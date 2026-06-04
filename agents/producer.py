@@ -439,9 +439,16 @@ def format_proposal_message(proposals: list[dict], target: dt.date) -> str:
     lines = [f"*내일({target.isoformat()}) 영상 제안 (2편)*\n"]
     for i, p in enumerate(proposals, 1):
         emoji = STYLE_EMOJI.get(p.get("render_style", ""), "🎬")
-        lines.append(f"{emoji} *{i}편 — {p['title']}* ({p.get('render_style', '?')})")
+        title = p.get("title")
+        title = title.get("ko") if isinstance(title, dict) else (title or "?")
+        lines.append(f"{emoji} *{i}편 — {title}* ({p.get('render_style', '?')})")
         for cut in p.get("cuts", []):
-            lines.append(f"  {cut['beat']}: {cut['description']}")
+            beat = cut.get("beat") or cut.get("tag") or "cut"
+            desc = cut.get("description") or cut.get("action") or ""
+            caps = cut.get("captions") or []
+            if not desc and caps:
+                desc = caps[0].get("ko", "")
+            lines.append(f"  {beat}: {desc}")
         tone = p.get("tone", "")
         bgm = p.get("bgm_mood", "")
         lines.append(f"  톤: {tone} | BGM: {bgm}")
