@@ -423,9 +423,12 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         if not m:
             raise RuntimeError(f"real_footage singlepass: no JSON array (len={len(text)})")
         concepts = json.loads(m.group(0))
-    # Ensure render_style stamped
+    # Ensure render_style stamped + cap cuts to 6 (Short length)
     for c in concepts:
         c["render_style"] = "real_footage"
+        cuts = c.get("cuts") or []
+        if len(cuts) > 6:
+            c["cuts"] = cuts[:6]
     if progress_cb:
         n = len(concepts[0].get("cuts", [])) if concepts else 0
         progress_cb(f":white_check_mark: 단일-패스 완료 — {n} cuts")
@@ -621,7 +624,7 @@ def _render_realfootage_direct(concept: dict, target: dt.date,
         },
     }
 
-    run_cur = con.execute("INSERT INTO runs (agent, status) VALUES ('realfootage_direct', 'running')")
+    run_cur = con.execute("INSERT INTO runs (agent, status) VALUES ('cameraman', 'running')")
     con.commit()
     persist_card(con, card, run_cur.lastrowid)
     con.execute("UPDATE cards SET state='approved', updated_at=datetime('now') WHERE card_id=?",
