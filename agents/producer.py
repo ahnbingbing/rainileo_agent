@@ -360,6 +360,14 @@ def propose_concepts(target: dt.date, context: dict, style_filter: str | None = 
     Fallback: legacy single-pass using producer_propose.md (Sonnet 4.6).
     Triggers on writer_director failure or when USE_WRITER_DIRECTOR=0.
     """
+    # Branch D (PD 2026-06-04): real_footage gets its OWN lean single-pass
+    # storyteller. The Writer/Director split (built for ai_vtuber Seedance
+    # generation) over-engineered real_footage — slow + dry captions. This
+    # path is ONE LLM call: read clips → flowing narrative grounded in real
+    # clip content → done. No Director, no card-writer, no validator gauntlet.
+    if style_filter == "real_footage":
+        return _propose_realfootage_singlepass(target, context, progress_cb)
+
     if os.getenv("USE_WRITER_DIRECTOR", "1") == "0":
         return _propose_concepts_legacy(target, context, style_filter)
 
@@ -375,6 +383,53 @@ def propose_concepts(target: dt.date, context: dict, style_filter: str | None = 
         if progress_cb:
             progress_cb(f":warning: Writer+Director 실패 ({str(e)[:80]}) — legacy로 fallback")
         return _propose_concepts_legacy(target, context, style_filter)
+
+
+REALFOOTAGE_SINGLEPASS_PROMPT = ROOT / "agents" / "prompts" / "realfootage_singlepass.md"
+
+
+def _propose_realfootage_singlepass(target: dt.date, context: dict,
+                                     progress_cb: ProgressCb = None) -> list[dict]:
+    """PD 2026-06-04: dedicated lean real_footage storyteller. ONE LLM call
+    that reads the clip ground truth and writes a flowing narrative grounded
+    in what the clips actually show (쿠들습격 style, but honest)."""
+    if progress_cb:
+        progress_cb(":pencil: real_footage 단일-패스 스토리텔러 (grounded flowing)")
+    system = REALFOOTAGE_SINGLEPASS_PROMPT.read_text(encoding="utf-8")
+    # Feed only the real_footage-relevant context: available videos with full
+    # ground truth, plus date. Strip ai_vtuber noise.
+    rf_context = {
+        "target_date": target.isoformat(),
+        "available_videos": context.get("available_videos", []),
+        "available_photos": context.get("available_photos", [])[:6],
+        "video_date_clusters": context.get("video_date_summary", {}),
+    }
+    user = json.dumps(rf_context, ensure_ascii=False, default=str)
+    user += ("\n\nWrite ONE real_footage concept as a JSON array of length 1. "
+             "Follow the 5-step order. Every caption must be grounded in the "
+             "clip's actual sc. Flowing narrative, not dry list. Output ONLY "
+             "the JSON array.")
+    from agents.llm_cascade import call_text_cascade
+    text = call_text_cascade(system, user, max_tokens=8000).strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+    text = text.strip()
+    try:
+        concepts = json.loads(text)
+    except json.JSONDecodeError:
+        m = re.search(r'\[[\s\S]*\]', text)
+        if not m:
+            raise RuntimeError(f"real_footage singlepass: no JSON array (len={len(text)})")
+        concepts = json.loads(m.group(0))
+    # Ensure render_style stamped
+    for c in concepts:
+        c["render_style"] = "real_footage"
+    if progress_cb:
+        n = len(concepts[0].get("cuts", [])) if concepts else 0
+        progress_cb(f":white_check_mark: 단일-패스 완료 — {n} cuts")
+    return concepts
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -508,6 +563,72 @@ def finalize_concepts(proposals: list[dict], pd_feedback: list[str]) -> list[dic
 # ──────────────────────────────────────────────────────────────────────
 # Produce: Writer batch → Cameraman render
 # ──────────────────────────────────────────────────────────────────────
+def _render_realfootage_direct(concept: dict, target: dt.date,
+                                con: sqlite3.Connection,
+                                progress_cb: ProgressCb = None) -> Path | None:
+    """Branch D (PD 2026-06-04): build a card directly from the single-pass
+    real_footage concept (NO card-writer LLM, NO validator gauntlet) and
+    render it. Preserves the grounded flowing captions verbatim."""
+    import uuid
+    from agents.writer import persist_card
+    from agents.cameraman import render_card
+
+    def _str(v):
+        return v.get("ko") if isinstance(v, dict) else (v or "")
+
+    title = _str(concept.get("title")) or "real_footage"
+    cuts = concept.get("cuts") or []
+    if not cuts:
+        if progress_cb:
+            progress_cb(":x: 단일-패스 컨셉에 cuts 없음")
+        return None
+
+    tone = concept.get("tone")
+    if isinstance(tone, str):
+        tone = {"primary": tone, "intensity": 0.6}
+    elif not isinstance(tone, dict):
+        tone = {"primary": "warm", "intensity": 0.6}
+
+    card = {
+        "card_id": str(uuid.uuid4()),
+        "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "author": "realfootage_singlepass",
+        "card_type": "daily",
+        "date": target.isoformat(),
+        "theme": title,
+        "title": title,
+        "narrative_oneliner": _str(concept.get("narrative_oneliner")) or title,
+        "render_style": "real_footage",
+        "episode_format": "short",
+        "tone": tone,
+        "subjects": concept.get("subjects", ["leo"]),
+        "duration_target_sec": sum(int(c.get("duration_seconds") or 4) for c in cuts) + 6,
+        "writer_confidence": 0.85,
+        "ask_pd": False,
+        "cuts": cuts,
+        "draft": {
+            "title": title,
+            "description": _str(concept.get("narrative_oneliner")) or title,
+            "hashtags": ["#랴니", "#레오", "#일상"],
+            "caption_burnin": title,
+        },
+    }
+
+    run_cur = con.execute("INSERT INTO runs (agent, status) VALUES ('realfootage_direct', 'running')")
+    con.commit()
+    persist_card(con, card, run_cur.lastrowid)
+    con.execute("UPDATE cards SET state='approved', updated_at=datetime('now') WHERE card_id=?",
+                (card["card_id"],))
+    con.commit()
+
+    if progress_cb:
+        progress_cb(f":movie_camera: real_footage 렌더 시작: {title}")
+    # use_brain=False — use the concept's cuts/asset_ids directly, no re-planning.
+    out = render_card(card["card_id"], progress_cb=progress_cb, use_brain=False,
+                      concept=concept)
+    return out
+
+
 def produce_and_render(concepts: list[dict], target: dt.date,
                        progress_cb: ProgressCb = None,
                        dry_run: bool = False) -> list[Path]:
@@ -617,6 +738,24 @@ def produce_and_render(concepts: list[dict], target: dt.date,
             log.warning("Photo selection failed: %s", e)
             if progress_cb:
                 progress_cb(f":warning: 사진 선정 실패: {str(e)[:100]}")
+
+        # Branch D (PD 2026-06-04): real_footage bypasses the card-writer LLM
+        # entirely. The single-pass storyteller already produced grounded
+        # flowing captions + cuts. Re-writing through writer_system.md was
+        # re-dramatizing them ("식탁 위의 범인 (대반전)"). Build the card
+        # directly from the concept, preserving title/captions/cuts verbatim.
+        if (concept.get("render_style") or "").lower() == "real_footage":
+            if progress_cb:
+                progress_cb(f":zap: [{i}/{len(concepts)}] real_footage 직접 카드화 (card-writer 우회)")
+            try:
+                out = _render_realfootage_direct(concept, target, con, progress_cb)
+                if out:
+                    outputs.append(out)
+            except Exception as e:
+                log.exception("real_footage direct render failed: %s", e)
+                if progress_cb:
+                    progress_cb(f":x: real_footage 렌더 실패: {str(e)[:150]}")
+            continue
 
         if progress_cb:
             progress_cb(f":pencil: [{i}/{len(concepts)}] Writer 카드 생성: {concept.get('title', '?')}")
