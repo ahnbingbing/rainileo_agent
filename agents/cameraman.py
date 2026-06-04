@@ -783,7 +783,11 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
     n_cuts = len(concept_cuts) if concept_cuts else min(len(ordered), 4)
     cuts = []
     for i in range(n_cuts):
-        beat = concept_cuts[i]["beat"] if i < len(concept_cuts) else f"cut{i+1}"
+        if i < len(concept_cuts):
+            cc = concept_cuts[i]
+            beat = cc.get("beat") or cc.get("tag") or f"cut{i+1}"
+        else:
+            beat = f"cut{i+1}"
         tag = f"cut{i+1}_{_slugify(beat)}"
         asset = ordered[i] if i < len(ordered) else ordered[-1]
         cuts.append({"tag": tag, "asset": asset})
