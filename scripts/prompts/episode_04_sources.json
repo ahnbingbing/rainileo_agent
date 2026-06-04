@@ -1,0 +1,26 @@
+{
+  "_comment": "EP04 일상 — real video clips, no AI gen. cut_tag → source video + trim window. Each cut is 4s. Pipeline: trim + scale/pad to 1080x1920 + burn TOP caption.",
+  "_episode_id": "04_daily_life",
+  "_style": "documentary observer narrator (괄호 톤)",
+  "cut1_sit_together": {
+    "source": "data/assets/clips/2026/med_2026_03_04_105836_icloud_27997f71.mp4",
+    "trim_start": 0.5,
+    "trim_dur": 4.0
+  },
+  "cut2_leo_munching": {
+    "source": "data/assets/clips/2026/med_2026_05_05_124151_icloud_1dd62157.mov",
+    "trim_start": 0.3,
+    "trim_dur": 4.0
+  },
+  "cut3_ryani_sleeping": {
+    "source": "data/assets/clips/2026/med_2026_01_01_204650_icloud_975b9fa0.mov",
+    "trim_start": 8.0,
+    "trim_dur": 4.0
+  },
+  "cut4_cuddle_together": {
+    "source": "data/assets/clips/2026/med_2026_04_11_110559_icloud_c632b1e8.mov",
+    "trim_start": 1.0,
+    "trim_dur": 4.0,
+    "pan": "left_to_right"
+  }
+}

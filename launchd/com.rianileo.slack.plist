@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Slack workroom (long-running, Socket Mode). KeepAlive=true so it auto-restarts on crash.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key><string>com.rianileo.slack</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/Users/ahnbingbing/code/rianileo-agent/.venv/bin/python</string>
+      <string>-m</string>
+      <string>slack.app</string>
+    </array>
+
+    <key>WorkingDirectory</key><string>/Users/ahnbingbing/code/rianileo-agent</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>TZ</key><string>Asia/Seoul</string>
+      <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><true/>
+
+    <key>StandardOutPath</key><string>/Users/ahnbingbing/code/rianileo-agent/data/logs/slack.out.log</string>
+    <key>StandardErrorPath</key><string>/Users/ahnbingbing/code/rianileo-agent/data/logs/slack.err.log</string>
+  </dict>
+</plist>

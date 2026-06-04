@@ -1,0 +1,12 @@
+{
+  "_comment": "Episode 03 Ryani판 captions. 수묵화 톤에 어울리는 단정/시적 표현. 한자 + 의역. cut4가 holiday wish 담음 (outro bumper 캡션 없음).",
+  "_episode_id": "03_ryani_buddha_birthday",
+  "_publish_date": "2026-05-24",
+  "_total_duration_estimate_sec": 20,
+  "_bumper_intro_sec": 1.5,
+  "_bumper_outro_sec": 2.5,
+  "cut1_ryani_greeting":    { "ko": "안녕하세요, 랴니예요",   "en": "Hello, I'm Ryani" },
+  "cut2_ryani_contemplate": { "ko": "고요한 봄날",           "en": "A quiet spring day" },
+  "cut3_ryani_with_leo":    { "ko": "함께라서 좋아요",       "en": "Better together" },
+  "cut4_ryani_peaceful":    { "ko": "행복한 부처님 오신날",   "en": "A blessed Buddha's Day" }
+}

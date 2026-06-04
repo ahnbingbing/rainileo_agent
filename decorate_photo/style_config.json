@@ -1,0 +1,169 @@
+{
+  "_comment": "Style config for decorate_photo. Edit any value and re-run — see README.md for guidance.",
+
+  "palette": {
+    "outline":         "#1a1a1a",
+    "bubble_fill":     "#ffffff",
+    "heart_pink":      "#ff6f9f",
+    "blush":           "#ff9ebd",
+    "halo":            "#f9c842",
+    "sparkle_white":   "#ffffff",
+    "sparkle_yellow":  "#ffe27a",
+    "paw":             "#1a1a1a",
+    "accent_lavender": "#bfa9ff",
+    "accent_mint":     "#9ee5cc",
+    "accent_peach":    "#ffb997"
+  },
+
+  "outlines": {
+    "halo_stroke":     6,
+    "heart_stroke":    3,
+    "sparkle_stroke":  2,
+    "bubble_stroke":   5,
+    "action_stroke":   5
+  },
+
+  "sizes": {
+    "_comment": "All *_pct values are percent of image HEIGHT. halo_w_ratio/blush_w_ratio are fractions of subject bbox width.",
+    "halo_w_ratio":       0.42,
+    "blush_w_ratio":      0.13,
+    "heart_min_pct":      3.2,
+    "heart_max_pct":      5.5,
+    "sparkle_min_pct":    2.2,
+    "sparkle_max_pct":    4.8,
+    "paw_min_pct":        2.6,
+    "paw_max_pct":        4.2,
+    "action_min_pct":     3.0,
+    "action_max_pct":     5.2,
+    "caption_font_pct":   5.8,
+    "reaction_font_pct":  3.8,
+    "micro_font_pct":     2.4
+  },
+
+  "modes": {
+    "_comment": "density = base count per overlay type. final count = base * mood_bias[mood][type]",
+
+    "clean": {
+      "density": {
+        "halo":           1,
+        "blush":          0,
+        "hearts":         1,
+        "sparkles":       3,
+        "paw_prints":     0,
+        "action_lines":   0,
+        "small_reaction": 0,
+        "main_caption":   1,
+        "micro_text":     0,
+        "emphasis":       0
+      }
+    },
+
+    "playful": {
+      "density": {
+        "halo":           1,
+        "blush":          0,
+        "hearts":         3,
+        "sparkles":       5,
+        "paw_prints":     3,
+        "action_lines":   2,
+        "small_reaction": 1,
+        "main_caption":   1,
+        "micro_text":     2,
+        "emphasis":       0
+      }
+    },
+
+    "extra_cute": {
+      "density": {
+        "halo":           1,
+        "blush":          1,
+        "hearts":         6,
+        "sparkles":       7,
+        "paw_prints":     4,
+        "action_lines":   3,
+        "small_reaction": 1,
+        "main_caption":   1,
+        "micro_text":     3,
+        "emphasis":       2
+      }
+    }
+  },
+
+  "mood_bias": {
+    "_comment": "Per-mood multipliers applied to mode density. Missing keys default to 1.0.",
+
+    "affectionate": {
+      "halo":           1.0,
+      "hearts":         1.4,
+      "sparkles":       1.2,
+      "paw_prints":     0.6,
+      "action_lines":   0.3,
+      "blush":          1.5,
+      "small_reaction": 1.0,
+      "micro_text":     1.0,
+      "emphasis":       0.6
+    },
+
+    "playful": {
+      "halo":           0.5,
+      "hearts":         0.8,
+      "sparkles":       1.0,
+      "paw_prints":     1.5,
+      "action_lines":   1.5,
+      "blush":          0.5,
+      "small_reaction": 1.2,
+      "micro_text":     1.0,
+      "emphasis":       1.0
+    },
+
+    "mischievous": {
+      "halo":           0.2,
+      "hearts":         0.4,
+      "sparkles":       0.7,
+      "paw_prints":     1.4,
+      "action_lines":   1.8,
+      "blush":          0.4,
+      "small_reaction": 1.3,
+      "micro_text":     1.0,
+      "emphasis":       1.6
+    },
+
+    "surprised": {
+      "halo":           0.2,
+      "hearts":         0.2,
+      "sparkles":       1.0,
+      "paw_prints":     0.6,
+      "action_lines":   1.8,
+      "blush":          0.4,
+      "small_reaction": 1.3,
+      "micro_text":     1.0,
+      "emphasis":       2.0
+    },
+
+    "calm": {
+      "halo":           1.2,
+      "hearts":         0.7,
+      "sparkles":       1.0,
+      "paw_prints":     0.3,
+      "action_lines":   0.0,
+      "blush":          0.7,
+      "small_reaction": 0.6,
+      "micro_text":     0.6,
+      "emphasis":       0.2
+    },
+
+    "cute": {
+      "halo":           1.0,
+      "hearts":         1.2,
+      "sparkles":       1.2,
+      "paw_prints":     0.8,
+      "action_lines":   0.4,
+      "blush":          1.4,
+      "small_reaction": 1.0,
+      "micro_text":     1.0,
+      "emphasis":       0.6
+    }
+  },
+
+  "face_points": null
+}

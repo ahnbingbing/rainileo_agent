@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(update-config)",
+      "Bash(python3 *)",
+      "Bash(./.venv/bin/python *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(find *)",
+      "Bash(rm -f data/*)",
+      "Bash(rm -f /tmp/*)",
+      "Bash(pkill *)",
+      "Bash(sips *)",
+      "Bash(ps *)",
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep"
+    ]
+  }
+}

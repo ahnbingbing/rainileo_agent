@@ -1,0 +1,8 @@
+{
+  "_comment": "Per-cut bilingual captions for ffmpeg burn-in. KO line shown above EN line, bottom-centered. Built 2026-05-15 by collapsing CAPTIONS_COPY_PASTE.txt (7 captions for sora-era 7-clip cut) into 5 captions for the Veo-era 5-cut episode. Dropped captions: '10살 차이 / 10 years apart' and '한 가족이에요 / Now we're family' — narrative arc still reads (intro → intro → play → bond → outro).",
+  "cut1_ryani_hook":     { "ko": "안녕! 나는 랴니예요",     "en": "Hi! I'm Ryani" },
+  "cut2_leo_intro":      { "ko": "그리고 나는 레오예요",     "en": "And I'm Leo" },
+  "cut3_together_play":  { "ko": "같이 놀 때가 제일 좋아",  "en": "Playing together is the best" },
+  "cut4_together_warm":  { "ko": "벌써 단짝이 됐어요",       "en": "Best buds already" },
+  "cut5_closer":         { "ko": "이제 자주자주 만나요!",    "en": "See you often from now on!" }
+}

@@ -1,0 +1,30 @@
+{
+  "_comment": "EP04 일상 — 재잘재잘 narrator scenes. Each cut has multiple timed scenes; captions update through the clip like a documentary voice-over (text version). Modeled after @tvhesuinbada4267 reference where captions narrate the action continuously instead of titling once. Each scene's start/end are relative to the 4s cut window.",
+  "_episode_id": "04_daily_life",
+  "_caption_position": "top",
+  "_caption_style": "marker_handwritten",
+  "cut1_sit_together": {
+    "scenes": [
+      { "start": 0.2, "end": 2.0, "ko": "오늘도 나란히 앉아있네요",     "en": "Side by side again today" },
+      { "start": 2.0, "end": 4.0, "ko": "둘이 뭘 보는 거예요?",        "en": "What are they staring at?" }
+    ]
+  },
+  "cut2_leo_munching": {
+    "scenes": [
+      { "start": 0.2, "end": 2.0, "ko": "레오는 풀 뜯는 중이에요",       "en": "Leo's on his greens" },
+      { "start": 2.0, "end": 4.0, "ko": "세상에서 제일 맛있나봐요",      "en": "Must be the tastiest thing ever" }
+    ]
+  },
+  "cut3_ryani_sleeping": {
+    "scenes": [
+      { "start": 0.2, "end": 2.0, "ko": "랴니는 쌔근쌔근 자는 중",        "en": "Ryani's fast asleep" },
+      { "start": 2.0, "end": 4.0, "ko": "눈이 움찔... 꿈을 꾸나봐요",    "en": "A paw twitch... must be dreaming" }
+    ]
+  },
+  "cut4_cuddle_together": {
+    "scenes": [
+      { "start": 0.2, "end": 2.0, "ko": "놀다 지치면 결국 이렇게",       "en": "After playing, it always ends like this" },
+      { "start": 2.0, "end": 4.0, "ko": "우리집 제일 평화로운 순간",      "en": "The most peaceful moment at home" }
+    ]
+  }
+}

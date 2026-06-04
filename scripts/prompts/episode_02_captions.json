@@ -1,0 +1,14 @@
+{
+  "_comment": "Episode 02 — 부처님 오신날 (2026-05-24 발행 목표). 4 content cuts. Intro/outro는 채널 banner card로 별도 처리 (assemble_episode.py가 앞뒤에 붙임). 톤: 동양적 매력 + 신나고 힙 하이브리드.",
+  "_episode_id": "02_buddha_birthday",
+  "_publish_date": "2026-05-24",
+  "_total_duration_estimate_sec": 20,
+  "_bumper_intro_sec": 1.5,
+  "_bumper_outro_sec": 2.5,
+  "cut1_peony_greeting":   { "ko": "안녕! 부처님 오신날이에요", "en": "Hi! It's Buddha's Day" },
+  "cut2_sunbathe_meditate":{ "ko": "햇살 받으며 명상 중",      "en": "Sunbathing & meditating" },
+  "cut3_dance_party":      { "ko": "근데 가끔은 신나게",        "en": "But sometimes we party" },
+  "cut4_cuddle_peace":     { "ko": "행복한 부처님 오신날!",    "en": "Have a blessed Buddha's Day!" },
+  "_outro_caption_legacy": { "ko": "단짝이랑은 평화로워",      "en": "Peaceful with my bestie",
+                             "_note": "옛 cut4 카피 — outro 캡션 제거하면서 cut4가 holiday wish 받았음. 이건 그냥 archive." }
+}

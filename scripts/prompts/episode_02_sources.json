@@ -1,0 +1,8 @@
+{
+  "_comment": "Episode 02 source photo mapping — tag → original JPEG path (relative to repo root). preprocess_for_i2v.py가 이걸 읽어서 9:16 crop + resize.",
+  "_episode_id": "02_buddha_birthday",
+  "cut1_peony_greeting":    "data/assets/photos/2026/med_2026_05_06_203116_icloud_d3c5c667.jpeg",
+  "cut2_sunbathe_meditate": "data/assets/photos/2026/med_2026_04_18_163637_icloud_a61bf9ca.jpeg",
+  "cut3_dance_party":       "data/assets/photos/2026/med_2026_05_06_153947_icloud_32f780a4.jpeg",
+  "cut4_cuddle_peace":      "data/assets/photos/2026/med_2026_04_20_123613_icloud_16ea2825.jpeg"
+}

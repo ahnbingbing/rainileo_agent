@@ -1,0 +1,41 @@
+Edit the provided pet photo.
+
+Keep the original photo realistic.
+Do not repaint, cartoonize, or stylize the pets themselves.
+Do not transform the whole image into an illustration.
+Preserve the real-life look of the pets and background.
+
+Only add decorative overlays in a modern Korean webtoon reaction style.
+
+Style:
+- cute, playful, affectionate
+- clean black outlines
+- white comic bubbles
+- pink heart accents
+- yellow/white sparkles
+- expressive but polished
+- not scrapbook style
+- not random emoji clutter
+
+Add overlays such as:
+- blush marks
+- hearts near the interaction
+- sparkles
+- small paw prints
+- action/reaction lines
+- a halo if it suits the mood
+- one or two small Korean comic-style text elements if natural
+
+Placement:
+- keep the pets as the main focus
+- use negative space well
+- allow slight face-overlap only if it looks cute
+- do not damage the natural expression
+
+Text:
+Use short Korean comic-style reaction text only if it fits the image.
+Do not repeat the same fixed phrase every time.
+Choose text that matches the image mood.
+
+Goal:
+Make this feel like a polished real-photo + Korean webtoon reaction overlay edit.

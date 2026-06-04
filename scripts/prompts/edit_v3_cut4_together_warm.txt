@@ -1,0 +1,51 @@
+Edit the provided pet photo.
+
+Keep the original photo realistic.
+Do not repaint, cartoonize, or stylize the pets themselves.
+Do not transform the whole image into an illustration.
+Preserve the real-life look of the pets and background.
+
+NO TEXT IN THE IMAGE.
+Do not add any letters, words, captions, speech bubbles, Korean characters,
+English characters, or written symbols of any language. Stickers only — no
+writing of any kind anywhere in the image. Captions will be added later as
+separate subtitles outside this step.
+
+Only add decorative overlays in a modern Korean webtoon reaction style.
+
+Style:
+- cute, playful, affectionate
+- clean black outlines
+- pink heart accents
+- yellow/white sparkles
+- expressive but polished
+- not scrapbook style
+- not random emoji clutter
+
+Placement (STRICT — this is the most important rule):
+- NEVER place any sticker on the pets' faces, eyes, ears, fur, paws, or bodies.
+- ALL stickers must sit in clean negative space (sky, floor, blank wall, empty corners, background).
+- Keep a clear margin between every sticker and the pets — stickers do not touch the pets at any point.
+- If there is not enough clean negative space for the listed stickers, USE FEWER stickers. Do not overlap the pets to make room.
+- The pets are the focus; stickers are accents around them, never on them.
+
+Distribution across the frame:
+- Spread the stickers across BOTH the upper AND the lower half of the frame. Do not cluster everything at the top.
+- Treat the floor / lower corners / lower-side empty areas as valid negative space and place at least some stickers there too.
+- Aim for stickers in the upper third, the side margins, AND the lower third whenever clean space exists in those regions.
+- Avoid leaving any large empty zone visually bare (especially the bottom of the frame).
+
+Overlay focus for this cut — theme: HEART STORM + HALO (warm, bonded duo).
+Use ONLY the following overlays (do not add extras from outside this list):
+- 4 to 5 pink hearts of varied sizes scattered across the frame — at least 2 in the upper negative space ABOVE the pets, and at least 1 to 2 in the lower negative space (floor / lower-corners). Never on their faces, ears, or fur.
+- 1 small yellow halo ring floating in the empty space directly above the two pets, centered over their group (above their heads, not on them)
+- 2 small yellow sparkles — 1 in upper negative space, 1 in lower negative space
+
+AVOID for this cut (do NOT add):
+- paw prints
+- black action / motion lines
+- a loud confetti vibe — keep this cut soft and warm
+- blush marks (no stickers on faces)
+- ANY text, letters, words, or speech bubbles
+
+Final reminder: ZERO text/letters in the image. The image must contain only the pets and the listed overlay shapes — no written characters anywhere.

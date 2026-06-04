@@ -1,0 +1,11 @@
+Mandatory main caption (exact text — do NOT change any character):
+"{{CAPTION}}"
+
+Render this Korean text inside a single comic starburst caption bubble
+(white fill, thick black outline, jagged starburst edges) placed in a
+natural empty area of the frame — lower-left preferred, but any clean
+negative space is acceptable as long as it does not cover the pets'
+faces. Spell every character exactly as given. This is the headline
+caption for the cut and must be clearly readable. In addition to this
+caption you may still add the small ambient reaction marks described
+above.

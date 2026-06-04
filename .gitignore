@@ -1,0 +1,22 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+# Heavy generated/data dirs — code-only repo (PD 2026-06-04: A/B/C branch test)
+data/
+assets/bgm/
+assets/branding/
+*.mp4
+*.mov
+*.heic
+*.jpg
+*.jpeg
+*.png
+youtube/token.json
+youtube/client_secret.json
+.DS_Store
+.env.bak
+*.lock
+assets/**/*.bak

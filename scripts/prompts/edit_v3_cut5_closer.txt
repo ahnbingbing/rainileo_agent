@@ -1,0 +1,51 @@
+Edit the provided pet photo.
+
+Keep the original photo realistic.
+Do not repaint, cartoonize, or stylize the pets themselves.
+Do not transform the whole image into an illustration.
+Preserve the real-life look of the pets and background.
+
+NO TEXT IN THE IMAGE.
+Do not add any letters, words, captions, speech bubbles, Korean characters,
+English characters, or written symbols of any language. Stickers only — no
+writing of any kind anywhere in the image. Captions will be added later as
+separate subtitles outside this step.
+
+Only add decorative overlays in a modern Korean webtoon reaction style.
+
+Style:
+- cute, playful, affectionate
+- clean black outlines
+- pink heart accents
+- yellow/white sparkles
+- expressive but polished
+- not scrapbook style
+- not random emoji clutter
+
+Placement (STRICT — this is the most important rule):
+- NEVER place any sticker on the pets' faces, eyes, ears, fur, paws, or bodies.
+- ALL stickers must sit in clean negative space (sky, floor, blank wall, empty corners, background).
+- Keep a clear margin between every sticker and the pets — stickers do not touch the pets at any point.
+- If there is not enough clean negative space for the listed stickers, USE FEWER stickers. Do not overlap the pets to make room.
+- The pets are the focus; stickers are accents around them, never on them.
+
+Distribution across the frame:
+- Spread the stickers across BOTH the upper AND the lower half of the frame. Do not cluster everything at the top.
+- Treat the floor / lower corners / lower-side empty areas as valid negative space and place at least some stickers there too.
+- Aim for stickers in the upper third, the side margins, AND the lower third whenever clean space exists in those regions.
+- Avoid leaving any large empty zone visually bare (especially the bottom of the frame).
+
+Overlay focus for this cut — theme: CONFETTI WRAP (finale flourish — different sticker shapes than earlier cuts).
+Use ONLY the following overlays (do not add extras from outside this list):
+- 6 to 8 small sparkles scattered like confetti ACROSS the FULL frame — mix of yellow 6-point, white 4-point, and small pink dots. Distribute evenly between the upper third, the middle side-margins, AND the lower third of the frame — do not cluster them all at the top.
+- 1 small pink heart in negative space (just one, as a finishing touch)
+- 1 small star shape (distinct from the sparkles) in negative space
+- 1 small check-mark symbol in an empty lower corner of the frame
+
+AVOID for this cut (do NOT add):
+- halo
+- paw prints
+- black action / motion lines
+- ANY text, letters, words, or speech bubbles
+
+Final reminder: ZERO text/letters in the image. The image must contain only the pets and the listed overlay shapes — no written characters anywhere.

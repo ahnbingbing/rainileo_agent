@@ -1,0 +1,9 @@
+{
+  "_comment": "Episode 03 Ryani판 source photo mapping. Ryani 중심 + 수묵화 + 연등 톤. 4 cuts: 카페 인사 → 명상 → 같이 → 빈티지 마무리.",
+  "_episode_id": "03_ryani_buddha_birthday",
+  "_publish_target": "2026-05-24",
+  "cut1_ryani_greeting":     "data/tmp/photos_2026_jpeg/med_2026_01_01_141833_icloud_cbf00f9c.jpg",
+  "cut2_ryani_contemplate":  "data/tmp/photos_2026_jpeg/med_2026_02_07_100934_icloud_7e837ca4.jpeg",
+  "cut3_ryani_with_leo":     "data/tmp/photos_2026_jpeg/med_2026_05_06_203421_icloud_331110de.jpeg",
+  "cut4_ryani_peaceful":     "data/tmp/photos_2026_jpeg/med_2026_01_01_150036_icloud_b4948885.jpg"
+}

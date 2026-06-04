@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  iCloud / Photos sync — every 15 min.
+
+  After editing the username path, install with:
+      cp launchd/com.rianileo.icloud-sync.plist ~/Library/LaunchAgents/
+      launchctl unload ~/Library/LaunchAgents/com.rianileo.icloud-sync.plist 2>/dev/null
+      launchctl load   ~/Library/LaunchAgents/com.rianileo.icloud-sync.plist
+
+  Tail logs:
+      tail -f data/logs/icloud.out.log data/logs/icloud.err.log
+
+  IMPORTANT: replace 'ahnbingbing' below with your macOS username if different.
+  Quick check: run `whoami` in Terminal — that's the value to use.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key><string>com.rianileo.icloud-sync</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/Users/ahnbingbing/code/rianileo-agent/.venv/bin/python</string>
+      <string>-m</string>
+      <string>icloud.sync</string>
+      <string>--album</string>
+      <string>Ryani &amp; Leo</string>
+    </array>
+
+    <key>WorkingDirectory</key><string>/Users/ahnbingbing/code/rianileo-agent</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>TZ</key><string>Asia/Seoul</string>
+      <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+      <key>LOG_LEVEL</key><string>INFO</string>
+    </dict>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+      <key>Hour</key><integer>6</integer>
+      <key>Minute</key><integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key><string>/Users/ahnbingbing/code/rianileo-agent/data/logs/icloud.out.log</string>
+    <key>StandardErrorPath</key><string>/Users/ahnbingbing/code/rianileo-agent/data/logs/icloud.err.log</string>
+
+    <key>RunAtLoad</key><true/>
+
+    <key>ProcessType</key><string>Background</string>
+
+    <key>Nice</key><integer>10</integer>
+  </dict>
+</plist>

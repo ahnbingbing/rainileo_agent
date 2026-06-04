@@ -1,0 +1,39 @@
+# Riani & Leo Agent System — Python deps (Phase 0)
+# Slack
+slack-bolt==1.20.1
+slack-sdk==3.31.0
+
+# YouTube Data API v3 + Analytics
+google-api-python-client==2.143.0
+google-auth==2.34.0
+google-auth-oauthlib==1.2.1
+google-auth-httplib2==0.2.0
+
+# LLM (Writer Agent)
+anthropic==0.39.0
+
+# Validation
+jsonschema==4.23.0
+
+# Scheduler
+APScheduler==3.10.4
+
+# Image / Video
+Pillow==10.4.0
+imagehash==4.3.1
+moviepy==1.0.3
+pillow-heif==0.18.0    # HEIC/HEIF reader for Pillow (iPhone photos)
+osxphotos==0.69.5      # macOS Photos library reader (no API key)
+
+# Utilities
+python-dotenv==1.0.1
+pydantic==2.9.2
+pytz==2024.2
+tzdata==2024.2
+
+# CLI / DX
+rich==13.8.1
+click==8.1.7
+
+# Testing
+pytest==8.3.3
