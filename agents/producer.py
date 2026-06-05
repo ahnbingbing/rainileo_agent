@@ -361,25 +361,13 @@ def propose_concepts(target: dt.date, context: dict, style_filter: str | None = 
     Fallback: legacy single-pass using producer_propose.md (Sonnet 4.6).
     Triggers on writer_director failure or when USE_WRITER_DIRECTOR=0.
     """
-    # PD 2026-06-05: real_footage uses the EXISTING producer_propose.md
-    # concept-ideation (664-line, the prompt that made 쿠들습격) — NOT the
-    # reinvented single-pass which threw away concept/hook ideation. The
-    # Producer prompt already does: asset-grounded concept + hook/theme +
-    # TV동물농장 caption style + per-cut time-split captions. Then
-    # _render_realfootage_direct renders it WITHOUT the card-writer
-    # re-dramatization. Branch D's single-pass is retired.
+    # PD 2026-06-05: real_footage uses its DEDICATED concept prompt
+    # (realfootage_concept.md) — concept ideation + 쿠들습격 baseline + the
+    # 3 quality axes PD demanded (caption wit/말맛, editing rhythm,
+    # story depth/twist) + grounding + readability. ONE clean prompt,
+    # then _render_realfootage_direct (no card-writer re-dramatization).
     if style_filter == "real_footage":
-        # producer_propose.md's system prompt forces 2 concepts (ai_vtuber +
-        # real_footage) regardless of the user-message filter. Drop the
-        # ai_vtuber one so we don't burn GPT-image generation we didn't want.
-        all_concepts = _propose_concepts_legacy(target, context, "real_footage")
-        rf = [c for c in all_concepts
-              if (c.get("render_style") or "").lower() == "real_footage"]
-        if not rf and all_concepts:
-            # LLM mislabeled — coerce the first to real_footage
-            all_concepts[0]["render_style"] = "real_footage"
-            rf = [all_concepts[0]]
-        return rf
+        return _propose_realfootage_singlepass(target, context, progress_cb)
 
     if os.getenv("USE_WRITER_DIRECTOR", "1") == "0":
         return _propose_concepts_legacy(target, context, style_filter)
@@ -398,7 +386,7 @@ def propose_concepts(target: dt.date, context: dict, style_filter: str | None = 
         return _propose_concepts_legacy(target, context, style_filter)
 
 
-REALFOOTAGE_SINGLEPASS_PROMPT = ROOT / "agents" / "prompts" / "realfootage_singlepass.md"
+REALFOOTAGE_SINGLEPASS_PROMPT = ROOT / "agents" / "prompts" / "realfootage_concept.md"
 
 
 def _propose_realfootage_singlepass(target: dt.date, context: dict,
