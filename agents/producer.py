@@ -424,15 +424,29 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         if not m:
             raise RuntimeError(f"real_footage singlepass: no JSON array (len={len(text)})")
         concepts = json.loads(m.group(0))
-    # Ensure render_style stamped + cap cuts to 6 (Short length)
+    # PD 2026-06-05: NO cut cap — script decides length.
     for c in concepts:
         c["render_style"] = "real_footage"
-        cuts = c.get("cuts") or []
-        if len(cuts) > 6:
-            c["cuts"] = cuts[:6]
+    # PD 2026-06-06: persist the stage artifact so we can trace WHERE a
+    # problem (e.g. subject/object reversal) was introduced.
+    try:
+        art_dir = ROOT / "data" / "output" / "artifacts"
+        art_dir.mkdir(parents=True, exist_ok=True)
+        ts = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+        art = art_dir / f"realfootage_{target.isoformat()}_{ts}.json"
+        art.write_text(json.dumps({
+            "stage": "realfootage_singlepass",
+            "target_date": target.isoformat(),
+            "input_videos": rf_context.get("available_videos"),
+            "raw_llm_text": text,
+            "parsed_concepts": concepts,
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        log.info("artifact saved: %s", art.name)
+    except Exception as e:
+        log.warning("artifact save failed: %s", e)
     if progress_cb:
         n = len(concepts[0].get("cuts", [])) if concepts else 0
-        progress_cb(f":white_check_mark: 단일-패스 완료 — {n} cuts")
+        progress_cb(f":white_check_mark: 단일-패스 완료 — {n} cuts (artifact 저장)")
     return concepts
 
 
