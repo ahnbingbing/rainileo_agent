@@ -4,6 +4,13 @@
 > production pipeline. Any agent/CLI working on this repo should read this
 > first, then dive into the per-episode notes/ docs as needed.
 
+> **⛔ OUTPUT RULE (절대):** NEVER write tool-call syntax as visible text —
+> no `<invoke>`, `<parameter>`, leading `count`, or XML function blocks in
+> the reply body. Tool calls go ONLY through the real function-call channel.
+> Reply text = plain prose only. When an episode renders, immediately
+> deliver the mp4 via SendUserFile (don't wait to be asked). PD has been
+> repeatedly frustrated by leaked tool-call text — this is a hard failure.
+
 ---
 
 ## The channel
