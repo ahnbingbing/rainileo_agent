@@ -360,13 +360,15 @@ def propose_concepts(target: dt.date, context: dict, style_filter: str | None = 
     Fallback: legacy single-pass using producer_propose.md (Sonnet 4.6).
     Triggers on writer_director failure or when USE_WRITER_DIRECTOR=0.
     """
-    # Branch D (PD 2026-06-04): real_footage gets its OWN lean single-pass
-    # storyteller. The Writer/Director split (built for ai_vtuber Seedance
-    # generation) over-engineered real_footage — slow + dry captions. This
-    # path is ONE LLM call: read clips → flowing narrative grounded in real
-    # clip content → done. No Director, no card-writer, no validator gauntlet.
+    # PD 2026-06-05: real_footage uses the EXISTING producer_propose.md
+    # concept-ideation (664-line, the prompt that made 쿠들습격) — NOT the
+    # reinvented single-pass which threw away concept/hook ideation. The
+    # Producer prompt already does: asset-grounded concept + hook/theme +
+    # TV동물농장 caption style + per-cut time-split captions. Then
+    # _render_realfootage_direct renders it WITHOUT the card-writer
+    # re-dramatization. Branch D's single-pass is retired.
     if style_filter == "real_footage":
-        return _propose_realfootage_singlepass(target, context, progress_cb)
+        return _propose_concepts_legacy(target, context, "real_footage")
 
     if os.getenv("USE_WRITER_DIRECTOR", "1") == "0":
         return _propose_concepts_legacy(target, context, style_filter)

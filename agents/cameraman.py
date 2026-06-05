@@ -721,6 +721,12 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
     if concept_cuts and any(c.get("asset_id") or c.get("seedance_mode") == "interp"
                             for c in concept_cuts):
         con = _db()
+        # PD 2026-06-04: keep cut↔asset 1:1 aligned. Previously a skipped
+        # asset (wrong kind / missing) did `continue` WITHOUT dropping the
+        # cut, shifting every later cut's asset by one → captions landed on
+        # the wrong clips. Now: build (cut, asset) pairs in lockstep; drop
+        # invalid cuts entirely so caption + clip stay paired.
+        valid_cuts = []
         for cut in concept_cuts:
             aid = cut.get("asset_id")
             mode = cut.get("seedance_mode", "")
@@ -730,17 +736,17 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
                     "duration_sec, width, height, NULL as role, NULL as trim_start, NULL as trim_end "
                     "FROM assets WHERE asset_id = ?", (aid,)
                 ).fetchone()
-                if row:
-                    asset = dict(row)
-                    # Skip kind mismatch (don't put video into cartoon_sticker)
-                    if asset["kind"] != expected_kind:
-                        log.warning("Skipping %s — kind=%s but style=%s needs %s",
-                                    aid[:20], asset["kind"], style, expected_kind)
-                        continue
-                    ordered.append(asset)
+                if not row:
+                    log.warning("Dropping cut — asset_id %s not found", str(aid)[:24])
+                    continue
+                asset = dict(row)
+                if asset["kind"] != expected_kind:
+                    log.warning("Dropping cut — %s kind=%s but style=%s needs %s",
+                                str(aid)[:20], asset["kind"], style, expected_kind)
+                    continue
+                ordered.append(asset)
+                valid_cuts.append(cut)
             elif mode == "interp" and style == "real_footage":
-                # Director-marked gap-fill cut. Cameraman will resolve fill_anchors
-                # later in run_real_footage_pipeline.
                 ordered.append({
                     "asset_id": None,
                     "kind": "interp_fill",
@@ -750,6 +756,11 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
                     "width": None, "height": None,
                     "role": None, "trim_start": None, "trim_end": None,
                 })
+                valid_cuts.append(cut)
+        # Re-bind concept_cuts to the surviving aligned set so downstream
+        # caption/manifest building uses the same indices as `ordered`.
+        if valid_cuts:
+            concept_cuts = valid_cuts
 
     # Priority 2: card_assets linked
     if not ordered:

@@ -73,6 +73,33 @@ thread를 연결조직으로 엮어라:
 - 자산 mood가 peaceful/sleepy → 따뜻한 톤 (추측형: "졸린가 봐요")
 - 두 펫 상호작용 → 관계 톤 ("랴니는 무심한 듯")
 
+## 캡션 가독성 — 짧게 나누고 길게 보여줘 (PD 2026-06-05 핵심)
+
+긴 한 문장을 한꺼번에 띄우면 못 읽는다. **각 cut의 narration을 2개의 짧은 캡션 scene으로 나눠라.**
+
+- ❌ 나쁜 예 (한 줄에 다): `{"start":1.0,"end":4.0,"ko":"먼저 레오는 유리 식탁 위에 올라 창밖을 살폈습니다."}`
+- ✅ 좋은 예 (2개로 분할 + 길게):
+  ```json
+  "captions": [
+    {"start": 0.5, "end": 3.5, "ko": "먼저, 식탁 위에 올라", "en": "First, up on the table"},
+    {"start": 3.5, "end": 6.5, "ko": "창밖을 가만히 살폈어요", "en": "he gazed out the window"}
+  ]
+  ```
+
+규칙:
+- **각 캡션 scene KO ≤ 14자** (한 줄에 편하게 읽히는 길이). 길면 나눠라.
+- **각 scene 최소 2.5초 표시** (읽을 시간). 짧으면 viewer가 못 읽음.
+- 한 cut에 보통 **2개 scene** (setup 조각 + payoff 조각). 흐름은 두 조각이 이어지게.
+- 연결조직("먼저/그다음/한편/이내")은 첫 scene 앞에.
+
+## duration_seconds = 캡션 총 길이에 맞춰라 (PD 2026-06-05)
+
+캡션을 길게 보여주려면 **클립도 그만큼 길어야 한다.**
+- 한 cut의 `duration_seconds`는 그 cut의 마지막 캡션 scene `end` 값 이상이어야 함.
+- 예: 캡션이 0.5~6.5s면 `duration_seconds: 7` (여유 0.5s).
+- 원본 클립이 그보다 짧으면 자동으로 마지막 프레임이 freeze되어 늘어남 (cameraman 처리). 걱정 말고 캡션 읽을 시간 기준으로 duration 잡아라.
+- 보통 cut당 6~8초 (2 scene × ~3s + 여유). 전체 에피소드 body = 6 cuts × 7s ≈ 35~45초 OK.
+
 ## 출력 형식
 
 JSON 배열, real_footage 컨셉 1개:
@@ -89,10 +116,13 @@ JSON 배열, real_footage 컨셉 1개:
     {
       "tag": "cut1",
       "asset_id": "med_... (available_videos에서)",
-      "duration_seconds": 4,
+      "duration_seconds": 7,
       "edit_effect": "static|ken_burns|speed_1.3x|freeze_last_frame",
       "action": "이 클립이 실제 보여주는 것 (sc 기반)",
-      "captions": [{"start": 1.0, "end": 4.0, "ko": "흐르는 캡션", "en": "..."}]
+      "captions": [
+        {"start": 0.5, "end": 3.5, "ko": "먼저, 식탁 위에 올라", "en": "First, up on the table"},
+        {"start": 3.5, "end": 6.5, "ko": "창밖을 가만히 살폈어요", "en": "gazing out the window"}
+      ]
     }
   ]
 }]
@@ -101,6 +131,8 @@ JSON 배열, real_footage 컨셉 1개:
 ## 출력 전 self-check (반드시)
 - [ ] 각 캡션이 그 cut의 asset_id sc에 실제로 있는 내용인가?
 - [ ] 캡션들이 연결조직으로 하나의 이야기로 흐르는가? (메마른 나열 아님)
+- [ ] 각 cut이 2개 짧은 scene으로 나뉘었나? (각 KO ≤14자, 각 ≥2.5초)
+- [ ] duration_seconds가 마지막 캡션 end 이상인가?
 - [ ] 드라마 프레임이 진짜 위반에만 쓰였는가? (자기밥/정상행동에 안 씀)
 - [ ] 클립에 없는 prop/펫/행동을 발명하지 않았는가?
 - [ ] 마지막 cut에 여운이 있는가?
