@@ -1730,17 +1730,16 @@ def _trim_real_footage_clips(manifests: dict, anim_dir: Path,
         # after the trim_dur, auto-extend via freeze_last_frame for 여운.
         if tag == last_body_tag:
             cap_end = cap_end_by_tag.get(tag, 0)
-            if cap_end > trim_dur - 0.2:  # caption doesn't fit cleanly
-                effect = "freeze_to_caption_end"
-                # We'll let the filter builder know how long to pad
-                extra_pad = max(0.5, cap_end - trim_dur + 0.8)
-                vf, time_args = _build_edit_effect_filter(
-                    effect, trim_dur, extra_pad=extra_pad,
-                )
-                log.info("last cut %s — extending %ds to cap_end+0.8 (pad %.1fs)",
-                         tag, int(trim_dur), extra_pad)
-            else:
-                vf, time_args = _build_edit_effect_filter(effect, trim_dur)
+            # PD 2026-06-05: last cut needs a real 여운 tail — 0.8s felt
+            # abrupt. Always extend the final cut so the visual lingers
+            # ~2s after the caption ends.
+            effect = "freeze_to_caption_end"
+            extra_pad = max(2.0, cap_end - trim_dur + 2.0)
+            vf, time_args = _build_edit_effect_filter(
+                effect, trim_dur, extra_pad=extra_pad,
+            )
+            log.info("last cut %s — 여운 extend (pad %.1fs past cap_end)",
+                     tag, extra_pad)
         else:
             vf, time_args = _build_edit_effect_filter(effect, trim_dur)
 
