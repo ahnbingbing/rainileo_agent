@@ -368,7 +368,17 @@ def propose_concepts(target: dt.date, context: dict, style_filter: str | None = 
     # _render_realfootage_direct renders it WITHOUT the card-writer
     # re-dramatization. Branch D's single-pass is retired.
     if style_filter == "real_footage":
-        return _propose_concepts_legacy(target, context, "real_footage")
+        # producer_propose.md's system prompt forces 2 concepts (ai_vtuber +
+        # real_footage) regardless of the user-message filter. Drop the
+        # ai_vtuber one so we don't burn GPT-image generation we didn't want.
+        all_concepts = _propose_concepts_legacy(target, context, "real_footage")
+        rf = [c for c in all_concepts
+              if (c.get("render_style") or "").lower() == "real_footage"]
+        if not rf and all_concepts:
+            # LLM mislabeled — coerce the first to real_footage
+            all_concepts[0]["render_style"] = "real_footage"
+            rf = [all_concepts[0]]
+        return rf
 
     if os.getenv("USE_WRITER_DIRECTOR", "1") == "0":
         return _propose_concepts_legacy(target, context, style_filter)
