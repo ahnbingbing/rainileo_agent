@@ -30,6 +30,8 @@ import anthropic
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
+from zoneinfo import ZoneInfo as _ZoneInfo
+KST = _ZoneInfo("Asia/Seoul")
 load_dotenv(ROOT / ".env")
 log = logging.getLogger("agents.writer_director")
 
@@ -749,6 +751,55 @@ def _build_polisher_user_prompt(concepts: list[dict]) -> str:
     )
 
 
+def _stamp_years_ago(concepts: list[dict]) -> None:
+    """Stamp cut['years_ago'] from each cut's asset_id captured_iso vs the
+    concept's target date. Memory-lane (PD 2026-06-07): past clips must be
+    narrated with their time point. Best-effort; never raises."""
+    import datetime as _dt
+    import sqlite3 as _sql
+    db_path = ROOT / "data" / "agent.db"
+    if not db_path.exists():
+        return
+    try:
+        con = _sql.connect(str(db_path))
+    except Exception:
+        return
+    try:
+        for c in concepts:
+            # target date for the relative calc
+            tgt = None
+            for k in ("target_date", "date", "episode_date"):
+                v = c.get(k)
+                if v:
+                    try:
+                        tgt = _dt.date.fromisoformat(str(v)[:10]); break
+                    except Exception:
+                        pass
+            if tgt is None:
+                tgt = _dt.datetime.now(KST).date()
+            for cut in c.get("cuts") or []:
+                if cut.get("years_ago") is not None:
+                    continue
+                aid = cut.get("asset_id") or cut.get("secondary_asset_id")
+                if not aid:
+                    continue
+                try:
+                    row = con.execute(
+                        "SELECT captured_iso FROM assets WHERE asset_id=?", (aid,)
+                    ).fetchone()
+                except Exception:
+                    continue
+                if not row or not row[0]:
+                    continue
+                try:
+                    d0 = _dt.date.fromisoformat(str(row[0])[:10])
+                    cut["years_ago"] = round((tgt - d0).days / 365.25, 1)
+                except Exception:
+                    continue
+    finally:
+        con.close()
+
+
 def run_caption_agent(concepts: list[dict],
                        progress_cb=None) -> list[dict]:
     """Caption Agent — TV동물농장 narrator script writer (PD 2026-06-02).
@@ -781,6 +832,11 @@ def run_caption_agent(concepts: list[dict],
                 beat = (cut.get("beat") or f"cut{i}").strip()
                 slug = _re.sub(r"[^a-zA-Z0-9_]+", "_", beat) or f"cut{i}"
                 cut["tag"] = f"cut{i}_{slug}"
+
+    # PD 2026-06-07: stamp years_ago on each cut from its asset's captured_iso so
+    # the Caption Agent narrates the time point of PAST (archive) clips. Lane-
+    # shared (av + rf). Best-effort — missing date / no asset_id → no stamp.
+    _stamp_years_ago(concepts)
 
     user = _build_caption_agent_user_prompt(concepts)
     try:
@@ -1272,6 +1328,8 @@ def _build_caption_agent_user_prompt(concepts: list[dict]) -> str:
                 "who": cut.get("who", ""),
                 "space": cut.get("space", ""),  # PD 2026-06-02: location per cut
                 "location_type": cut.get("location_type", ""),  # asset metadata
+                "years_ago": cut.get("years_ago"),  # PD 2026-06-07: past clip → caption must state time point
+
                 "action": cut.get("action", "") or cut.get("description", ""),
                 "action_beats": cut.get("action_beats", []),
                 "motion_prompt": (cut.get("motion_prompt") or "")[:800],

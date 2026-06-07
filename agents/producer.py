@@ -179,6 +179,54 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
         date_clusters.setdefault(d, []).append(v["id"])
     video_date_summary = {d: len(ids) for d, ids in date_clusters.items() if len(ids) >= 2}
 
+    # ── Archive (memory-lane) clips (PD 2026-06-07, first_month_plan §1b) ──
+    # best_videos is the recent-20 only → character-intro / memory-lane episodes
+    # had no PAST footage to do "입양 첫날 → 지금" past⇄present narration. Surface
+    # a YEAR-STRATIFIED sample of older quality clips (excluding the recent-20),
+    # each stamped with years_ago so captions can ground the time point.
+    def _years_ago(iso: str) -> float | None:
+        try:
+            d0 = dt.date.fromisoformat((iso or "")[:10])
+            return round((target - d0).days / 365.25, 1)
+        except Exception:
+            return None
+    # also stamp recent clips with years_ago (0 for this year)
+    for v in best_videos:
+        v["years_ago"] = _years_ago(v.get("date", ""))
+    _recent_ids = {v["id"] for v in best_videos}
+    ARCHIVE_PER_YEAR = int(os.getenv("ARCHIVE_PER_YEAR", "3"))
+    archive_videos: list[dict] = []
+    _per_year: dict[str, int] = {}
+    for r in con.execute(
+        """
+        SELECT asset_id, activity, subjects_csv, mood, scene_description, pd_notes,
+               duration_sec, captured_iso, location_type, notes, has_human
+        FROM assets
+        WHERE vlm_analyzed_at IS NOT NULL AND kind='video' AND quality_score >= 0.7
+          AND captured_iso IS NOT NULL
+        ORDER BY quality_score DESC, captured_iso DESC
+        """,
+    ).fetchall():
+        if r["asset_id"] in _recent_ids:
+            continue
+        yr = (r["captured_iso"] or "")[:4]
+        if not yr:
+            continue
+        if _per_year.get(yr, 0) >= ARCHIVE_PER_YEAR:
+            continue
+        _per_year[yr] = _per_year.get(yr, 0) + 1
+        archive_videos.append({
+            "id": r["asset_id"], "act": r["activity"] or "",
+            "sub": r["subjects_csv"] or "", "mood": r["mood"] or "",
+            "sc": _ground_truth_sc(r), "dur": r["duration_sec"],
+            "date": (r["captured_iso"] or "")[:10],
+            "years_ago": _years_ago(r["captured_iso"] or ""),
+            "loc": r["location_type"] or "", "has_human": bool(r["has_human"]),
+            "motion": _motion_level(r), "outing": _outing_flag(r),
+            **_extra_vlm(r)})
+    archive_videos.sort(key=lambda v: v.get("date", ""))  # oldest → newest
+    archive_year_summary = dict(sorted(_per_year.items()))
+
     # Episode stories from #episode channel (least-used first)
     episode_stories = [
         {"text": r["text"], "use_count": r["use_count"]}
@@ -331,6 +379,8 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
         "character_objects": character_objects,      # Phase G — recurring outfit/hair/accessory rows
         "available_photos": best_photos,
         "available_videos": best_videos,
+        "archive_videos": archive_videos,          # PD 2026-06-07: past clips for memory-lane (years_ago stamped)
+        "archive_year_summary": archive_year_summary,
         "video_date_clusters": video_date_summary,
         "video_locations": {r[0]: r[1] for r in con.execute(
             "SELECT location_type, count(*) FROM assets WHERE kind='video' AND vlm_analyzed_at IS NOT NULL GROUP BY location_type"
@@ -511,6 +561,11 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         "target_date": target.isoformat(),
         "available_videos": avail_videos,
         "available_photos": context.get("available_photos", [])[:10],
+        # PD 2026-06-07: archive (older) clips for past⇄present memory-lane /
+        # character-intro episodes. Each has years_ago — if you use one, the
+        # caption MUST state the time point ("○년 전", "입양 첫날", "그때는…").
+        "archive_videos": context.get("archive_videos", []),
+        "archive_year_summary": context.get("archive_year_summary", {}),
         "video_date_clusters": context.get("video_date_summary", {}),
     }
     user = json.dumps(rf_context, ensure_ascii=False, default=str)
