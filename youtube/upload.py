@@ -62,13 +62,40 @@ def upload_short(
     return response
 
 
+def veto_video(video_id: str, delete: bool = False) -> str:
+    """Take down an auto-published launch episode (PD /veto). Default = flip to
+    private (reversible — the scheduled publishAt is cleared so it won't go
+    public). delete=True removes it entirely. Returns the action taken."""
+    yt = get_youtube()
+    if delete:
+        yt.videos().delete(id=video_id).execute()
+        log.info("veto: deleted %s", video_id)
+        return "deleted"
+    # set private + clear any pending publishAt so it never auto-goes-public
+    yt.videos().update(
+        part="status",
+        body={"id": video_id,
+              "status": {"privacyStatus": "private", "selfDeclaredMadeForKids": False}},
+    ).execute()
+    log.info("veto: set private %s", video_id)
+    return "private"
+
+
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("video", help="path to .mp4")
-    ap.add_argument("--title", required=True)
-    ap.add_argument("--description", default="")
-    ap.add_argument("--privacy", default=None)
+    sub = ap.add_subparsers(dest="cmd")
+    up = sub.add_parser("upload")
+    up.add_argument("video", help="path to .mp4")
+    up.add_argument("--title", required=True)
+    up.add_argument("--description", default="")
+    up.add_argument("--privacy", default=None)
+    vt = sub.add_parser("veto")
+    vt.add_argument("video_id")
+    vt.add_argument("--delete", action="store_true")
     args = ap.parse_args()
-    out = upload_short(args.video, args.title, args.description, privacy=args.privacy)
-    print(out["id"])
+    if args.cmd == "veto":
+        print(veto_video(args.video_id, delete=args.delete))
+    else:  # default/upload (backward compatible)
+        out = upload_short(args.video, args.title, args.description, privacy=args.privacy)
+        print(out["id"])

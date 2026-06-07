@@ -292,6 +292,53 @@ def upload_cmd(ack, body, respond):
 
 
 # ──────────────────────────────────────────────────────────────────────
+# /veto — 런칭 모드 취소 (PD 2026-06-07): 자동 발행된 회차를 내림.
+# 기리 게이트 + PD 스팟체크 워크플로의 PD 개입 수단. 기본 = 비공개 전환
+# (예약 publishAt 해제 → 공개 안 됨, 되돌릴 수 있음). `/veto <id> delete` = 완전 삭제.
+# 인자: card_id prefix 또는 youtube_video_id.
+# ──────────────────────────────────────────────────────────────────────
+@app.command("/veto")
+def veto_cmd(ack, body, respond):
+    ack()
+    parts = (body.get("text") or "").strip().split()
+    if not parts:
+        respond("usage: `/veto <card_id_prefix | youtube_video_id> [delete]`")
+        return
+    ident = parts[0]
+    do_delete = len(parts) > 1 and parts[1].lower() in ("delete", "del", "삭제")
+    with db() as con:
+        row = con.execute(
+            "SELECT card_id, youtube_video_id, theme FROM cards "
+            "WHERE youtube_video_id=? OR card_id LIKE ? || '%' "
+            "ORDER BY updated_at DESC LIMIT 1",
+            (ident, ident),
+        ).fetchone()
+    if not row or not row["youtube_video_id"]:
+        respond(f":x: `{ident}` 에 매칭되는 업로드 영상이 없어요 (youtube_video_id 없음)")
+        return
+    card_id = row["card_id"]
+    vid = row["youtube_video_id"]
+    respond(f":no_entry: veto `{card_id[:8]}` → {vid} "
+            f"({'삭제' if do_delete else '비공개 전환'})...")
+    try:
+        from youtube.upload import veto_video
+        action = veto_video(vid, delete=do_delete)
+        with db() as con:
+            # revoke uploaded flag so the clip cooldown / arc no longer counts it,
+            # and mark state so it won't be re-treated as live.
+            con.execute(
+                "UPDATE cards SET uploaded=0, state=?, updated_at=datetime('now') "
+                "WHERE card_id=?",
+                ("vetoed_deleted" if do_delete else "vetoed", card_id),
+            )
+        respond(f":white_check_mark: veto 완료 — `{card_id[:8]}` {action} "
+                f"(쿨다운/아크 카운트 회수됨)")
+    except Exception as e:
+        log.exception("veto failed for %s", card_id[:8])
+        respond(f":x: veto 실패: {str(e)[:600]}")
+
+
+# ──────────────────────────────────────────────────────────────────────
 # /sync — iCloud 수동 싱크
 # ──────────────────────────────────────────────────────────────────────
 @app.command("/sync")
@@ -467,6 +514,90 @@ def daily_cmd(ack, body, respond, client):
             if thread_ref[0]:
                 kwargs["thread_ts"] = thread_ref[0]
             client.chat_postMessage(**kwargs)
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+# ──────────────────────────────────────────────────────────────────────
+# /launch — 런칭 모드 4슬롯 (PD 2026-06-07): 하루 4편(2 AV + 2 RF) 라틴스퀘어.
+# 기리 통과분만 슬롯 시각에 예약 발행, 4편 모두 스레드 포스팅 → PD는 `/veto`로만 개입.
+# `/launch [YYYY-MM-DD] [dry] [noupload]`
+# ──────────────────────────────────────────────────────────────────────
+@app.command("/launch")
+def launch_cmd(ack, body, respond, client):
+    ack()
+    text = (body.get("text") or "").strip()
+    import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+    target = None
+    dry_run = False
+    do_upload = True
+    for part in text.split():
+        if part == "dry":
+            dry_run = True
+        elif part in ("noupload", "no-upload"):
+            do_upload = False
+        else:
+            try:
+                target = _dt.date.fromisoformat(part)
+            except ValueError:
+                pass
+    if not target:
+        target = _dt.datetime.now(_ZI("Asia/Seoul")).date()
+
+    respond(f":rocket: 런칭 4슬롯 시작 — {target.isoformat()}"
+            + (" (dry-run)" if dry_run else "")
+            + ("" if do_upload else " (no-upload)"))
+
+    import threading
+
+    def _run():
+        from agents.launch import launch_pipeline
+        # open a thread root so all 4 episodes + progress live together
+        root = None
+        try:
+            r = client.chat_postMessage(
+                channel=WORKROOM,
+                text=f":clapper: *런칭 데이* {target.isoformat()} — 4슬롯 생산 시작")
+            root = r.get("ts")
+        except Exception:
+            pass
+
+        def _progress(msg):
+            if _stop_flag.is_set():
+                raise InterruptedError("중지 명령으로 중단됨")
+            try:
+                client.chat_postMessage(channel=WORKROOM, text=msg, thread_ts=root)
+            except Exception:
+                pass
+
+        def _video(path):
+            try:
+                client.files_upload_v2(
+                    channel=WORKROOM, thread_ts=root,
+                    file=str(path), title=Path(path).name,
+                    initial_comment=f":movie_camera: {Path(path).name} — 문제 있으면 `/veto`")
+            except Exception as e:
+                log.warning("launch video upload failed: %s", e)
+
+        try:
+            results = launch_pipeline(target, progress_cb=_progress,
+                                      video_cb=_video, do_upload=do_upload,
+                                      dry_run=dry_run)
+            # summary line with veto hints
+            lines = [":checkered_flag: *런칭 요약*"]
+            for r in results:
+                vid = r.get("video_id")
+                tag = (f"<https://youtube.com/shorts/{vid}|{vid}>" if vid
+                       else "_미업로드_")
+                lines.append(f"  • {r['slot']} {r['lane']} → {tag}")
+            client.chat_postMessage(channel=WORKROOM, text="\n".join(lines),
+                                    thread_ts=root)
+        except Exception as e:
+            log.exception("launch pipeline failed")
+            client.chat_postMessage(
+                channel=WORKROOM, thread_ts=root,
+                text=f":x: 런칭 파이프라인 실패:\n```{str(e)[:1200]}```")
 
     threading.Thread(target=_run, daemon=True).start()
 

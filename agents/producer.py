@@ -1352,10 +1352,14 @@ def _compute_publish_at(target: dt.date) -> str:
 
 
 def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.date,
-                         progress_cb: ProgressCb = None) -> str | None:
+                         progress_cb: ProgressCb = None,
+                         publish_at_iso: str | None = None) -> str | None:
     """Upload a rendered episode to YouTube as SCHEDULED-PUBLIC (private +
     publishAt). Sets cards.uploaded=1 + youtube_video_id (activates arc/cooldown).
-    OAuth not bootstrapped → warn + skip (non-fatal)."""
+    OAuth not bootstrapped → warn + skip (non-fatal).
+
+    publish_at_iso: explicit scheduled-public time (ISO-UTC). Launch mode passes
+    a per-slot timeslot time; daily mode leaves it None → YOUTUBE_PUBLISH_HOUR."""
     _ensure_upload_columns(con)
     row = con.execute(
         "SELECT card_id, payload_json, theme FROM cards WHERE output_video_path=? "
@@ -1375,7 +1379,7 @@ def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.dat
         title = title.get("ko") or "Ryani & Leo"
     desc = draft.get("description", "") or ""
     tags = [str(t).lstrip("#") for t in (draft.get("hashtags") or [])]
-    publish_at = _compute_publish_at(target)
+    publish_at = publish_at_iso or _compute_publish_at(target)
     try:
         from youtube.upload import upload_short
         if progress_cb:
