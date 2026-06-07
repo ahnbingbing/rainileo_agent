@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Launch month — daily 4-slot production (PD 2026-06-07).
+
+  Produces the day's 4 episodes (2 av + 2 rf, lane×timeslot Latin square) at
+  02:00 KST, Giri-gated, auto-scheduled-public at that day's 08:00/12:30/18:00/
+  21:00 slots, all posted to the Slack workroom thread for PD spot-check / /veto.
+
+  ⚠️ INSTALL ONLY WHEN STARTING THE LAUNCH MONTH — this ships real public-
+  scheduled videos and spends Seedance/Gemini budget daily.
+
+      cp launchd/com.rianileo.launch.plist ~/Library/LaunchAgents/
+      launchctl load ~/Library/LaunchAgents/com.rianileo.launch.plist
+
+  To pause: launchctl unload ~/Library/LaunchAgents/com.rianileo.launch.plist
+  Prereqs: ARC_ENABLED=1, YOUTUBE_AUTO_UPLOAD=1, OAuth token, slash commands
+  registered. Slack /launch does the same thing on-demand.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key><string>com.rianileo.launch</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/Users/ahnbingbing/code/rianileo-agent/.venv/bin/python</string>
+      <string>-m</string>
+      <string>agents.launch</string>
+    </array>
+
+    <key>WorkingDirectory</key><string>/Users/ahnbingbing/code/rianileo-agent</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>TZ</key><string>Asia/Seoul</string>
+      <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+      <key>LOG_LEVEL</key><string>INFO</string>
+      <key>ARC_ENABLED</key><string>1</string>
+      <key>YOUTUBE_AUTO_UPLOAD</key><string>1</string>
+    </dict>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+      <key>Hour</key><integer>2</integer>
+      <key>Minute</key><integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key><string>/Users/ahnbingbing/code/rianileo-agent/data/logs/launch.out.log</string>
+    <key>StandardErrorPath</key><string>/Users/ahnbingbing/code/rianileo-agent/data/logs/launch.err.log</string>
+
+    <key>RunAtLoad</key><false/>
+    <key>ProcessType</key><string>Background</string>
+    <key>Nice</key><integer>5</integer>
+  </dict>
+</plist>

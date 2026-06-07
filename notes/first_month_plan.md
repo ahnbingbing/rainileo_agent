@@ -80,16 +80,31 @@
   **시각 marginal** — 최적 시각대(들) 채택. ③ 표본 부족하면 다음 달도 explore 연장(Thompson).
 - 보고: **주 1회 슬랙** — 레인별/시각별 누적 reward·표본수·현재 우세확률.
 
-## 5. 구현 로드맵 (이 플랜을 돌리려면)
-> 상태: 아크·업로드·쿨다운 ✅ / bandit·analytics·video_performance·아카이브소싱·런칭스케줄러 ❌
-1. **`ARC_ENABLED=1`** + 4슬롯 **런칭 스케줄러**: 매일 라틴스퀘어로 (레인, 시각) 4건 생성·예약.
-2. **검수 전환**: 기리 통과 자동 예약업로드 + 슬랙 4편 포스팅 + `/veto` 커맨드(런칭 모드 플래그).
-3. **아카이브 소싱**: producer가 최근 20개 외 연도별/마일스톤(입양·생일) 클립도 후보 공급 +
-   캡션 프롬프트 "과거 클립이면 시점 명시" 규칙. (1주차 캐릭터 소개 = 과거⇄현재 필수)
-4. **측정 루프**(첫 영상 publish+48h 전까지): `youtube/analytics.py` + `video_performance` 테이블 +
-   `agents/bandit.py`(요인 posterior + marginal) + publish+48h 수집 잡(launchd).
-   - Week1은 라틴스퀘어 강제라 bandit 없이도 런칭 가능 → 측정 루프는 병렬로.
-5. **첫 회차 = rf 실제 클립 소개**(과거⇄현재 메모리레인)부터. cold-start엔 진정성 훅이 강함.
+## 5. 구현 로드맵 — ✅ 전부 빌드 완료 (2026-06-07)
+1. ✅ **`ARC_ENABLED=1`**(.env) + 4슬롯 **런칭 스케줄러** `agents/launch.py`:
+   `day_assignments()` 라틴스퀘어(2 av + 2 rf, 시각 회전, 14일 검증 7/7),
+   `publish_at_for()`(지난 슬롯 익일 롤), `launch_pipeline()`(레인별 propose →
+   렌더(기리 게이트) → 슬롯 시각 예약업로드 → 실패 슬롯 비움).
+2. ✅ **검수 전환**: launch_pipeline = 기리 통과분만 자동 예약업로드(블로킹 승인 없음).
+   `youtube.upload.veto_video()`(비공개/삭제) + 슬랙 `/launch`(4편 스레드 포스팅)·`/veto`.
+3. ✅ **아카이브 소싱**: `_gather_context` `archive_videos`(연도별 3개, years_ago 스탬프) +
+   `writer_director._stamp_years_ago` + realfootage_concept STEP1.4 / caption_agent 시점 규칙.
+4. ✅ **측정 루프**: `youtube/analytics.py`(48h views+retention) + `video_performance` 테이블 +
+   `agents/bandit.py`(population reward + 3-level Thompson + marginal + P(best) + choose) +
+   launchd `bandit-collect`(일 06:30)·`bandit-report`(주1 월 10:00 슬랙) + 슬랙 `/bandit`.
+5. ✅ **첫 회차 = rf**: launch_pipeline 짝수일 08:00 슬롯이 rf(라틴스퀘어), 아카이브 메모리레인 가능.
+
+## 5b. ★ 런칭 시작 전 PD 수동 단계 (코드는 다 됨, 운영 스위치만)
+1. **Slack 슬래시 커맨드 등록** (api.slack.com → 앱 → Slash Commands): `/launch` `/veto` `/bandit`.
+   (핸들러는 slack/app.py에 있음 — 대시보드에 명령만 추가하면 활성.)
+2. **launchd 설치** (런칭 시작일에):
+   - `com.rianileo.launch.plist` (일 02:00 4슬롯 생산) ← **실제 공개영상 발행·비용 발생, 시작일에만**
+   - `com.rianileo.bandit-collect.plist` (일 06:30 지표 수집)
+   - `com.rianileo.bandit-report.plist` (주1 슬랙 리포트)
+   설치: `cp launchd/<plist> ~/Library/LaunchAgents/ && launchctl load ~/Library/LaunchAgents/<plist>`
+3. **수동 시운전**: 먼저 슬랙 `/launch dry`(배정만) → `/launch noupload`(렌더만, 업로드 X)로 품질 확인 후
+   `/launch`로 실발행. 또는 `/test ai`·`/test rf` 단편 점검.
+4. **결정(월말)**: `/bandit choose`로 다음 달 레인/시각 추천 확인 → 다음 달 비율 이동.
 
 ## 6. 리스크/주의
 - **Throughput/비용**: 4편×30일=~120편. av Seedance ~$3/편(≈60편→~$180)+Gemini. 비용 OK,

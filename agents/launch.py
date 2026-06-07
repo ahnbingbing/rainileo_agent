@@ -202,7 +202,43 @@ def main() -> int:
         for lane, hhmm in day_assignments(target):
             print(f"  {hhmm}  {lane}  → publish_at {publish_at_for(target, hhmm)}")
         return 0
-    launch_pipeline(target, progress_cb=lambda m: print(m, flush=True),
+
+    # Slack wiring: when a workroom is configured (e.g. the daily launchd job),
+    # open a thread root and route progress + the 4 mp4s there. Falls back to
+    # stdout-only when Slack isn't available.
+    progress_cb = lambda m: print(m, flush=True)
+    video_cb = None
+    client = ch = root = None
+    try:
+        ch = os.environ.get("SLACK_WORKROOM_CHANNEL")
+        tok = os.environ.get("SLACK_BOT_TOKEN")
+        if ch and tok:
+            from slack_sdk import WebClient
+            client = WebClient(token=tok)
+            r = client.chat_postMessage(
+                channel=ch,
+                text=f":clapper: *런칭 데이* {target.isoformat()} — 4슬롯 생산 시작")
+            root = r.get("ts")
+
+            def progress_cb(m, _c=client, _ch=ch, _root=root):  # noqa
+                print(m, flush=True)
+                try:
+                    _c.chat_postMessage(channel=_ch, text=m, thread_ts=_root)
+                except Exception:
+                    pass
+
+            def video_cb(p, _c=client, _ch=ch, _root=root):  # noqa
+                try:
+                    _c.files_upload_v2(
+                        channel=_ch, thread_ts=_root, file=str(p),
+                        title=Path(p).name,
+                        initial_comment=f":movie_camera: {Path(p).name} — 문제 있으면 `/veto`")
+                except Exception:
+                    pass
+    except Exception as e:
+        log.warning("slack wiring failed (stdout only): %s", e)
+
+    launch_pipeline(target, progress_cb=progress_cb, video_cb=video_cb,
                     do_upload=not args.no_upload)
     return 0
 
