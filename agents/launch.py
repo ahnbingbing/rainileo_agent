@@ -201,8 +201,9 @@ def main() -> int:
     p.add_argument("--max-slots", type=int, default=None,
                    help="shakedown: only run the first N slots (e.g. 1)")
     args = p.parse_args()
+    # default to TOMORROW (consistent with /daily/test; PD 2026-06-07)
     target = (dt.date.fromisoformat(args.date) if args.date
-              else dt.datetime.now(KST).date())
+              else (dt.datetime.now(KST) + dt.timedelta(days=1)).date())
     if args.dry_run:
         for lane, hhmm in day_assignments(target):
             print(f"  {hhmm}  {lane}  → publish_at {publish_at_for(target, hhmm)}")

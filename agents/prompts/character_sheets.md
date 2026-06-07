@@ -103,6 +103,17 @@ Pick the segment matching the story's time setting:
 - **Brave at car wash**: Not scared at all, calm and unbothered
 - **In car**: Rides in a carrier on the passenger seat, face poking out. Always wears harness.
 - **Outside**: Always wears harness for walks
+- **물/수영/눈 (water, swimming, snow) — PD 2026-06-07 정정 (NON-NEGOTIABLE)**: 랴니는
+  **물을 엄청 좋아하는 "물 매니아"**다.
+  - **물만 보면 흥분해서 짖는다.** 특히 **고무호스에서 나오는 물이나 분수**를 보면 격하게
+    흥분 → **분수에 막 뛰어들어가려고 난리**.
+  - **수영을 아주 잘한다** (보호자 표현 "펠프스급" 수영견).
+  - **겨울엔 눈을 좋아하고 얼음 썰매를 탄다.**
+  - ⚠️ **"랴니가 물을 무서워한다 / 물 공포 극복" = 완전히 거짓(정반대)이니 절대 쓰지 마라.**
+    단 하나의 예외: **2016년 아기 시절**엔 잠깐 물을 무서워했음 → 과거⇄현재 메모리레인
+    회상에서만 "그땐 물이 무서웠는데 지금은 분수에 뛰어드는 물개가 됐죠" 식으로 사용 가능.
+  - 여름 물놀이/분수/수영 + 겨울 눈/얼음썰매 컨셉의 **주인공 = 랴니**. (대비: 레오=고양이라
+    물을 피하고 물가/창가에서 구경하는 쪽.)
 
 ### Personality expressed through art
 - Calm, wise, observant — the older companion

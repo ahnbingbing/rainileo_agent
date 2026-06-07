@@ -566,7 +566,9 @@ def launch_cmd(ack, body, respond, client):
             except ValueError:
                 pass
     if not target:
-        target = _dt.datetime.now(_ZI("Asia/Seoul")).date()
+        # PD 2026-06-07: default to TOMORROW, consistent with /daily and /test
+        # (production runs ahead of publish; gives a veto buffer).
+        target = (_dt.datetime.now(_ZI("Asia/Seoul")) + _dt.timedelta(days=1)).date()
 
     respond(f":rocket: 런칭 4슬롯 시작 — {target.isoformat()}"
             + (" (dry-run)" if dry_run else "")

@@ -242,6 +242,27 @@ def _asset_inventory(con: sqlite3.Connection) -> dict:
     return out
 
 
+# Authoritative character facts for the showrunner — personality / ability /
+# age that planning needs (visual markings live in character_sheets.md, the full
+# source). PD 2026-06-07: the planner was INVENTING traits (e.g. "랴니 물 공포
+# 극복") because no real facts were fed. Keep this in sync with character_sheets.md.
+CHARACTER_FACTS = (
+    "## 캐릭터 사실 (권위 — 여기 없는 성격/능력/공포는 발명 금지)\n"
+    "- **레오(레오)**: 8개월 **수컷** 고양이(주황 태비). 2025-11-15 떠돌이로 구조됨 → "
+    "랴니를 엄마로 여김('랴니엄마'는 레오 POV 호칭). 장난꾸러기·사냥꾼·매복 전문. "
+    "세차를 무서워함. 고양이라 물을 피하고 물가에서 구경하는 쪽.\n"
+    "- **랴니(랴니)**: 11살 **암컷(중성화)** 프렌치불독, 꼬리 없음. 의젓한 누나/엄마, "
+    "차분·현명. ★ **물을 엄청 좋아하는 '물 매니아'**: 물만 보면 흥분해서 짖고, 특히 "
+    "**고무호스/분수** 물을 보면 격하게 흥분해 **분수에 뛰어들려고 난리**. **수영도 아주 잘함"
+    "('펠프스급')**. 겨울엔 **눈을 좋아하고 얼음 썰매를 탄다**. (거짓 금지: '랴니 물 공포/물 "
+    "무서워함'은 완전히 틀림 — 정반대. 단 2016 아기 시절엔 잠깐 무서워했음 → 과거 회상에서만.) "
+    "세차도 안 무서워함(레오와 대비).\n"
+    "- **여름 물놀이/분수/수영 + 겨울 눈/얼음썰매 컨셉의 주인공 = 랴니.** 레오는 물가 구경/마른 쪽.\n"
+    "- ⚠️ 위 목록에 없는 공포·능력·트레잇을 새로 지어내지 마라. 나이도 정확히(레오 8개월/"
+    "랴니 11살) — 뒤바꾸지 마라.\n"
+)
+
+
 def _refresh_plan(con: sqlite3.Connection, today: str) -> str:
     """(Re)draft the rolling ~1-month plan from ledger + season/holiday/trend
     + REAL clip inventory (so rf beats are grounded in footage that exists)."""
@@ -257,8 +278,12 @@ def _refresh_plan(con: sqlite3.Connection, today: str) -> str:
         "- 캐릭터 소개→관계→성장→떡밥 회수처럼 큰 호를 그려라. 단 날짜별로 "
         "  못박지 말고 '주차/단계' 단위의 느슨한 흐름으로 (유연하게 바뀔 수 있음).\n"
         "- ★ 계절/공휴일/트렌드를 반드시 반영하라 (아래 season_context). 계절 "
-        "  과일·음식·장소·활동(여름=수박/랴니 수영 등), 다가오는 기념일/공휴일 "
-        "  타이인, 살아있는 트렌드를 시즌 비트에 녹여라.\n"
+        "  과일·음식·장소·활동(여름=수박·물놀이·수영 등; 랴니는 수영을 잘하니 여름 "
+        "  물놀이의 주인공감), 다가오는 기념일/공휴일 타이인, 트렌드를 시즌 비트에 녹여라.\n"
+        "- ★★ 캐릭터의 성격·능력·공포는 아래 CHARACTER_FACTS에 적힌 것만 써라. "
+        "  없는 트레잇(없는 공포/능력)을 지어내지 마라. (예: '랴니 물 공포 극복'은 거짓 — "
+        "  랴니는 수영을 잘한다.)\n"
+        + CHARACTER_FACTS +
         "- ★ 한 달에 한 번은 '랴니&레오 재소개' 회차를 넣어라(정기 리프레시). "
         "  과거 부처님오신날 회차처럼 ai_vtuber로 AI 배경을 전환하며 보여주는 "
         "  연출이 좋다.\n"
@@ -303,12 +328,53 @@ def get_or_refresh_plan(con: sqlite3.Connection, today: str) -> str:
         return row[0] if row else ""
 
 
+# Launch week intro schedule (PD 2026-06-07): the first days are DETERMINISTIC —
+# both-together intro, then individual character intros with past⇄present
+# memory-lane — so a new audience meets the two leads. Set LAUNCH_START_DATE
+# (YYYY-MM-DD) = Day 1; offsets 0/1/2 below. Empty env → no overlay (plan-driven).
+def _launch_intro_directive(today: str, render_style: str) -> str | None:
+    import datetime as dt
+    start = os.getenv("LAUNCH_START_DATE", "").strip()
+    if not start:
+        return None
+    try:
+        d0 = dt.date.fromisoformat(start)
+        dnow = dt.date.fromisoformat(today[:10])
+        offset = (dnow - d0).days
+    except Exception:
+        return None
+    rf = render_style == "real_footage"
+    if offset == 0:  # Day 1 — 둘 함께 채널 첫인사
+        return ("[런칭 Day1 — 둘 함께 첫인사] 채널 첫 등장. 랴니(11살 의젓한 누나/엄마)와 "
+                "레오(8개월 장난꾸러기 아들) **둘을 함께** 소개하는 따뜻한 첫인사 + 여름 시즌 "
+                "가벼운 훅. " + ("실제 클립으로 둘의 일상·성격 대비를 보여줘라(현재 클립 중심)."
+                                  if rf else "상상 연출로 둘의 등장을 임팩트 있게."))
+    if offset == 1:  # Day 2 — 레오 집중
+        return ("[런칭 Day2 — 레오 집중 소개] 오늘은 **레오** 중심. 장난꾸러기·사냥꾼·매복 전문, "
+                "2025-11-15 떠돌이로 구조돼 랴니를 엄마로 여기는 origin. " +
+                ("**과거⇄현재 메모리레인**: 아기/구조 직후 레오 아카이브 클립(archive_videos) → "
+                 "지금 8개월. 시점 명시 필수('구조된 날', '지금은')."
+                 if rf else "레오의 성격을 상상 연출로. 랴니는 보조."))
+    if offset == 2:  # Day 3 — 랴니 집중
+        return ("[런칭 Day3 — 랴니 집중 소개] 오늘은 **랴니** 중심. 의젓·현명한 누나, "
+                "**수영을 아주 잘하는(펠프스급) 면모**(물 공포 아님). " +
+                ("**과거⇄현재 메모리레인**: 과거 랴니 아카이브(archive_videos) → 지금 11살. "
+                 "시점 명시 필수. 물놀이 클립 있으면 수영 잘하는 모습 강조."
+                 if rf else "랴니의 의젓함·수영 실력을 상상 연출로. 레오는 보조."))
+    return None
+
+
 def next_directive(con: sqlite3.Connection, *, today: str, render_style: str) -> str:
     """Showrunner directive for THIS episode: what it should contribute to the
     shared arc, given the rolling plan + what already aired. Injected into the
     lane's writer. Empty string on failure (writer just falls back to grounded)."""
     if not enabled():
         return ""
+    # Launch-week intro overlay takes precedence (deterministic — no LLM
+    # re-hallucination during the critical first impressions).
+    overlay = _launch_intro_directive(today, render_style)
+    if overlay:
+        return overlay
     try:
         plan = get_or_refresh_plan(con, today)
         prior = series_so_far(con, n=12)
@@ -317,7 +383,9 @@ def next_directive(con: sqlite3.Connection, *, today: str, render_style: str) ->
             f"시리즈'를 보고, 오늘의 {render_style} 에피소드가 시리즈상 무엇을 "
             "해야 할지 1-3문장 한국어 디렉티브로 줘라. 구체적 컨셉을 못박지 말고 "
             "'방향'만(예: 이번엔 레오의 호기심 떡밥을 한 단계 진전 / 랴니와의 관계 "
-            "에 작은 변화). 자산에 없는 걸 강요하지 말고 유연하게. 디렉티브 텍스트만 출력."
+            "에 작은 변화). 자산에 없는 걸 강요하지 말고 유연하게. "
+            "캐릭터 성격·능력·공포는 아래 CHARACTER_FACTS에 있는 것만(없는 트레잇 발명 금지). "
+            "디렉티브 텍스트만 출력.\n" + CHARACTER_FACTS
         )
         user = json.dumps({"today": today, "render_style": render_style,
                            "season_plan": plan, "series_so_far": prior},
