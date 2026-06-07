@@ -213,8 +213,27 @@ def _str(val) -> str | None:
     return str(val)
 
 
+def _coarse_location(location_specific: str | None) -> str | None:
+    """Map fine-grained VLM location_specific → coarse location_type COLUMN that
+    producer/cameraman read (PD 2026-06-07: VLM v2 only wrote location_specific
+    into notes JSON, leaving the column NULL → writer guessed location → '주방
+    오인'). Returns None when undecidable (don't clobber)."""
+    s = (location_specific or "").strip().lower()
+    if not s or s == "other":
+        return None
+    if s == "cafe":
+        return "cafe"
+    if s in ("outdoor_walk",):
+        return "outdoor"
+    if s in ("vet", "car"):
+        return "other"
+    # everything else in the enum is inside the apartment
+    return "home"
+
+
 def update_asset_tags(con: sqlite3.Connection, asset_id: str, tags: dict) -> None:
     """Write VLM analysis results to the DB."""
+    _loc_type = _coarse_location(tags.get("location_specific"))
     con.execute(
         """
         UPDATE assets SET
@@ -226,6 +245,7 @@ def update_asset_tags(con: sqlite3.Connection, asset_id: str, tags: dict) -> Non
             mood = ?,
             background = ?,
             location_tag = ?,
+            location_type = COALESCE(?, location_type),
             quality_score = ?,
             focus_subject = ?,
             decoration_level = ?,
@@ -243,6 +263,7 @@ def update_asset_tags(con: sqlite3.Connection, asset_id: str, tags: dict) -> Non
             _str(tags.get("mood")),
             _str(tags.get("background")),
             _str(tags.get("background")),  # also fill location_tag
+            _loc_type,                     # location_type column (COALESCE — keep if undecidable)
             tags.get("quality_score"),
             tags.get("focus_subject"),
             tags.get("decoration_level"),
