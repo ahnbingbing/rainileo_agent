@@ -151,18 +151,25 @@ def _call_gemini_vision(image_path: Path) -> dict:
 
 
 def _extract_video_frame(video_path: Path, at_sec: float = 1.0) -> Path | None:
-    """Extract a single frame from a video for VLM analysis."""
+    """Extract a single frame from a video for VLM analysis.
+
+    Tries the requested timestamp first, then falls back to 0.0 — short clips
+    (<1s) have no frame at the default 1.0s seek and would otherwise fail.
+    """
     TMP_DIR.mkdir(parents=True, exist_ok=True)
     out = TMP_DIR / f"{video_path.stem}_frame.jpg"
-    try:
-        subprocess.run(
-            ["ffmpeg", "-y", "-ss", str(at_sec), "-i", str(video_path),
-             "-frames:v", "1", "-q:v", "2", str(out)],
-            capture_output=True, check=True, timeout=30,
-        )
-        return out if out.exists() else None
-    except Exception:
-        return None
+    for ss in (at_sec, 0.0):
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-ss", str(ss), "-i", str(video_path),
+                 "-frames:v", "1", "-q:v", "2", str(out)],
+                capture_output=True, check=True, timeout=30,
+            )
+            if out.exists() and out.stat().st_size > 0:
+                return out
+        except Exception:
+            continue
+    return None
 
 
 def analyze_asset(asset: dict, dry_run: bool = False) -> dict | None:
