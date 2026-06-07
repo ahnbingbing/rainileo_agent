@@ -573,6 +573,17 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     # + what already aired across BOTH lanes) so the writer BUILDS the unified
     # arc. NOTE: arc is a POST-UPLOAD concern — arc.py functions no-op while
     # ARC_ENABLED != 1, so these calls add no cost until enabled.
+    # PD 2026-06-07: inject authoritative character facts + PD-learned facts so
+    # the writer doesn't invent traits (and asks via knowledge_questions instead).
+    try:
+        from agents import arc as _arc2, knowledge as _kn
+        _facts = _arc2.CHARACTER_FACTS + _kn.facts_block(_db())
+        if _facts:
+            user += ("\n\n" + _facts +
+                     "\n위 사실에 어긋나는 캐릭터 묘사 금지. 필요한데 모르는 건 "
+                     "knowledge_questions에 적어라(추측 금지).")
+    except Exception as e:
+        log.warning("character facts injection (rf) failed: %s", e)
     try:
         from agents import arc as _arc
         _series = _arc.series_so_far(_db(), n=10)
@@ -1461,6 +1472,63 @@ def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.dat
         progress_cb(f":white_check_mark: 예약 업로드 완료 → https://youtube.com/shorts/{vid} "
                     f"(공개 {publish_at})")
     return vid
+
+
+def resolve_knowledge_questions(concepts: list[dict], target: dt.date, *,
+                                ask_cb: Callable[[list[dict]], dict] | None = None,
+                                progress_cb: ProgressCb = None) -> list[dict]:
+    """Layer ③ (PD 2026-06-07): if the concept stage emitted knowledge_questions
+    it couldn't ground, surface them to PD instead of letting inventions through.
+
+    - dedup vs already-known (character_facts), record new ones as pending.
+    - WEEK 1 (is_launch_week) + ask_cb available → BLOCKING: ask PD, store answers,
+      re-propose so the answer lands in THIS batch.
+    - otherwise → NON-BLOCKING: post the questions, proceed (writer already avoided
+      the uncertain element); answers seed future episodes via /answer.
+    Returns concepts (possibly re-proposed)."""
+    try:
+        from agents import knowledge as kn
+    except Exception:
+        return concepts
+    con = _db()
+    qs = kn.collect_questions(concepts)
+    new_qs = [q for q in qs if not kn.has_question(con, q["question"])]
+    if not new_qs:
+        return concepts
+    for q in new_qs:
+        kn.add_pending(con, q.get("subject", ""), q["question"])
+    blocking = kn.is_launch_week(target.isoformat()) and ask_cb is not None
+    qlines = "\n".join(f"  {i+1}. {q['question']}" for i, q in enumerate(new_qs))
+    if progress_cb:
+        progress_cb(f":grey_question: 컨셉이 확신 못 한 캐릭터/세계 사실 {len(new_qs)}건 — "
+                    + ("PD 답 대기(블로킹)" if blocking else "스레드 질문(논블로킹, /answer로 답)")
+                    + f"\n{qlines}")
+    if not blocking:
+        return concepts  # non-blocking: pending saved, proceed as-is
+    # blocking: ask PD, store answers, re-propose
+    try:
+        answers = ask_cb(new_qs) or {}
+    except Exception as e:
+        log.warning("ask_cb failed: %s", e)
+        answers = {}
+    stored = 0
+    for q in new_qs:
+        a = answers.get(q["question"]) or answers.get(str(new_qs.index(q) + 1))
+        if a:
+            kn.add_answer(con, q["question"], a, subject=q.get("subject", ""))
+            stored += 1
+    if stored and progress_cb:
+        progress_cb(f":white_check_mark: PD 답 {stored}건 지식 저장 — 컨셉 재생성")
+    if stored:
+        # re-propose with the new facts now injected (one fresh draw per lane)
+        try:
+            style = (concepts[0].get("render_style") if concepts else None)
+            ctx = _gather_context(con, target)
+            return propose_concepts(target, ctx, style_filter=style,
+                                    progress_cb=progress_cb) or concepts
+        except Exception as e:
+            log.warning("re-propose after answers failed: %s", e)
+    return concepts
 
 
 def daily_pipeline(target: dt.date, *,

@@ -263,6 +263,15 @@ CHARACTER_FACTS = (
 )
 
 
+def _learned_facts(con: sqlite3.Connection) -> str:
+    """PD-confirmed learned facts (layer ③) to inject alongside CHARACTER_FACTS."""
+    try:
+        from agents import knowledge
+        return knowledge.facts_block(con)
+    except Exception:
+        return ""
+
+
 def _refresh_plan(con: sqlite3.Connection, today: str) -> str:
     """(Re)draft the rolling ~1-month plan from ledger + season/holiday/trend
     + REAL clip inventory (so rf beats are grounded in footage that exists)."""
@@ -283,7 +292,7 @@ def _refresh_plan(con: sqlite3.Connection, today: str) -> str:
         "- ★★ 캐릭터의 성격·능력·공포는 아래 CHARACTER_FACTS에 적힌 것만 써라. "
         "  없는 트레잇(없는 공포/능력)을 지어내지 마라. (예: '랴니 물 공포 극복'은 거짓 — "
         "  랴니는 수영을 잘한다.)\n"
-        + CHARACTER_FACTS +
+        + CHARACTER_FACTS + _learned_facts(con) +
         "- ★ 한 달에 한 번은 '랴니&레오 재소개' 회차를 넣어라(정기 리프레시). "
         "  과거 부처님오신날 회차처럼 ai_vtuber로 AI 배경을 전환하며 보여주는 "
         "  연출이 좋다.\n"
@@ -385,7 +394,7 @@ def next_directive(con: sqlite3.Connection, *, today: str, render_style: str) ->
             "'방향'만(예: 이번엔 레오의 호기심 떡밥을 한 단계 진전 / 랴니와의 관계 "
             "에 작은 변화). 자산에 없는 걸 강요하지 말고 유연하게. "
             "캐릭터 성격·능력·공포는 아래 CHARACTER_FACTS에 있는 것만(없는 트레잇 발명 금지). "
-            "디렉티브 텍스트만 출력.\n" + CHARACTER_FACTS
+            "디렉티브 텍스트만 출력.\n" + CHARACTER_FACTS + _learned_facts(con)
         )
         user = json.dumps({"today": today, "render_style": render_style,
                            "season_plan": plan, "series_so_far": prior},

@@ -98,7 +98,8 @@ def launch_pipeline(target: dt.date, *,
                     video_cb: Callable[[Path], None] | None = None,
                     do_upload: bool = True,
                     dry_run: bool = False,
-                    max_slots: int | None = None) -> list[dict]:
+                    max_slots: int | None = None,
+                    ask_cb: Callable[[list], dict] | None = None) -> list[dict]:
     """Produce the day's 4 launch episodes per the Latin-square assignment.
 
     Returns a list of slot result dicts: {lane, slot, output, video_id,
@@ -129,6 +130,14 @@ def launch_pipeline(target: dt.date, *,
             progress_cb(f":bulb: {lane} {len(slots)}편 컨셉 생성 중...")
         lane_concepts[lane] = _propose_n_for_lane(
             target, context, lane, len(slots), progress_cb)
+        # Layer ③: resolve any knowledge_questions the concepts raised before
+        # rendering (week-1 blocking / later non-blocking).
+        try:
+            from agents.producer import resolve_knowledge_questions
+            lane_concepts[lane] = resolve_knowledge_questions(
+                lane_concepts[lane], target, ask_cb=ask_cb, progress_cb=progress_cb)
+        except Exception as e:
+            log.warning("knowledge Q resolve failed (%s): %s", lane, e)
 
     if dry_run:
         results = []

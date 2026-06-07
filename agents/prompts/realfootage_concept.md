@@ -269,6 +269,7 @@ JSON 배열 (real_footage 컨셉 1개):
   "tone": "warm|playful|wistful|calm",
   "bgm_mood": "gentle_acoustic|playful_upbeat|lofi_chill",
   "subjects": ["leo"] 또는 ["ryani"] 또는 ["both"],
+  "knowledge_questions": ["(선택) 컨셉에 필요하지만 캐릭터 사실/CHARACTER_FACTS/학습된 사실로 확신 못 하는 점을 PD에게 물을 질문. 없으면 빈 배열 []"],
   "cuts": [
     {
       "beat": "intro|develop|hook|cutaway|kick|closer (컷마다 고유)",
@@ -290,7 +291,15 @@ JSON 배열 (real_footage 컨셉 1개):
 }]
 ```
 
+## ★ 모르면 발명하지 말고 물어봐라 (PD 2026-06-07)
+캐릭터의 성격·습관·능력·호불호(예: "랴니가 물을 좋아하나?", "레오가 특정 소리에 반응하나?")가
+컨셉에 필요한데 **CHARACTER_FACTS / 학습된 사실 / 클립 sc로 확신할 수 없으면**, 추측해서 쓰지 말고
+`knowledge_questions`에 구체적 질문으로 적어라. (틀린 추측 1번이 캐릭터를 망친다 — 물공포 사건 참고.)
+- 이미 사실로 주어진 것(CHARACTER_FACTS/학습된 사실)은 다시 묻지 마라.
+- 질문은 컨셉에 꼭 필요한 것만 (남발 금지).
+
 ## 출력 전 self-check (전부 YES여야 출력)
+- [ ] 캐릭터 트레잇을 추측으로 단정하지 않았는가? (불확실하면 knowledge_questions로)
 - [ ] 각 캡션이 그 cut asset_id의 sc에 실제 있는 내용인가?
 - [ ] 캡션이 연결조직으로 하나의 이야기로 흐르는가? (나열 아님)
 - [ ] 컨셉/훅이 있는가? (단순 클립 라벨링 아님)

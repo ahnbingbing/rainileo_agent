@@ -339,6 +339,59 @@ def veto_cmd(ack, body, respond):
 
 
 # ──────────────────────────────────────────────────────────────────────
+# /knowledge — 컨셉 생성이 PD에게 물은 '모르는 캐릭터/세계 사실' 대기열 (PD 2026-06-07).
+#   /knowledge          → 대기 질문 + 저장된 사실 보기
+#   /answer <id> <답>    → 그 질문에 답 저장(영구 — 다음 컨셉부터 반영, 다시 안 물음)
+# ──────────────────────────────────────────────────────────────────────
+@app.command("/knowledge")
+def knowledge_cmd(ack, body, respond):
+    ack()
+    try:
+        from agents import knowledge as kn
+        con = kn._db()
+        pend = kn.pending_questions(con)
+        lines = []
+        if pend:
+            lines.append(":grey_question: *대기 중 질문* (`/answer <id> <답>`)")
+            for q in pend:
+                sub = f"[{q['subject']}] " if q["subject"] else ""
+                lines.append(f"  • `{q['id']}` {sub}{q['question']}")
+        else:
+            lines.append(":white_check_mark: 대기 중 질문 없음")
+        fb = kn.facts_block(con)
+        if fb:
+            lines.append("\n" + fb)
+        respond("\n".join(lines))
+    except Exception as e:
+        log.exception("knowledge cmd failed")
+        respond(f":x: knowledge 실패: {str(e)[:500]}")
+
+
+@app.command("/answer")
+def answer_cmd(ack, body, respond):
+    ack()
+    parts = (body.get("text") or "").strip().split(maxsplit=1)
+    if len(parts) < 2:
+        respond("usage: `/answer <id> <답변>`  (id는 `/knowledge`에서 확인)")
+        return
+    qid, fact = parts[0], parts[1]
+    try:
+        from agents import knowledge as kn
+        con = kn._db()
+        row = con.execute("SELECT question, subject FROM character_facts WHERE id=?",
+                          (qid,)).fetchone()
+        if not row:
+            respond(f":x: id `{qid}` 질문 없음 — `/knowledge`로 확인")
+            return
+        kn.add_answer(con, row["question"], fact, subject=row["subject"] or "")
+        respond(f":white_check_mark: 저장됨 — \"{row['question']}\" → {fact}\n"
+                f"_다음 컨셉부터 반영되고 다시 묻지 않습니다._")
+    except Exception as e:
+        log.exception("answer cmd failed")
+        respond(f":x: answer 실패: {str(e)[:500]}")
+
+
+# ──────────────────────────────────────────────────────────────────────
 # /bandit — av-vs-rf A/B 현황 (PD 2026-06-07). `/bandit` = 리포트,
 # `/bandit collect` = 48h 지표 수집 후 리포트, `/bandit choose` = 다음 레인/시각 추천.
 # ──────────────────────────────────────────────────────────────────────
@@ -605,10 +658,39 @@ def launch_cmd(ack, body, respond, client):
             except Exception as e:
                 log.warning("launch video upload failed: %s", e)
 
+        def _ask(questions):
+            # Layer ③ week-1 blocking ask: post numbered Qs, wait for PD reply,
+            # map "1. ans / 2. ans" lines back to questions. Timeout → non-blocking
+            # (questions stay pending for /answer).
+            import os as _os, re as _re
+            from agents.producer import wait_for_pd
+            qtext = "\n".join(f"  {i+1}. {q['question']}" for i, q in enumerate(questions))
+            try:
+                client.chat_postMessage(
+                    channel=WORKROOM, thread_ts=root,
+                    text=(":raising_hand: *컨셉에 필요한데 모르는 게 있어요* "
+                          "— 답해주시면 영구 기억하고 다신 안 물어요.\n" + qtext +
+                          "\n(예: `1. 랴니는 물 엄청 좋아해, 분수에 뛰어듦`)"))
+            except Exception:
+                pass
+            timeout = int(_os.getenv("KNOWLEDGE_ASK_TIMEOUT", "1800"))
+            replies = wait_for_pd(root, timeout_sec=timeout, seen_ts={root})
+            ans: dict = {}
+            for rep in replies:
+                for line in rep.splitlines():
+                    m = _re.match(r"\s*(\d+)[.)]\s*(.+)", line)
+                    if m:
+                        idx = int(m.group(1)) - 1
+                        if 0 <= idx < len(questions):
+                            ans[questions[idx]["question"]] = m.group(2).strip()
+                if len(questions) == 1 and rep.strip() and not ans:
+                    ans[questions[0]["question"]] = rep.strip()
+            return ans
+
         try:
             results = launch_pipeline(target, progress_cb=_progress,
                                       video_cb=_video, do_upload=do_upload,
-                                      dry_run=dry_run)
+                                      dry_run=dry_run, ask_cb=_ask)
             # summary line with veto hints
             lines = [":checkered_flag: *런칭 요약*"]
             for r in results:
