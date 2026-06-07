@@ -264,12 +264,20 @@ CHARACTER_FACTS = (
 
 
 def _learned_facts(con: sqlite3.Connection) -> str:
-    """PD-confirmed learned facts (layer ③) to inject alongside CHARACTER_FACTS."""
+    """Layer ③ PD-confirmed facts + Layer ① VLM observed profile, injected
+    alongside CHARACTER_FACTS. Order = authority: PD facts first, observed last."""
+    out = ""
     try:
         from agents import knowledge
-        return knowledge.facts_block(con)
+        out += knowledge.facts_block(con)
     except Exception:
-        return ""
+        pass
+    try:
+        from agents import pet_profile
+        out += pet_profile.profile_block(con)
+    except Exception:
+        pass
+    return out
 
 
 def _refresh_plan(con: sqlite3.Connection, today: str) -> str:

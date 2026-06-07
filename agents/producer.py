@@ -578,6 +578,11 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     try:
         from agents import arc as _arc2, knowledge as _kn
         _facts = _arc2.CHARACTER_FACTS + _kn.facts_block(_db())
+        try:
+            from agents import pet_profile as _pp
+            _facts += _pp.profile_block(_db())
+        except Exception:
+            pass
         if _facts:
             user += ("\n\n" + _facts +
                      "\n위 사실에 어긋나는 캐릭터 묘사 금지. 필요한데 모르는 건 "
