@@ -34,6 +34,50 @@ load_dotenv(ROOT / ".env")
 log = logging.getLogger("agents.cameraman")
 
 DB_PATH = Path(os.getenv("DB_PATH", str(ROOT / "data" / "agent.db"))).resolve()
+
+# ── BGM mood → candidate tracks (PD 2026-06-07: rf used a flat single-track map
+# → every episode sounded identical; route it through this hash-varied picker
+# like the ai_vtuber path). Mirrors the in-function map; single source of truth. ──
+_BGM_MOOD_MAP: dict[str, list[str]] = {
+    "gentle_acoustic": ["cocosmusic-rainbow-lullaby-300370.mp3", "cocosmusic-funshine-melody-281885.mp3", "diana_production_music-little-moments-of-joy-287749.mp3", "sonican-sweet-moments-232318.mp3", "sonican-sweet-moments-optimistic-folk-232685.mp3"],
+    "warm_acoustic": ["hunzalaawanarts75-cinematic-cozy-vibes-421335.mp3", "lp-studio-music-background-acoustic-guitar-music-spring-vibes-308989.mp3", "stockaudios-upbeat-acoustic-113986.mp3"],
+    "soft_lofi": ["redproductions-charming-lofi-cozy-peaceful-warm-wonderful-music-196174.mp3", "9jackjack8-fading-summer-ibiza-chill-house-499753.mp3", "9jackjack8-shallow-water-hawaiian-chill-515350.mp3", "tyler-havlicek-moonless-night-remasterd-by-laura-parrell-416321.mp3"],
+    "gentle_ambient": ["cocosmusic-sunny-meadow-song-287479.mp3", "manandnature2024-sunset-escape-soundora-rfm-386107.mp3", "natureseye-always-chanting-intro-outro-10373.mp3", "kuzu420-ambient-electronic-flute-bgm-431329.mp3"],
+    "cozy": ["hunzalaawanarts75-cinematic-cozy-vibes-421335.mp3", "redproductions-charming-lofi-cozy-peaceful-warm-wonderful-music-196174.mp3", "redproductions-background-delicate-presentation-peaceful-happy-friendly-music-20859.mp3"],
+    "lullaby": ["cocosmusic-rainbow-lullaby-300370.mp3", "diana_production_music-little-moments-of-joy-287749.mp3"],
+    "playful_upbeat": ["cocosmusic-funshine-groove-281923.mp3", "diana_production_music-bouncing-with-joy-315940.mp3", "diana_production_music-joyride-melody-315944.mp3", "lp-studio-music-fun-and-happy-318796.mp3", "top-flow-happy-day-148320.mp3", "pproducer-happy-positive-rock-151330.mp3", "musictown-upbeat-and-sweet-114196.mp3"],
+    "playful_synth": ["cocosmusic-giggly-grooves-290115.mp3", "colorfulsound-go-bounce-158716.mp3", "colorfulsound-letx27s-create-158711.mp3"],
+    "upbeat_cute": ["backgroundmusicforvideos-cute-cheerful-whistle-cute-music-249653.mp3", "gensanmaier-cheerful-instrumental-childrenx27s-song-311964.mp3", "redproductions-game-comedy-interesting-playful-sweet-bright-childish-music-57040.mp3", "diana_production_music-bouncy-bunny-trail-335181.mp3"],
+    "fun": ["cocosmusic-joyful-jumps-290119.mp3", "lp-studio-music-fun-and-happy-318796.mp3", "lp-studio-music-happy-fun-music-weekend-323148.mp3", "free_audio_library-jolly-jingles-290437.mp3"],
+    "whistle": ["audiodollar-ukulele-whistling-451780.mp3", "silentecho-whistle-dance-336938.mp3", "top-flow-whistle-bliss-pop-159649.mp3", "redproductions-pleasure-whistling-hope-joy-playful-bright-claps-music-16522.mp3", "sonican-ukulele-whistle-60-seconds-248093.mp3", "sonican-ukulele-whistle-laid-back-hope-275633.mp3", "dpstudiomusic-background-happy-royalty-free-wanderlust-whistle-307635.mp3"],
+    "ukulele": ["audiodollar-ukulele-whistling-451780.mp3", "kaazoom-golden-dayz-upbeat-ukulele-334188.mp3", "kaazoom-happy-and-free-ukulele-with-whistling-and-keyboard-335220.mp3", "kaazoom-hawaiian-shuffle-full-version-happy-ukulele-music-490377.mp3", "kaazoom-you-and-me-carefree-happy-upbeat-ukulele-and-whistling-335212.mp3", "sunnyvibesaudio-laugh-together-happy-upbeat-ukulele-197624.mp3"],
+    "chill_documentary": ["9jackjack8-fading-summer-ibiza-chill-house-499753.mp3", "manandnature2024-sunset-escape-soundora-rfm-386107.mp3", "lp-studio-music-summer-bossa-318802.mp3"],
+    "chill": ["9jackjack8-shallow-water-hawaiian-chill-515350.mp3", "kuzu420-beginning-is-the-end-chilling-futuristic-ambient-music-233264.mp3", "manandnature2024-sunset-escape-soundora-rfm-386107.mp3"],
+    "happy": ["bodleasons-happy-dreams-296347.mp3", "lp-studio-music-happy-music-310817.mp3", "lp-studio-music-happy-positive-background-music-310816.mp3", "paulyudin-happy-sunshine-198392.mp3", "dpstudiomusic-background-happy-royalty-free-joyful-journey-307644.mp3", "dpstudiomusic-background-happy-royalty-free-sunny-strings-307646.mp3", "dpstudiomusic-background-happy-royalty-free-laughing-skies-307648.mp3", "dpstudiomusic-background-happy-royalty-free-harmonic-trails-307650.mp3", "musictown-cheerful-joy-and-celebration-108492.mp3", "surprising_media-drunk-with-happiness-406944.mp3"],
+    "bright": ["aliceurbandruid-happy-whistle-travel-445333.mp3", "lp-studio-music-happy-fun-positive-day-313390.mp3", "lp-studio-music-smile-318797.mp3", "lp-studio-music-positive-day-301821.mp3", "lp-studio-music-joyful-journey-301836.mp3"],
+    "bossa_summer": ["lp-studio-music-summer-bossa-318802.mp3", "kaazoom-youx27re-my-august-heart-happy-summer-love-song-489902.mp3"],
+    "jazz_quirky": ["music_for_videos-fun-amp-quirky-jazz-123607.mp3", "lp-studio-music-background-happy-music-funny-cat-jazz-308988.mp3"],
+    "country_folk": ["sonican-old-country-joy-201384.mp3", "sonican-old-country-joy-loop-201614.mp3", "dpstudiomusic-background-happy-royalty-free-harvest-hoedown-307638.mp3", "dpstudiomusic-background-happy-royalty-free-banjo-bliss-307640.mp3", "geoffharvey-gone-fishinx27-379984.mp3"],
+    "piano_sparkle": ["chrisdjyogi-holiday-sparkle-piano-strings-amp-glockenspiel-421425.mp3"],
+    "drama_orchestral": ["sonican-dramatic-orchestral-hope-238050.mp3"],
+    "comedy": ["alanajordan-goblin-mode-403685.mp3", "alisiabeats-eat-me-168922.mp3", "lp-studio-music-background-happy-music-funny-friends-308987.mp3", "lp-studio-music-background-happy-music-funny-cat-jazz-308988.mp3", "music_for_videos-fun-amp-quirky-jazz-123607.mp3"],
+    "bouncy": ["diana_production_music-bouncy-bunny-trail-335181.mp3", "diana_production_music-bouncing-with-joy-315940.mp3", "colorfulsound-go-bounce-158716.mp3", "geoffharvey-playdate-427890.mp3", "dimmysad-rock-your-body-390089.mp3"],
+    "picnic": ["cocosmusic-picnic-jam-334903.mp3", "kaazoom-ice-cold-beer-full-version-happy-ukulele-guitar-and-whistling-489893.mp3"],
+    "optimistic": ["sonican-optimistic-517106.mp3", "sonican-optimistic-music-hopeful-loop-2-520368.mp3", "diana_production_music-pure-bliss-vibes-315943.mp3", "lemonmusicstudio-completely-satisfied-135249.mp3", "kmacleod-pickled-pink-127675.mp3"],
+    "pet_themed": ["lp-studio-music-background-happy-music-funny-cat-jazz-308988.mp3", "diana_production_music-bouncy-bunny-trail-335181.mp3", "grumpynora-piggy-loop-1-409462.mp3", "grumpynora-piggy-loop-2-409463.mp3"],
+    "spooky": ["melodyayresgriffiths-the-spirit-in-the-castle-dungeon-spooky-soundtrack-halloween-420820.mp3", "surprising_media-whistle-in-the-dark-439161.mp3"],
+}
+
+
+def _pick_bgm_track(bgm_mood: str, seed_key: str) -> str:
+    """Deterministic-but-varied BGM filename for a mood: hash(seed_key) indexes
+    into the mood's candidates so repeated renders of one episode are stable but
+    different episodes vary even within a mood. Falls back to a cute default."""
+    import hashlib as _h
+    candidates = _BGM_MOOD_MAP.get(
+        bgm_mood, ["backgroundmusicforvideos-cute-cheerful-whistle-cute-music-249653.mp3"])
+    seed = int(_h.sha1((seed_key or "default").encode("utf-8")).hexdigest()[:8], 16)
+    return candidates[seed % len(candidates)]
 BUMPER_MUSIC = ROOT / os.getenv(
     "BUMPER_MUSIC",
     "assets/bgm/redproductions-whistling-bright-kids-education-positive-claps-music-187833.mp3",
@@ -1144,32 +1188,12 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
         "concept_cuts": concept_cuts,  # per-cut Director metadata (seedance_mode, references, fill_anchors)
     }
 
-    # ── BGM selection based on concept mood ──
+    # ── BGM selection based on concept mood (PD 2026-06-07: hash-varied pick so
+    # rf episodes don't all sound the same — same picker as the ai_vtuber path). ──
     bgm_mood = (concept or {}).get("bgm_mood", "")
-    bgm_map = {
-        # Warm / cozy / gentle
-        "gentle_acoustic": "cocosmusic-rainbow-lullaby-300370.mp3",
-        "warm_acoustic": "hunzalaawanarts75-cinematic-cozy-vibes-421335.mp3",
-        "soft_lofi": "redproductions-charming-lofi-cozy-peaceful-warm-wonderful-music-196174.mp3",
-        "gentle_ambient": "cocosmusic-sunny-meadow-song-287479.mp3",
-        "cozy": "hunzalaawanarts75-cinematic-cozy-vibes-421335.mp3",
-        "lullaby": "cocosmusic-rainbow-lullaby-300370.mp3",
-        # Playful / fun / upbeat
-        "playful_upbeat": "cocosmusic-funshine-groove-281923.mp3",
-        "playful_synth": "cocosmusic-giggly-grooves-290115.mp3",
-        "upbeat_cute": "backgroundmusicforvideos-cute-cheerful-whistle-cute-music-249653.mp3",
-        "fun": "cocosmusic-joyful-jumps-290119.mp3",
-        # Whistle / ukulele
-        "whistle": "audiodollar-ukulele-whistling-451780.mp3",
-        "ukulele": "audiodollar-ukulele-whistling-451780.mp3",
-        # Chill / documentary
-        "chill_documentary": "9jackjack8-fading-summer-ibiza-chill-house-499753.mp3",
-        "chill": "9jackjack8-shallow-water-hawaiian-chill-515350.mp3",
-        # Happy / bright
-        "happy": "bodleasons-happy-dreams-296347.mp3",
-        "bright": "aliceurbandruid-happy-whistle-travel-445333.mp3",
-    }
-    bgm_file = bgm_map.get(bgm_mood, "backgroundmusicforvideos-cute-cheerful-whistle-cute-music-249653.mp3")
+    _seed = (card.get("card_id") if isinstance(card, dict) else "") \
+        or (concept or {}).get("title", "") or "default"
+    bgm_file = _pick_bgm_track(bgm_mood, _seed)
     result["bgm"] = str(ROOT / "assets" / "bgm" / bgm_file)
 
     # ── Regen prompts (ai_vtuber / cartoon_sticker — concept-driven) ──
@@ -2220,7 +2244,10 @@ def _build_edit_effect_filter(effect: str, dur: float, extra_pad: float = 0.0) -
             mul = float(e.replace("speed_", "").replace("x", ""))
         except ValueError:
             mul = 1.0
-        if mul == 1.0:
+        # PD 2026-06-07: fast-forward was TOO fast — clamp to a gentle max so the
+        # action stays readable (1.3x felt frantic; ~1.2x reads better).
+        mul = min(mul, float(os.getenv("RF_MAX_SPEED", "1.2")))
+        if mul <= 1.0:
             return "", []
         return f"setpts={1.0/mul:.3f}*PTS", []
     # Ken Burns: gentle zoom-in + slight pan over the clip duration
