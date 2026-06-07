@@ -1158,19 +1158,34 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
         _cc_here = concept_cuts[i] if i < len(concept_cuts) else {}
         _is_wink = _cc_here.get("function") == "wink_ending"
         if scenes and not _is_wink:
+            # PD 2026-06-08: distribute captions across the ACTUAL clip duration
+            # (sources[tag].trim_dur), not the concept's requested duration. Short
+            # source clips were keeping captions timed to 7.5s → last-scene caption
+            # overflowed a 4s clip ("캡션 많은데 영상 짧고"). Also drop captions that
+            # can't get a readable min display, and spread the rest evenly (gap-free,
+            # no racing).
+            MIN_SCENE = float(os.getenv("CAPTION_MIN_SEC", "1.8"))
             try:
-                _dur = float(_cc_here.get("duration_seconds") or 0)
+                _concept_dur = float(_cc_here.get("duration_seconds") or 0)
             except Exception:
-                _dur = 0.0
+                _concept_dur = 0.0
+            try:
+                _actual = float(sources.get(item["tag"], {}).get("trim_dur") or 0)
+            except Exception:
+                _actual = 0.0
+            span = _actual or _concept_dur or (len(scenes) * MIN_SCENE)
             scenes.sort(key=lambda s: float(s.get("start", 0)))
-            scenes[0]["start"] = min(float(scenes[0].get("start", 0.1)), 0.1)
-            for j in range(len(scenes) - 1):
-                scenes[j]["end"] = float(scenes[j + 1]["start"])
-            last_end = float(scenes[-1].get("end", 0))
-            scenes[-1]["end"] = max(last_end, _dur - 0.05) if _dur else last_end
-            for s in scenes:
-                if float(s["end"]) <= float(s["start"]):
-                    s["end"] = float(s["start"]) + 1.0
+            # cap caption count to what fits the clip at a readable pace
+            max_n = max(1, int(span / MIN_SCENE))
+            if len(scenes) > max_n:
+                log.info("cut %s: dropping %d caption(s) to fit %.1fs clip",
+                         item["tag"], len(scenes) - max_n, span)
+                scenes = scenes[:max_n]
+            # even, gap-free distribution across the actual clip span
+            n = len(scenes)
+            for j, s in enumerate(scenes):
+                s["start"] = round(0.1 if j == 0 else j * span / n, 2)
+                s["end"] = round((j + 1) * span / n if j < n - 1 else max(span - 0.05, s["start"] + 1.0), 2)
 
         # Always use scenes format (works for both real_footage and ai_vtuber)
         captions[item["tag"]] = {"scenes": scenes} if scenes else {
@@ -2134,6 +2149,16 @@ def _vlm_pet_crop_filter(src_path: Path, trim_start: float = 0.0) -> str:
         box = json.loads((resp.text or "{}").strip())
         pets = box.get("pets") or {}
         human = box.get("human") or {}
+        # PD 2026-06-08: the pets+human VLM call under-reports the FACE (it called a
+        # bench man "lower body"). Override the avoid-target with a dedicated,
+        # reliable face box so the 9:16 window slides AWAY from the actual face.
+        try:
+            from agents.facecheck import face_box as _face_box
+            fb = _face_box(frame)
+            if fb and float(fb.get("w", 0)) > 0 and float(fb.get("h", 0)) > 0:
+                human = fb
+        except Exception:
+            pass
         # ★ ROTATION FIX (PD 2026-06-06): use the EXTRACTED FRAME's dims
         # (rotation already applied) — the source stream reports unrotated dims.
         try:

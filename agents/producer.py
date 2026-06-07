@@ -941,13 +941,34 @@ def _render_realfootage_with_retry(concept: dict, target: dt.date,
     last_card_id = ""
     best_out = None
     best_card_id = ""
-    best_score = -1
+    best_key = (-1, -1)  # (intro_satisfied, score)
 
     def _score_of(report) -> int:
         try:
             return int(report.get("점수") or report.get("score") or 0)
         except (TypeError, ValueError):
             return 0
+
+    # PD 2026-06-08: on launch intro days the writer drifted to an outdoor-walk
+    # story instead of a self-intro. Enforce: an intro day's concept MUST read as
+    # a self-introduction (1인칭 자기소개 captions), else re-propose.
+    intro_day = False
+    try:
+        from agents import arc as _arcchk
+        intro_day = _arcchk._launch_intro_directive(target.isoformat(), "real_footage") is not None
+    except Exception:
+        pass
+
+    def _is_self_intro(c: dict) -> bool:
+        import re as _re
+        blob = " ".join(
+            (cap.get("ko", "") or "")
+            for cut in (c.get("cuts") or []) for cap in (cut.get("captions") or []))
+        # self-intro markers: greeting + first-person + age/identity
+        pats = ["안녕", "나는", "저는", "소개", "예요", "이에요", "랴니예요", "레오예요"]
+        hits = sum(1 for p in pats if p in blob)
+        has_age = bool(_re.search(r"\d+\s*(살|개월)", blob))
+        return hits >= 2 or (hits >= 1 and has_age)
 
     def _arc(card_id):
         # PD 2026-06-06: record the actually-rendered concept into the unified
@@ -968,33 +989,50 @@ def _render_realfootage_with_retry(concept: dict, target: dt.date,
         out, report, card_id = _render_realfootage_direct(cur_concept, target, con, progress_cb)
         last_out = out or last_out
         last_card_id = card_id or last_card_id
-        # track best-scoring attempt so we ship the best after the cap (not last)
-        if out:
-            sc = _score_of(report or {})
-            if sc > best_score:
-                best_score, best_out, best_card_id = sc, out, card_id
+        # track best-scoring attempt so we ship the best after the cap (not last).
+        # NEVER track a face-violating attempt as best — a human face must not ship.
+        intro_ok = (not intro_day) or _is_self_intro(cur_concept)
+        # best key = (intro-satisfied, score) so on intro days a self-intro always
+        # beats a non-intro, but a non-intro is still kept as last-resort.
+        if out and not (report or {}).get("_face_violation"):
+            key = (1 if intro_ok else 0, _score_of(report or {}))
+            if key > best_key:
+                best_key, best_out, best_card_id = key, out, card_id
         verdict = (report or {}).get("판정", "")
         if not report:
             # Review unavailable (e.g., no API key) — don't loop blindly.
             log.warning("Giri report unavailable — accepting attempt %d", attempt)
             _arc(card_id)
             return out
-        if verdict in GIRI_PASS_VERDICTS:
+        if verdict in GIRI_PASS_VERDICTS and intro_ok:
             if progress_cb:
                 progress_cb(f":white_check_mark: 기리 통과 (시도 {attempt}): {verdict}")
             _arc(card_id)
             return out
+        if verdict in GIRI_PASS_VERDICTS and not intro_ok and progress_cb:
+            progress_cb(":repeat: 기리는 통과했지만 자기소개 회차가 아님 — 재생성")
         if attempt >= max_attempts:
-            chosen_out = best_out or last_out
-            chosen_card = best_card_id or last_card_id
+            # Never ship a face-violating episode — if every attempt had a face,
+            # best_out is None → skip this slot entirely (no episode > a face).
+            if best_out is None:
+                if progress_cb:
+                    progress_cb(f":no_entry: {max_attempts}회 모두 얼굴 노출/렌더 실패 — 슬롯 비움(발행 안 함)")
+                log.warning("real_footage: all %d attempts face-violating/failed — skipping slot",
+                            max_attempts)
+                return None
             if progress_cb:
-                progress_cb(f":warning: 기리 미통과 {max_attempts}회 — 최고점({best_score}/10) 결과 사용")
-            log.warning("real_footage failed Giri after %d attempts — using best score %d",
-                        max_attempts, best_score)
-            _arc(chosen_card)
-            return chosen_out
+                progress_cb(f":warning: 기리 미통과 {max_attempts}회 — 최고({'자기소개' if best_key[0] else '일반'} {best_key[1]}/10) 결과 사용")
+            log.warning("real_footage failed Giri after %d attempts — using best %s",
+                        max_attempts, best_key)
+            _arc(best_card_id)
+            return best_out
         # Re-propose with feedback and retry.
         feedback = _giri_feedback_to_text(report)
+        if intro_day and not intro_ok:
+            feedback = ("[자기소개 회차 강제] 이번 회차는 반드시 캐릭터 '자기소개'다. "
+                        "산책/먹방/일상 관찰 스토리로 빠지지 마라. 캡션은 1인칭 자기소개"
+                        "('안녕! 나는 레오예요, 8개월이에요' / '나는 랴니, 11살 누나')로 써라. "
+                        "실제 클립이 산책이어도 자기소개 톤으로 프레이밍하라.\n") + feedback
         if progress_cb:
             progress_cb(f":arrows_counterclockwise: 기리 미통과({verdict}) — 피드백 반영 재생성")
         try:
@@ -1027,6 +1065,38 @@ def _giri_review_realfootage(video: Path, concept: dict, target: dt.date,
         if progress_cb:
             progress_cb(":mag: 기리 검수 중 (real_footage)...")
         report = giri_review(video, storyboard=storyboard, concept=concept)
+        # PD 2026-06-08 HARD RULE: no human face may ship. The review VLM under-
+        # reports faces (called a bench man "lower body"), so run a dedicated
+        # dense face scan — but ONLY when some cut's clip has a human (else skip
+        # the ~30s cost). A detected face forces 수정 필요 + _face_violation, and
+        # the retry loop will NOT publish a face-violating episode.
+        try:
+            con_fc = _db()
+            has_human_cut = False
+            for c in concept.get("cuts") or []:
+                aid = c.get("asset_id")
+                if not aid:
+                    continue
+                r = con_fc.execute("SELECT has_human FROM assets WHERE asset_id=?", (aid,)).fetchone()
+                if r and r[0]:
+                    has_human_cut = True
+                    break
+            if has_human_cut:
+                from agents.facecheck import video_has_face
+                if progress_cb:
+                    progress_cb(":detective: 얼굴 노출 검사 중 (has_human 컷 있음)...")
+                face, _n = video_has_face(video)
+                if face:
+                    report["판정"] = "수정 필요"
+                    report["_face_violation"] = True
+                    report["가장_큰_문제"] = "인간 얼굴 노출 — crop 실패 (HARD RULE)"
+                    report.setdefault("개선점", [])
+                    if isinstance(report.get("개선점"), list):
+                        report["개선점"].insert(0, "인간 얼굴 노출 — crop_out 강화 또는 해당 클립 교체")
+                    if progress_cb:
+                        progress_cb(":no_entry: 얼굴 노출 감지 — 발행 차단")
+        except Exception as e:
+            log.warning("face check failed (non-fatal): %s", e)
         score = report.get("점수", "?")
         verdict = report.get("판정", "?")
         mismatches = report.get("caption_vs_clip_mismatches") or []

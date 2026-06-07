@@ -231,9 +231,31 @@ def _coarse_location(location_specific: str | None) -> str | None:
     return "home"
 
 
+def _subjects_csv(tags: dict) -> str | None:
+    """Pets present as CSV ('leo' / 'leo,ryani') for the subjects_csv COLUMN that
+    producer/writer ground captions on (PD 2026-06-08: VLM wrote subjects_visible
+    + focus_subject but NOT subjects_csv → empty → caption subject misattribution).
+    Built from subjects_visible (pets only), falls back to focus_subject."""
+    vis = tags.get("subjects_visible")
+    pets: list[str] = []
+    if isinstance(vis, list):
+        for s in vis:
+            sl = str(s).strip().lower()
+            if sl in ("leo", "ryani") and sl not in pets:
+                pets.append(sl)
+    if not pets:
+        fs = str(tags.get("focus_subject") or "").strip().lower()
+        if fs == "both":
+            pets = ["leo", "ryani"]
+        elif fs in ("leo", "ryani"):
+            pets = [fs]
+    return ",".join(pets) or None
+
+
 def update_asset_tags(con: sqlite3.Connection, asset_id: str, tags: dict) -> None:
     """Write VLM analysis results to the DB."""
     _loc_type = _coarse_location(tags.get("location_specific"))
+    _subj = _subjects_csv(tags)
     con.execute(
         """
         UPDATE assets SET
@@ -246,6 +268,7 @@ def update_asset_tags(con: sqlite3.Connection, asset_id: str, tags: dict) -> Non
             background = ?,
             location_tag = ?,
             location_type = COALESCE(?, location_type),
+            subjects_csv = COALESCE(?, subjects_csv),
             quality_score = ?,
             focus_subject = ?,
             decoration_level = ?,
@@ -264,6 +287,7 @@ def update_asset_tags(con: sqlite3.Connection, asset_id: str, tags: dict) -> Non
             _str(tags.get("background")),
             _str(tags.get("background")),  # also fill location_tag
             _loc_type,                     # location_type column (COALESCE — keep if undecidable)
+            _subj,                         # subjects_csv column (COALESCE — keep if undecidable)
             tags.get("quality_score"),
             tags.get("focus_subject"),
             tags.get("decoration_level"),
