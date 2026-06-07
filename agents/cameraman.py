@@ -2080,7 +2080,11 @@ def _vlm_pet_crop_filter(src_path: Path, trim_start: float = 0.0) -> str:
         if not frame.exists():
             return ""
         data = frame.read_bytes()
-        client = _genai.Client(api_key=api_key)
+        # PD 2026-06-07: bound the VLM call so a hung request can't freeze the
+        # whole render (a 57-min hang killed a shakedown). Timeout → raises →
+        # outer try returns "" (no crop, render continues).
+        client = _genai.Client(api_key=api_key, http_options=_types.HttpOptions(
+            timeout=int(os.getenv("VLM_TIMEOUT_MS", "90000"))))
         model_name = os.getenv("VLM_MODEL", "gemini-2.5-flash")
         prompt = (
             "One frame of a vertical pet video. Locate, as fractions of the "

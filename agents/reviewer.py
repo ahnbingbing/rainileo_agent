@@ -439,7 +439,9 @@ def review(video: Path, storyboard: list[dict] | None = None,
     from google.genai import types as _types
     from PIL import Image
 
-    client = _genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
+    client = _genai.Client(api_key=os.environ["GOOGLE_API_KEY"],
+                           http_options=_types.HttpOptions(
+                               timeout=int(os.getenv("VLM_TIMEOUT_MS", "90000"))))
     model_name = os.getenv("VLM_MODEL", "gemini-2.5-flash")
 
     # Extract frames

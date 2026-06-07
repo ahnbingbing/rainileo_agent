@@ -132,7 +132,8 @@ def _call_gemini_vision(image_path: Path) -> dict:
     buf = BytesIO()
     img.save(buf, format="JPEG", quality=85)
 
-    client = _genai.Client(api_key=api_key)
+    client = _genai.Client(api_key=api_key, http_options=_types.HttpOptions(
+        timeout=int(os.getenv("VLM_TIMEOUT_MS", "90000"))))
     model_name = os.getenv("VLM_MODEL", "gemini-2.5-flash")
     response = client.models.generate_content(
         model=model_name,

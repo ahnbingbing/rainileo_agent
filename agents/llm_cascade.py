@@ -19,9 +19,10 @@ def call_text_cascade(system: str, user: str, *,
     `anthropic_model` is only used on the last fallback hop.
     """
     # 1. OpenAI
+    _llm_timeout = int(os.environ.get("LLM_TIMEOUT_S", "120"))
     try:
         from openai import OpenAI
-        client = OpenAI()
+        client = OpenAI(timeout=_llm_timeout)
         resp = client.chat.completions.create(
             model=os.environ.get("OPENAI_FALLBACK_MODEL", "gpt-5"),
             messages=([
@@ -44,7 +45,8 @@ def call_text_cascade(system: str, user: str, *,
         model_name = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-2.5-pro")
         m = genai.GenerativeModel(model_name,
                                    system_instruction=system or None)
-        resp = m.generate_content(user)
+        resp = m.generate_content(
+            user, request_options={"timeout": _llm_timeout})
         log.info("LLM cascade: Gemini used")
         return (resp.text or "").strip()
     except Exception as e:
