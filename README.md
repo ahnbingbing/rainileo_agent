@@ -122,29 +122,58 @@ print('PASS' if not errs else errs)
 # PASS
 ```
 
-## 운영 루틴
+## 운영 루틴 — 런칭 자동화 (PD 2026-06-07)
 
-### 매일
+첫 달은 **explore 전용 4편/day A/B 실험**. 자세한 설계는 `notes/first_month_plan.md`.
 
 ```
-00:00 — iCloud sync (15분 주기 자동)
-18:00 — Writer Agent 자동 실행 (launchd)
-       → 다음날 카드 초안 생성, ask_pd=true 면 Slack 워크룸에 알림
-~20:00 — PD가 Slack에서 /writer-show 확인 → /pd-approve 또는 /pd-reject
-20:30 — Cameraman 렌더 (Phase 1에서 구현 예정, Phase 0는 수동 편집)
-21:00 — 발행 (Phase 1 자동, Phase 0 수동)
+매일 00:00 — launchd(com.rianileo.launch): 다음날치 4편 제작
+            (2 av + 2 rf, 레인×시각 라틴스퀘어), 기리 통과분만
+            다음날 슬롯(08:00/12:30/18:00/21:00)에 예약공개,
+            4편 + 모르는 점 질문을 Slack 워크룸 스레드에 게시
+그날 하루 — PD가 Slack에서 검토: /veto(거르기), /answer(질문 답변)
+다음날 슬롯 — (veto 안 된) 영상 공개
+06:30 — bandit-collect (48h 성과 수집)
+월 10:00 — bandit-report (av vs rf 누적 리포트 → Slack)
+06:00 — iCloud sync + VLM 태깅 + 원본 정리
+15분 주기 — Slack #background/#episode/#photos → DB
+일시정지: launchctl unload ~/Library/LaunchAgents/com.rianileo.launch.plist
 ```
+
+### 컨셉 디렉티브 우선순위 (그날 무엇을 만들지 결정 — `agents/arc.py:next_directive`)
+
+```
+1. PD /concept <날짜> <내용>   ← 그 날짜에 지정했을 때만. 무조건 최우선
+                                  (ARC_ENABLED 꺼져 있어도 작동)
+       ↓ 없으면
+2. 런칭 인트로 오버레이          ← 1주차 Day1(둘 함께 자기소개)/Day2(레오 단독)/
+   (LAUNCH_START_DATE 기준)        Day3(랴니 단독). 결정적(LLM 환각 방지)
+       ↓ 1주차 아니면
+3. arc 시즌 플랜 디렉티브        ← 롤링 ~1개월 계획(계절/공휴일/트렌드/월1 재소개),
+                                  실제 클립 인벤토리 + CHARACTER_FACTS 그라운딩
+```
+즉 **`/concept` 안 쓴 날은 전부 arc가 기본**으로 굴린다. 캐릭터 사실/자산 충실도는 모든 층에서 항상 강제.
 
 ### 슬래시 명령
 
 | 명령 | 용도 |
 |---|---|
-| `/writer-run [date]` | Writer 즉시 실행 (기본=내일) |
-| `/writer-show [date]` | 카드 요약 보기 |
-| `/pd-approve <id>` | 승인 |
-| `/pd-reject <id> <reason>` | 반려 |
-| `/post <id>` | Cameraman 큐에 투입 |
-| `/status` | 파이프라인 스냅샷 |
+| **`/launch [date|dry|noupload]`** | 그날 4슬롯 제작·예약공개 (dry=배정만, noupload=렌더만) |
+| **`/concept [YYYY-MM-DD] [내용]`** | 특정 날짜 컨셉 예약(최우선). 인자 없으면 목록 |
+| **`/veto <card|video_id> [delete]`** | 자동발행 회차 내림(기본 비공개, delete=삭제) |
+| **`/bandit [collect|choose]`** | av vs rf A/B 현황 / 다음달 레인·시각 추천 |
+| **`/knowledge`** | 컨셉이 PD에게 물은 '모르는 사실' 대기열 + 저장된 사실 |
+| **`/answer <id> <답변>`** | 그 질문에 답 저장(영구, 다음 컨셉부터 반영) |
+| `/daily [date|dry]` | (구) 일일 제안→PD컨펌→제작 파이프라인 |
+| `/test [rf|ai]` | 컨펌 없이 1편 진단 렌더 (결과 영상 스레드 게시) |
+| `/upload <id>` | 렌더된 카드 수동 YouTube 업로드 |
+| `/sync` | iCloud 수동 동기화 |
+| `/writer_run [date]` / `/writer_show [date]` | Writer 직접 실행 / 카드 조회 |
+| `/pd_approve <id>` / `/pd_reject <id> <reason>` | 승인 / 반려 |
+| `/post <id>` | 렌더 큐 투입 |
+| `/bot_status` | 파이프라인 스냅샷 |
+
+전체 사용법: `notes/slack_commands_guide.txt` (채널 핀 고정용).
 
 ## 등록된 1회성 알람 (Cowork Scheduled Tasks)
 

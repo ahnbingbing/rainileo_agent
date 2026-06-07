@@ -109,6 +109,63 @@ When story/연출 quality complaints come up, the bottleneck is HERE — not the
 i2v scripts or BGM choice. Edit prompts in `agents/prompts/writer_*.md` /
 `director_shots.md` first.
 
+## Launch month system (PD 2026-06-07 — LIVE)
+
+First month = explore-heavy **4 videos/day A/B** (av vs rf). Full design in
+`notes/first_month_plan.md`; operations in README "런칭 자동화".
+
+- **`agents/launch.py`** — `day_assignments()` = 2 av + 2 rf/day on a lane×timeslot
+  **Latin square** (timeslots 08:00/12:30/18:00/21:00 KST, rotated daily so each
+  lane×slot cell is balanced). `launch_pipeline()` proposes per lane → renders
+  (existing per-lane Giri retry gates) → auto-schedules passing episodes public at
+  their slot → leaves failed slots empty (no junk). `publish_at_for()` rolls a
+  passed slot to next day.
+- **launchd `com.rianileo.launch`** runs **00:00** producing TOMORROW's batch →
+  a full day for PD spot-check/veto/answer before it goes public. Pause:
+  `launchctl unload ~/Library/LaunchAgents/com.rianileo.launch.plist`.
+- **Review = Giri-gate + PD spot-check** (no blocking per-episode approval). 4 mp4s
+  post to a Slack thread; PD `/veto`s bad ones (`youtube.upload.veto_video` →
+  private/delete + `uploaded=0` so cooldown/arc drop it).
+- **Measurement**: `youtube/analytics.py` (48h views + retention) → `video_performance`
+  → `agents/bandit.py` (population reward + 3-level Thompson: marginal lane /
+  marginal timeslot / lane×timeslot arm + P(best) + `choose_*` for next month).
+  launchd `bandit-collect` (06:30) + `bandit-report` (Mon 10:00 → Slack).
+- Env: `ARC_ENABLED=1`, `LAUNCH_START_DATE=YYYY-MM-DD` (Day1 = first public day),
+  `YOUTUBE_AUTO_UPLOAD=1`. cards gain `youtube_video_id` / `youtube_publish_at`.
+
+### Concept directive priority (`agents/arc.py:next_directive` — what each episode does)
+
+```
+1. PD /concept <date> <text>   (pd_concept_directives table) — HIGHEST, even if ARC off
+       ↓ none
+2. Launch intro overlay (_launch_intro_directive, by LAUNCH_START_DATE)
+   Day1 both-greet self-intro ("안녕! 나는 ~예요", rf+av; rf = real clip + 1st-person
+   caption) / Day2 Leo solo / Day3 Ryani solo — past⇄present memory-lane + interaction
+       ↓ not launch week
+3. arc season-plan LLM directive (rolling ~1mo: season/holiday/trend/monthly re-intro)
+```
+`/concept`-free days run on arc by default. Character-fact + asset fidelity is
+enforced at **every** layer (never invent).
+
+## Character knowledge system v2 (anti-hallucination, 3 layers)
+
+Born from the "랴니 물 공포" hallucination (the arc invented a false trait). Traits
+are grounded, never invented — see memory `character_knowledge_v2`.
+
+1. **VLM auto profile** (`agents/pet_profile.py`) — aggregates VLM tags per pet
+   (activity / pet_intent / looking_at / micro_behaviors / props). Observed,
+   supporting.
+2. **PD facts** (`arc.CHARACTER_FACTS` + `character_sheets.md`) — what footage can't
+   infer / corrections. Authoritative. ★ Ryani = water-MANIAC (barks at water,
+   leaps into fountains), strong swimmer, loves snow/ice-sled; feared water only as
+   a 2016 puppy. "물 공포" is FALSE. Leo (cat) avoids water.
+3. **Ask-when-unknown** (`agents/knowledge.py` + `character_facts` table) — concept
+   stage emits `knowledge_questions` when uncertain → `producer.resolve_knowledge_
+   questions` asks PD (week-1 blocking via `/launch` ask_cb / else non-blocking) →
+   answer stored permanently + injected. `/knowledge`, `/answer <id> <답>`.
+
+All three inject into the arc plan/directive + rf concept prompt.
+
 ## Seedance 2.0 modes (per-cut)
 
 `scripts/animate_seedance_i2v.py` exposes `--mode {i2v|interp|ref}`:
