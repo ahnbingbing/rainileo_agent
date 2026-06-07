@@ -2295,6 +2295,44 @@ def _build_edit_effect_filter(effect: str, dur: float, extra_pad: float = 0.0) -
     return "", []
 
 
+def _prune_missing_cuts(manifests: dict, anim_dir: Path,
+                        progress_cb: ProgressCb = None) -> None:
+    """Drop cuts whose animated/<tag>.mp4 doesn't exist from the caption manifest
+    (and cuts/concept_cuts) so burn + assemble only see rendered cuts. Prevents a
+    single missing clip (pruned photo_i2v source, failed trim) from crashing the
+    whole episode. Raises if NOTHING remains."""
+    cap_path = Path(manifests.get("captions", ""))
+    if not cap_path.exists():
+        return
+    try:
+        caps = json.loads(cap_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    dropped = []
+    for tag in list(caps.keys()):
+        if tag.startswith("_"):
+            continue
+        if not (anim_dir / f"{tag}.mp4").exists():
+            caps.pop(tag, None)
+            dropped.append(tag)
+    if not dropped:
+        return
+    # keep at least one real cut
+    remaining = [t for t in caps if not t.startswith("_")]
+    if not remaining:
+        raise RuntimeError(f"all cuts missing animated mp4 ({dropped}) — cannot render")
+    cap_path.write_text(json.dumps(caps, ensure_ascii=False, indent=2), encoding="utf-8")
+    # also prune cuts/concept_cuts lists so downstream is consistent
+    for key in ("cuts", "concept_cuts"):
+        lst = manifests.get(key)
+        if isinstance(lst, list):
+            manifests[key] = [c for c in lst
+                              if (c.get("tag") or c.get("cut_tag")) not in dropped]
+    log.warning("pruned %d missing cut(s) before burn: %s", len(dropped), dropped)
+    if progress_cb:
+        progress_cb(f":scissors: 누락 컷 {len(dropped)}개 드롭(파일 없음) — 남은 컷으로 진행: {', '.join(dropped)}")
+
+
 def run_real_footage_pipeline(manifests: dict, work_dir: Path,
                               progress_cb: ProgressCb = None,
                               dry_run: bool = False) -> Path:
@@ -2339,6 +2377,13 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
             )
         except Exception as ex:
             log.warning("VLM rewrite skipped for real_footage: %s", ex)
+
+    # PD 2026-06-08: a cut whose animated/<tag>.mp4 is missing (e.g. a photo_i2v
+    # cut whose source photo was pruned and couldn't be re-fetched) used to crash
+    # the burn step (rc=1). Drop missing cuts from the caption manifest so the
+    # episode renders with the available cuts instead of failing outright.
+    if not dry_run:
+        _prune_missing_cuts(manifests, anim_dir, progress_cb)
 
     # Step 1c: burn captions on trimmed clips.
     captioned_dir = ROOT / "data" / "output" / "animated_captioned"
