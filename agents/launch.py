@@ -97,7 +97,8 @@ def launch_pipeline(target: dt.date, *,
                     progress_cb: Callable[[str], None] | None = None,
                     video_cb: Callable[[Path], None] | None = None,
                     do_upload: bool = True,
-                    dry_run: bool = False) -> list[dict]:
+                    dry_run: bool = False,
+                    max_slots: int | None = None) -> list[dict]:
     """Produce the day's 4 launch episodes per the Latin-square assignment.
 
     Returns a list of slot result dicts: {lane, slot, output, video_id,
@@ -108,6 +109,8 @@ def launch_pipeline(target: dt.date, *,
                                   _auto_upload_episode)
     con = _db()
     assignments = day_assignments(target)
+    if max_slots is not None:
+        assignments = assignments[:max_slots]  # shakedown: render a subset
 
     if progress_cb:
         plan = "  ".join(f"{hh}:{'AV' if ln=='ai_vtuber' else 'RF'}"
@@ -195,6 +198,8 @@ def main() -> int:
     p.add_argument("--date", default=None, help="target date YYYY-MM-DD (default: today KST)")
     p.add_argument("--dry-run", action="store_true", help="show assignments only")
     p.add_argument("--no-upload", action="store_true", help="render but do not upload")
+    p.add_argument("--max-slots", type=int, default=None,
+                   help="shakedown: only run the first N slots (e.g. 1)")
     args = p.parse_args()
     target = (dt.date.fromisoformat(args.date) if args.date
               else dt.datetime.now(KST).date())
@@ -239,7 +244,7 @@ def main() -> int:
         log.warning("slack wiring failed (stdout only): %s", e)
 
     launch_pipeline(target, progress_cb=progress_cb, video_cb=video_cb,
-                    do_upload=not args.no_upload)
+                    do_upload=not args.no_upload, max_slots=args.max_slots)
     return 0
 
 
