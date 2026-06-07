@@ -933,10 +933,21 @@ def _render_realfootage_with_retry(concept: dict, target: dt.date,
     ceiling (env RF_GIRI_MAX_ATTEMPTS, default 100) only prevents a true infinite
     loop / runaway cost if Giri can never be satisfied."""
     if max_attempts is None:
-        max_attempts = int(os.getenv("RF_GIRI_MAX_ATTEMPTS", "100"))
+        # PD 2026-06-08: sane cap (was 100 — an unfixable Giri verdict looped for
+        # hours and blocked the whole day's batch with 0 published).
+        max_attempts = int(os.getenv("RF_GIRI_MAX_ATTEMPTS", "5"))
     cur_concept = concept
     last_out = None
     last_card_id = ""
+    best_out = None
+    best_card_id = ""
+    best_score = -1
+
+    def _score_of(report) -> int:
+        try:
+            return int(report.get("점수") or report.get("score") or 0)
+        except (TypeError, ValueError):
+            return 0
 
     def _arc(card_id):
         # PD 2026-06-06: record the actually-rendered concept into the unified
@@ -957,6 +968,11 @@ def _render_realfootage_with_retry(concept: dict, target: dt.date,
         out, report, card_id = _render_realfootage_direct(cur_concept, target, con, progress_cb)
         last_out = out or last_out
         last_card_id = card_id or last_card_id
+        # track best-scoring attempt so we ship the best after the cap (not last)
+        if out:
+            sc = _score_of(report or {})
+            if sc > best_score:
+                best_score, best_out, best_card_id = sc, out, card_id
         verdict = (report or {}).get("판정", "")
         if not report:
             # Review unavailable (e.g., no API key) — don't loop blindly.
@@ -969,11 +985,14 @@ def _render_realfootage_with_retry(concept: dict, target: dt.date,
             _arc(card_id)
             return out
         if attempt >= max_attempts:
+            chosen_out = best_out or last_out
+            chosen_card = best_card_id or last_card_id
             if progress_cb:
-                progress_cb(f":warning: 기리 미통과 {max_attempts}회 — 마지막 결과 사용 ({verdict})")
-            log.warning("real_footage failed Giri after %d attempts (%s)", max_attempts, verdict)
-            _arc(last_card_id)
-            return last_out
+                progress_cb(f":warning: 기리 미통과 {max_attempts}회 — 최고점({best_score}/10) 결과 사용")
+            log.warning("real_footage failed Giri after %d attempts — using best score %d",
+                        max_attempts, best_score)
+            _arc(chosen_card)
+            return chosen_out
         # Re-propose with feedback and retry.
         feedback = _giri_feedback_to_text(report)
         if progress_cb:

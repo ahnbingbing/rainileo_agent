@@ -120,7 +120,7 @@ IMPORTANT STYLE RULES:
 - **Character appearance accuracy** (PD 2026-06-02: TIGHTENED):
   - **Ryani (French Bulldog, 11yr)**: a THIN Boston Terrier-style WHITE BLAZE (narrow line, NOT a wide splash) from nose to forehead, white dot above each eye, silver-grey aged muzzle, white chin, large white chest patch, large bat ears, ABSOLUTELY NO TAIL (her rear is bare — flag any tail rendering as a major failure), stocky compact body, only black/white/grey — no brown.
   - **Leo (orange tabby, ~8mo)**: pale yellow-green chartreuse eyes (NOT gold-amber), faint scar across nose bridge, white chin tuft. Tail often in question mark shape. Lean agile body, paler cream-orange cheeks/belly than the back.
-  - **Marking enforcement (HARD CAP)**: if the automated marking check (이마줄/눈썹/회색주둥이/흰가슴) reports 3+ ❌ across any cut, your overall score MUST NOT exceed 7/10 — character fidelity is foundational. State this explicitly in your reasoning. If 4/4 ❌, max 5/10 and verdict = "수정 필요".
+  - **Marking enforcement (HARD CAP — AI-RENDERED CUTS ONLY)**: this applies to AI-generated frames (ai_vtuber, or real_footage photo_i2v cuts) where Seedance can drift. If the automated marking check (이마줄/눈썹/회색주둥이/흰가슴) reports 3+ ❌ across AI-rendered cuts, overall score MUST NOT exceed 7/10; 4/4 ❌ → max 5/10, verdict="수정 필요". **EXCEPTION (PD 2026-06-08): for real_footage real-clip cuts, the dog IS the real Ryani — her markings are correct by definition; do NOT penalize markings on real clips (the pixel heuristic false-negatives on real angles/lighting). Judge real clips on story/clarity, not the marking pixel check.**
   - **Cross-cut consistency**: pets should look IDENTICAL across cuts within the same episode. Different breed renderings between cuts 1 and 4 = major drift, cap at 6.
 - **Animal behavior accuracy**: Body language must match the scene's emotion and be species-accurate:
   - Leo (cat): tail shape (?=curious, up=happy, puffed=scared), ear direction, slow blink, butt wiggle before jump, kneading, grooming
@@ -538,33 +538,37 @@ def review(video: Path, storyboard: list[dict] | None = None,
         blaze_ok = checks.get("blaze_pass_rate", 0) > 0.5
         eyebrow_ok = checks.get("eyebrow_pass_rate", 0) > 0.5
         muzzle_ok = checks.get("muzzle_pass_rate", 0) > 0.5
-
-        dims = report.get("dimensions", {})
-        vlm_char = dims.get("character_clarity", 7)
-
-        # 이마줄 빠지면 캐릭터 최대 5점 (VLM이 10점 줘도 무시)
-        if not blaze_ok:
-            dims["character_clarity"] = min(vlm_char, 5)
-            report.setdefault("_marking_overrides", []).append(
-                "이마줄 없음 → character_clarity 최대 5점")
-        # 이마줄+눈썹 둘 다 빠지면 최대 3점
-        if not blaze_ok and not eyebrow_ok:
-            dims["character_clarity"] = min(dims.get("character_clarity", 7), 3)
-            report.setdefault("_marking_overrides", []).append(
-                "이마줄+눈썹 없음 → character_clarity 최대 3점")
-
-        report["dimensions"] = dims
-
-        # 마킹 픽셀 체크는 SIGNAL로만 사용 (2026-05-30 변경).
-        # 이전: marking_pass < 2 면 무조건 verdict override → VLM 9/10도 강제 "수정 필요"로.
-        # 현재: marking_pass < 1 (즉 3개 다 실패) 일 때만 override. Seedance ref가
-        # 마킹을 흐릿하게 reproduce 하지만 캐릭터 정체성은 유지하는 경우가 많아서,
-        # VLM 점수를 신뢰하고 픽셀 체크는 한계 케이스만 잡도록 조정.
         marking_pass = sum([blaze_ok, eyebrow_ok, muzzle_ok])
-        if marking_pass < 1 and report.get("판정") == "업로드":
-            report["판정"] = "수정 필요"
-            report["가장_큰_문제"] = f"랴니 마킹 전부 누락 (이마줄={'✓' if blaze_ok else '✗'} 눈썹={'✓' if eyebrow_ok else '✗'} 주둥이={'✓' if muzzle_ok else '✗'})"
-            report["최소_수정안"] = "Seedance prompt에 랴니 마킹 설명 강화 또는 standard 모델로 격상"
+
+        # PD 2026-06-08: the marking pixel-check + hard cap is for AI-rendered
+        # cuts (ai_vtuber / Seedance drift). On REAL footage the dog IS the real
+        # Ryani — her markings are ground-truth-correct; the brightness heuristic
+        # just false-negatives on real angles/lighting. Hard-capping real_footage
+        # forced verdict="수정 필요" and the retry loop ran 100× (re-proposing can
+        # never "fix" a real clip's markings). So for real_footage: SIGNAL only.
+        is_rf = (concept or {}).get("render_style", "") == "real_footage"
+        dims = report.get("dimensions", {})
+        if is_rf:
+            report.setdefault("_marking_overrides", []).append(
+                f"real_footage — 마킹 하드캡 미적용(실제 강아지). 픽셀신호 pass={marking_pass}/3")
+        else:
+            vlm_char = dims.get("character_clarity", 7)
+            # 이마줄 빠지면 캐릭터 최대 5점 (VLM이 10점 줘도 무시)
+            if not blaze_ok:
+                dims["character_clarity"] = min(vlm_char, 5)
+                report.setdefault("_marking_overrides", []).append(
+                    "이마줄 없음 → character_clarity 최대 5점")
+            # 이마줄+눈썹 둘 다 빠지면 최대 3점
+            if not blaze_ok and not eyebrow_ok:
+                dims["character_clarity"] = min(dims.get("character_clarity", 7), 3)
+                report.setdefault("_marking_overrides", []).append(
+                    "이마줄+눈썹 없음 → character_clarity 최대 3점")
+            report["dimensions"] = dims
+            # 마킹 픽셀 체크는 SIGNAL로만 (2026-05-30): 3개 다 실패일 때만 verdict override.
+            if marking_pass < 1 and report.get("판정") == "업로드":
+                report["판정"] = "수정 필요"
+                report["가장_큰_문제"] = f"랴니 마킹 전부 누락 (이마줄={'✓' if blaze_ok else '✗'} 눈썹={'✓' if eyebrow_ok else '✗'} 주둥이={'✓' if muzzle_ok else '✗'})"
+                report["최소_수정안"] = "Seedance prompt에 랴니 마킹 설명 강화 또는 standard 모델로 격상"
     except Exception as e:
         log.warning("Character similarity check failed: %s", e)
 
