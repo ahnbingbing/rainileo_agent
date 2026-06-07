@@ -339,6 +339,49 @@ def veto_cmd(ack, body, respond):
 
 
 # ──────────────────────────────────────────────────────────────────────
+# /concept <YYYY-MM-DD> <내용> — 특정 날짜 컨셉 예약 (PD 2026-06-07).
+#   그 날 제작 시 PD가 적은 내용을 최우선 방향으로 컨셉을 만든다.
+#   /concept                    → 다가오는 예약 목록
+#   /concept 2026-06-15 비오는날 창밖 보는 레오 + 랴니 실내놀이
+# ──────────────────────────────────────────────────────────────────────
+@app.command("/concept")
+def concept_cmd(ack, body, respond):
+    ack()
+    import datetime as _dt
+    from agents import arc
+    text = (body.get("text") or "").strip()
+    if not text:
+        with db() as con:
+            rows = arc.list_concept_directives(con, _dt.date.today().isoformat())
+        if not rows:
+            respond("예약된 컨셉 없음.\nusage: `/concept <YYYY-MM-DD> <내용>`")
+            return
+        lines = [":calendar: *예약된 컨셉*"]
+        for r in rows:
+            lines.append(f"  • `{r['target_date']}` — {r['directive'][:120]}")
+        respond("\n".join(lines)); return
+    parts = text.split(maxsplit=1)
+    try:
+        d = _dt.date.fromisoformat(parts[0])
+    except ValueError:
+        respond("날짜 형식은 `YYYY-MM-DD` 예요. 예: `/concept 2026-06-15 비오는날 컨셉`")
+        return
+    if len(parts) < 2 or not parts[1].strip():
+        respond("내용을 적어주세요. 예: `/concept 2026-06-15 비오는날 창밖 레오 + 랴니 실내놀이`")
+        return
+    directive = parts[1].strip()
+    try:
+        with db() as con:
+            arc.set_concept_directive(con, d.isoformat(), directive)
+        warn = "" if d >= _dt.date.today() else " :warning: (과거 날짜)"
+        respond(f":white_check_mark: `{d.isoformat()}` 컨셉 예약됨{warn}\n  → {directive}\n"
+                f"_그날 4슬롯 모두 이 방향을 최우선으로 제작합니다._")
+    except Exception as e:
+        log.exception("concept cmd failed")
+        respond(f":x: concept 저장 실패: {str(e)[:300]}")
+
+
+# ──────────────────────────────────────────────────────────────────────
 # /knowledge — 컨셉 생성이 PD에게 물은 '모르는 캐릭터/세계 사실' 대기열 (PD 2026-06-07).
 #   /knowledge          → 대기 질문 + 저장된 사실 보기
 #   /answer <id> <답>    → 그 질문에 답 저장(영구 — 다음 컨셉부터 반영, 다시 안 물음)

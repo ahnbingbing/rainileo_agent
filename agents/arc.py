@@ -67,7 +67,52 @@ def ensure_tables(con: sqlite3.Connection) -> None:
         )
         """
     )
+    # PD-scheduled concept directives (PD 2026-06-07 /concept): on target_date the
+    # day's production uses this PD-authored direction (highest priority).
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pd_concept_directives (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            target_date TEXT,
+            directive   TEXT,
+            created_at  TEXT DEFAULT (datetime('now')),
+            used_at     TEXT
+        )
+        """
+    )
     con.commit()
+
+
+# ── PD-scheduled concept (/concept <date> <text>) ─────────────────────
+def set_concept_directive(con: sqlite3.Connection, target_date: str, directive: str) -> None:
+    """Store a PD-authored concept direction for a specific date (latest wins)."""
+    ensure_tables(con)
+    con.execute(
+        "INSERT INTO pd_concept_directives (target_date, directive) VALUES (?,?)",
+        (target_date[:10], directive),
+    )
+    con.commit()
+
+
+def get_concept_directive(con: sqlite3.Connection, target_date: str) -> str | None:
+    """Most recent PD concept directive for the date, if any."""
+    try:
+        ensure_tables(con)
+        row = con.execute(
+            "SELECT directive FROM pd_concept_directives WHERE target_date=? "
+            "ORDER BY id DESC LIMIT 1", (target_date[:10],),
+        ).fetchone()
+        return row[0] if row else None
+    except Exception:
+        return None
+
+
+def list_concept_directives(con: sqlite3.Connection, from_date: str) -> list[dict]:
+    ensure_tables(con)
+    return [dict(r) for r in con.execute(
+        "SELECT target_date, directive FROM pd_concept_directives "
+        "WHERE target_date >= ? GROUP BY target_date ORDER BY target_date",
+        (from_date[:10],))]
 
 
 # ── Ledger ────────────────────────────────────────────────────────────
@@ -397,6 +442,12 @@ def next_directive(con: sqlite3.Connection, *, today: str, render_style: str) ->
     """Showrunner directive for THIS episode: what it should contribute to the
     shared arc, given the rolling plan + what already aired. Injected into the
     lane's writer. Empty string on failure (writer just falls back to grounded)."""
+    # PD-scheduled concept (/concept <date> <text>) — highest priority, applies
+    # even when ARC is off (it's PD's explicit instruction for that date).
+    pd = get_concept_directive(con, today)
+    if pd:
+        return ("[PD 지정 컨셉 — 이 방향을 최우선으로] " + pd +
+                " (단 캐릭터 사실/자산 충실도는 그대로 지켜라.)")
     if not enabled():
         return ""
     # Launch-week intro overlay takes precedence (deterministic — no LLM
