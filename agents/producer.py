@@ -135,16 +135,35 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
     ]
 
     # Group videos by date for continuity (same-day clips = one episode)
+    # PD 2026-06-06: derive two flags the Writer needs to avoid incoherent
+    # clip sets: `motion` (low-motion clips read as still photos) and `outing`
+    # (harness/leash/cafe = a DIFFERENT place from home — must not be mixed).
+    _LOW_MOTION_ACTS = {"sitting", "sleeping", "resting", "lying", "loaf_pose",
+                        "watching", "looking", "being_held"}
+    def _motion_level(r):
+        return "low" if (r["activity"] or "").lower() in _LOW_MOTION_ACTS else "ok"
+    def _outing_flag(r):
+        sc = (_ground_truth_sc(r) or "")
+        cues = ("하네스", "harness", "리쉬", "leash", "목줄", "끈", "카페", "cafe",
+                "유리 테이블", "외출")
+        return any(c in sc for c in cues)
+
     best_videos = [
         {"id": r["asset_id"], "act": r["activity"] or "", "sub": r["subjects_csv"] or "",
          "mood": r["mood"] or "", "sc": _ground_truth_sc(r),
          "dur": r["duration_sec"], "date": (r["captured_iso"] or "")[:10],
          "loc": r["location_type"] or "",
+         # PD 2026-06-06: surface has_human so the Writer can set crop_out to
+         # frame a background person out (instead of letting them appear as an
+         # unexplained surprise).
+         "has_human": bool(r["has_human"]),
+         "motion": _motion_level(r),     # "low" = looks like a still photo
+         "outing": _outing_flag(r),      # True = cafe/outing, NOT home
          **_extra_vlm(r)}
         for r in con.execute(
             """
             SELECT asset_id, activity, subjects_csv, mood, scene_description, pd_notes,
-                   duration_sec, captured_iso, location_type, notes
+                   duration_sec, captured_iso, location_type, notes, has_human
             FROM assets
             WHERE vlm_analyzed_at IS NOT NULL AND kind='video' AND quality_score >= 0.7
             ORDER BY captured_iso DESC
@@ -372,6 +391,17 @@ def propose_concepts(target: dt.date, context: dict, style_filter: str | None = 
     if os.getenv("USE_WRITER_DIRECTOR", "1") == "0":
         return _propose_concepts_legacy(target, context, style_filter)
 
+    # PD 2026-06-06: feed the UNIFIED arc (av+rf share one series) into the
+    # ai_vtuber writer too — series-so-far + showrunner directive (rolling
+    # ~1-month season plan w/ season·holiday·trend·monthly re-intro·fantasy).
+    try:
+        from agents import arc as _arc
+        context["series_so_far"] = _arc.series_so_far(_db(), n=10)
+        context["arc_directive"] = _arc.next_directive(
+            _db(), today=target.isoformat(), render_style="ai_vtuber")
+    except Exception as e:
+        log.warning("arc directive (av) failed: %s", e)
+
     try:
         from agents.writer_director import propose_concepts_v2
         return propose_concepts_v2(
@@ -388,24 +418,126 @@ def propose_concepts(target: dt.date, context: dict, style_filter: str | None = 
 
 REALFOOTAGE_SINGLEPASS_PROMPT = ROOT / "agents" / "prompts" / "realfootage_concept.md"
 
+# PD 2026-06-06: a clip used in a real_footage episode is on COOLDOWN for the
+# next N episodes — don't reuse the same footage back-to-back.
+RF_CLIP_COOLDOWN_EPISODES = int(os.getenv("RF_CLIP_COOLDOWN_EPISODES", "4"))
+
+
+def _ensure_uploaded_column(con: sqlite3.Connection) -> None:
+    """PD 2026-06-06: cooldown counts only UPLOADED episodes (test renders must
+    NOT burn a clip's cooldown). Add an `uploaded` flag the future upload
+    pipeline will set to 1. Until then nothing is uploaded → cooldown is inert."""
+    try:
+        cols = [r[1] for r in con.execute("PRAGMA table_info(cards)")]
+        if "uploaded" not in cols:
+            con.execute("ALTER TABLE cards ADD COLUMN uploaded INTEGER DEFAULT 0")
+            con.commit()
+            log.info("added cards.uploaded column")
+    except Exception as e:
+        log.warning("ensure uploaded column failed: %s", e)
+
+
+def _recently_used_rf_assets(con: sqlite3.Connection,
+                             n: int = RF_CLIP_COOLDOWN_EPISODES) -> set[str]:
+    """asset_ids used in the last `n` UPLOADED real_footage episodes (from each
+    card's payload_json cuts). PD 2026-06-06: only uploaded=1 counts — test
+    renders don't trigger cooldown. RF doesn't populate card_assets → read
+    payload_json. (Until the upload pipeline sets uploaded=1, this is empty.)"""
+    used: set[str] = set()
+    try:
+        _ensure_uploaded_column(con)
+        rows = con.execute(
+            "SELECT payload_json FROM cards WHERE render_style='real_footage' "
+            "AND uploaded=1 "
+            "ORDER BY created_at DESC LIMIT ?", (n,),
+        ).fetchall()
+        for r in rows:
+            try:
+                p = json.loads(r[0] or "{}")
+            except Exception:
+                continue
+            for c in (p.get("cuts") or []):
+                aid = c.get("asset_id")
+                if aid:
+                    used.add(aid)
+    except Exception as e:
+        log.warning("cooldown lookup failed: %s", e)
+    return used
+
 
 def _propose_realfootage_singlepass(target: dt.date, context: dict,
-                                     progress_cb: ProgressCb = None) -> list[dict]:
+                                     progress_cb: ProgressCb = None,
+                                     prior_feedback: str = "") -> list[dict]:
     """PD 2026-06-04: dedicated lean real_footage storyteller. ONE LLM call
     that reads the clip ground truth and writes a flowing narrative grounded
-    in what the clips actually show (쿠들습격 style, but honest)."""
+    in what the clips actually show (쿠들습격 style, but honest).
+
+    PD 2026-06-06: `prior_feedback` carries the Giri review's findings from a
+    failed attempt so this re-proposal fixes them (the Giri-driven retry loop).
+    """
     if progress_cb:
-        progress_cb(":pencil: real_footage 단일-패스 스토리텔러 (grounded flowing)")
+        msg = ":pencil: real_footage 단일-패스 스토리텔러 (grounded flowing)"
+        if prior_feedback:
+            msg += " — 기리 피드백 반영 재작성"
+        progress_cb(msg)
     system = REALFOOTAGE_SINGLEPASS_PROMPT.read_text(encoding="utf-8")
-    # Feed only the real_footage-relevant context: available videos with full
-    # ground truth, plus date. Strip ai_vtuber noise.
+    # Feed both videos (Tier 1) and photos (Tier 2). PD 2026-06-06: photos are
+    # NOT dropped anymore — every photo cut is animated via Seedance photo_i2v
+    # so the writer can use a photo for the payoff/closer and still get motion.
+    # The writer must mark photo cuts with source_hint="photo_i2v" + a
+    # motion_prompt grounded in the photo.
+    # PD 2026-06-06: exclude clips used in the last N real_footage episodes so
+    # the same footage isn't reused back-to-back (4-episode cooldown).
+    avail_videos = context.get("available_videos", [])
+    try:
+        _con = _db()
+        cooldown = _recently_used_rf_assets(_con)
+        before = len(avail_videos)
+        filtered = [v for v in avail_videos if v.get("id") not in cooldown]
+        # Safety: don't starve the writer. If the cooldown leaves too few clips
+        # for a full episode, relax it (still prefer fresh, but allow reuse).
+        if len(filtered) >= 6:
+            avail_videos = filtered
+            if cooldown and progress_cb:
+                progress_cb(f":snowflake: 최근 {RF_CLIP_COOLDOWN_EPISODES}편 사용 클립 "
+                            f"{before - len(filtered)}개 제외 (쿨다운)")
+        else:
+            log.warning("cooldown left only %d clips (<6) — relaxing", len(filtered))
+            if progress_cb:
+                progress_cb(f":warning: 쿨다운 후 클립 부족({len(filtered)}개) — 완화 적용")
+    except Exception as e:
+        log.warning("cooldown filter failed: %s", e)
     rf_context = {
         "target_date": target.isoformat(),
-        "available_videos": context.get("available_videos", []),
-        "available_photos": context.get("available_photos", [])[:6],
+        "available_videos": avail_videos,
+        "available_photos": context.get("available_photos", [])[:10],
         "video_date_clusters": context.get("video_date_summary", {}),
     }
     user = json.dumps(rf_context, ensure_ascii=False, default=str)
+    # PD 2026-06-06: feed the showrunner directive (rolling ~1-month season plan
+    # + what already aired across BOTH lanes) so the writer BUILDS the unified
+    # arc. NOTE: arc is a POST-UPLOAD concern — arc.py functions no-op while
+    # ARC_ENABLED != 1, so these calls add no cost until enabled.
+    try:
+        from agents import arc as _arc
+        _series = _arc.series_so_far(_db(), n=10)
+        _dir = _arc.next_directive(_db(), today=target.isoformat(),
+                                   render_style="real_footage")
+        if _series or _dir:
+            user += "\n\n" + _series
+            if _dir:
+                user += ("\n\n## 오늘의 showrunner 디렉티브 (시즌 플랜 기반):\n" + _dir)
+            user += ("\n위 시리즈/디렉티브를 이어받아라: 이미 한 소개/스토리 반복 금지, "
+                     "열린 떡밥은 잇거나 회수, 이번 회차의 시리즈상 진전을 의식. "
+                     "단 자산에 실제 있는 것만 — 디렉티브가 자산과 안 맞으면 자산 우선.")
+    except Exception as e:
+        log.warning("arc directive injection failed: %s", e)
+    if prior_feedback:
+        user += (
+            "\n\n## ⚠️ 이전 시도가 기리(Giri) 검수를 통과하지 못했다. 아래 지적을 "
+            "반드시 고쳐서 다시 써라 (같은 실수 반복 금지):\n" + prior_feedback +
+            "\n위 문제를 해결한 새 컨셉을 작성하라. 필요하면 컷 구성/자산/캡션을 바꿔라."
+        )
     user += ("\n\nWrite ONE real_footage concept as a JSON array of length 1. "
              "Follow the 5-step order. Every caption must be grounded in the "
              "clip's actual sc. Flowing narrative, not dry list. Output ONLY "
@@ -425,8 +557,13 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
             raise RuntimeError(f"real_footage singlepass: no JSON array (len={len(text)})")
         concepts = json.loads(m.group(0))
     # PD 2026-06-05: NO cut cap — script decides length.
+    # PD 2026-06-06: stamp the single-pass author so the render pipeline can
+    # SKIP the VLM post-render caption rewrite. The single-pass captions are
+    # already grounded in clip ground truth; letting the Caption Agent rewrite
+    # them downstream silently overwrote every prompt fix (the 3-day root cause).
     for c in concepts:
         c["render_style"] = "real_footage"
+        c["author"] = "realfootage_singlepass"
     # PD 2026-06-06: persist the stage artifact so we can trace WHERE a
     # problem (e.g. subject/object reversal) was introduced.
     try:
@@ -475,6 +612,24 @@ def format_proposal_message(proposals: list[dict], target: dt.date) -> str:
     return "\n".join(lines)
 
 
+def post_revised_proposal(thread_ts: str, proposals: list[dict],
+                          target: dt.date, round_no: int) -> None:
+    """PD 2026-06-07: re-post the REVISED concept into the same thread so PD can
+    confirm or steer again (the propose→direction→update→re-confirm loop)."""
+    try:
+        from slack_sdk import WebClient
+        client = WebClient(token=os.environ["SLACK_BOT_TOKEN"])
+        channel = os.environ.get("SLACK_WORKROOM_CHANNEL")
+        if not channel:
+            return
+        msg = (f":pencil2: *수정안 v{round_no+1}* (피드백 반영)\n\n"
+               + format_proposal_message(proposals, target)
+               + "\n다른 방향 있으면 또 알려주세요. 없으면 이대로 진행합니다.")
+        client.chat_postMessage(channel=channel, text=msg, thread_ts=thread_ts)
+    except Exception as e:
+        log.warning("post_revised_proposal failed: %s", e)
+
+
 def post_proposal(proposals: list[dict], target: dt.date) -> str | None:
     """Post proposal to Slack workroom. Returns thread_ts."""
     from slack_sdk import WebClient
@@ -493,15 +648,21 @@ def post_proposal(proposals: list[dict], target: dt.date) -> str | None:
 # ──────────────────────────────────────────────────────────────────────
 def wait_for_pd(thread_ts: str, timeout_sec: int = 7200,
                 poll_interval: int = 60,
-                progress_cb: ProgressCb = None) -> list[str]:
-    """Poll Slack thread for PD replies. Returns list of reply texts."""
+                progress_cb: ProgressCb = None,
+                seen_ts: set | None = None) -> list[str]:
+    """Poll Slack thread for PD replies. Returns list of reply texts.
+    PD 2026-06-07: pass a persistent `seen_ts` across revision rounds so each
+    round only catches NEW replies (the propose→revise→re-confirm loop)."""
     from slack_sdk import WebClient
     client = WebClient(token=os.environ["SLACK_BOT_TOKEN"])
     channel = os.environ["SLACK_WORKROOM_CHANNEL"]
     bot_user_id = client.auth_test()["user_id"]
 
     deadline = time.time() + timeout_sec
-    seen_ts = {thread_ts}
+    if seen_ts is None:
+        seen_ts = {thread_ts}
+    else:
+        seen_ts.add(thread_ts)
     replies: list[str] = []
 
     while time.time() < deadline:
@@ -606,7 +767,7 @@ def _render_realfootage_direct(concept: dict, target: dt.date,
     if not cuts:
         if progress_cb:
             progress_cb(":x: 단일-패스 컨셉에 cuts 없음")
-        return None
+        return None, None, None
 
     tone = concept.get("tone")
     if isinstance(tone, str):
@@ -651,7 +812,169 @@ def _render_realfootage_direct(concept: dict, target: dt.date,
     # use_brain=False — use the concept's cuts/asset_ids directly, no re-planning.
     out = render_card(card["card_id"], progress_cb=progress_cb, use_brain=False,
                       concept=concept)
-    return out
+
+    # PD 2026-06-06: real_footage was bypassing the Giri review gate entirely
+    # (it goes through render_card directly, not render_with_retry). Run Giri on
+    # the rendered episode, surface the verdict, persist the report. The retry
+    # wrapper (_render_realfootage_with_retry) decides whether to re-generate.
+    report = None
+    if out:
+        report = _giri_review_realfootage(out, concept, target, progress_cb)
+    return out, report, card["card_id"]
+
+
+# Giri verdicts that count as "passed" (mirror reviewer.main exit logic).
+GIRI_PASS_VERDICTS = ("업로드", "소폭 수정 후 업로드")
+
+
+def _giri_feedback_to_text(report: dict) -> str:
+    """Condense a Giri report into actionable Korean feedback for the writer."""
+    if not report:
+        return ""
+    lines = []
+    verdict = report.get("판정", "?")
+    score = report.get("점수", "?")
+    lines.append(f"기리 판정: {verdict} ({score}/10)")
+    for m in (report.get("caption_vs_clip_mismatches") or [])[:6]:
+        cn = m.get("cut_number", "?")
+        cap = m.get("caption_text", "")
+        real = m.get("what_clip_actually_shows", "")
+        lines.append(f"- cut{cn} 캡션-클립 불일치: 캡션「{cap}」인데 실제로는 「{real}」")
+    for key in ("개선점", "문제점", "이유", "총평"):
+        v = report.get(key)
+        if isinstance(v, list):
+            for item in v[:5]:
+                lines.append(f"- {key}: {item}")
+        elif isinstance(v, str) and v.strip():
+            lines.append(f"- {key}: {v.strip()[:200]}")
+    return "\n".join(lines)
+
+
+def _render_realfootage_with_retry(concept: dict, target: dt.date,
+                                   con: sqlite3.Connection,
+                                   context: dict,
+                                   progress_cb: ProgressCb = None,
+                                   max_attempts: int | None = None) -> Path | None:
+    """PD 2026-06-06: real_footage MUST pass the Giri gate — if it fails, retry.
+    Each retry re-runs the single-pass writer with the Giri feedback injected,
+    then re-renders. Loops UNTIL it passes — PD does NOT tolerate low quality, so
+    there is no small fixed cap (10, 100, however many it takes). A high safety
+    ceiling (env RF_GIRI_MAX_ATTEMPTS, default 100) only prevents a true infinite
+    loop / runaway cost if Giri can never be satisfied."""
+    if max_attempts is None:
+        max_attempts = int(os.getenv("RF_GIRI_MAX_ATTEMPTS", "100"))
+    cur_concept = concept
+    last_out = None
+    last_card_id = ""
+
+    def _arc(card_id):
+        # PD 2026-06-06: record the actually-rendered concept into the unified
+        # arc ledger so the next directive (av+rf) builds on it.
+        try:
+            from agents import arc as _arcmod
+            title = cur_concept.get("title")
+            title = title.get("ko") if isinstance(title, dict) else (title or "real_footage")
+            _arcmod.record_episode(con, card_id=card_id or "", date=target.isoformat(),
+                                   render_style="real_footage", title=title,
+                                   concept=cur_concept)
+        except Exception as e:
+            log.warning("arc record (rf) failed: %s", e)
+
+    for attempt in range(1, max_attempts + 1):
+        if progress_cb:
+            progress_cb(f":repeat: real_footage 시도 {attempt}/{max_attempts}")
+        out, report, card_id = _render_realfootage_direct(cur_concept, target, con, progress_cb)
+        last_out = out or last_out
+        last_card_id = card_id or last_card_id
+        verdict = (report or {}).get("판정", "")
+        if not report:
+            # Review unavailable (e.g., no API key) — don't loop blindly.
+            log.warning("Giri report unavailable — accepting attempt %d", attempt)
+            _arc(card_id)
+            return out
+        if verdict in GIRI_PASS_VERDICTS:
+            if progress_cb:
+                progress_cb(f":white_check_mark: 기리 통과 (시도 {attempt}): {verdict}")
+            _arc(card_id)
+            return out
+        if attempt >= max_attempts:
+            if progress_cb:
+                progress_cb(f":warning: 기리 미통과 {max_attempts}회 — 마지막 결과 사용 ({verdict})")
+            log.warning("real_footage failed Giri after %d attempts (%s)", max_attempts, verdict)
+            _arc(last_card_id)
+            return last_out
+        # Re-propose with feedback and retry.
+        feedback = _giri_feedback_to_text(report)
+        if progress_cb:
+            progress_cb(f":arrows_counterclockwise: 기리 미통과({verdict}) — 피드백 반영 재생성")
+        try:
+            new_concepts = _propose_realfootage_singlepass(
+                target, context, progress_cb, prior_feedback=feedback)
+            if new_concepts:
+                cur_concept = new_concepts[0]
+        except Exception as e:
+            log.warning("re-propose failed (%s) — keeping prior concept", e)
+    return last_out
+
+
+def _giri_review_realfootage(video: Path, concept: dict, target: dt.date,
+                             progress_cb: ProgressCb = None) -> dict | None:
+    """Run the Giri review agent on a rendered real_footage episode and save
+    the report as an artifact. Non-fatal: logs + returns None on any failure."""
+    try:
+        from agents.reviewer import review as giri_review
+
+        def _capstr(cut):
+            caps = cut.get("captions") or []
+            ko = " / ".join(c.get("ko", "") for c in caps if c.get("ko"))
+            return ko or cut.get("action", "")
+
+        storyboard = [
+            {"beat": c.get("beat", f"cut{i+1}"),
+             "description": f"{c.get('action','')} | 캡션: {_capstr(c)}"}
+            for i, c in enumerate(concept.get("cuts") or [])
+        ]
+        if progress_cb:
+            progress_cb(":mag: 기리 검수 중 (real_footage)...")
+        report = giri_review(video, storyboard=storyboard, concept=concept)
+        score = report.get("점수", "?")
+        verdict = report.get("판정", "?")
+        mismatches = report.get("caption_vs_clip_mismatches") or []
+        # PD 2026-06-06: post the SAME formatted Giri report ai_vtuber posts, so
+        # real_footage leaves the same rich Slack log (was just a one-liner).
+        if progress_cb:
+            try:
+                from agents.reviewer import format_slack_report
+                progress_cb(format_slack_report(report))
+            except Exception:
+                progress_cb(f":clipboard: 기리 판정: {verdict} ({score}/10)"
+                            + (f" — 캡션-클립 불일치 {len(mismatches)}건" if mismatches else ""))
+        log.info("Giri real_footage: %s (%s/10), %d caption mismatches",
+                 verdict, score, len(mismatches))
+        # Persist as artifact (PD: 단계별 산출물 추적).
+        try:
+            art_dir = ROOT / "data" / "output" / "artifacts"
+            art_dir.mkdir(parents=True, exist_ok=True)
+            ts = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+            art = art_dir / f"giri_realfootage_{target.isoformat()}_{ts}.json"
+            # default=str: the reviewer mixes numpy scalars (image-similarity
+            # metrics) into the report, which plain json.dumps rejects.
+            art.write_text(json.dumps({
+                "stage": "giri_review_realfootage",
+                "video": str(video),
+                "score": score,
+                "verdict": verdict,
+                "report": report,
+            }, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+            log.info("artifact saved: %s", art.name)
+        except Exception as e:
+            log.warning("giri artifact save failed: %s", e)
+        return report
+    except Exception as e:
+        log.warning("Giri review (real_footage) failed: %s", e)
+        if progress_cb:
+            progress_cb(f":warning: 기리 검수 실패(무시하고 진행): {str(e)[:100]}")
+        return None
 
 
 def produce_and_render(concepts: list[dict], target: dt.date,
@@ -771,9 +1094,14 @@ def produce_and_render(concepts: list[dict], target: dt.date,
         # directly from the concept, preserving title/captions/cuts verbatim.
         if (concept.get("render_style") or "").lower() == "real_footage":
             if progress_cb:
-                progress_cb(f":zap: [{i}/{len(concepts)}] real_footage 직접 카드화 (card-writer 우회)")
+                progress_cb(f":zap: [{i}/{len(concepts)}] real_footage 직접 카드화 (card-writer 우회) + 기리 retry")
             try:
-                out = _render_realfootage_direct(concept, target, con, progress_cb)
+                # PD 2026-06-06: render with the Giri-driven retry loop. context
+                # is rebuilt so a retry can re-run the single-pass writer with
+                # the failed attempt's Giri feedback injected.
+                rf_context = _gather_context(con, target)
+                out = _render_realfootage_with_retry(
+                    concept, target, con, rf_context, progress_cb)
                 if out:
                     outputs.append(out)
             except Exception as e:
@@ -995,10 +1323,89 @@ def send_photo_reminder() -> None:
 # ──────────────────────────────────────────────────────────────────────
 # Main: daily_pipeline
 # ──────────────────────────────────────────────────────────────────────
+# YouTube auto-upload (PD 2026-06-07: 승인 후 자동 + 예약 공개 publishAt).
+YOUTUBE_PUBLISH_HOUR = int(os.getenv("YOUTUBE_PUBLISH_HOUR", "18"))  # KST
+
+
+def _ensure_upload_columns(con: sqlite3.Connection) -> None:
+    try:
+        cols = [r[1] for r in con.execute("PRAGMA table_info(cards)")]
+        if "uploaded" not in cols:
+            con.execute("ALTER TABLE cards ADD COLUMN uploaded INTEGER DEFAULT 0")
+        if "youtube_video_id" not in cols:
+            con.execute("ALTER TABLE cards ADD COLUMN youtube_video_id TEXT")
+        con.commit()
+    except Exception as e:
+        log.warning("ensure upload columns failed: %s", e)
+
+
+def _compute_publish_at(target: dt.date) -> str:
+    """Scheduled-public time as ISO-UTC. target date at YOUTUBE_PUBLISH_HOUR KST,
+    but always at least 1h in the future (YouTube requires publishAt > now)."""
+    from zoneinfo import ZoneInfo
+    kst = ZoneInfo("Asia/Seoul")
+    when = dt.datetime.combine(target, dt.time(YOUTUBE_PUBLISH_HOUR, 0), tzinfo=kst)
+    now = dt.datetime.now(kst)
+    if when <= now + dt.timedelta(hours=1):
+        when = now + dt.timedelta(hours=1)
+    return when.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.date,
+                         progress_cb: ProgressCb = None) -> str | None:
+    """Upload a rendered episode to YouTube as SCHEDULED-PUBLIC (private +
+    publishAt). Sets cards.uploaded=1 + youtube_video_id (activates arc/cooldown).
+    OAuth not bootstrapped → warn + skip (non-fatal)."""
+    _ensure_upload_columns(con)
+    row = con.execute(
+        "SELECT card_id, payload_json, theme FROM cards WHERE output_video_path=? "
+        "ORDER BY updated_at DESC LIMIT 1", (str(out_path),),
+    ).fetchone()
+    if not row:
+        log.warning("auto-upload: no card for %s", out_path)
+        return None
+    card_id = row["card_id"]
+    try:
+        payload = json.loads(row["payload_json"] or "{}")
+    except Exception:
+        payload = {}
+    draft = payload.get("draft", {})
+    title = draft.get("title") or row["theme"] or "Ryani & Leo"
+    if isinstance(title, dict):
+        title = title.get("ko") or "Ryani & Leo"
+    desc = draft.get("description", "") or ""
+    tags = [str(t).lstrip("#") for t in (draft.get("hashtags") or [])]
+    publish_at = _compute_publish_at(target)
+    try:
+        from youtube.upload import upload_short
+        if progress_cb:
+            progress_cb(f":arrow_up: YouTube 예약 업로드 중: {Path(out_path).name} "
+                        f"(공개 예정 {publish_at})")
+        res = upload_short(out_path, title, desc, tags=tags,
+                           publish_at_iso=publish_at)
+        vid = res.get("id")
+    except Exception as e:
+        log.warning("auto-upload failed for %s: %s", card_id[:8], e)
+        if progress_cb:
+            progress_cb(f":warning: YouTube 업로드 실패 (OAuth 미설정일 수 있음): "
+                        f"{str(e)[:120]} — `python -m youtube.oauth` 부트스트랩 필요")
+        return None
+    con.execute(
+        "UPDATE cards SET state='published', uploaded=1, youtube_video_id=?, "
+        "updated_at=datetime('now') WHERE card_id=?", (vid, card_id),
+    )
+    con.commit()
+    if progress_cb:
+        progress_cb(f":white_check_mark: 예약 업로드 완료 → https://youtube.com/shorts/{vid} "
+                    f"(공개 {publish_at})")
+    return vid
+
+
 def daily_pipeline(target: dt.date, *,
                    timeout_sec: int = 7200,
                    progress_cb: ProgressCb = None,
                    on_thread_created: Callable[[str], None] | None = None,
+                   video_cb: Callable[[Path], None] | None = None,
                    style_filter: str | None = None,
                    dry_run: bool = False) -> None:
     con = _db()
@@ -1044,24 +1451,35 @@ def daily_pipeline(target: dt.date, *,
     con.commit()
     proposal_id = con.execute("SELECT last_insert_rowid()").fetchone()[0]
 
-    # 4. Wait for PD (skip if timeout=0 / test mode)
-    pd_feedback = []
-    if timeout_sec > 0:
-        if progress_cb:
-            progress_cb(":hourglass: PD 피드백 대기 (최대 2시간)...")
-        if thread_ts:
-            pd_feedback = wait_for_pd(thread_ts, timeout_sec=timeout_sec,
-                                      progress_cb=progress_cb)
+    # 4-5. PD feedback → REVISION LOOP (PD 2026-06-07): a confirm-only flow is
+    # not enough — if PD replies a different direction in the thread, revise the
+    # concept, RE-POST the updated version, and wait again. Loop until PD
+    # approves (or stops replying / max rounds / timeout).
+    final = proposals
+    all_feedback: list[str] = []
+    if timeout_sec > 0 and thread_ts:
+        seen: set = {thread_ts}
+        max_rounds = int(os.getenv("PD_REVISION_ROUNDS", "5"))
+        for rnd in range(max_rounds):
+            if progress_cb:
+                progress_cb(":hourglass: PD 피드백 대기 (확정 또는 다른 방향 제안)...")
+            fb = wait_for_pd(thread_ts, timeout_sec=timeout_sec,
+                             progress_cb=progress_cb, seen_ts=seen)
+            real = [f for f in fb if f.lower() not in APPROVE_SIGNALS]
+            all_feedback += fb
+            if not real:
+                # approval / reaction / timeout → settle on current `final`
+                break
+            if progress_cb:
+                progress_cb(":memo: 다른 방향 반영해 컨셉 업데이트 중...")
+            final = finalize_concepts(final, fb)
+            post_revised_proposal(thread_ts, final, target, rnd)
     elif progress_cb:
         progress_cb(":fast_forward: 테스트 모드 — PD 컨펌 스킵")
 
-    # 5. Finalize concepts
-    if progress_cb:
-        progress_cb(":memo: 컨셉 확정 중...")
-    final = finalize_concepts(proposals, pd_feedback)
     con.execute(
         "UPDATE daily_proposals SET pd_feedback=?, finalized_json=?, status='confirmed' WHERE id=?",
-        (json.dumps(pd_feedback, ensure_ascii=False),
+        (json.dumps(all_feedback, ensure_ascii=False),
          json.dumps(final, ensure_ascii=False),
          proposal_id),
     )
@@ -1079,13 +1497,35 @@ def daily_pipeline(target: dt.date, *,
     )
     con.commit()
 
-    # 8. Notify
+    # 8. Notify + POST THE ACTUAL VIDEOS (PD 2026-06-07: 결과 동영상은 꼭
+    # 올라와야 한다 — used to upload, regressed to filenames-only).
     if progress_cb:
         progress_cb(
             f":white_check_mark: {len(outputs)}편 렌더 완료!\n"
             + "\n".join(f"  • `{o.name}`" for o in outputs)
-            + f"\n`/upload` 명령으로 YouTube에 업로드하세요."
         )
+    if video_cb:
+        for o in outputs:
+            try:
+                video_cb(o)
+            except Exception as e:
+                log.warning("video_cb failed for %s: %s", o, e)
+
+    # 9. AUTO-UPLOAD (PD 2026-06-07: 승인 후 자동 + 예약 공개). Only in the
+    # PD-approval flow (timeout_sec>0) — NOT /test (timeout=0). Schedules each
+    # episode public via publishAt. OAuth missing → warns + skips. Gate with
+    # YOUTUBE_AUTO_UPLOAD=0 to disable.
+    if (timeout_sec > 0 and not dry_run
+            and os.getenv("YOUTUBE_AUTO_UPLOAD", "1") == "1"):
+        if progress_cb:
+            progress_cb(":satellite: 승인 완료 — YouTube 예약 업로드 시작")
+        for o in outputs:
+            try:
+                _auto_upload_episode(con, o, target, progress_cb)
+            except Exception as e:
+                log.warning("auto-upload failed for %s: %s", o, e)
+    elif progress_cb:
+        progress_cb("`/upload <card_id>`로 수동 업로드할 수 있어요.")
 
 
 # ──────────────────────────────────────────────────────────────────────

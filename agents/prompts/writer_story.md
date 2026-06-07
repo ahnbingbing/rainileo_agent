@@ -79,6 +79,22 @@ You do **NOT** write veo_prompt, regen_prompt, motion_prompt, shot size, camera_
 - 좋은 예: cut1 `beat: setup`, cut2 `beat: build`, cut3 `beat: climax`, cut4 `beat: reveal`, cut5 `beat: resolution`.
 - one_take 의도면 1 cut만 만들고 Director가 그 안에서 shot 분할.
 
+### 시리즈 연속성 — 아크를 쌓아라 (PD 2026-06-06)
+`context.series_so_far`(지금까지 나간 회차, av+rf 통합)와 `context.arc_directive`
+(쇼러너의 이번 회차 방향, ~1개월 시즌 플랜 기반)가 있으면 **반드시 참고**하라.
+- 이미 한 소개/스토리를 반복하지 말고, 열린 떡밥은 잇거나 회수하며, 이번 회차가
+  시리즈에서 어떤 진전인지 의식하며 써라.
+- `arc_directive`의 방향을 따르되, 자산/계절/현실성과 안 맞으면 유연하게 조정.
+- ai_vtuber는 상상/판타지 컨셉(여행·서핑·배경전환) + 월 1회 재소개 회차를 소화할 수
+  있다 (디렉티브가 그렇게 지시하면).
+
+### 윙크 엔딩 주체 — `wink_subject` 필수 (PD 2026-06-06)
+에피소드는 마지막에 한 펫이 카메라에 윙크하며 끝난다. **그 윙크를 누가 할지 네가 스토리 기반으로 정해 `wink_subject: "ryani" | "leo"`로 출력하라.** (안 정하면 시스템이 캡션을 추측해야 해서 자주 틀린다.)
+- 윙크 = 그 갸그의 **주동자/승자**가 한다. 약 올린 쪽, 작전을 편 쪽, 펀치라인을 친 쪽.
+- ❌ 반응만 한 쪽(당황/발끈/웡! 한 쪽)은 윙크 주체 아님 — 그쪽은 당한 쪽.
+- 예: 레오가 꼬리로 랴니를 약 올리고 랴니가 "웡!" 반응 → 주동자는 **레오** → `wink_subject: "leo"`.
+- 예: 랴니가 레오 사료를 슬쩍 회수, 레오는 모름 → 주동자는 **랴니** → `wink_subject: "ryani"`.
+
 ### 캐릭터 소개 회차 (`episode_type: "character_intro"`) — PD 2026-06-02
 
 평범한 갸그 회차가 아니라 **랴니 또는 레오의 캐릭터 자체를 소개하는 spotlight 회차**일 때만 다음 룰을 켜라:

@@ -72,7 +72,8 @@ Return ONLY valid JSON with these fields:
   "best_for": ["cartoon_sticker", "ai_vtuber", "real_footage"],
   "best_for_reasoning": "why this image suits certain styles",
   "suggested_caption_ko": "이 장면에 어울리는 한국어 캡션 한 줄 — 추측형 어미 권장",
-  "suggested_motion_prompt": "if animated: English micro-motion prompt for Veo i2v"
+  "suggested_motion_prompt": "if animated: English micro-motion prompt for Veo i2v",
+  "uncertainties": ["list any fact you are GUESSING about, as 'field: what is unclear + your best guess'. e.g. 'location: 집 주방인지 카페인지 불확실, 카페 추정'. Empty list [] if everything is clearly visible. ALWAYS add an entry here when you are not sure of the location, who a partial person is, or an ambiguous pose."]
 }
 
 Rules:
@@ -82,7 +83,9 @@ Rules:
 - **LOOK BEYOND THE PET.** location_specific should say where this is in the apartment — not just "kitchen" but "kitchen_table" or "kitchen_counter". If a door is visible, identify if it's "rooftop_door_area" / "apartment_entrance" / "bathroom_door".
 - **SUBJECT INTENT.** What does this pet seem to be DOING / WANTING in this moment? play-bow → "social_invite". Stalking crouch → "hunt". Slow blink at human → "seek_attention" or "rest".
 - contextual_props: list ONLY props visibly in frame. If only food bowl visible, that's the only entry. If cat grass is visible, include "cat_grass".
-- has_human: true if ANY part of a human is visible.
+- **LOCATION — DO NOT GUESS A HOME ROOM (PD 2026-06-06).** The home is ONE specific apartment (light wood floors, white walls, blue-cushioned wooden bench sofa, fish tank). If the space does NOT match it — unfamiliar counter/tables, café décor, wooden animal figures/signage, other pets, leashes on chairs, outdoor seating — it is most likely a **cafe** or **other**, NOT "kitchen". Never label a café "주방/kitchen". When the room is genuinely unclear, use location_specific="other" and SAY "장소 불확실" in scene_description rather than guessing.
+- **BODY POSE — stretched vs curled are OPPOSITE (PD 2026-06-06).** Look at the legs/body. Legs extended, body long = "몸을 길게 뻗음 (stretched out)" → activity "stretching"/"resting", NOT "웅크림". Body balled up, legs tucked = "웅크림 (curled up)". Do not default a sleeping pet to "웅크림" — describe what you actually see.
+- has_human: true if ANY part of a human is visible — **including a partial human in the BACKGROUND** (a skirt, a leg, an arm, a hand at the frame edge, someone seated on the bench behind the pets). When present, say WHERE in scene_description (e.g. "왼쪽 뒤편에 사람의 치마/다리"). Missing a background human causes the Writer to render them as an unexplained surprise.
 - quality_score: 1.0 = perfect, 0.5 = usable, 0.0 = unusable.
 - Return ONLY valid JSON, no markdown fences, no commentary.
 """
@@ -254,6 +257,11 @@ def update_asset_tags(con: sqlite3.Connection, asset_id: str, tags: dict) -> Non
                 "looking_at": tags.get("looking_at"),
                 "location_specific": tags.get("location_specific"),
                 "contextual_props": tags.get("contextual_props"),
+                # PD 2026-06-06: VLM self-flags facts it is GUESSING about
+                # (esp. location). A queue surfaces these to PD, whose answer
+                # becomes authoritative pd_notes. Stops the Writer from
+                # transcribing wrong/uncertain tags as truth.
+                "uncertainties": tags.get("uncertainties") or [],
             }, ensure_ascii=False),
             asset_id,
         ),

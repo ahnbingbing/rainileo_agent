@@ -25,6 +25,8 @@
       <string>icloud.sync</string>
       <string>--album</string>
       <string>Ryani &amp; Leo</string>
+      <string>--download-missing</string>
+      <string>--vlm</string>
     </array>
 
     <key>WorkingDirectory</key><string>/Users/ahnbingbing/code/rianileo-agent</string>

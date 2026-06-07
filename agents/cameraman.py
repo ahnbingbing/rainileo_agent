@@ -733,17 +733,27 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
             if aid:
                 row = con.execute(
                     "SELECT asset_id, file_path, kind, subjects_csv, captured_iso, "
-                    "duration_sec, width, height, NULL as role, NULL as trim_start, NULL as trim_end "
+                    "duration_sec, width, height, has_human, "
+                    "NULL as role, NULL as trim_start, NULL as trim_end "
                     "FROM assets WHERE asset_id = ?", (aid,)
                 ).fetchone()
                 if not row:
                     log.warning("Dropping cut — asset_id %s not found", str(aid)[:24])
                     continue
                 asset = dict(row)
+                # PD 2026-06-06: for real_footage, a PHOTO is NOT an invalid
+                # asset — keep the cut and let the sources builder route it to
+                # Seedance photo_i2v (Tier 2) so it gets motion. Previously
+                # photos were dropped here, silently truncating the story
+                # (e.g. the warm payoff finale vanished → abrupt ending).
                 if asset["kind"] != expected_kind:
-                    log.warning("Dropping cut — %s kind=%s but style=%s needs %s",
-                                str(aid)[:20], asset["kind"], style, expected_kind)
-                    continue
+                    if style == "real_footage" and asset["kind"] == "photo":
+                        log.info("real_footage: photo cut %s → Seedance photo_i2v",
+                                 str(aid)[:20])
+                    else:
+                        log.warning("Dropping cut — %s kind=%s but style=%s needs %s",
+                                    str(aid)[:20], asset["kind"], style, expected_kind)
+                        continue
                 ordered.append(asset)
                 valid_cuts.append(cut)
             elif mode == "interp" and style == "real_footage":
@@ -876,6 +886,12 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
                 "source": fp,
                 "trim_start": ts,
                 "trim_dur": td,
+                # PD 2026-06-06: carry has_human so the trim step can crop the
+                # human out — channel HARD RULE: a human FACE must NEVER be
+                # visible. Also carry duration_sec for last-cut 여운 (play real
+                # footage instead of a frozen still).
+                "has_human": int(a.get("has_human") or 0),
+                "src_dur": float(src_dur) if src_dur else None,
             }
             # PD 2026-06-03: split_screen modes need a SECOND asset for the
             # other half of the split. Writer sets cc.secondary_asset_id.
@@ -1033,29 +1049,80 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
                     return _wrap_caption(en_clean, font_size=40, max_width=max_w)
                 return ""
 
+            # PD 2026-06-06: real_footage keeps KO/EN as SEPARATE fields so
+            # burn_captions.build_vf_multi can apply the intended hierarchy —
+            # KO big in the handwriting font, EN smaller in Pretendard below it.
+            # _merge_ko_en (used by ai_vtuber) stuffed both into `ko` with a
+            # newline + cleared `en`, so English rendered in the Korean
+            # handwriting font at KO size and the KO block ran "한 줄 더" long
+            # (PD repeat issue #4). Only real_footage gets the split for now.
+            split_ko_en = (style == "real_footage")
+
             # Priority 1: concept has "captions" array (multi-scene)
             if "captions" in cut_data and isinstance(cut_data["captions"], list):
                 for sc in cut_data["captions"]:
-                    merged = _merge_ko_en(sc.get("ko", ""), sc.get("en", ""))
-                    if merged:
-                        scenes.append({
-                            "start": sc.get("start", 0.2),
-                            "end": sc.get("end", 4.0),
-                            "ko": merged, "en": "",
-                        })
+                    if split_ko_en:
+                        ko_clean = _clean_caption(sc.get("ko", ""))
+                        en_clean = _clean_caption(sc.get("en", ""))
+                        if ko_clean or en_clean:
+                            scenes.append({
+                                "start": sc.get("start", 0.2),
+                                "end": sc.get("end", 4.0),
+                                "ko": ko_clean, "en": en_clean,
+                            })
+                    else:
+                        merged = _merge_ko_en(sc.get("ko", ""), sc.get("en", ""))
+                        if merged:
+                            scenes.append({
+                                "start": sc.get("start", 0.2),
+                                "end": sc.get("end", 4.0),
+                                "ko": merged, "en": "",
+                            })
 
             # Priority 2: single caption_ko + caption_en
             if not scenes:
-                merged = _merge_ko_en(
-                    cut_data.get("caption_ko", cut_data.get("description", "")),
-                    cut_data.get("caption_en", ""),
-                )
-                if merged:
-                    scenes.append({"start": 0.2, "end": 4.0, "ko": merged, "en": ""})
+                if split_ko_en:
+                    ko_clean = _clean_caption(
+                        cut_data.get("caption_ko", cut_data.get("description", "")))
+                    en_clean = _clean_caption(cut_data.get("caption_en", ""))
+                    if ko_clean or en_clean:
+                        scenes.append({"start": 0.2, "end": 4.0,
+                                       "ko": ko_clean, "en": en_clean})
+                else:
+                    merged = _merge_ko_en(
+                        cut_data.get("caption_ko", cut_data.get("description", "")),
+                        cut_data.get("caption_en", ""),
+                    )
+                    if merged:
+                        scenes.append({"start": 0.2, "end": 4.0, "ko": merged, "en": ""})
 
         # Priority 3: fallback to title
         if not scenes and fallback_title:
             scenes.append({"start": 0.2, "end": 4.0, "ko": fallback_title, "en": ""})
+
+        # PD 2026-06-06: captions MUST be continuous — a frame with NO caption is
+        # a SERIOUS defect (PD: "자막 영상 불일치는 심각한 이슈"). Make scenes
+        # gap-free and cover the whole cut: the first appears at ~0.1s, each
+        # scene's end = the next scene's start (fills any gap), and the last
+        # extends to the cut's end. Applies to BOTH lanes now — ai_vtuber
+        # one-take cuts were leaving the first ~2s blank. EXCEPTION: a
+        # wink_ending cut keeps its intentional late/brief caption.
+        _cc_here = concept_cuts[i] if i < len(concept_cuts) else {}
+        _is_wink = _cc_here.get("function") == "wink_ending"
+        if scenes and not _is_wink:
+            try:
+                _dur = float(_cc_here.get("duration_seconds") or 0)
+            except Exception:
+                _dur = 0.0
+            scenes.sort(key=lambda s: float(s.get("start", 0)))
+            scenes[0]["start"] = min(float(scenes[0].get("start", 0.1)), 0.1)
+            for j in range(len(scenes) - 1):
+                scenes[j]["end"] = float(scenes[j + 1]["start"])
+            last_end = float(scenes[-1].get("end", 0))
+            scenes[-1]["end"] = max(last_end, _dur - 0.05) if _dur else last_end
+            for s in scenes:
+                if float(s["end"]) <= float(s["start"]):
+                    s["end"] = float(s["start"]) + 1.0
 
         # Always use scenes format (works for both real_footage and ai_vtuber)
         captions[item["tag"]] = {"scenes": scenes} if scenes else {
@@ -1303,11 +1370,22 @@ def _vlm_post_render_caption_rewrite(work_dir: Path, manifests: dict,
     except Exception as e:
         log.warning("captions.json parse fail: %s", e); return
     n_updated = 0
-    for new_cut in (new_concept.get("cuts") or []):
+    # PD 2026-06-06 FIX: the Caption Agent's returned cuts sometimes carry tags
+    # that don't match captions.json keys (e.g. "cut1" vs "cut1_one_take") → the
+    # rewrite matched 0 cuts and the original (often gappy/mismatched) captions
+    # were kept ("VLM 캡션 0컷 재작성"). Fall back to POSITIONAL matching when the
+    # tag doesn't resolve, so the re-grounded captions actually apply.
+    ordered_tags = [k for k in cap_data.keys() if not k.startswith("_")]
+    new_cuts = new_concept.get("cuts") or []
+    for idx, new_cut in enumerate(new_cuts):
         tag = new_cut.get("tag") or new_cut.get("cut_tag")
+        if not tag or tag not in cap_data:
+            tag = ordered_tags[idx] if idx < len(ordered_tags) else None
         if not tag or tag not in cap_data:
             continue
         new_caps = new_cut.get("captions") or []
+        if not new_caps:
+            continue
         cap_data[tag]["scenes"] = new_caps
         # Drop legacy top-level ko/en
         cap_data[tag].pop("ko", None)
@@ -1468,6 +1546,60 @@ def _prerender_interp_fills(manifests: dict, work_dir: Path,
                             encoding="utf-8")
 
 
+def _append_character_canon(prompt: str) -> str:
+    """PD 2026-06-06: re-state Ryani/Leo canonical appearance so Seedance keeps
+    them ON-MODEL. Used by BOTH ai_vtuber and real_footage photo_i2v — without
+    it, i2v drifts the pet into a different-looking animal (PD: '랴니가 완전
+    다른 캐릭터'). Same canon text as the ai_vtuber per-cut marking injection."""
+    pl = (prompt or "").lower()
+    if any(k in pl for k in ("ryani", "랴니", "french bulldog", "dog", "강아지", "개")):
+        ryani_canon = (
+            "Ryani is a SPAYED FEMALE 11-year-old senior French Bulldog "
+            "(she/her). Markings CONSISTENT: THIN Boston Terrier-style white "
+            "blaze (a narrow line, NOT a wide splash) from nose to forehead, "
+            "white dot above each eye, silver-grey aged muzzle, white chin, "
+            "large white chest patch, bat ears, ABSOLUTELY NO TAIL, petite "
+            "refined feminine body (NOT muscular), only black/white/grey — no "
+            "brown. Keep her EXACTLY as in the source photo."
+        )
+        if "Boston Terrier-style white blaze" not in prompt:
+            prompt = prompt + " " + ryani_canon
+    if any(k in pl for k in ("leo", "레오", "orange tabby", "cat", "고양이")):
+        leo_canon = (
+            "Leo is a MALE 8-month-old orange tabby cat (he/him). Pale "
+            "yellow-green chartreuse eyes, white chin tuft, lean agile body, "
+            "paler cream-orange cheeks and belly than the back. Keep him "
+            "EXACTLY as in the source photo."
+        )
+        if "chartreuse eyes" not in prompt:
+            prompt = prompt + " " + leo_canon
+    return prompt
+
+
+def _measure_clip_motion(mp4: Path) -> float:
+    """Average frame-to-frame luma change — a proxy for how much MOVES in the
+    clip. ~1.5 = near-static (still photo with at most a zoom); ~5+ = clearly
+    moving subject. Used to guarantee photo_i2v cuts actually animate the pet."""
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-nostats", "-loglevel", "error", "-i", str(mp4),
+             "-vf", "tblend=all_mode=difference,signalstats,"
+                    "metadata=print:key=lavfi.signalstats.YAVG:file=-",
+             "-f", "null", "-"],
+            capture_output=True, text=True, check=False,
+        )
+        vals = [float(l.split("=")[-1]) for l in proc.stdout.splitlines()
+                if "YAVG" in l]
+        return sum(vals) / len(vals) if vals else 0.0
+    except Exception:
+        return 0.0
+
+
+# Below this average motion, a photo_i2v clip reads as a frozen still — PD
+# 2026-06-06 HARD requirement: the pet MUST visibly move on photo/image cuts.
+PHOTO_I2V_MIN_MOTION = float(os.getenv("PHOTO_I2V_MIN_MOTION", "3.0"))
+
+
 def _prerender_photo_i2v_cuts(manifests: dict, work_dir: Path,
                                 progress_cb: ProgressCb = None,
                                 dry_run: bool = False) -> None:
@@ -1477,7 +1609,12 @@ def _prerender_photo_i2v_cuts(manifests: dict, work_dir: Path,
     """
     sources_path = Path(manifests["sources"])
     sources = json.loads(sources_path.read_text(encoding="utf-8"))
-    work_anim = work_dir / "animated"
+    # PD 2026-06-06: output to a SEPARATE dir (not animated/) so the later
+    # _trim_real_footage_clips step reads this mp4 as its input and writes the
+    # trimmed result into animated/. If we wrote here straight to animated/,
+    # trim's same-path guard would skip the cut, robbing photo cuts of their
+    # edit_effect AND the last-cut 여운 freeze extension.
+    work_anim = work_dir / "photo_i2v"
     work_anim.mkdir(parents=True, exist_ok=True)
     n_rendered = 0
     for tag, entry in list(sources.items()):
@@ -1490,19 +1627,83 @@ def _prerender_photo_i2v_cuts(manifests: dict, work_dir: Path,
             log.warning("photo_i2v: photo not found for %s", tag)
             continue
         out_mp4 = work_anim / f"{tag}.mp4"
-        motion = entry.get("motion_prompt") or "gentle natural pet motion"
+        # PD 2026-06-06: the PET (character) must visibly move, not just a
+        # camera zoom — same way ai_vtuber drives Seedance: a character-action
+        # prompt with the camera held still. BUT keep it NATURAL, not dramatic:
+        # real_footage must not read as generative/regen. Animated photos are a
+        # brief mid-roll supplement, so the motion is a small sign of life
+        # (blink / ear twitch / slight shift), not a big repositioning.
+        # Model matches ai_vtuber (SEEDANCE_MODEL, fast default); override with
+        # PHOTO_I2V_MODEL if a cut needs richer motion.
+        # PD 2026-06-06: the PET must CLEARLY move — a "subtle breathe + zoom"
+        # prompt makes Seedance freeze the pet and only zoom ("정지 화면 줌인줌아웃").
+        # Mandate a visible body action; camera held still so the motion reads
+        # as the animal, not the camera.
+        motion = entry.get("motion_prompt") or (
+            "The pet clearly moves: it lifts and turns its head, looks around, "
+            "blinks, and shifts its body — visible natural motion. The cat may "
+            "sway its tail. Camera stays completely still, no zoom."
+        )
         seconds = str(int(entry.get("seedance_seconds") or 5))
-        cmd = [
-            "python3", "scripts/animate_seedance_i2v.py",
-            "--mode", "i2v",
-            "--image", str(photo_path),
-            "--prompt", motion,
-            "--seconds", seconds,
-            "--model", os.getenv("SEEDANCE_MODEL", DEFAULT_MODEL_SEEDANCE),
-            "--output", str(out_mp4),
+        # PD 2026-06-06: default photo_i2v to the STANDARD model — verified to
+        # give visible PET motion on a real photo, where the fast model only
+        # applied a camera zoom (PD: "i2v 동작 안 함"). Only 0-2 photo cuts per
+        # episode, so the extra time is negligible. Override via PHOTO_I2V_MODEL.
+        photo_model = os.getenv("PHOTO_I2V_MODEL", "dreamina-seedance-2-0-260128")
+        # PD 2026-06-06 HARD requirement: on a photo/image cut the CHARACTER
+        # must visibly move — a zoom is NOT motion. We don't just hope the
+        # prompt works: render, MEASURE the motion, and re-render with an
+        # escalating prompt until the pet clearly moves (or we run out of tries).
+        max_tries = int(os.getenv("PHOTO_I2V_MAX_TRIES", "3"))
+        escalation = [
+            "",
+            " Make the head turn and the body shift clearly visible across the "
+            "whole clip.",
+            " The pet noticeably moves its head, looks around, and repositions "
+            "its body — clearly animated, not a still image.",
         ]
-        _run(cmd, f":frame_with_picture: [0/3] Photo→i2v {tag}",
-             progress_cb, dry_run)
+        best_motion = -1.0
+        for attempt in range(max_tries):
+            prompt = motion + (escalation[attempt] if attempt < len(escalation) else escalation[-1])
+            # PD 2026-06-06: anchor Ryani/Leo appearance (same canon ai_vtuber
+            # uses) so the animated photo doesn't drift into a different-looking
+            # pet ("랴니가 완전 다른 캐릭터").
+            prompt = _append_character_canon(prompt)
+            cmd = [
+                "python3", "scripts/animate_seedance_i2v.py",
+                "--mode", "i2v",
+                "--image", str(photo_path),
+                "--prompt", prompt,
+                "--seconds", seconds,
+                "--model", photo_model,
+                "--output", str(out_mp4),
+            ]
+            _run(cmd,
+                 f":frame_with_picture: [0/3] Photo→i2v {tag} (char-motion 시도 {attempt+1})",
+                 progress_cb, dry_run)
+            if dry_run or not out_mp4.exists():
+                break
+            mv = _measure_clip_motion(out_mp4)
+            log.info("photo_i2v %s attempt %d motion=%.2f (min %.1f)",
+                     tag, attempt + 1, mv, PHOTO_I2V_MIN_MOTION)
+            if mv > best_motion:
+                best_motion = mv
+                shutil.copy(out_mp4, out_mp4.with_suffix(".best.mp4"))
+            if mv >= PHOTO_I2V_MIN_MOTION:
+                break
+            if progress_cb and attempt + 1 < max_tries:
+                progress_cb(f":repeat: {tag} 모션 부족({mv:.1f}) — 더 강하게 재생성")
+        # Keep the best attempt if none cleared the bar.
+        best_path = out_mp4.with_suffix(".best.mp4")
+        if best_path.exists():
+            if best_motion < PHOTO_I2V_MIN_MOTION:
+                log.warning("photo_i2v %s: best motion only %.2f — using it anyway",
+                            tag, best_motion)
+                shutil.copy(best_path, out_mp4)
+            try:
+                best_path.unlink()
+            except Exception:
+                pass
         sources[tag] = {
             "source": str(out_mp4),
             "trim_start": 0.0,
@@ -1684,10 +1885,15 @@ def _trim_real_footage_clips(manifests: dict, anim_dir: Path,
     concept_cuts = manifests.get("concept_cuts") or []
     cuts_meta = manifests.get("cuts") or []
     by_tag_effect = {}
+    by_tag_crop = {}
     last_body_tag = None
     for i, item in enumerate(cuts_meta):
         cc = concept_cuts[i] if i < len(concept_cuts) else {}
         by_tag_effect[item.get("tag")] = (cc.get("edit_effect") or "static").strip().lower()
+        # PD 2026-06-06: per-cut crop to push an unwanted element (esp. a
+        # background human / 할머니 치마) out of frame. crop_out names WHERE the
+        # unwanted thing is (top/bottom/left/right) — we zoom-crop AWAY from it.
+        by_tag_crop[item.get("tag")] = (cc.get("crop_out") or "").strip().lower()
         if cc.get("function") != "wink_ending":
             last_body_tag = item.get("tag")  # tracks the last non-wink cut
 
@@ -1726,22 +1932,67 @@ def _trim_real_footage_clips(manifests: dict, anim_dir: Path,
         trim_start = float(entry.get("trim_start") or 0.0)
         trim_dur = float(entry.get("trim_dur") or 4.0)
         effect = by_tag_effect.get(tag, "static")
+        # ★ PD 2026-06-06 ROOT-CAUSE FIX: ken_burns / zoom / pan use
+        # `zoompan=...:d=dur*30`, which on a VIDEO freezes the FIRST frame and
+        # only zooms — turning real footage into a "정지 화면 줌인" still. PD's
+        # repeated complaint ("동영상을 이미지로 캡쳐해서 줌인만"). real_footage
+        # already HAS motion, so drop the zoom/pan family entirely → play the
+        # real clip (static framing). Keep speed_* and freeze (those don't
+        # freeze-to-first-frame).
+        _ZOOM_FAMILY = {"ken_burns", "zoom_in_slow", "zoom_out_slow",
+                        "zoom_in", "zoom_out", "pan_left", "pan_right", "pan"}
+        if effect in _ZOOM_FAMILY:
+            log.info("real_footage %s: drop zoom effect '%s' → play real footage (static)",
+                     tag, effect)
+            effect = "static"
         # PD 2026-06-02: if this is the LAST body cut and its caption ends
         # after the trim_dur, auto-extend via freeze_last_frame for 여운.
         if tag == last_body_tag:
             cap_end = cap_end_by_tag.get(tag, 0)
-            # PD 2026-06-05: last cut needs a real 여운 tail — 0.8s felt
-            # abrupt. Always extend the final cut so the visual lingers
-            # ~2s after the caption ends.
-            effect = "freeze_to_caption_end"
-            extra_pad = max(2.0, cap_end - trim_dur + 2.0)
-            vf, time_args = _build_edit_effect_filter(
-                effect, trim_dur, extra_pad=extra_pad,
-            )
-            log.info("last cut %s — 여운 extend (pad %.1fs past cap_end)",
-                     tag, extra_pad)
+            # 여운: linger ~1.5s after the caption ends.
+            desired = max(trim_dur, float(cap_end) + 1.5)
+            src_dur = entry.get("src_dur")
+            avail = (float(src_dur) - trim_start) if src_dur else None
+            # PD 2026-06-06: a FROZEN last frame reads as a static photo
+            # ("동영상을 이미지로 캡쳐한 느낌"). If the source clip is long
+            # enough, PLAY the real footage through the 여운 so motion continues.
+            # Only freeze the shortfall when the clip truly runs out.
+            if avail is not None and avail >= desired - 0.1:
+                trim_dur = desired
+                vf, time_args = _build_edit_effect_filter(effect, trim_dur)
+                log.info("last cut %s — play real footage to %.1fs (no freeze)",
+                         tag, desired)
+            else:
+                play = avail if avail else trim_dur
+                pad = max(0.0, desired - play)
+                trim_dur = play
+                vf, time_args = _build_edit_effect_filter(
+                    "freeze_to_caption_end", trim_dur, extra_pad=pad)
+                effect = "freeze_to_caption_end"
+                log.info("last cut %s — play %.1fs + freeze pad %.1fs",
+                         tag, play, pad)
         else:
             vf, time_args = _build_edit_effect_filter(effect, trim_dur)
+
+        # PD 2026-06-06 HARD RULE: a human FACE must NEVER be visible. If this
+        # cut's clip has a human, crop them out. Prefer the VLM-computed
+        # pets-only window (reliable — keeps pets, excludes the face); fall back
+        # to the writer's directional crop_out hint, then a center zoom. Runs
+        # BEFORE the edit_effect.
+        crop_hint = by_tag_crop.get(tag, "")
+        has_human = bool(entry.get("has_human"))
+        crop_vf = ""
+        if has_human or crop_hint:
+            if not dry_run:
+                crop_vf = _vlm_pet_crop_filter(src_path, trim_start)
+            if not crop_vf:
+                # fall back to directional hint, or a center zoom if a human is
+                # present but no direction was given (never leave a face in).
+                crop_vf = _build_crop_filter(crop_hint or ("center" if has_human else ""))
+        if crop_vf:
+            vf = ",".join(p for p in (crop_vf, vf) if p)
+            log.info("crop %s — has_human=%s hint=%s → %s",
+                     tag, has_human, crop_hint, crop_vf[:40])
 
         cmd = [
             "ffmpeg", "-y", "-nostats", "-loglevel", "error",
@@ -1763,6 +2014,146 @@ def _trim_real_footage_clips(manifests: dict, anim_dir: Path,
         n += 1
     if progress_cb:
         progress_cb(f":scissors: [1/3] {n} clips trimmed → animated/")
+
+
+def _vlm_pet_crop_filter(src_path: Path, trim_start: float = 0.0) -> str:
+    """PD 2026-06-06 HARD RULE: a human FACE must NEVER be visible in
+    real_footage. For a clip with a human, ask Gemini for the largest 9:16
+    portrait window that contains the pet(s) and EXCLUDES every human (face
+    especially). Return an ffmpeg crop filter, or "" if it can't be determined
+    (caller then falls back to the directional crop hint)."""
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        return ""
+    try:
+        from google import genai as _genai
+        from google.genai import types as _types
+        frame = src_path.parent / f".cropprobe_{src_path.stem}.jpg"
+        subprocess.run([
+            "ffmpeg", "-y", "-nostats", "-loglevel", "error",
+            "-ss", f"{trim_start + 1.0:.2f}", "-i", str(src_path),
+            "-frames:v", "1", str(frame),
+        ], check=False)
+        if not frame.exists():
+            return ""
+        data = frame.read_bytes()
+        client = _genai.Client(api_key=api_key)
+        model_name = os.getenv("VLM_MODEL", "gemini-2.5-flash")
+        prompt = (
+            "One frame of a vertical pet video. Locate, as fractions of the "
+            "frame (0..1, top-left origin):\n"
+            "1) 'pets' — ONE tight box covering ALL visible pets together (the "
+            "orange cat and/or the black dog). Include every pet fully.\n"
+            "2) 'human' — ONE box covering the visible human (whole person if "
+            "seen; at minimum the head/face). Use zeros if truly no human.\n"
+            "Return ONLY JSON: {\"pets\":{\"x\":..,\"y\":..,\"w\":..,\"h\":..},"
+            "\"human\":{\"x\":..,\"y\":..,\"w\":..,\"h\":..}}."
+        )
+        resp = client.models.generate_content(
+            model=model_name,
+            contents=[
+                _types.Part.from_bytes(data=data, mime_type="image/jpeg"),
+                prompt,
+            ],
+            config=_types.GenerateContentConfig(
+                response_mime_type="application/json",
+                thinking_config=_types.ThinkingConfig(thinking_budget=0),
+            ),
+        )
+        box = json.loads((resp.text or "{}").strip())
+        pets = box.get("pets") or {}
+        human = box.get("human") or {}
+        # ★ ROTATION FIX (PD 2026-06-06): use the EXTRACTED FRAME's dims
+        # (rotation already applied) — the source stream reports unrotated dims.
+        try:
+            fprobe = subprocess.run(
+                ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                 "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x",
+                 str(frame)], capture_output=True, text=True, check=True)
+            W, H = (int(v) for v in fprobe.stdout.strip().split("x")[:2])
+        except Exception:
+            W, H = 1080, 1920
+        try:
+            frame.unlink()
+        except Exception:
+            pass
+        pw = float(pets.get("w", 0)); ph = float(pets.get("h", 0))
+        if pw < 0.05 or ph < 0.05:
+            log.warning("vlm crop: pets bbox not found for %s", src_path.name)
+            return ""
+        # Pets bbox in pixels, padded ~5% so we don't shave fur at the edge.
+        pad = 0.05
+        px = (float(pets.get("x", 0)) - pad) * W
+        py = (float(pets.get("y", 0)) - pad) * H
+        pwp = (pw + 2 * pad) * W
+        php = (ph + 2 * pad) * H
+        px = max(0.0, px); py = max(0.0, py)
+        pwp = min(pwp, W - px); php = min(php, H - py)
+        # PD 2026-06-06: the SMALLEST 9:16 window that fully CONTAINS the pets
+        # (zoom OUT if needed) so pets are NEVER clipped. Then slide it away from
+        # the human so the face drops out. This replaces the old "largest 9:16
+        # inside a human-free box" which shrank onto the pets and cut them off.
+        r = 9.0 / 16.0  # width / height
+        if pwp / php >= r:        # pets wider than 9:16 → width drives it
+            cw = pwp; ch = cw / r
+        else:                      # pets taller → height drives it
+            ch = php; cw = ch * r
+        cw = min(cw, W); ch = min(ch, H)
+        # keep aspect after clamping
+        if cw / ch > r:
+            cw = ch * r
+        else:
+            ch = cw / r
+        # Allowed top-left range so the window still contains the pets bbox.
+        x_lo = max(0.0, px + pwp - cw); x_hi = min(W - cw, px)
+        y_lo = max(0.0, py + php - ch); y_hi = min(H - ch, py)
+        if x_lo > x_hi:
+            x_lo = x_hi = min(max(px + pwp / 2 - cw / 2, 0.0), W - cw)
+        if y_lo > y_hi:
+            y_lo = y_hi = min(max(py + php / 2 - ch / 2, 0.0), H - ch)
+        # Slide AWAY from the human: among the allowed top-left range, pick the
+        # endpoint whose window CENTER is farther from the human bbox center.
+        def _far(lo, hi, dim, h_x, h_w, size):
+            if hi <= lo:
+                return lo
+            if h_w <= 0:
+                return (lo + hi) / 2.0
+            hc = (h_x + h_w / 2.0) * dim
+            c_lo = lo + size / 2.0
+            c_hi = hi + size / 2.0
+            return lo if abs(c_lo - hc) >= abs(c_hi - hc) else hi
+        cx = _far(x_lo, x_hi, W, float(human.get("x", 0)), float(human.get("w", 0)), cw)
+        cy = _far(y_lo, y_hi, H, float(human.get("y", 0)), float(human.get("h", 0)), ch)
+        cw = int(cw) // 2 * 2; ch = int(ch) // 2 * 2
+        cx = min(max(0, int(cx)), W - cw); cy = min(max(0, int(cy)), H - ch)
+        return f"crop={cw}:{ch}:{cx}:{cy}"
+    except Exception as ex:
+        log.warning("vlm crop failed for %s: %s", src_path.name, ex)
+        return ""
+
+
+def _build_crop_filter(crop_out: str, zoom: float = 1.3) -> str:
+    """PD 2026-06-06: zoom-crop a clip to push an unwanted element (usually a
+    background human / 할머니 치마) out of frame. `crop_out` names WHERE the
+    unwanted thing is; we keep a zoomed-in window biased to the OPPOSITE side.
+    Aspect is preserved (window is the source aspect / zoom), so the downstream
+    9:16 scale stays clean. Returns "" when no crop requested."""
+    d = (crop_out or "").strip().lower()
+    if d in ("", "none", "false", "no"):
+        return ""
+    w = f"floor(iw/{zoom}/2)*2"
+    h = f"floor(ih/{zoom}/2)*2"
+    if d == "top":          # human at top → keep bottom
+        x, y = "(iw-ow)/2", "ih-oh"
+    elif d == "bottom":     # human at bottom → keep top
+        x, y = "(iw-ow)/2", "0"
+    elif d == "left":       # human at left → keep right
+        x, y = "iw-ow", "(ih-oh)/2"
+    elif d == "right":      # human at right → keep left
+        x, y = "0", "(ih-oh)/2"
+    else:                   # "center"/generic → just zoom in to drop edges
+        x, y = "(iw-ow)/2", "(ih-oh)/2"
+    return f"crop={w}:{h}:{x}:{y}"
 
 
 def _build_edit_effect_filter(effect: str, dur: float, extra_pad: float = 0.0) -> tuple[str, list]:
@@ -1825,15 +2216,30 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
     _trim_real_footage_clips(manifests, anim_dir, progress_cb, dry_run)
 
     # Step 1b: VLM post-render check + caption rewrite (same agent as ai_vtuber).
-    cuts_local = manifests.get("cuts") or []
-    concept_cuts_local = manifests.get("concept_cuts") or []
-    try:
-        _vlm_post_render_caption_rewrite(
-            work_dir, manifests, cuts_local, concept_cuts_local, anim_dir,
-            progress_cb=progress_cb, dry_run=dry_run,
-        )
-    except Exception as ex:
-        log.warning("VLM rewrite skipped for real_footage: %s", ex)
+    # PD 2026-06-06 ROOT CAUSE FIX: for single-pass real_footage, the captions
+    # are ALREADY grounded in clip ground truth by realfootage_concept.md. Re-
+    # running the Caption Agent here silently overwrote every upstream prompt fix
+    # (주체정확성/랴니대사/여운/가독성) — the reason PD's feedback "wasn't applied"
+    # for days. Skip the rewrite when the concept came from the single-pass
+    # author. Override with RF_FORCE_VLM_REWRITE=1 for debugging.
+    concept_author = (manifests.get("concept") or {}).get("author", "")
+    is_singlepass = concept_author == "realfootage_singlepass"
+    force_rewrite = os.environ.get("RF_FORCE_VLM_REWRITE") == "1"
+    if is_singlepass and not force_rewrite:
+        log.info("real_footage single-pass: SKIP VLM caption rewrite "
+                 "(captions already grounded)")
+        if progress_cb:
+            progress_cb(":lock: [1b/3] 단일-패스 캡션 보존 — VLM 재작성 건너뜀")
+    else:
+        cuts_local = manifests.get("cuts") or []
+        concept_cuts_local = manifests.get("concept_cuts") or []
+        try:
+            _vlm_post_render_caption_rewrite(
+                work_dir, manifests, cuts_local, concept_cuts_local, anim_dir,
+                progress_cb=progress_cb, dry_run=dry_run,
+            )
+        except Exception as ex:
+            log.warning("VLM rewrite skipped for real_footage: %s", ex)
 
     # Step 1c: burn captions on trimmed clips.
     captioned_dir = ROOT / "data" / "output" / "animated_captioned"
@@ -2928,6 +3334,29 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
 # ──────────────────────────────────────────────────────────────────────
 # Main entry: render_card
 # ──────────────────────────────────────────────────────────────────────
+def _prune_tmp_workdirs(keep: int | None = None) -> None:
+    """PD 2026-06-06: delete old cameraman_* tmp workdirs (trimmed clips,
+    photo_i2v, animated intermediates) — they accumulated to 16GB. Keep the
+    most recent `keep` for debugging. Final episodes live in data/output/
+    episodes and are never touched. Override count with CAMERAMAN_TMP_KEEP."""
+    if keep is None:
+        keep = int(os.getenv("CAMERAMAN_TMP_KEEP", "6"))
+    try:
+        tmp = ROOT / "data" / "tmp"
+        dirs = sorted(
+            [d for d in tmp.glob("cameraman_*") if d.is_dir()],
+            key=lambda d: d.stat().st_mtime, reverse=True,
+        )
+        removed = 0
+        for d in dirs[keep:]:
+            shutil.rmtree(d, ignore_errors=True)
+            removed += 1
+        if removed:
+            log.info("pruned %d old tmp workdirs (kept %d)", removed, keep)
+    except Exception as e:
+        log.warning("tmp prune failed: %s", e)
+
+
 def render_card(card_id_prefix: str, *,
                 progress_cb: ProgressCb = None,
                 dry_run: bool = False,
@@ -3007,6 +3436,12 @@ def render_card(card_id_prefix: str, *,
         if progress_cb:
             size_mb = out.stat().st_size / 1e6 if not dry_run and out.exists() else 0
             progress_cb(f":white_check_mark: Rendered `{card_id[:8]}` → `{out.name}` ({size_mb:.1f} MB)")
+
+        # PD 2026-06-06: intermediate clips piled up (16GB / 335 workdirs). Prune
+        # old tmp workdirs, keeping only the most recent few for debugging. The
+        # final episode lives in data/output/episodes (untouched).
+        if not dry_run:
+            _prune_tmp_workdirs()
 
         # Giri review is handled by retry_loop.py — not here
         return out

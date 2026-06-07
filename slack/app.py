@@ -269,9 +269,18 @@ def upload_cmd(ack, body, respond):
         )
         video_id = result.get("id", "unknown")
         with db() as con:
+            # PD 2026-06-07: mark uploaded=1 (gates the arc + clip cooldown,
+            # which only count UPLOADED episodes) and persist the YouTube
+            # video_id (for analytics / upload-feedback-driven content later).
+            cols = [r[1] for r in con.execute("PRAGMA table_info(cards)")]
+            if "uploaded" not in cols:
+                con.execute("ALTER TABLE cards ADD COLUMN uploaded INTEGER DEFAULT 0")
+            if "youtube_video_id" not in cols:
+                con.execute("ALTER TABLE cards ADD COLUMN youtube_video_id TEXT")
             con.execute(
-                "UPDATE cards SET state='published', updated_at=datetime('now') WHERE card_id=?",
-                (card_id,),
+                "UPDATE cards SET state='published', uploaded=1, "
+                "youtube_video_id=?, updated_at=datetime('now') WHERE card_id=?",
+                (video_id, card_id),
             )
         respond(
             f":white_check_mark: Uploaded `{card_id[:8]}` → `{video_id}`\n"
@@ -348,12 +357,37 @@ def test_cmd(ack, body, respond, client):
             def _on_thread(ts):
                 pass  # ignore — we use our own thread_ts
 
+            # PD 2026-06-07: the RESULT VIDEO must be posted to the thread
+            # (regressed to filenames-only). Upload each rendered mp4.
+            def _video(path):
+                try:
+                    client.files_upload_v2(
+                        channel=channel, thread_ts=thread_ts,
+                        file=str(path), title=Path(path).name,
+                        initial_comment=f":movie_camera: {Path(path).name}",
+                    )
+                except Exception as e:
+                    log.warning("video upload failed: %s", e)
+                    client.chat_postMessage(channel=channel, thread_ts=thread_ts,
+                        text=f":warning: 영상 업로드 실패: {Path(path).name} ({str(e)[:80]})")
+
+            # PD 2026-06-06: /test runs BOTH lanes (ai_vtuber + real_footage).
+            # Optional arg narrows it: "/test rf" or "/test ai".
+            text_arg = (body.get("text") or "").strip().lower()
+            if text_arg in ("rf", "real_footage", "real"):
+                style_filter = "real_footage"
+            elif text_arg in ("ai", "ai_vtuber", "vtuber"):
+                style_filter = "ai_vtuber"
+            else:
+                style_filter = None  # both lanes
+            lane_label = style_filter or "ai_vtuber + real_footage"
             client.chat_postMessage(channel=channel, thread_ts=thread_ts,
-                text=f":rocket: 테스트 렌더 시작 — {target.isoformat()} (PD 컨펌 스킵)")
+                text=f":rocket: 테스트 렌더 시작 — {target.isoformat()} "
+                     f"({lane_label}, PD 컨펌 스킵)")
 
             daily_pipeline(target, timeout_sec=0, progress_cb=_progress,
-                           on_thread_created=_on_thread,
-                           style_filter="ai_vtuber")
+                           on_thread_created=_on_thread, video_cb=_video,
+                           style_filter=style_filter)
 
         except InterruptedError:
             client.chat_postMessage(channel=channel, thread_ts=thread_ts,
@@ -413,9 +447,20 @@ def daily_cmd(ack, body, respond, client):
         def _on_thread(ts):
             thread_ref[0] = ts
 
+        def _video(path):
+            # PD 2026-06-07: post the rendered mp4 into the proposal thread.
+            try:
+                client.files_upload_v2(
+                    channel=WORKROOM, thread_ts=thread_ref[0],
+                    file=str(path), title=Path(path).name,
+                    initial_comment=f":movie_camera: {Path(path).name}")
+            except Exception as e:
+                log.warning("video upload failed: %s", e)
+
         try:
             daily_pipeline(target, progress_cb=_progress,
-                           on_thread_created=_on_thread, dry_run=dry_run)
+                           on_thread_created=_on_thread, video_cb=_video,
+                           dry_run=dry_run)
         except Exception as e:
             log.exception("daily pipeline failed")
             kwargs = {"channel": WORKROOM, "text": f":x: 일일 파이프라인 실패:\n```{str(e)[:1200]}```"}

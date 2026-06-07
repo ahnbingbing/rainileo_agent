@@ -2115,17 +2115,22 @@ def _pick_wink_subject(c: dict) -> str:
         for cap in (cut.get("captions") or []):
             all_text += " " + (cap.get("ko") or "")
 
-    # 2. Winner patterns (whoever acts/schemes/gets/takes)
+    # 2. Winner patterns (whoever acts/schemes/gets/takes — OR provokes/teases
+    #    and gets a reaction out of the other; PD 2026-06-06: the active
+    #    prankster wins. Leo teasing Ryani with his tail → Leo winks).
     winner_patterns = {
         "ryani": [
             "랴니의 작전", "랴니가 슬쩍", "랴니가 회수", "랴니가 가로채",
             "랴니가 챙겨", "랴니가 줍", "랴니가 먼저", "랴니가 가져",
             "랴니가 뺏어", "랴니의 회수", "랴니가 챙겼", "랴니가 발견",
+            "랴니가 약올", "랴니가 놀려", "랴니가 장난", "랴니: 이거",
         ],
         "leo": [
             "레오의 작전", "레오가 슬쩍", "레오가 회수", "레오가 가로채",
             "레오가 챙겨", "레오가 먼저", "레오가 가져", "레오가 뺏어",
             "레오의 회수", "레오가 챙겼", "레오가 발견",
+            "레오가 약올", "레오가 놀려", "레오가 장난", "레오: 이거",
+            "레오가 꼬리", "레오의 꼬리", "레오가 시전",
         ],
     }
     for subj, patterns in winner_patterns.items():
@@ -2133,11 +2138,15 @@ def _pick_wink_subject(c: dict) -> str:
             return subj
 
     # 3. Loser patterns inverted (named pet is unaware/missed → OTHER wins)
+    # Loser = unaware OR the one REACTING to the other's prank (PD 2026-06-06:
+    # the reactor — 웡!/발끈/왜그래 — is the target; the prankster wins/winks).
     loser_patterns = {
         "leo": ["레오는 모르", "레오만 모르", "레오야 진짜 몰랐", "레오야 정말 몰랐",
-                "레오는 몰랐", "레오가 뒤늦게", "레오만 뒤늦게"],
+                "레오는 몰랐", "레오가 뒤늦게", "레오만 뒤늦게",
+                "레오가 발끈", "레오: 왜그래", "레오: 왜 그래", "레오가 야옹"],
         "ryani": ["랴니는 모르", "랴니만 모르", "랴니야 진짜 몰랐", "랴니야 정말 몰랐",
-                  "랴니는 몰랐", "랴니가 뒤늦게", "랴니만 뒤늦게"],
+                  "랴니는 몰랐", "랴니가 뒤늦게", "랴니만 뒤늦게",
+                  "랴니가 발끈", "랴니: 왜그래", "랴니: 왜 그래", "랴니가 웡", "랴니: 웡"],
     }
     for loser, patterns in loser_patterns.items():
         if any(p in all_text for p in patterns):
@@ -2180,18 +2189,25 @@ def _build_wink_cut(subject: str, prev_cut: dict) -> dict:
         )
         cap_ko = "랴니: ...찡긋 ♥"
         cap_en = "Ryani: ...wink ♥"
+    # PD 2026-06-06: the wink was too short and felt 뜬금없다 (abrupt/random).
+    # Fix: (1) OPEN by continuing the exact pose/setting of the previous moment
+    # so it reads as a natural beat of the same scene, not a teleport; (2) a
+    # small in-character action first (settle, a relaxed breath) before turning;
+    # (3) a SLOW push-in; (4) longer held eye-contact and a longer held wink so
+    # it lands. Total 7s so it lingers instead of flashing by.
     motion = (
-        "Camera slowly pushes IN toward the subject over the first 1.5 seconds, "
-        "ending in an intimate tight CLOSE-UP on the face — eyes, nose, and "
-        "mouth fill the frame. Lighting, shadow direction, and color "
-        "temperature exactly match the input frame; no panning, just a smooth "
-        "forward dolly push-in. "
-        f"{char_desc} slowly turns its head to look directly into the camera "
-        "as the lens pushes in. Steady eye contact at peak close-up for a "
-        "brief beat. Then a clear playful WINK — one eye closes briefly while "
-        "the other stays wide open looking at the camera. Subtle smug "
-        "satisfied smile, mouth corner slightly raised. Hold the close-up "
-        "wink for the remaining time. "
+        "Continue seamlessly from the previous moment — SAME pose, SAME setting, "
+        "SAME lighting, shadow direction and color temperature as the input "
+        f"frame. {char_desc} stays where it was and settles for a beat (a small "
+        "natural movement — a relaxed breath, ears shifting). Then, over about "
+        "2 seconds, the camera slowly pushes IN with a smooth forward dolly (no "
+        "panning) toward an intimate tight CLOSE-UP where the face fills the "
+        "frame. As the lens pushes in, the subject slowly turns its head to look "
+        "directly into the camera and holds steady, warm eye contact for a clear "
+        "beat. Then a slow, deliberate, playful WINK — one eye closes for a "
+        "noticeable moment while the other stays wide open on the camera — with "
+        "a subtle smug satisfied smile, mouth corner slightly raised. HOLD that "
+        "close-up wink and smile, lingering, for the remaining time. "
         "Casual iPhone snapshot, natural fur strands visible at this close "
         "distance, no studio polish. Completely bare-furred — NO clothing, "
         "NO collar, NO accessories."
@@ -2203,16 +2219,17 @@ def _build_wink_cut(subject: str, prev_cut: dict) -> dict:
         "function": "wink_ending",
         "action": f"{subject} winks at camera",
         "description": f"{subject} winks at camera",
-        "duration_seconds": 5,
+        # PD 2026-06-06: 5s felt too short/abrupt — 7s so the wink lingers.
+        "duration_seconds": 7,
         "seedance_mode": "i2v",
         "chain_from_prev": True,
         "motion_prompt": motion,
         "veo_prompt": motion,
         "regen_prompt": "",  # chain mode skips regen
-        # PD 2026-06-02 룰: "오늘도 햅삐" shows only the LAST 0.5 SECONDS
-        # of the body. For a 5s wink cut: 4.5-5.0s. Brief flash then bumper.
+        # Caption appears once the wink has landed (after the push-in + wink),
+        # held through the lingering tail.
         "captions": [{
-            "start": 4.5, "end": 5.0,
+            "start": 5.0, "end": 7.0,
             "ko": "오늘도 햅삐 ♥",
             "en": "Happy as ever ♥",
         }],

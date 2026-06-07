@@ -75,6 +75,10 @@ Before judging anything else, scan each frame against the burned-in caption visi
 - If caption says "사료가 톡 튕겼어요" but the frame shows no food bowl and no food motion → FAIL.
 - If caption says "장난감을 쫓아가요" but the frame shows cat sitting with back to camera, no toy in frame → FAIL.
 - If caption ignores Ryani's clear visible presence (e.g., play-bow with Ryani in frame, but caption only describes Leo) → FAIL.
+- **CAPTIONS MUST ALWAYS BE ON SCREEN (PD 2026-06-06): a frame with NO burned-in caption is a DEFECT — real_footage captions must be dense/continuous so a caption is showing at every moment. If you see frames with no caption, note it in `개선점` as "자막 공백 (촘촘하게 채워야 함)".**
+- **NO HUMAN FACE — HARD RULE (PD 2026-06-06): a human FACE must NEVER be visible in any frame. If you see a human face, verdict MUST be "수정 필요" (or worse) and note "인간 얼굴 노출 — crop 필요" in `개선점`. Human hands/legs without a face are acceptable.**
+- **NO STATIC/FROZEN FEEL (PD 2026-06-06): if a cut looks like a still photo with only a zoom (subject not actually moving), note "정지 화면 느낌 — 캐릭터 모션 필요" in `개선점`.**
+- **KICK (PD 2026-06-06): the episode should have ONE standout moment (play-bow, camera-direct gaze, belly-up, a striking expression, a twist) within a COHERENT arc. If the whole thing is flat observation with NO peak at all, note "킥 부족" in `개선점` (do NOT force a fail by itself). BUT coherence matters more than kick intensity — a smooth natural story with a modest kick is GOOD; a jumbled story contorted around a forced kick is BAD. If the narrative feels forced/jumbled (e.g. an artificial "초대/답장" conceit, food beat in a weird order), note "흐름 어색 — 자연스러운 단일 arc 필요".**
 - For each Caption-vs-Clip failure, list in `caption_vs_clip_mismatches` (one entry per cut).
 - If `caption_vs_clip_mismatches` has ≥2 entries, the verdict MUST be "수정 필요" or worse, and overall score MUST NOT exceed 5/10.
 - If ≥1 mismatch, score must not exceed 7/10.

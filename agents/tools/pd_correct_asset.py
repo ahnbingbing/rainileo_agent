@@ -51,6 +51,8 @@ def main() -> int:
     p.add_argument("asset_id", nargs="?", help="asset_id or prefix")
     p.add_argument("note", nargs="?", help="ground-truth description (replaces VLM scene_description for Writer)")
     p.add_argument("--list-recent", action="store_true", help="list 20 most recent video assets")
+    p.add_argument("--list-uncertain", action="store_true",
+                   help="list assets where the VLM flagged uncertainty (needs PD ground truth)")
     p.add_argument("--show", metavar="ID_PREFIX", help="show current pd_notes / sc for an asset")
     p.add_argument("--clear", action="store_true", help="clear pd_notes (revert to VLM)")
     args = p.parse_args()
@@ -67,6 +69,44 @@ def main() -> int:
         for r in rows:
             mark = " [PD]" if con.execute("SELECT pd_notes FROM assets WHERE asset_id=?", (r[0],)).fetchone()[0] else ""
             print(f"{r[0]} | {r[1]} | {r[2]} | {r[3]}{mark}\n  {r[4]}")
+        return 0
+
+    if args.list_uncertain:
+        # PD 2026-06-06: surface assets the VLM is GUESSING about so PD can
+        # confirm the real ground truth (→ pd_notes). Two triggers: an explicit
+        # notes.uncertainties list, or location_specific="other"/"불확실" text.
+        import json as _json
+        rows = con.execute(
+            "SELECT asset_id, kind, DATE(captured_iso) as d, notes, scene_description, pd_notes "
+            "FROM assets WHERE vlm_analyzed_at IS NOT NULL ORDER BY captured_iso DESC"
+        ).fetchall()
+        n = 0
+        for r in rows:
+            try:
+                nj = _json.loads(r[3] or "{}")
+            except Exception:
+                nj = {}
+            unc = nj.get("uncertainties") or []
+            loc = (nj.get("location_specific") or "")
+            sc = r[4] or ""
+            flagged = bool(unc) or loc == "other" or "불확실" in sc
+            if not flagged:
+                continue
+            if r[5]:
+                continue  # already has PD ground truth — resolved
+            n += 1
+            print(f"\n[{n}] {r[0]} ({r[1]}, {r[2]})")
+            if unc:
+                for u in unc:
+                    print(f"    ❓ {u}")
+            else:
+                print(f"    ❓ location/sc 불확실 (location_specific={loc})")
+            print(f"    VLM sc: {sc[:160]}")
+            print(f"    → 확정:  python -m agents.tools.pd_correct_asset {r[0][:32]} \"<실제 장소/사실>\"")
+        if n == 0:
+            print("불확실로 표시된 자산이 없습니다 (또는 모두 PD 확정 완료).")
+        else:
+            print(f"\n총 {n}건 — PD 확정 필요. 위 명령으로 답하면 pd_notes(최우선)에 기록됩니다.")
         return 0
 
     if args.show:

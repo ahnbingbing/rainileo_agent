@@ -189,6 +189,23 @@ def asset_exists(con: sqlite3.Connection, asset_id: str) -> bool:
 # ──────────────────────────────────────────────────────────────────────
 # Bulk download via osxphotos CLI (handles version differences for us)
 # ──────────────────────────────────────────────────────────────────────
+def _run_vlm_tagging(n_new: int) -> None:
+    """PD 2026-06-07: after ingest, VLM-tag the newly-imported (untagged)
+    assets. Runs scripts/tag_assets_vlm.py (default selects vlm_analyzed_at IS
+    NULL). Non-fatal — a tagging failure must not fail the sync."""
+    import sys as _sys
+    script = Path(__file__).resolve().parent.parent / "scripts" / "tag_assets_vlm.py"
+    if not script.exists():
+        log.warning("tag_assets_vlm.py not found — skipping VLM tagging")
+        return
+    log.info("running VLM tagging on ~%d newly-imported assets…", n_new)
+    try:
+        rc = subprocess.run([_sys.executable, str(script)], check=False).returncode
+        log.info("VLM tagging finished (rc=%d)", rc)
+    except Exception as e:
+        log.warning("VLM tagging failed: %s", e)
+
+
 def bulk_download_missing(album_name: str, dry_run: bool = False) -> bool:
     """
     Use osxphotos's built-in CLI to fetch every missing item in the album from
@@ -202,18 +219,35 @@ def bulk_download_missing(album_name: str, dry_run: bool = False) -> bool:
     """
     cli = shutil.which("osxphotos")
     if not cli:
-        log.warning("osxphotos CLI not on PATH — cannot bulk fetch missing items")
-        return False
+        # PD 2026-06-07: under launchd / background the venv bin isn't on PATH,
+        # so `which` failed and 104 iCloud-only items were never downloaded
+        # (skipped_missing → not ingested). Fall back to the osxphotos CLI that
+        # ships next to the running interpreter (.venv/bin/osxphotos).
+        import sys as _sys
+        cand = Path(_sys.executable).parent / "osxphotos"
+        if cand.exists():
+            cli = str(cand)
+            log.info("osxphotos not on PATH — using venv CLI: %s", cli)
+        else:
+            log.warning("osxphotos CLI not on PATH and not in venv (%s) — "
+                        "cannot bulk fetch missing items", cand)
+            return False
     if dry_run:
         log.info("[dry-run] would run: osxphotos export --album %r --download-missing --use-photos-export", album_name)
         return False
 
     with tempfile.TemporaryDirectory(prefix="rl_dlmiss_") as tmp:
+        # PD 2026-06-07: --use-photos-export drives Photos via AppleScript and
+        # failed repeatedly ("AppleScript export has failed 10 consecutive
+        # times") — needs Automation permission + a foreground Photos app.
+        # --use-photokit downloads iCloud originals via the PhotoKit framework
+        # directly (more reliable headless). Override with ICLOUD_EXPORT_METHOD.
+        method = os.getenv("ICLOUD_EXPORT_METHOD", "--use-photokit")
         cmd = [
             cli, "export",
             "--album", album_name,
             "--download-missing",
-            "--use-photos-export",
+            method,
             "--skip-edited",
             "--skip-bursts",
             "--retry", "2",
@@ -532,6 +566,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--watch", action="store_true", help="poll forever (use launchd in prod)")
     ap.add_argument("--interval", type=int, default=int(os.getenv("ICLOUD_SYNC_INTERVAL", "900")),
                     help="seconds between polls when --watch (default 900 = 15 min)")
+    ap.add_argument("--vlm", action="store_true",
+                    help="after ingest, run VLM tagging on the newly-imported "
+                         "(untagged) assets so the Writer can use them (PD 2026-06-07)")
     args = ap.parse_args(argv)
 
     subject_map = parse_subject_map(args.subject_map)
@@ -548,6 +585,15 @@ def main(argv: list[str] | None = None) -> int:
                 download_missing=args.download_missing,
             )
             print_summary(s)
+            # PD 2026-06-07: tag newly-imported assets so the Writer can use
+            # them. tag_assets_vlm (default = untagged only) picks up exactly
+            # the new ones.
+            imported = (s.get("imported_photos", 0) + s.get("imported_clips", 0)
+                        + s.get("imported_live_clips", 0))
+            if args.vlm and not args.dry_run and imported > 0:
+                _run_vlm_tagging(imported)
+            elif args.vlm and imported == 0:
+                log.info("--vlm: no new assets imported — skipping VLM tagging")
             return 0
         except SystemExit:
             raise
