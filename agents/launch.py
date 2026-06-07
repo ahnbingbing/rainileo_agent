@@ -20,6 +20,9 @@ from pathlib import Path
 from typing import Callable
 from zoneinfo import ZoneInfo
 
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
 log = logging.getLogger("agents.launch")
 KST = ZoneInfo("Asia/Seoul")
 

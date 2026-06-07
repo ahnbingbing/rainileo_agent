@@ -2,9 +2,11 @@
 <!--
   Launch month — daily 4-slot production (PD 2026-06-07).
 
-  Produces the day's 4 episodes (2 av + 2 rf, lane×timeslot Latin square) at
-  02:00 KST, Giri-gated, auto-scheduled-public at that day's 08:00/12:30/18:00/
-  21:00 slots, all posted to the Slack workroom thread for PD spot-check / /veto.
+  Runs at 00:00 KST and produces TOMORROW's 4 episodes (2 av + 2 rf, lane×
+  timeslot Latin square), Giri-gated, auto-scheduled-public at tomorrow's
+  08:00/12:30/18:00/21:00 slots, all posted to the Slack workroom thread.
+  PD 2026-06-07: midnight start gives a full day to spot-check/veto AND answer
+  the knowledge questions before anything goes public the next day.
 
   ⚠️ INSTALL ONLY WHEN STARTING THE LAUNCH MONTH — this ships real public-
   scheduled videos and spends Seedance/Gemini budget daily.
@@ -41,7 +43,7 @@
 
     <key>StartCalendarInterval</key>
     <dict>
-      <key>Hour</key><integer>2</integer>
+      <key>Hour</key><integer>0</integer>
       <key>Minute</key><integer>0</integer>
     </dict>
 
