@@ -1389,6 +1389,8 @@ def _ensure_upload_columns(con: sqlite3.Connection) -> None:
             con.execute("ALTER TABLE cards ADD COLUMN uploaded INTEGER DEFAULT 0")
         if "youtube_video_id" not in cols:
             con.execute("ALTER TABLE cards ADD COLUMN youtube_video_id TEXT")
+        if "youtube_publish_at" not in cols:
+            con.execute("ALTER TABLE cards ADD COLUMN youtube_publish_at TEXT")
         con.commit()
     except Exception as e:
         log.warning("ensure upload columns failed: %s", e)
@@ -1451,7 +1453,8 @@ def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.dat
         return None
     con.execute(
         "UPDATE cards SET state='published', uploaded=1, youtube_video_id=?, "
-        "updated_at=datetime('now') WHERE card_id=?", (vid, card_id),
+        "youtube_publish_at=?, updated_at=datetime('now') WHERE card_id=?",
+        (vid, publish_at, card_id),
     )
     con.commit()
     if progress_cb:

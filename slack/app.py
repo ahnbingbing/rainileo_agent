@@ -339,6 +339,29 @@ def veto_cmd(ack, body, respond):
 
 
 # ──────────────────────────────────────────────────────────────────────
+# /bandit — av-vs-rf A/B 현황 (PD 2026-06-07). `/bandit` = 리포트,
+# `/bandit collect` = 48h 지표 수집 후 리포트, `/bandit choose` = 다음 레인/시각 추천.
+# ──────────────────────────────────────────────────────────────────────
+@app.command("/bandit")
+def bandit_cmd(ack, body, respond):
+    ack()
+    arg = (body.get("text") or "").strip().lower()
+    try:
+        from agents import bandit as B
+        if arg.startswith("collect"):
+            got = B.collect()
+            respond(f":arrows_counterclockwise: {len(got)}편 지표 수집/갱신\n\n" + B.report())
+        elif arg.startswith("choose"):
+            respond(f":game_die: 다음 추천\n  lane → *{B.choose_lane()}*\n"
+                    f"  timeslot → *{B.choose_timeslot()}*\n\n" + B.report())
+        else:
+            respond(B.report())
+    except Exception as e:
+        log.exception("bandit cmd failed")
+        respond(f":x: bandit 실패: {str(e)[:600]}")
+
+
+# ──────────────────────────────────────────────────────────────────────
 # /sync — iCloud 수동 싱크
 # ──────────────────────────────────────────────────────────────────────
 @app.command("/sync")
