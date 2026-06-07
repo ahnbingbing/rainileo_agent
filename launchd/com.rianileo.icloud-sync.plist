@@ -27,6 +27,7 @@
       <string>Ryani &amp; Leo</string>
       <string>--download-missing</string>
       <string>--vlm</string>
+      <string>--prune</string>
     </array>
 
     <key>WorkingDirectory</key><string>/Users/ahnbingbing/code/rianileo-agent</string>

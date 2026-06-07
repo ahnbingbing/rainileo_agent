@@ -206,80 +206,180 @@ def _run_vlm_tagging(n_new: int) -> None:
         log.warning("VLM tagging failed: %s", e)
 
 
-def bulk_download_missing(album_name: str, dry_run: bool = False) -> bool:
-    """
-    Use osxphotos's built-in CLI to fetch every missing item in the album from
-    iCloud. Side effect: Photos.app's local library cache fills up so the next
-    PhotoInfo.path lookup returns valid local paths.
-
-    The CLI export writes copies into a temp dir which is auto-cleaned. We
-    don't keep those files; we just need the cache population side effect.
-
-    Returns True if invoked, False if osxphotos CLI was not found.
-    """
+def _osxphotos_cli() -> str | None:
     cli = shutil.which("osxphotos")
-    if not cli:
-        # PD 2026-06-07: under launchd / background the venv bin isn't on PATH,
-        # so `which` failed and 104 iCloud-only items were never downloaded
-        # (skipped_missing → not ingested). Fall back to the osxphotos CLI that
-        # ships next to the running interpreter (.venv/bin/osxphotos).
-        import sys as _sys
-        cand = Path(_sys.executable).parent / "osxphotos"
-        if cand.exists():
-            cli = str(cand)
-            log.info("osxphotos not on PATH — using venv CLI: %s", cli)
-        else:
-            log.warning("osxphotos CLI not on PATH and not in venv (%s) — "
-                        "cannot bulk fetch missing items", cand)
-            return False
-    if dry_run:
-        log.info("[dry-run] would run: osxphotos export --album %r --download-missing --use-photos-export", album_name)
-        return False
+    if cli:
+        return cli
+    # PD 2026-06-07: under launchd / background the venv bin isn't on PATH.
+    import sys as _sys
+    cand = Path(_sys.executable).parent / "osxphotos"
+    if cand.exists():
+        log.info("osxphotos not on PATH — using venv CLI: %s", cand)
+        return str(cand)
+    log.warning("osxphotos CLI not on PATH and not in venv (%s)", cand)
+    return None
 
-    with tempfile.TemporaryDirectory(prefix="rl_dlmiss_") as tmp:
-        # PD 2026-06-07: --use-photos-export drives Photos via AppleScript and
-        # failed repeatedly ("AppleScript export has failed 10 consecutive
-        # times") — needs Automation permission + a foreground Photos app.
-        # --use-photokit downloads iCloud originals via the PhotoKit framework
-        # directly (more reliable headless). Override with ICLOUD_EXPORT_METHOD.
-        method = os.getenv("ICLOUD_EXPORT_METHOD", "--use-photokit")
-        cmd = [
-            cli, "export",
-            "--album", album_name,
-            "--download-missing",
-            method,
-            "--skip-edited",
-            "--skip-bursts",
-            "--retry", "2",
-            tmp,
-        ]
-        log.info("bulk-fetching missing originals via osxphotos CLI (this is the slow step):")
-        log.info("  %s", " ".join(cmd[:-1]) + f" {tmp}")
-        log.info("  Photos.app must stay running. Don't sleep the Mac.")
-        try:
-            proc = subprocess.run(cmd, check=False)
-            if proc.returncode != 0:
-                log.warning("osxphotos export rc=%d (some items may have failed)", proc.returncode)
-        except FileNotFoundError:
-            log.warning("osxphotos CLI invocation failed — binary not found at runtime")
-            return False
-        except KeyboardInterrupt:
-            log.warning("bulk download interrupted by user")
-            return True
+
+def bulk_export_to(album_name: str, dest_dir: Path, dry_run: bool = False) -> bool:
+    """PD 2026-06-07 (Option A): export the album to `dest_dir` with each file
+    named by the photo UUID ({uuid}.<ext>), downloading iCloud-only originals
+    via PhotoKit. We then INGEST FROM THESE EXPORTED FILES (our own copies) —
+    not from Photos' volatile local path (which Optimize-Mac-Storage keeps
+    evicting). Once copied into data/assets, an asset never disappears again.
+    Returns True if the export ran."""
+    cli = _osxphotos_cli()
+    if not cli:
+        return False
+    method = os.getenv("ICLOUD_EXPORT_METHOD", "--use-photokit")
+    if dry_run:
+        log.info("[dry-run] would run: osxphotos export %s --album %r %s "
+                 "--download-missing --filename {uuid}", dest_dir, album_name, method)
+        return False
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        cli, "export", str(dest_dir),
+        "--album", album_name,
+        "--download-missing",
+        method,
+        "--skip-edited",
+        "--skip-bursts",
+        "--filename", "{uuid}",   # name by UUID so we can map exported→PhotoInfo
+        "--retry", "2",
+    ]
+    log.info("Option A export (download-missing → %s, filename={uuid}):", dest_dir)
+    log.info("  %s", " ".join(cmd))
+    try:
+        proc = subprocess.run(cmd, check=False)
+        if proc.returncode != 0:
+            log.warning("osxphotos export rc=%d (some items may have failed)", proc.returncode)
+    except FileNotFoundError:
+        log.warning("osxphotos CLI invocation failed — binary not found at runtime")
+        return False
+    except KeyboardInterrupt:
+        log.warning("bulk export interrupted by user")
+        return True
     return True
 
 
+def _resolve_local_source(p, export_dir: Path | None):
+    """Find a REAL local file for photo `p`. Prefer Photos' own local path; if
+    evicted (Optimize Storage), use the UUID-named file we just exported."""
+    try:
+        if p.path and Path(p.path).exists():
+            return Path(p.path)
+    except Exception:
+        pass
+    if export_dir:
+        try:
+            matches = sorted(Path(export_dir).glob(f"{p.uuid}.*"))
+            # skip osxphotos increment dupes like "{uuid} (1).ext"; prefer plain
+            plain = [m for m in matches if " (" not in m.name]
+            for m in (plain or matches):
+                if m.exists():
+                    return m
+        except Exception:
+            pass
+    return None
+
+
+def ensure_source_uuid_column(con: sqlite3.Connection) -> None:
+    """PD 2026-06-07 (efficient model): store the Photos UUID so the original
+    can be RE-DOWNLOADED on demand at render time — letting us delete bulky
+    originals after VLM tagging without losing the asset."""
+    try:
+        cols = [r[1] for r in con.execute("PRAGMA table_info(assets)")]
+        if "source_uuid" not in cols:
+            con.execute("ALTER TABLE assets ADD COLUMN source_uuid TEXT")
+            con.commit()
+    except Exception as e:
+        log.warning("ensure source_uuid column failed: %s", e)
+
+
+def download_asset_by_uuid(uuid: str, dest_dir: Path) -> str | None:
+    """Efficient-model on-demand fetch: download ONE original by Photos UUID
+    (for a clip selected at render time). Returns the local file path or None."""
+    cli = _osxphotos_cli()
+    if not cli or not uuid:
+        return None
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    method = os.getenv("ICLOUD_EXPORT_METHOD", "--use-photokit")
+    cmd = [cli, "export", str(dest_dir), "--uuid", uuid, "--download-missing",
+           method, "--skip-edited", "--skip-bursts", "--filename", "{uuid}",
+           "--retry", "2"]
+    try:
+        subprocess.run(cmd, check=False)
+    except Exception as e:
+        log.warning("download_asset_by_uuid failed for %s: %s", uuid, e)
+        return None
+    matches = sorted(Path(dest_dir).glob(f"{uuid}.*"))
+    plain = [m for m in matches if " (" not in m.name]
+    cand = (plain or matches)
+    return str(cand[0]) if cand else None
+
+
+def backfill_uuids(album_name: str) -> int:
+    """One-time: fill source_uuid for already-ingested assets (legacy rows had
+    none) so they become re-downloadable for the efficient model + cooldown."""
+    import osxphotos  # type: ignore
+    con = sqlite3.connect(DB_PATH)
+    ensure_source_uuid_column(con)
+    log.info("backfill: opening Photos library…")
+    photosdb = osxphotos.PhotosDB()
+    photos = list(photosdb.photos(albums=[album_name]))
+    n = 0
+    for p in photos:
+        captured = p.date or dt.datetime.now()
+        for src in ("icloud", "icloud_live"):
+            aid = _asset_id(captured, src, p.uuid)
+            cur = con.execute(
+                "UPDATE assets SET source_uuid=? WHERE asset_id=? "
+                "AND (source_uuid IS NULL OR source_uuid='')", (p.uuid, aid))
+            n += cur.rowcount
+    con.commit()
+    con.close()
+    log.info("backfill: set source_uuid on %d rows", n)
+    return n
+
+
+def prune_originals(dry_run: bool = False) -> tuple[int, int]:
+    """Efficient model: delete the local ORIGINAL file for assets that are
+    VLM-tagged AND have a source_uuid (re-downloadable). Keeps the DB row +
+    file_path; render re-downloads on demand. Returns (count, bytes_freed)."""
+    con = sqlite3.connect(DB_PATH)
+    ensure_source_uuid_column(con)
+    rows = con.execute(
+        "SELECT asset_id, file_path FROM assets WHERE source_uuid IS NOT NULL "
+        "AND source_uuid != '' AND vlm_analyzed_at IS NOT NULL"
+    ).fetchall()
+    con.close()
+    n = 0
+    freed = 0
+    for aid, fp in rows:
+        try:
+            if fp and os.path.exists(fp):
+                sz = os.path.getsize(fp)
+                if not dry_run:
+                    os.remove(fp)
+                freed += sz
+                n += 1
+        except Exception as e:
+            log.warning("prune skip %s: %s", aid, e)
+    log.info("%sprune: %d files, %.1f GB", "[dry] " if dry_run else "", n, freed / 1e9)
+    return n, freed
+
+
 def insert_asset(con: sqlite3.Connection, **kw) -> None:
+    kw.setdefault("source_uuid", None)
     con.execute(
         """
         INSERT OR IGNORE INTO assets
             (asset_id, source, kind, file_path, captured_iso, ingested_iso,
              duration_sec, width, height, phash, subjects_csv, age_tag,
-             location_tag, notes)
+             location_tag, notes, source_uuid)
         VALUES (:asset_id, :source, :kind, :file_path, :captured_iso,
                 COALESCE(:ingested_iso, datetime('now')),
                 :duration_sec, :width, :height, :phash,
-                :subjects_csv, :age_tag, :location_tag, :notes)
+                :subjects_csv, :age_tag, :location_tag, :notes, :source_uuid)
         """,
         kw,
     )
@@ -315,19 +415,19 @@ def sync_album(
             f"  available albums: {', '.join(a.title for a in photosdb.album_info)[:200]} ..."
         )
 
-    # Bulk download from iCloud BEFORE filtering, so that even items with
-    # since/limit applied still benefit from the cache population.
+    # PD 2026-06-07 (Option A): export the album (downloading iCloud-only
+    # originals) to a UUID-named export dir, then INGEST FROM THOSE FILES — not
+    # from Photos' volatile local path. This makes downloads stick: once copied
+    # into data/assets they never disappear (Optimize Mac Storage can't evict
+    # our own copies). `export_dir` is consumed by _process_one below.
+    export_dir: Path | None = None
     if download_missing:
         missing_count = sum(1 for p in photos if not p.path)
         log.info("missing locally: %d / %d album items", missing_count, len(photos))
-        if missing_count > 0:
-            invoked = bulk_download_missing(album_name, dry_run=dry_run)
-            if invoked and not dry_run:
-                log.info("re-opening Photos library to pick up newly-cached paths")
-                photosdb = osxphotos.PhotosDB()
-                photos = list(photosdb.photos(albums=[album_name]))
-                still_missing = sum(1 for p in photos if not p.path)
-                log.info("after bulk download: %d items still missing", still_missing)
+        export_dir = ROOT / "data" / "tmp" / "icloud_export"
+        shutil.rmtree(export_dir, ignore_errors=True)
+        if not dry_run:
+            bulk_export_to(album_name, export_dir, dry_run=dry_run)
 
     if since:
         photos = [p for p in photos if p.date and p.date.date() >= since]
@@ -340,6 +440,7 @@ def sync_album(
     CLIPS_DIR.mkdir(parents=True, exist_ok=True)
 
     con = sqlite3.connect(DB_PATH)
+    ensure_source_uuid_column(con)
     summary = {
         "considered": len(photos),
         "skipped_existing": 0,
@@ -369,12 +470,27 @@ def sync_album(
         if p.hidden:
             summary["skipped_hidden"] += 1
             return
-        if p.ismissing or not p.path:
+
+        captured = p.date or dt.datetime.now()
+        captured_iso = captured.isoformat(timespec="seconds")
+
+        is_video = bool(getattr(p, "ismovie", False))
+        kind = "video" if is_video else "photo"
+        target_dir = _year_dir(CLIPS_DIR if is_video else PHOTOS_DIR, captured)
+        asset_id = _asset_id(captured, "icloud", p.uuid)
+
+        # Skip already-ingested BEFORE resolving/downloading the source.
+        if asset_exists(con, asset_id):
+            summary["skipped_existing"] += 1
+            return
+
+        # PD 2026-06-07 (Option A): get a REAL local file — Photos' own path if
+        # present, else the UUID-named file we exported (downloaded from iCloud).
+        src_path = _resolve_local_source(p, export_dir)
+        if not src_path or not src_path.exists():
             summary["skipped_missing"] += 1
             return
 
-        captured = p.date or dt.datetime.fromtimestamp(Path(p.path).stat().st_mtime)
-        captured_iso = captured.isoformat(timespec="seconds")
         year_key = captured.strftime("%Y")
         summary["by_year"][year_key] = summary["by_year"].get(year_key, 0) + 1
 
@@ -394,25 +510,8 @@ def sync_album(
         else:
             summary["by_subjects"]["unknown"] += 1
 
-        is_video = bool(getattr(p, "ismovie", False))
-        kind = "video" if is_video else "photo"
-        target_dir = _year_dir(CLIPS_DIR if is_video else PHOTOS_DIR, captured)
-        asset_id = _asset_id(captured, "icloud", p.uuid)
-
-        if asset_exists(con, asset_id):
-            summary["skipped_existing"] += 1
-            return
-
-        # Direct copy from Photos.app's local file. HEIC stays HEIC —
-        # pillow-heif handles it for pHash, ffmpeg handles it for video
-        # editing. Items that are still missing after the optional
-        # bulk-download phase are silently skipped here; the bulk phase
-        # already logged anything that went wrong.
-        src_path = Path(p.path) if p.path else None
-        if not src_path or not src_path.exists():
-            summary["skipped_missing"] += 1
-            return
-
+        # Copy the resolved local file (Photos path or our exported copy) into
+        # data/assets — HEIC stays HEIC (pillow-heif/ffmpeg handle it).
         ext = src_path.suffix.lower() or (".mov" if is_video else ".jpg")
         dest_path = target_dir / f"{asset_id}{ext}"
 
@@ -436,6 +535,7 @@ def sync_album(
                 con,
                 asset_id=asset_id,
                 source="icloud",
+                source_uuid=p.uuid,
                 kind=kind,
                 file_path=str(dest_path),
                 captured_iso=captured_iso,
@@ -466,6 +566,7 @@ def sync_album(
                         con,
                         asset_id=live_id,
                         source="icloud",
+                        source_uuid=p.uuid,
                         kind="video",
                         file_path=str(live_dest),
                         captured_iso=captured_iso,
@@ -507,6 +608,10 @@ def sync_album(
     if not dry_run:
         con.commit()
     con.close()
+    # Option A: the exported copies are now safe in data/assets — drop the temp
+    # export dir (can be many GB).
+    if export_dir and not dry_run:
+        shutil.rmtree(export_dir, ignore_errors=True)
     return summary
 
 
@@ -569,7 +674,24 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--vlm", action="store_true",
                     help="after ingest, run VLM tagging on the newly-imported "
                          "(untagged) assets so the Writer can use them (PD 2026-06-07)")
+    ap.add_argument("--backfill-uuids", action="store_true",
+                    help="one-time: fill source_uuid for already-ingested assets")
+    ap.add_argument("--prune", action="store_true",
+                    help="efficient model: delete local originals for VLM-tagged "
+                         "+ uuid'd assets (re-downloadable on demand). Frees space.")
     args = ap.parse_args(argv)
+
+    if args.backfill_uuids:
+        n = backfill_uuids(args.album)
+        print(f"backfill: set source_uuid on {n} rows")
+        if not args.prune:
+            return 0
+    # Standalone prune only when no sync intent. Otherwise prune runs AFTER the
+    # sync (download→ingest→VLM→prune) — see _one() below.
+    if args.prune and not (args.download_missing or args.vlm or args.watch):
+        n, freed = prune_originals(dry_run=args.dry_run)
+        print(f"prune: removed {n} originals, freed {freed/1e9:.1f} GB")
+        return 0
 
     subject_map = parse_subject_map(args.subject_map)
     since = dt.date.fromisoformat(args.since) if args.since else None
@@ -594,6 +716,11 @@ def main(argv: list[str] | None = None) -> int:
                 _run_vlm_tagging(imported)
             elif args.vlm and imported == 0:
                 log.info("--vlm: no new assets imported — skipping VLM tagging")
+            # Efficient model: after tagging, free the bulky originals (kept
+            # re-downloadable by uuid). Daily steady-state stays small.
+            if args.prune and not args.dry_run:
+                n, freed = prune_originals()
+                log.info("post-sync prune: %d files, %.1f GB freed", n, freed / 1e9)
             return 0
         except SystemExit:
             raise

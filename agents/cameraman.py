@@ -733,7 +733,7 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
             if aid:
                 row = con.execute(
                     "SELECT asset_id, file_path, kind, subjects_csv, captured_iso, "
-                    "duration_sec, width, height, has_human, "
+                    "duration_sec, width, height, has_human, source_uuid, "
                     "NULL as role, NULL as trim_start, NULL as trim_end "
                     "FROM assets WHERE asset_id = ?", (aid,)
                 ).fetchone()
@@ -836,6 +836,7 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
                 sources[tag] = {
                     "source": "__photo_i2v__",
                     "photo_path": photo_fp,
+                    "source_uuid": a.get("source_uuid") or "",  # for on-demand re-download
                     "motion_prompt": cc.get("motion_prompt", ""),
                     "seedance_seconds": int(cc.get("duration_seconds") or 5),
                     "trim_start": 0.0,
@@ -892,6 +893,9 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
                 # footage instead of a frozen still).
                 "has_human": int(a.get("has_human") or 0),
                 "src_dur": float(src_dur) if src_dur else None,
+                # PD 2026-06-07 efficient model: uuid lets the trim step
+                # re-download the original on demand if it was pruned.
+                "source_uuid": a.get("source_uuid") or "",
             }
             # PD 2026-06-03: split_screen modes need a SECOND asset for the
             # other half of the split. Writer sets cc.secondary_asset_id.
@@ -1623,6 +1627,10 @@ def _prerender_photo_i2v_cuts(manifests: dict, work_dir: Path,
         if entry.get("source") != "__photo_i2v__":
             continue
         photo_path = entry.get("photo_path")
+        # PD 2026-06-07 efficient model: re-download the photo on demand if it
+        # was pruned (we kept its UUID).
+        if (not photo_path or not Path(photo_path).exists()) and entry.get("source_uuid"):
+            photo_path = _ensure_local(photo_path, entry.get("source_uuid")) or photo_path
         if not photo_path or not Path(photo_path).exists():
             log.warning("photo_i2v: photo not found for %s", tag)
             continue
@@ -1869,6 +1877,33 @@ def _prerender_chain_from_prev(manifests: dict, work_dir: Path,
     )
 
 
+def _ensure_local(file_path: str, source_uuid: str | None) -> str | None:
+    """PD 2026-06-07 efficient model: a clip's original may have been pruned to
+    save space. If the file is missing but we have its Photos UUID, re-download
+    it on demand to the same path. Returns a valid local path or None."""
+    try:
+        if file_path and Path(file_path).exists():
+            return file_path
+        if not source_uuid:
+            return file_path  # nothing we can do — let caller handle missing
+        from icloud.sync import download_asset_by_uuid
+        dest = Path(file_path).parent if file_path else (ROOT / "data" / "assets" / "clips")
+        dl = download_asset_by_uuid(source_uuid, dest)
+        if not dl:
+            return None
+        # Move/rename the downloaded {uuid}.ext to the expected file_path.
+        if file_path and Path(dl).resolve() != Path(file_path).resolve():
+            try:
+                shutil.move(dl, file_path)
+                return file_path
+            except Exception:
+                return dl
+        return dl
+    except Exception as e:
+        log.warning("ensure_local failed for %s: %s", file_path, e)
+        return file_path if (file_path and Path(file_path).exists()) else None
+
+
 def _trim_real_footage_clips(manifests: dict, anim_dir: Path,
                                 progress_cb: ProgressCb = None,
                                 dry_run: bool = False) -> None:
@@ -1919,6 +1954,14 @@ def _trim_real_footage_clips(manifests: dict, anim_dir: Path,
         src = entry.get("source", "")
         if src in ("__interp_pending__", "__photo_i2v__", "__chain_from_prev__"):
             continue
+        # PD 2026-06-07 efficient model: if the original was pruned, re-download
+        # it on demand using its Photos UUID.
+        if src and not Path(src).exists() and entry.get("source_uuid"):
+            if progress_cb:
+                progress_cb(f":arrow_down: {tag} 원본 재다운로드 (on-demand)")
+            restored = _ensure_local(src, entry.get("source_uuid"))
+            if restored:
+                src = restored
         src_path = Path(src)
         if not src_path.exists():
             log.warning("trim: source missing for %s: %s", tag, src)
