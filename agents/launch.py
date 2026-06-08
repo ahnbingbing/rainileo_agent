@@ -155,16 +155,26 @@ def launch_pipeline(target: dt.date, *,
                 progress_cb(f"  [dry] {r['slot']} {r['lane']}: {r['title']}")
         return results
 
-    # Render + upload each slot. Re-walk assignments in slot order so uploads
-    # are scheduled per timeslot; pop one concept per lane as we go.
-    results: list[dict] = []
+    # Build the slot jobs (one concept per slot).
+    jobs: list[tuple[str, str, dict]] = []
     for lane, hhmm in assignments:
         queue = lane_concepts.get(lane, [])
         if not queue:
             if progress_cb:
                 progress_cb(f":warning: {hhmm} {lane}: 컨셉 없음 — 슬롯 비움")
             continue
-        concept = queue.pop(0)
+        jobs.append((lane, hhmm, queue.pop(0)))
+
+    # WAL so the parallel renders (each its own connection) don't lock each other.
+    try:
+        con.execute("PRAGMA journal_mode=WAL")
+    except Exception:
+        pass
+
+    def _render_slot(lane: str, hhmm: str, concept: dict) -> dict | None:
+        # PD 2026-06-08: rf and av use different engines (rf=ffmpeg+Gemini,
+        # av=Seedance) so they parallelize well. Each thread uses its OWN db
+        # connection (sqlite connections aren't thread-safe to share).
         if progress_cb:
             progress_cb(f":factory: {hhmm} {lane} 생산: {concept.get('title','?')}")
         try:
@@ -173,12 +183,12 @@ def launch_pipeline(target: dt.date, *,
             log.exception("launch render failed (%s %s): %s", hhmm, lane, e)
             if progress_cb:
                 progress_cb(f":x: {hhmm} {lane} 렌더 실패: {str(e)[:140]}")
-            continue
+            return None
         out = outs[0] if outs else None
         if not out:
             if progress_cb:
                 progress_cb(f":x: {hhmm} {lane}: 기리 미통과/렌더 실패 — 슬롯 비움(junk 금지)")
-            continue
+            return None
         if video_cb:
             try:
                 video_cb(out)
@@ -188,12 +198,30 @@ def launch_pipeline(target: dt.date, *,
         publish_at = publish_at_for(target, hhmm)
         if do_upload and os.getenv("YOUTUBE_AUTO_UPLOAD", "1") == "1":
             try:
-                vid = _auto_upload_episode(con, out, target, progress_cb,
+                tcon = _db()
+                vid = _auto_upload_episode(tcon, out, target, progress_cb,
                                            publish_at_iso=publish_at)
+                tcon.close()
             except Exception as e:
                 log.warning("launch upload failed (%s %s): %s", hhmm, lane, e)
-        results.append({"lane": lane, "slot": hhmm, "output": str(out),
-                        "video_id": vid, "publish_at": publish_at})
+        return {"lane": lane, "slot": hhmm, "output": str(out),
+                "video_id": vid, "publish_at": publish_at}
+
+    results: list[dict] = []
+    concurrency = max(1, int(os.getenv("LAUNCH_CONCURRENCY", "2")))
+    if concurrency == 1 or len(jobs) <= 1:
+        for lane, hhmm, concept in jobs:
+            r = _render_slot(lane, hhmm, concept)
+            if r:
+                results.append(r)
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+        if progress_cb:
+            progress_cb(f":fast_forward: {len(jobs)}슬롯 병렬 렌더 (동시 {concurrency}개)")
+        with ThreadPoolExecutor(max_workers=concurrency) as ex:
+            for r in ex.map(lambda j: _render_slot(*j), jobs):
+                if r:
+                    results.append(r)
 
     if progress_cb:
         ok = sum(1 for r in results if r.get("output"))
