@@ -1840,7 +1840,7 @@ def _prerender_photo_i2v_cuts(manifests: dict, work_dir: Path,
             for ccx in (manifests.get("concept_cuts") or []):
                 if (ccx.get("tag") or ccx.get("cut_tag")) == tag:
                     who = (ccx.get("who") or "").lower(); break
-            if who in ("ryani", "both") and not _cut_ryani_marking_ok(out_mp4):
+            if who in ("ryani", "leo", "both") and not _cut_character_ok(out_mp4, who):
                 repl = _find_replacement_real_clip(who)
                 if repl:
                     sources[tag] = repl
@@ -2991,14 +2991,20 @@ _RYANI_MARKING_EMPHASIS = (
     "tail. Only black/white/grey — no brown. Keep the blaze thin and the face "
     "identical to the input; do not redraw or distort her markings.")
 
+_LEO_MARKING_EMPHASIS = (
+    " CRITICAL — Leo the orange tabby cat must look like the REAL cat, not AI-"
+    "generated: pale yellow-green / chartreuse eyes (NOT gold or amber), a faint "
+    "scar across the nose bridge, white chin tuft, lean young-adult body, natural "
+    "real-cat face and proportions. Do not warp, plasticize, or redraw his face.")
 
-def _cut_ryani_marking_ok(mp4_path: Path, n_frames: int = 3) -> bool:
-    """PD 2026-06-08: per-cut Ryani marking gate for i2v output (av + rf photo_i2v),
-    checked RIGHT AFTER the cut renders (not at end-of-episode). ANGLE-AWARE: a side
-    profile legitimately hides the blaze, so only FAIL when Ryani's face is frontal
-    AND her white blaze/markings are clearly wrong (Seedance drift). Fail-open (True)
-    on any error / no API — never block on infra issues.
-    Returns True = keep, False = drift detected (caller regenerates or replaces)."""
+
+def _cut_character_ok(mp4_path: Path, who: str = "both", n_frames: int = 3) -> bool:
+    """PD 2026-06-08: per-cut CHARACTER fidelity gate for i2v output (av + rf
+    photo_i2v), checked RIGHT AFTER the cut renders. Covers Ryani AND Leo (PD: "레오
+    캐릭터가 너무 생성형"). ANGLE-AWARE: a side profile that hides markings is FINE;
+    only FAIL when a pet is frontal/clear AND clearly wrong, OR the render looks
+    obviously AI-generated/distorted (warped face, wrong proportions). Fail-open
+    (True) on any error / no API. Returns True = keep, False = bad (regen/replace)."""
     api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key or not Path(mp4_path).exists():
         return True
@@ -3029,17 +3035,28 @@ def _cut_ryani_marking_ok(mp4_path: Path, n_frames: int = 3) -> bool:
                                                      mime_type="image/jpeg"))
             if not parts:
                 return True
+            w = (who or "both").lower()
+            specs = []
+            if w in ("ryani", "both"):
+                specs.append(
+                    "RYANI (black French Bulldog): THIN white blaze (narrow line "
+                    "nose→forehead, NOT thick/large), white eyebrow dots, silver-grey "
+                    "muzzle, white chin, white chest patch, bat ears, NO tail, only "
+                    "black/white/grey (no brown).")
+            if w in ("leo", "both"):
+                specs.append(
+                    "LEO (orange tabby cat): pale YELLOW-GREEN/chartreuse eyes (NOT "
+                    "gold/amber), faint scar on the nose bridge, white chin tuft, lean "
+                    "young-adult body, natural real-cat look.")
             prompt = (
-                "These frames are from one cut featuring Ryani, a black French "
-                "Bulldog. Her signature: a THIN white blaze (narrow line nose→"
-                "forehead), white eyebrow dots, silver-grey muzzle, white chin, "
-                "white chest patch — only black/white/grey, NO brown, NO tail. "
-                "Check if her face is rendered correctly. IMPORTANT: if her face is "
-                "in side profile or turned away (blaze naturally not visible), that "
-                "is FINE — not a defect. Only flag a problem when her face is "
-                "FRONTAL/near-frontal AND the blaze/markings are clearly wrong "
-                "(e.g. blaze too thick/large, wrong shape, brown tint, distorted). "
-                "Return ONLY JSON: {\"frontal\":true|false,\"markings_ok\":true|false}.")
+                "These frames are from ONE rendered cut. Judge the pet character "
+                "fidelity for: " + " ".join(specs) + " IMPORTANT: a side profile or "
+                "turned-away face that naturally hides markings is FINE — not a "
+                "defect. Flag a problem ONLY when a pet is frontal/clearly visible AND "
+                "its markings/features are clearly wrong, OR the render looks obviously "
+                "AI-generated/distorted (warped face, melted/extra features, wrong "
+                "proportions, plastic/fake look). Return ONLY JSON: "
+                "{\"clear\":true|false,\"character_ok\":true|false}.")
             contents = list(parts) + [prompt]
             resp = client.models.generate_content(
                 model=os.getenv("VLM_MODEL", "gemini-2.5-flash"),
@@ -3049,11 +3066,12 @@ def _cut_ryani_marking_ok(mp4_path: Path, n_frames: int = 3) -> bool:
                     thinking_config=_gt.ThinkingConfig(thinking_budget=0)))
             import json as _json
             d = _json.loads((resp.text or "{}").strip())
-            frontal = bool(d.get("frontal"))
-            ok = bool(d.get("markings_ok"))
-            bad = frontal and not ok
+            clear = bool(d.get("clear", d.get("frontal")))
+            ok = bool(d.get("character_ok", d.get("markings_ok")))
+            bad = clear and not ok
             if bad:
-                log.info("cut marking gate: Ryani blaze DRIFT in %s", Path(mp4_path).name)
+                log.info("cut character gate: %s drift/generative in %s",
+                         w, Path(mp4_path).name)
             return not bad
     except Exception as e:
         log.warning("cut marking check failed (%s) — keeping cut", e)
@@ -3622,39 +3640,41 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                     raise
         _seedance_i2v_safe(prompt)
 
-        # PD 2026-06-08: per-cut Ryani marking gate (angle-aware) RIGHT AFTER render.
-        # Bad (frontal face + drifted blaze) → regenerate the cut with strengthened
-        # marking canon ×3 → 1 alt prompt → drop. Dropping breaks the chain/story →
-        # flag for PD-confirmed Writer/Producer rework (Phase 2).
-        _has_ryani = any(k in (prompt or "").lower()
-                         for k in ("ryani", "랴니", "french bulldog"))
-        if _has_ryani and not dry_run and out_mp4.exists():
-            if not _cut_ryani_marking_ok(out_mp4):
+        # PD 2026-06-08: per-cut CHARACTER gate (angle-aware) RIGHT AFTER render —
+        # covers Ryani AND Leo (PD: "레오 생성형 티"). Bad (clear + wrong/generative)
+        # → regenerate with strengthened canon ×3 → 1 alt prompt → drop. Dropping
+        # breaks the chain/story → flag for PD-confirmed Writer/Producer rework (Phase 2).
+        _pl = (prompt or "").lower()
+        _has_r = any(k in _pl for k in ("ryani", "랴니", "french bulldog"))
+        _has_l = any(k in _pl for k in ("leo", "레오", "tabby", "cat", "고양이"))
+        _who = "both" if (_has_r and _has_l) else ("ryani" if _has_r else ("leo" if _has_l else ""))
+        _emph = (_RYANI_MARKING_EMPHASIS if _has_r else "") + (_LEO_MARKING_EMPHASIS if _has_l else "")
+        if _who and not dry_run and out_mp4.exists():
+            if not _cut_character_ok(out_mp4, _who):
                 resolved = False
                 for r in range(3):
                     if progress_cb:
-                        progress_cb(f":repeat: {tag} 랴니 마킹 드리프트 — 재생성 {r+1}/3")
+                        progress_cb(f":repeat: {tag} 캐릭터 드리프트({_who}) — 재생성 {r+1}/3")
                     try:
-                        _seedance_i2v_safe(prompt + _RYANI_MARKING_EMPHASIS)
+                        _seedance_i2v_safe(prompt + _emph)
                     except Exception as e:
                         log.warning("regen %d failed for %s: %s", r + 1, tag, e); break
-                    if _cut_ryani_marking_ok(out_mp4):
+                    if _cut_character_ok(out_mp4, _who):
                         resolved = True; break
                 if not resolved:
-                    # different prompt (calmer, marking-forward)
-                    alt = ("Gentle natural motion, camera holds still."
-                           + _RYANI_MARKING_EMPHASIS)
+                    # different prompt (calmer, character-forward)
+                    alt = "Gentle natural motion, camera holds still." + _emph
                     if progress_cb:
                         progress_cb(f":repeat: {tag} — 다른 프롬프트로 재도전")
                     try:
                         _seedance_i2v_safe(alt)
-                        resolved = _cut_ryani_marking_ok(out_mp4)
+                        resolved = _cut_character_ok(out_mp4, _who)
                     except Exception:
                         pass
                 if not resolved:
-                    log.warning("av cut %s: Ryani marking unresolved — dropping cut", tag)
+                    log.warning("av cut %s: character unresolved — dropping cut", tag)
                     if progress_cb:
-                        progress_cb(f":x: {tag} 마킹 해결 실패 — 컷 드롭 "
+                        progress_cb(f":x: {tag} 캐릭터 해결 실패 — 컷 드롭 "
                                     f"(스토리 영향 → PD 컨펌 후 재작업 필요)")
                     try:
                         out_mp4.unlink(missing_ok=True)

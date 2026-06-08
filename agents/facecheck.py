@@ -52,7 +52,9 @@ _FACE_PROMPT = (
     "that NO human FACE may ever be visible. Look CAREFULLY at each numbered image. "
     "A face counts even if: partially turned, wearing sunglasses/hat/mask, blurry, "
     "small, in the background, or only the head/forehead is shown. Pets (cat/dog) "
-    "are NOT faces. Human hands/legs/torso WITHOUT a face are OK. "
+    "are NOT faces. Human hands/legs/torso WITHOUT a face are OK. A face shown ON a "
+    "screen (TV/monitor/phone/tablet) or in a photo/poster/painting does NOT count "
+    "— only a REAL person physically in the scene. "
     "Return ONLY JSON: {\"frames_with_face\":[indices...], "
     "\"any\":true|false, \"note\":\"where the face is, if any\"}."
 )
@@ -100,8 +102,11 @@ def face_box(image_path) -> dict | None:
         resp = client.models.generate_content(
             model=os.getenv("VLM_MODEL", "gemini-2.5-flash"),
             contents=[types.Part.from_bytes(data=data, mime_type="image/jpeg"),
-                      ("Locate any HUMAN FACE/HEAD in this image (count sunglasses/"
-                       "hat/partial/background faces). Return ONLY JSON "
+                      ("Locate a REAL human face/head PHYSICALLY PRESENT in this "
+                       "scene (count sunglasses/hat/partial/background). IMPORTANT: "
+                       "do NOT count a face shown ON a screen — TV, monitor, phone, "
+                       "tablet, laptop — or in a photo/poster/painting/artwork. Only "
+                       "a real person in the room counts. Return ONLY JSON "
                        "{\"face\":{\"x\":..,\"y\":..,\"w\":..,\"h\":..}} as fractions "
                        "0..1 top-left origin, or {\"face\":null} if none.")],
             config=types.GenerateContentConfig(
