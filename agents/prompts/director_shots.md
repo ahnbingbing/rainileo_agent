@@ -197,15 +197,16 @@ Then prepend the **same** anchor language into every cut's set_description / mot
 
 Same rule for **scratcher, rug (if exists), TV stand, plant pots, etc.** — declare each piece ONCE per prompt with its position, then describe character positions RELATIVE to it. 절대 "Ryani의 sofa", "Leo의 sofa"처럼 캐릭터별로 동일 가구를 따로 묘사하지 마라.
 
-### Fixture realism — pets do NOT stand inside mounted fixtures (NON-NEGOTIABLE)
-PD 2026-06-08 (욕실 세면대 바닥 사건): a wall-/vanity-mounted fixture — **sink basin(세면대), toilet(변기), bathtub if wall-set, counter** — sits at human/counter height (~75–85cm). Seedance CANNOT float a pet at that height *inside* a wall fixture, so when a prompt says "the dog stands inside the sink basin," it **drops the whole basin onto the floor** to make the pose plausible → 세면대가 바닥에 굴러다니는 그림이 된다. Never stage a pet standing/sitting INSIDE a mounted fixture.
+### Fixture HEIGHT lock — the sink stays mounted at counter height (NON-NEGOTIABLE)
+PD 2026-06-08 (욕실 세면대 바닥 사건). **랴니는 실제로 발 씻을 때 세면대 안에 네 발로 들어가 선다 — 세면대가 커서 들어간다. 이 자세 자체는 맞다.** The ONLY failure was that Seedance rendered the sink sitting **on the floor**. Like the elevated-surface jump rule above, Seedance defaults a fixture to floor level unless its height is explicitly locked. So when a pet stands INSIDE the sink, you MUST nail the sink's mount height in the prompt every time, or it gets grounded.
 
-To wash/rinse paws at a sink, do ONE of:
-- ✅ Pet **stands on the floor or on the wooden chair/stool** beside the sink, and a hand **lifts the paw UP to the faucet** ("front paws lifted up to the running faucet of the wall-mounted sink"). The sink stays mounted at counter height in the upper frame.
-- ✅ Use an explicit **floor basin / 대야(washtub)** that genuinely belongs on the ground: "a round plastic washtub placed ON the bathroom floor" — then the pet standing in it is correct. But then it is NOT the sink.
-- ❌ "stands inside the white square sink basin" / "sits in the toilet" / "inside the counter sink" — Seedance grounds the fixture. Forbidden.
+Required whenever a cut places a pet at/in the sink:
+- ✅ State the sink is **mounted/built into the vanity at human hand-washing height** with an explicit number: *"the large white square sink basin is mounted into the bathroom vanity at adult hand-washing height — the basin rim sits about 80cm above the tiled floor, set against the back wall. The vanity cabinet and its legs/plumbing are visible BELOW the basin. The basin is large, and Ryani stands inside it on all four paws, elevated at counter height."*
+- ✅ Make the elevation visible: mention what's **under** the basin (vanity cabinet / pedestal / visible gap to the floor) so the frame reads as "up on the counter," and keep the floor/bathmat lower in frame as a separate plane.
+- ❌ Do NOT write just "Ryani stands inside the sink basin" with no height/mount cue → Seedance drops the whole basin to the floor (the bug PD caught).
+- ❌ Do NOT describe the basin resting on the floor or at floor level.
 
-State the fixture's mount height + position once ("white square sink basin mounted into the vanity along the back wall, basin rim about 80cm above the floor, upper-center of frame"), then stage the pet relative to it on the floor/chair.
+(If a concept genuinely wants a floor washtub instead, that's a different prop — an explicit "round plastic 대야 placed ON the floor". But the family's real paw-wash is the elevated sink.)
 
 ### Water-source coherence for any water/drinking payoff (NON-NEGOTIABLE)
 PD 2026-06-08: if a cut's gag/payoff is a pet **drinking or interacting with water** (e.g., "Leo drinks the water Ryani was washed with"), the water MUST come from the SAME established source shown in frame, and the pet must be staged AT that source. Don't have Leo drink "그 물" while standing on a stool across the room with no water near his mouth — show him at the sink lapping from the faucet stream / the cup on the sink ledge / the basin he can actually reach. The source, the water, and the drinking mouth must be in one coherent space. If the payoff needs Leo at the sink, put Leo at the sink (on the chair/edge), not on a separate perch.
