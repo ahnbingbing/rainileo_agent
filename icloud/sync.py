@@ -240,6 +240,7 @@ def bulk_export_to(album_name: str, dest_dir: Path, dry_run: bool = False) -> bo
         cli, "export", str(dest_dir),
         "--album", album_name,
         "--download-missing",
+        "--update",               # reuse prior export DB → no interactive prompt
         method,
         "--skip-edited",
         "--skip-bursts",
@@ -249,7 +250,7 @@ def bulk_export_to(album_name: str, dest_dir: Path, dry_run: bool = False) -> bo
     log.info("Option A export (download-missing → %s, filename={uuid}):", dest_dir)
     log.info("  %s", " ".join(cmd))
     try:
-        proc = subprocess.run(cmd, check=False)
+        proc = subprocess.run(cmd, check=False, stdin=subprocess.DEVNULL)
         if proc.returncode != 0:
             log.warning("osxphotos export rc=%d (some items may have failed)", proc.returncode)
     except FileNotFoundError:
@@ -303,11 +304,15 @@ def download_asset_by_uuid(uuid: str, dest_dir: Path) -> str | None:
         return None
     dest_dir.mkdir(parents=True, exist_ok=True)
     method = os.getenv("ICLOUD_EXPORT_METHOD", "--use-photokit")
+    # PD 2026-06-08: --update reuses the prior export DB so osxphotos does NOT
+    # prompt "found previous export database ... continue? [y/N]" (that interactive
+    # prompt hung the render at photo_i2v re-download). stdin=DEVNULL + timeout are
+    # belt-and-suspenders so it can never block a render/cron.
     cmd = [cli, "export", str(dest_dir), "--uuid", uuid, "--download-missing",
-           method, "--skip-edited", "--skip-bursts", "--filename", "{uuid}",
-           "--retry", "2"]
+           "--update", method, "--skip-edited", "--skip-bursts",
+           "--filename", "{uuid}", "--retry", "2"]
     try:
-        subprocess.run(cmd, check=False)
+        subprocess.run(cmd, check=False, stdin=subprocess.DEVNULL, timeout=180)
     except Exception as e:
         log.warning("download_asset_by_uuid failed for %s: %s", uuid, e)
         return None
