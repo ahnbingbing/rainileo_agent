@@ -39,16 +39,23 @@ def call_text_cascade(system: str, user: str, *,
         log.warning("OpenAI failed (%s) — trying Gemini", e)
     # 2. Gemini
     try:
-        import google.generativeai as genai
+        # PD 2026-06-08: use the NEW google.genai SDK with an http_options timeout.
+        # The legacy google.generativeai SDK ignored the timeout on DNS failures and
+        # hung 600s per call (intermittent googleapis DNS flakiness) — that single
+        # bug made each proposal take 10+ min and stalled the whole launch batch.
+        from google import genai as _genai
+        from google.genai import types as _gtypes
         api_key = os.environ.get("GOOGLE_API_KEY")
         if not api_key:
             raise RuntimeError("GOOGLE_API_KEY missing")
-        genai.configure(api_key=api_key)
+        gclient = _genai.Client(api_key=api_key, http_options=_gtypes.HttpOptions(
+            timeout=int(os.getenv("LLM_TIMEOUT_S", "45")) * 1000))
         model_name = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-2.5-pro")
-        m = genai.GenerativeModel(model_name,
-                                   system_instruction=system or None)
-        resp = m.generate_content(
-            user, request_options={"timeout": _llm_timeout})
+        resp = gclient.models.generate_content(
+            model=model_name,
+            contents=user,
+            config=_gtypes.GenerateContentConfig(system_instruction=system or None),
+        )
         log.info("LLM cascade: Gemini used")
         return (resp.text or "").strip()
     except Exception as e:
