@@ -83,6 +83,13 @@ A JSON array, one object per cut, in the same cut order:
 - If motion_prompt says "Leo enters from right and sniffs the bowl", the caption shouldn't say "레오가 사료를 먹어요" (he isn't eating yet — he's sniffing).
 - Pull a key verb from action_beats[i] to anchor the caption literal-truth. If action says "approaches", caption uses "다가가요" / "가까이 가네요" — not "먹어요".
 
+### ★ 등장/나타남 거짓 금지 (PD 2026-06-08 — 욕실편 "레오 등장" 오류)
+A character who is **present/visible the whole time** must NOT be narrated as newly appearing. PD case: Leo was sitting in the background through the entire one-take, but captions said "그때, 랴니의 시야에 들어온 누군가" / treated Leo as a surprise arrival. That's a lie about the footage.
+- ❌ "그때 나타난 누군가" / "시야에 들어온…" / "갑자기 등장한 레오" when Leo is already on screen in the previous/same cut.
+- ✅ Only use appearance/entrance language ("등장", "나타나다", "들어오다", "고개를 내밀다") when `vlm_actual_action` / action_beats explicitly say the character ENTERS frame in that cut (was off-screen before).
+- If a character is continuously present, narrate what they DO or THINK ("뒤에서 지켜보던 레오", "레오는 아까부터 노리고 있었죠"), not that they appear.
+- Check the prior cut's subjects: if the character was already in frame, an "appears" caption is a CONTINUITY LIE — rewrite it.
+
 ### Tone diversity (within a 5-cut episode, use ALL FIVE registers)
 1. **의성어/의태어** — "아그작 — 아그작", "발라당!", "쪼르륵", "샤샤샥" — instant sound/sight hook. **CRITICAL (PD 2026-06-02): only use sound-onomatopoeia when the pet ACTUALLY makes that sound in the cut.** Use "왕왕!" only when `vlm_actual_action` explicitly says 짖음/바크/왕왕/woof. Use "야옹/냐옹/미야옹" only when VLM says 야옹/메우. Do NOT speculate from a play-bow pose alone — the pose doesn't imply barking. Visible-motion onomatopoeia (발라당, 쪼르륵 for visible water, 샤샤샥 for visible scurry) follow the same rule: only when VLM observed the motion.
 2. **위트있는 한 줄 평** — "이쯤 되면 11년차 베테랑이에요", "본격 먹방 모드 ON"

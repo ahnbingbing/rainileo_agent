@@ -1375,7 +1375,13 @@ def _vlm_post_render_caption_rewrite(work_dir: Path, manifests: dict,
                                                  mime_type="image/jpeg"))
             except Exception:
                 pass
-        parts.append("1-2 short Korean sentences describing what actually happens.")
+        parts.append(
+            "1-2 short Korean sentences describing what actually happens. "
+            "Also state which pets are visible (cat / dog) and whether either is "
+            "ALREADY present in the background from the first keyframe vs newly "
+            "ENTERS the frame mid-clip — say e.g. '레오는 처음부터 뒤에 있음' or "
+            "'레오가 중간에 프레임 안으로 들어옴'. (Needed so captions don't falsely "
+            "say a pet '등장/나타남' when it was there all along.)")
         # PD 2026-06-02: VLM 실패 = 재도전. PD 2026-06-08: 2회로 축소 + bounded
         # timeout (DNS blip이 600s×3 행이던 것 해소).
         actual = ""
