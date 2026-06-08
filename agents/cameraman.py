@@ -2887,6 +2887,30 @@ def _run_t2v_pipeline(manifests: dict, card: dict, work_dir: Path,
     return out
 
 
+def _sanitize_motion_prompt(prompt: str) -> str:
+    """PD 2026-06-08: rewrite a motion_prompt that tripped Ark text moderation
+    (InputTextSensitiveContentDetected) into a safe one — strip proper nouns
+    (Leo/Ryani/랴니/레오/랴니엄마) → breed/color descriptors, drop moderation-prone
+    verbs (warp/morph/animate/transform), collapse to a calm generic motion."""
+    import re as _re
+    p = prompt or ""
+    repl = {
+        r"\b[Rr]yani\b": "the small black French Bulldog",
+        r"\b[Ll]eo\b": "the orange tabby cat",
+        "랴니엄마": "the dog", "랴니": "the dog", "레오": "the cat",
+    }
+    for pat, sub in repl.items():
+        p = _re.sub(pat, sub, p)
+    for risky in ("warp", "morph", "animate", "transform", "deform", "melt",
+                  "explode", "blood", "weapon"):
+        p = _re.sub(rf"\b{risky}\w*\b", "move", p, flags=_re.IGNORECASE)
+    p = p.strip()
+    if len(p) < 20:
+        p = ("A small black French Bulldog and an orange tabby cat in a cozy "
+             "home. They move gently and naturally. Camera holds still.")
+    return p
+
+
 def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                       progress_cb: ProgressCb = None,
                       dry_run: bool = False) -> Path:
@@ -3397,16 +3421,32 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                     if light_hint.strip() not in prompt:
                         prompt = prompt + light_hint
 
-        cmd = [
-            "python3", "scripts/animate_seedance_i2v.py",
-            "--mode", "i2v",
-            "--image", str(first_frame_path),
-            "--prompt", prompt,
-            "--seconds", seconds,
-            "--model", os.getenv("SEEDANCE_MODEL", DEFAULT_MODEL_SEEDANCE),
-            "--output", str(out_mp4),
-        ]
-        _run(cmd, f":film_frames: [3/6] Seedance i2v {tag}", progress_cb, dry_run)
+        def _seedance_i2v(p: str):
+            cmd = [
+                "python3", "scripts/animate_seedance_i2v.py",
+                "--mode", "i2v",
+                "--image", str(first_frame_path),
+                "--prompt", p,
+                "--seconds", seconds,
+                "--model", os.getenv("SEEDANCE_MODEL", DEFAULT_MODEL_SEEDANCE),
+                "--output", str(out_mp4),
+            ]
+            _run(cmd, f":film_frames: [3/6] Seedance i2v {tag}", progress_cb, dry_run)
+        # PD 2026-06-08: Ark text moderation ("InputTextSensitiveContentDetected")
+        # was failing a single cut → whole av episode retried (same prompt) → av
+        # never produced. On that error, retry the cut with a sanitized prompt
+        # (strip proper nouns / risky verbs per CLAUDE.md motion rules).
+        try:
+            _seedance_i2v(prompt)
+        except RuntimeError as e:
+            if "SensitiveContent" in str(e) or "BadRequest" in str(e):
+                safe = _sanitize_motion_prompt(prompt)
+                log.warning("Seedance moderation on %s — retrying sanitized prompt", tag)
+                if progress_cb:
+                    progress_cb(f":shield: {tag} 모더레이션 — 정제 프롬프트로 재시도")
+                _seedance_i2v(safe)
+            else:
+                raise
 
     # Step 3a: per-cut fade-out + fade-in for smooth chain transitions
     # (PD 2026-06-01 PM: "컷사이 넘어갈때 f/o 통해서 어색함을 없애야해").
