@@ -1556,12 +1556,40 @@ def _lint_seedance_prompt(prompt: str) -> list[str]:
     return issues
 
 
+def _ondemand_regen_still(scene_prompt: str, out_png: Path) -> Path | None:
+    """PD 2026-06-08: when a Seedance call has no image, GENERATE a scene-specific
+    still (OpenAI gpt-image-1 → Gemini fallback, per generate_scene) from the prompt
+    + character refs and use THAT — far better than a generic static ref sheet, since
+    it matches the actual scene + characters. Returns the written png, or None on
+    failure (caller then falls back to a static ref)."""
+    try:
+        from scripts.generate_character_scene import (generate_scene,
+                                                      build_character_prompt)
+        who, _ = _who_and_emph(scene_prompt)
+        subjects = who if who in ("ryani", "leo", "both") else "both"
+        full = build_character_prompt(scene_prompt, subjects)
+        data = generate_scene(full, None, subjects=subjects)
+        if not data:
+            return None
+        out_png.parent.mkdir(parents=True, exist_ok=True)
+        out_png.write_bytes(data)
+        if out_png.exists() and out_png.stat().st_size > 1000:
+            log.info("preflight: generated on-demand regen still (%s) → %s",
+                     subjects, out_png.name)
+            return out_png
+        return None
+    except Exception as e:
+        log.warning("on-demand regen still failed: %s", e)
+        return None
+
+
 def _seedance_preflight(cmd: list[str]) -> list[str]:
     """PD 2026-06-08 cost guard: NEVER let a Seedance call go out without at least
     ONE image visual (text-only generation wastes the expensive call and drifts).
-    Guarantee an existing image is attached; if none, fall back to the canonical
-    pair ref; if even that is missing, REFUSE (raise) rather than spend. Also lint
-    the prompt for background richness + guardrails."""
+    If no valid image: PREFER generating a scene-specific regen still (GPT→Gemini)
+    over a generic static ref (PD: "차라리 regen 이미지 써도 되지 않아?"); fall back
+    to the canonical pair ref only if generation fails; if even that is missing,
+    REFUSE (raise) rather than spend. Also lint the prompt for background richness."""
     cmd = list(cmd)
 
     def _val(flag):
@@ -1578,20 +1606,33 @@ def _seedance_preflight(cmd: list[str]) -> list[str]:
         for i, a in enumerate(cmd) if a in img_flags
     )
     if not has_image:
-        fb = ROOT / REF_LIBRARY.get("pair", "")
-        if not fb.exists():
+        fb_img = None
+        how = ""
+        prompt = _val("--prompt") or ""
+        out = _val("--output") or ""
+        # 1) PREFER a freshly generated, scene-specific still (OpenAI→Gemini).
+        if prompt and out:
+            still = Path(out).with_name(Path(out).stem + "_preflight_still.png")
+            fb_img = _ondemand_regen_still(prompt, still)
+            how = "generated regen still"
+        # 2) last resort: canonical static ref sheet.
+        if not fb_img:
+            pair = ROOT / REF_LIBRARY.get("pair", "")
+            fb_img = pair if pair.exists() else None
+            how = "fallback pair ref"
+        if not fb_img:
             raise RuntimeError(
-                "Seedance preflight: no image visual available and no fallback ref "
-                "— refusing a text-only generation (cost guard, PD 2026-06-08).")
+                "Seedance preflight: no image and could not generate one — refusing "
+                "a text-only generation (cost guard, PD 2026-06-08).")
         if mode == "i2v":
             if "--image" in cmd:
-                cmd[cmd.index("--image") + 1] = str(fb)
+                cmd[cmd.index("--image") + 1] = str(fb_img)
             else:
-                cmd += ["--image", str(fb)]
+                cmd += ["--image", str(fb_img)]
         else:  # ref / interp
-            cmd += ["--ref-image", str(fb)]
-        log.warning("Seedance preflight: no valid image → attached fallback pair ref "
-                    "(%s) to guarantee ≥1 visual", fb.name)
+            cmd += ["--ref-image", str(fb_img)]
+        log.warning("Seedance preflight: no valid image → %s (%s)", how,
+                    Path(fb_img).name)
     _lint_seedance_prompt(_val("--prompt") or "")
     return cmd
 
