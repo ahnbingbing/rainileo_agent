@@ -18,11 +18,13 @@ def call_text_cascade(system: str, user: str, *,
     Returns the first successful response text. Raises if all three fail.
     `anthropic_model` is only used on the last fallback hop.
     """
-    # 1. OpenAI
-    _llm_timeout = int(os.environ.get("LLM_TIMEOUT_S", "120"))
+    # 1. OpenAI — fail FAST to Gemini (PD 2026-06-08: gpt-5 was timing out every
+    # call and the SDK's internal retries × a 120s timeout made one proposal take
+    # 6+ min → the launch batch stalled for hours). Short timeout + no SDK retries.
+    _llm_timeout = int(os.environ.get("LLM_TIMEOUT_S", "45"))
     try:
         from openai import OpenAI
-        client = OpenAI(timeout=_llm_timeout)
+        client = OpenAI(timeout=_llm_timeout, max_retries=0)
         resp = client.chat.completions.create(
             model=os.environ.get("OPENAI_FALLBACK_MODEL", "gpt-5"),
             messages=([
