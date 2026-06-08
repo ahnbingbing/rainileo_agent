@@ -79,24 +79,46 @@ def build_character_prompt(scene_prompt: str, subjects: str = "both",
     """
     sheet = load_character_sheet()
 
-    # Extract relevant character sections
+    # Canonical character canon — PD 2026-06-08: image gen MUST NOT destroy the
+    # characters' traits. Match the cameraman's per-cut marking canon exactly:
+    # Ryani = SPAYED FEMALE, THIN blaze (not wide), NO tail; Leo = MALE, chartreuse
+    # (yellow-green) eyes — NOT amber/gold (the old prompt's "amber" was wrong and
+    # actively drifted Leo's eyes).
+    RYANI_CANON = (
+        "Ryani — REAL black French Bulldog, SPAYED FEMALE (she/her, 11-year-old "
+        "senior; clearly female, NO male anatomy). Markings (keep EXACTLY, do not "
+        "redraw): a THIN NARROW white blaze (a fine Boston-Terrier line from nose up "
+        "the forehead — NOT a wide splash, do NOT enlarge it), a small white dot above "
+        "each eye, silver-grey aged muzzle, white chin, white chest patch, white toes, "
+        "bat ears, ABSOLUTELY NO TAIL. Only black/white/grey — NO brown. Petite, "
+        "refined, feminine build (NOT a muscular barrel-chested male). A REAL dog, not "
+        "a cartoon.")
+    LEO_CANON = (
+        "Leo — REAL orange tabby cat, MALE (he/him, young ~8 months). Pale "
+        "YELLOW-GREEN / chartreuse eyes (NOT amber, NOT gold), white chin tuft, white "
+        "whiskers, lean agile young-adult body, paler cream-orange cheeks and belly "
+        "than the back. A REAL cat, not a cartoon.")
     if subjects == "leo":
-        char_focus = "Focus on Leo (레오) — the orange tabby cat character."
+        char_focus = "Focus on Leo (레오) — the orange tabby cat."
+        canon = LEO_CANON
     elif subjects == "ryani":
-        char_focus = "Focus on Ryani (랴니) — the black French Bulldog character. Her white markings (chin, chest, paws) MUST be clearly visible. She has NO tail."
+        char_focus = "Focus on Ryani (랴니) — the black French Bulldog."
+        canon = RYANI_CANON
     else:
-        char_focus = "Both Leo (orange tabby cat) and Ryani (black French Bulldog with white markings, no tail) should appear."
+        char_focus = "Both Leo (orange tabby cat) and Ryani (black French Bulldog) appear."
+        canon = RYANI_CANON + " " + LEO_CANON
 
-    # Keep prompt SHORT — reference image already carries character design
     prompt = f"""PHOTOREALISTIC image that looks like a REAL PHOTOGRAPH taken with a professional camera.
 
 {char_focus}
 
+CHARACTER IDENTITY — preserve EXACTLY, do not alter the markings or proportions:
+{canon}
+
 ABSOLUTE REQUIREMENTS:
-- Ryani: REAL black French Bulldog, white markings on chin/chest/paws, NO tail, greying face (age 11). Must look like a REAL dog, not a cartoon.
-- Leo: REAL orange tabby cat, amber eyes, white whiskers. Must look like a REAL cat, not a cartoon.
 - REAL fur textures, REAL lighting, REAL environment. Shallow depth of field, natural bokeh.
 - This MUST look like an actual photograph. NEVER cartoon, NEVER illustration, NEVER anime, NEVER digital art.
+- Pets are bare-furred — NO clothing/hanbok/costumes (unless the scene explicitly says a harness).
 - Vertical 9:16 composition.
 - Do NOT add any text, captions, watermarks, or logos to the image.
 
@@ -168,6 +190,10 @@ def generate_scene(prompt: str, reference_image: Path | None = None,
         return _generate_scene_gemini(prompt, reference_image)
 
 
+# PD 2026-06-08: image gen must use gpt-image-2 (newer, better fidelity).
+_OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-2")
+
+
 def _generate_scene_openai(prompt: str, reference_image: Path | None) -> bytes:
     from openai import OpenAI
     client = OpenAI()
@@ -183,7 +209,7 @@ def _generate_scene_openai(prompt: str, reference_image: Path | None) -> bytes:
         tmp_png = ROOT / "data" / "tmp" / "_ref_tmp.png"
         img.save(tmp_png, format="PNG")
         result = client.images.edit(
-            model="gpt-image-1",
+            model=_OPENAI_IMAGE_MODEL,
             image=open(tmp_png, "rb"),
             prompt=prompt,
             size="1024x1536",
@@ -192,7 +218,7 @@ def _generate_scene_openai(prompt: str, reference_image: Path | None) -> bytes:
         )
     else:
         result = client.images.generate(
-            model="gpt-image-1",
+            model=_OPENAI_IMAGE_MODEL,
             prompt=prompt,
             size="1024x1536",
             quality="high",

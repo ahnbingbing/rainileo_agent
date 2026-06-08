@@ -194,7 +194,7 @@ def _resolve_scene_ref(set_anchor: str | None, set_description: str,
         import base64
         client = OpenAI()
         result = client.images.generate(
-            model="gpt-image-1",
+            model=os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-2"),
             prompt=prompt,
             size="1024x1024",
             quality="high",

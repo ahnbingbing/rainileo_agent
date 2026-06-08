@@ -16,7 +16,7 @@
 ## The channel
 
 - **Pets**:
-  - **Leo** — orange tabby cat, juvenile/young adult, ~3kg, gold-amber eyes
+  - **Leo** — orange tabby cat, juvenile/young adult, ~3kg, yellow-green/chartreuse eyes
   - **Ryani** — small black French bulldog, **no tail** (brachycephalic
     Frenchie). Mostly black BUT has **white markings on chin/muzzle, chest,
     and toes/paws** that MUST be preserved in any regen.
