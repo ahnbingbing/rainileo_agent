@@ -150,14 +150,18 @@ def _call_gemini_fallback(system: str, user: str, max_tokens: int = 16000) -> st
     api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         raise RuntimeError("GOOGLE_API_KEY not set — Gemini fallback unavailable")
-    try:
-        import google.generativeai as genai
-    except ImportError:
-        raise RuntimeError("google.generativeai not installed")
-    genai.configure(api_key=api_key)
+    # PD 2026-06-08: NEW google.genai SDK with an http timeout. The legacy
+    # google.generativeai SDK ignored timeouts on DNS failures and hung 600s per
+    # call (intermittent googleapis DNS flakiness) — that stalled av slots for ~40min.
+    from google import genai as _genai
+    from google.genai import types as _gtypes
+    gclient = _genai.Client(api_key=api_key, http_options=_gtypes.HttpOptions(
+        timeout=int(os.getenv("LLM_TIMEOUT_S", "45")) * 1000))
     model_name = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-2.5-pro")
-    m = genai.GenerativeModel(model_name, system_instruction=system)
-    resp = m.generate_content(user)
+    resp = gclient.models.generate_content(
+        model=model_name, contents=user,
+        config=_gtypes.GenerateContentConfig(system_instruction=system or None),
+    )
     log.info("Gemini fallback used (model=%s)", model_name)
     return (resp.text or "").strip()
 
