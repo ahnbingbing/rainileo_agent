@@ -1640,6 +1640,24 @@ def _append_character_canon(prompt: str) -> str:
     return prompt
 
 
+def _probe_rotation(path: Path) -> int:
+    """Display rotation of a video (degrees, e.g. -90/90/180) from side_data or
+    the legacy rotate tag. 0 if none/unknown. Used to bake rotation before crop."""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream_side_data=rotation:stream_tags=rotate",
+             "-of", "default=nw=1:nk=1", str(path)],
+            capture_output=True, text=True, timeout=15).stdout
+        for line in out.splitlines():
+            s = line.strip()
+            if s.lstrip("-").isdigit():
+                return int(s)
+    except Exception:
+        pass
+    return 0
+
+
 def _measure_clip_motion(mp4: Path) -> float:
     """Average frame-to-frame luma change — a proxy for how much MOVES in the
     clip. ~1.5 = near-static (still photo with at most a zoom); ~5+ = clearly
@@ -2147,8 +2165,26 @@ def _trim_real_footage_clips(manifests: dict, anim_dir: Path,
             log.info("crop %s — has_human=%s hint=%s → %s",
                      tag, has_human, crop_hint, crop_vf[:40])
 
-        cmd = [
-            "ffmpeg", "-y", "-nostats", "-loglevel", "error",
+        # PD 2026-06-08 ROTATION FIX: a rotated source (e.g. iPhone landscape with
+        # rotation=-90) + a crop filter → ffmpeg crops the RAW unrotated frame and
+        # leaves the rotation flag → sideways output ("갑자기 세로 화면"). Bake the
+        # rotation with transpose BEFORE crop (so crop coords, computed on the
+        # display-oriented frame, match) and disable autorotate to avoid doubling.
+        rot = _probe_rotation(src_path)
+        transpose_vf = ""
+        if rot in (-90, 270):
+            transpose_vf = "transpose=1"
+        elif rot in (90, -270):
+            transpose_vf = "transpose=2"
+        elif rot in (180, -180):
+            transpose_vf = "transpose=1,transpose=1"
+        if transpose_vf:
+            vf = ",".join(p for p in (transpose_vf, vf) if p)
+
+        cmd = ["ffmpeg", "-y", "-nostats", "-loglevel", "error"]
+        if transpose_vf:
+            cmd.append("-noautorotate")
+        cmd += [
             "-ss", f"{trim_start:.2f}",
             "-i", str(src_path),
             "-t", f"{trim_dur:.2f}",
@@ -2373,7 +2409,14 @@ def _build_edit_effect_filter(effect: str, dur: float, extra_pad: float = 0.0) -
     여운 on the final cut when the caption exceeds the trimmed clip length."""
     e = (effect or "static").strip().lower()
     if e == "freeze_to_caption_end":
-        # Pad final frame for `extra_pad` seconds so the caption can finish.
+        # Pad final frame for `extra_pad` sec (여운). PD 2026-06-08: FADE OUT during
+        # the held frame so the ending breathes instead of cutting hard (and it
+        # softly hides any leftover crop edge). Fade starts when the freeze begins.
+        if extra_pad and extra_pad > 0.1:
+            fade_d = min(extra_pad, max(0.6, extra_pad - 0.2))
+            fade_st = max(0.0, dur + extra_pad - fade_d)
+            return (f"tpad=stop_mode=clone:stop_duration={extra_pad:.2f},"
+                    f"fade=t=out:st={fade_st:.2f}:d={fade_d:.2f}"), []
         return f"tpad=stop_mode=clone:stop_duration={extra_pad:.2f}", []
     if e in ("", "static", "none"):
         return "", []
