@@ -2993,9 +2993,9 @@ _RYANI_MARKING_EMPHASIS = (
 
 _LEO_MARKING_EMPHASIS = (
     " CRITICAL — Leo the orange tabby cat must look like the REAL cat, not AI-"
-    "generated: pale yellow-green / chartreuse eyes (NOT gold or amber), a faint "
-    "scar across the nose bridge, white chin tuft, lean young-adult body, natural "
-    "real-cat face and proportions. Do not warp, plasticize, or redraw his face.")
+    "generated: pale yellow-green / chartreuse eyes (NOT gold or amber), white chin "
+    "tuft, lean young-adult body, natural real-cat face and proportions. Do not "
+    "warp, plasticize, or redraw his face.")
 
 
 def _cut_character_ok(mp4_path: Path, who: str = "both", n_frames: int = 3) -> bool:
@@ -3046,8 +3046,9 @@ def _cut_character_ok(mp4_path: Path, who: str = "both", n_frames: int = 3) -> b
             if w in ("leo", "both"):
                 specs.append(
                     "LEO (orange tabby cat): pale YELLOW-GREEN/chartreuse eyes (NOT "
-                    "gold/amber), faint scar on the nose bridge, white chin tuft, lean "
-                    "young-adult body, natural real-cat look.")
+                    "gold/amber), white chin tuft, lean young-adult body, natural "
+                    "real-cat look. (A nose scar is NOT required — current Leo has a "
+                    "faint one but baby/kitten Leo had none; do not fail on the scar.)")
             prompt = (
                 "These frames are from ONE rendered cut. Judge the pet character "
                 "fidelity for: " + " ".join(specs) + " IMPORTANT: a side profile or "
