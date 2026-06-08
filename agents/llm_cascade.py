@@ -22,23 +22,34 @@ def call_text_cascade(system: str, user: str, *,
     # call and the SDK's internal retries × a 120s timeout made one proposal take
     # 6+ min → the launch batch stalled for hours). Short timeout + no SDK retries.
     _llm_timeout = int(os.environ.get("LLM_TIMEOUT_S", "45"))
-    try:
-        from openai import OpenAI
-        client = OpenAI(timeout=_llm_timeout, max_retries=0)
-        resp = client.chat.completions.create(
-            model=os.environ.get("OPENAI_FALLBACK_MODEL", "gpt-5"),
-            messages=([
-                {"role": "system", "content": system}
-            ] if system else []) + [
-                {"role": "user", "content": user}
-            ],
-        )
-        log.info("LLM cascade: OpenAI used")
-        return (resp.choices[0].message.content or "").strip()
-    except Exception as e:
-        log.warning("OpenAI failed (%s) — trying Gemini", e)
+    from agents import circuit
+    # PD 2026-06-08: circuit breaker — skip a provider that just failed (cooldown)
+    # instead of wasting the 45s timeout on every one of an av concept's ~9 calls.
+    if circuit.is_down("openai"):
+        log.info("LLM cascade: skip OpenAI (circuit open) → Gemini")
+    else:
+        try:
+            from openai import OpenAI
+            client = OpenAI(timeout=_llm_timeout, max_retries=0)
+            resp = client.chat.completions.create(
+                model=os.environ.get("OPENAI_FALLBACK_MODEL", "gpt-5"),
+                messages=([
+                    {"role": "system", "content": system}
+                ] if system else []) + [
+                    {"role": "user", "content": user}
+                ],
+            )
+            log.info("LLM cascade: OpenAI used")
+            circuit.mark_up("openai")
+            return (resp.choices[0].message.content or "").strip()
+        except Exception as e:
+            circuit.mark_down("openai")
+            log.warning("OpenAI failed (%s) — circuit open, trying Gemini", e)
     # 2. Gemini
     try:
+        if circuit.is_down("gemini"):
+            log.info("LLM cascade: skip Gemini (circuit open) → Anthropic")
+            raise RuntimeError("gemini circuit open")
         # PD 2026-06-08: use the NEW google.genai SDK with an http_options timeout.
         # The legacy google.generativeai SDK ignored the timeout on DNS failures and
         # hung 600s per call (intermittent googleapis DNS flakiness) — that single
@@ -57,8 +68,11 @@ def call_text_cascade(system: str, user: str, *,
             config=_gtypes.GenerateContentConfig(system_instruction=system or None),
         )
         log.info("LLM cascade: Gemini used")
+        circuit.mark_up("gemini")
         return (resp.text or "").strip()
     except Exception as e:
+        if "circuit open" not in str(e):   # real failure, not a skip → open circuit
+            circuit.mark_down("gemini")
         log.warning("Gemini failed (%s) — last fallback Anthropic", e)
     # 3. Anthropic last resort
     import anthropic

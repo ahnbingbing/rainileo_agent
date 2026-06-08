@@ -77,16 +77,31 @@ def _call_anthropic(system: str, user: str, *, model: str,
     (5min ephemeral, ~90% input discount) lost when not primary —
     acceptable cost for availability.
     """
+    # PD 2026-06-08: circuit breaker — skip a provider that just failed (cooldown)
+    # instead of burning the 45s timeout on every one of an av concept's ~9 calls.
+    from agents import circuit
     # 1) OpenAI primary
-    try:
-        return _call_openai_fallback(system, user, max_tokens=max_tokens)
-    except Exception as e:
-        log.warning("OpenAI primary failed (%s) — trying Gemini", e)
+    if not circuit.is_down("openai"):
+        try:
+            out = _call_openai_fallback(system, user, max_tokens=max_tokens)
+            circuit.mark_up("openai")
+            return out
+        except Exception as e:
+            circuit.mark_down("openai")
+            log.warning("OpenAI primary failed (%s) — circuit open, trying Gemini", e)
+    else:
+        log.info("writer_director: skip OpenAI (circuit open) → Gemini")
     # 2) Gemini fallback
-    try:
-        return _call_gemini_fallback(system, user, max_tokens=max_tokens)
-    except Exception as e:
-        log.warning("Gemini failed (%s) — last fallback Anthropic", e)
+    if not circuit.is_down("gemini"):
+        try:
+            out = _call_gemini_fallback(system, user, max_tokens=max_tokens)
+            circuit.mark_up("gemini")
+            return out
+        except Exception as e:
+            circuit.mark_down("gemini")
+            log.warning("Gemini failed (%s) — circuit open, last fallback Anthropic", e)
+    else:
+        log.info("writer_director: skip Gemini (circuit open) → Anthropic")
     # 3) Anthropic last fallback (only if OpenAI + Gemini both down)
     return _call_anthropic_raw(system, user, model=model,
                                  max_tokens=max_tokens,
