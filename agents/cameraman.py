@@ -3092,6 +3092,61 @@ def _cut_character_ok(mp4_path: Path, who: str = "both", n_frames: int = 3) -> b
         return True
 
 
+def _who_and_emph(prompt: str) -> tuple[str, str]:
+    """Infer which pets a motion prompt is about + the matching marking-canon
+    emphasis to append on a regen. Shared by the i2v and ref gate sites so both
+    behave identically."""
+    pl = (prompt or "").lower()
+    has_r = any(k in pl for k in ("ryani", "랴니", "french bulldog"))
+    has_l = any(k in pl for k in ("leo", "레오", "tabby", "cat", "고양이"))
+    who = "both" if (has_r and has_l) else ("ryani" if has_r else ("leo" if has_l else ""))
+    emph = (_RYANI_MARKING_EMPHASIS if has_r else "") + (_LEO_MARKING_EMPHASIS if has_l else "")
+    return who, emph
+
+
+def _gate_and_heal(out_mp4, prompt, who, emph, regen, progress_cb, dry_run,
+                   manifests, tag) -> bool:
+    """PD 2026-06-08 per-cut self-heal, shared by i2v + ref dispatch. After a cut
+    renders, run the angle-aware character gate (Ryani blaze etc.); on failure
+    regenerate via the `regen(prompt_text)` callable ×3 with strengthened canon →
+    1 alt prompt → drop the cut (flag for PD-confirmed story rework). Returns True
+    if the cut is kept/clean, False if dropped."""
+    if not who or dry_run or not out_mp4.exists():
+        return True
+    if _cut_character_ok(out_mp4, who):
+        return True
+    resolved = False
+    for r in range(3):
+        if progress_cb:
+            progress_cb(f":repeat: {tag} 캐릭터 드리프트({who}) — 재생성 {r+1}/3")
+        try:
+            regen(prompt + emph)
+        except Exception as e:
+            log.warning("regen %d failed for %s: %s", r + 1, tag, e); break
+        if _cut_character_ok(out_mp4, who):
+            resolved = True; break
+    if not resolved:
+        if progress_cb:
+            progress_cb(f":repeat: {tag} — 다른 프롬프트로 재도전")
+        try:
+            regen("Gentle natural motion, camera holds still." + emph)
+            resolved = _cut_character_ok(out_mp4, who)
+        except Exception:
+            pass
+    if not resolved:
+        log.warning("av cut %s: character unresolved — dropping cut", tag)
+        if progress_cb:
+            progress_cb(f":x: {tag} 캐릭터 해결 실패 — 컷 드롭 "
+                        f"(스토리 영향 → PD 컨펌 후 재작업 필요)")
+        try:
+            out_mp4.unlink(missing_ok=True)
+        except Exception:
+            pass
+        manifests.setdefault("_dropped_cuts", []).append(tag)
+        return False
+    return True
+
+
 def _sanitize_motion_prompt(prompt: str) -> str:
     """PD 2026-06-08: rewrite a motion_prompt that tripped Ark text moderation
     (InputTextSensitiveContentDetected) into a safe one — strip proper nouns
@@ -3517,30 +3572,56 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                     log.warning("omni ref load failed: %s", ex)
                 full_refs = full_refs[:9]
 
-                cmd = [
-                    "python3", "scripts/animate_seedance_i2v.py",
-                    "--mode", "ref",
-                    "--prompt", prompt,
-                    "--seconds", seconds,
-                    "--model", os.getenv("SEEDANCE_MODEL", DEFAULT_MODEL_SEEDANCE),
-                    "--output", str(out_mp4),
-                ]
-                for rp in full_refs:
-                    cmd.extend(["--ref-image", str(rp)])
-                # Add reference_video URL if set_library defines one for this anchor
+                # Resolve optional reference_video URL once (set_library per anchor)
+                ref_video_url = None
                 ref_video_lbl = ""
                 try:
                     if sa_for_anti:
                         rv_url = (lib_data.get(sa_for_anti) or {}).get("reference_video_url")
                         if rv_url:
-                            cmd.extend(["--ref-video", rv_url])
+                            ref_video_url = rv_url
                             ref_video_lbl = " +R2V"
                 except Exception:
                     pass
                 scene_lbl = " +scene" if scene_ref_path and scene_ref_path in full_refs else ""
                 omni_lbl = f" +omni×{extras_added}" if extras_added else ""
-                _run(cmd, f":film_frames: [3/6] Seedance ref {tag} ({len(full_refs)} refs{scene_lbl}{omni_lbl}{ref_video_lbl})",
-                     progress_cb, dry_run)
+
+                def _seedance_ref(p: str):
+                    rcmd = [
+                        "python3", "scripts/animate_seedance_i2v.py",
+                        "--mode", "ref",
+                        "--prompt", p,
+                        "--seconds", seconds,
+                        "--model", os.getenv("SEEDANCE_MODEL", DEFAULT_MODEL_SEEDANCE),
+                        "--output", str(out_mp4),
+                    ]
+                    for rp in full_refs:
+                        rcmd.extend(["--ref-image", str(rp)])
+                    if ref_video_url:
+                        rcmd.extend(["--ref-video", ref_video_url])
+                    _run(rcmd, f":film_frames: [3/6] Seedance ref {tag} "
+                         f"({len(full_refs)} refs{scene_lbl}{omni_lbl}{ref_video_lbl})",
+                         progress_cb, dry_run)
+
+                def _seedance_ref_safe(p: str):
+                    try:
+                        _seedance_ref(p)
+                    except RuntimeError as e:
+                        if "SensitiveContent" in str(e) or "BadRequest" in str(e):
+                            log.warning("Seedance moderation on %s (ref) — sanitized retry", tag)
+                            if progress_cb:
+                                progress_cb(f":shield: {tag} 모더레이션 — 정제 프롬프트 재시도")
+                            _seedance_ref(_sanitize_motion_prompt(p))
+                        else:
+                            raise
+
+                _seedance_ref_safe(prompt)
+                # PD 2026-06-08: ref-mode cuts were skipping the per-cut character
+                # gate entirely (it lived only in the i2v branch). Apply the SAME
+                # angle-aware Ryani/Leo gate + self-heal (regen ×3 → alt → drop).
+                _who, _emph = _who_and_emph(prompt)
+                _gate_and_heal(out_mp4, prompt, _who, _emph, _seedance_ref_safe,
+                               progress_cb, dry_run, manifests, tag)
                 continue
 
         if mode == "interp":
@@ -3658,55 +3739,24 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         # covers Ryani AND Leo (PD: "레오 생성형 티"). Bad (clear + wrong/generative)
         # → regenerate with strengthened canon ×3 → 1 alt prompt → drop. Dropping
         # breaks the chain/story → flag for PD-confirmed Writer/Producer rework (Phase 2).
-        _pl = (prompt or "").lower()
-        _has_r = any(k in _pl for k in ("ryani", "랴니", "french bulldog"))
-        _has_l = any(k in _pl for k in ("leo", "레오", "tabby", "cat", "고양이"))
-        _who = "both" if (_has_r and _has_l) else ("ryani" if _has_r else ("leo" if _has_l else ""))
-        _emph = (_RYANI_MARKING_EMPHASIS if _has_r else "") + (_LEO_MARKING_EMPHASIS if _has_l else "")
-        if _who and not dry_run and out_mp4.exists():
-            if not _cut_character_ok(out_mp4, _who):
-                resolved = False
-                # ROOT-CAUSE fix (PD 2026-06-08): a chain cut's i2v input is the
-                # PREVIOUS cut's last frame, so marking drift (e.g. blaze widening)
-                # compounds down the chain and a same-input regen can't fix it.
-                # On a chain cut, regenerate from the FRESH canonical GPT still
-                # (built from the thin-blaze ref) instead of the drifted chain frame.
-                _fresh_still = regen_dir / f"{tag}.png"
-                _regen_img = (_fresh_still if (cc.get("chain_from_prev")
-                              and _fresh_still.exists()
-                              and _fresh_still != first_frame_path) else None)
-                if _regen_img and progress_cb:
-                    progress_cb(f":arrows_counterclockwise: {tag} 체인 드리프트 → "
-                                f"원본 스틸로 재생성")
-                for r in range(3):
-                    if progress_cb:
-                        progress_cb(f":repeat: {tag} 캐릭터 드리프트({_who}) — 재생성 {r+1}/3")
-                    try:
-                        _seedance_i2v_safe(prompt + _emph, image=_regen_img)
-                    except Exception as e:
-                        log.warning("regen %d failed for %s: %s", r + 1, tag, e); break
-                    if _cut_character_ok(out_mp4, _who):
-                        resolved = True; break
-                if not resolved:
-                    # different prompt (calmer, character-forward) — also from fresh still
-                    alt = "Gentle natural motion, camera holds still." + _emph
-                    if progress_cb:
-                        progress_cb(f":repeat: {tag} — 다른 프롬프트로 재도전")
-                    try:
-                        _seedance_i2v_safe(alt, image=_regen_img)
-                        resolved = _cut_character_ok(out_mp4, _who)
-                    except Exception:
-                        pass
-                if not resolved:
-                    log.warning("av cut %s: character unresolved — dropping cut", tag)
-                    if progress_cb:
-                        progress_cb(f":x: {tag} 캐릭터 해결 실패 — 컷 드롭 "
-                                    f"(스토리 영향 → PD 컨펌 후 재작업 필요)")
-                    try:
-                        out_mp4.unlink(missing_ok=True)
-                    except Exception:
-                        pass
-                    manifests.setdefault("_dropped_cuts", []).append(tag)
+        _who, _emph = _who_and_emph(prompt)
+        # ROOT-CAUSE fix (PD 2026-06-08): a chain cut's i2v input is the PREVIOUS
+        # cut's last frame, so marking drift (e.g. blaze widening) compounds down
+        # the chain and a same-input regen can't fix it. On a chain cut, regenerate
+        # from the FRESH canonical GPT still (thin-blaze ref) instead of the drifted
+        # chain frame. Bind that into the regen callable for the shared self-heal.
+        _fresh_still = regen_dir / f"{tag}.png"
+        _regen_img = (_fresh_still if (cc.get("chain_from_prev")
+                      and _fresh_still.exists()
+                      and _fresh_still != first_frame_path) else None)
+
+        def _i2v_regen(p: str):
+            if _regen_img and progress_cb:
+                progress_cb(f":arrows_counterclockwise: {tag} 체인 드리프트 → 원본 스틸로 재생성")
+            _seedance_i2v_safe(p, image=_regen_img)
+
+        _gate_and_heal(out_mp4, prompt, _who, _emph, _i2v_regen,
+                       progress_cb, dry_run, manifests, tag)
 
     # Step 3a: per-cut fade-out + fade-in for smooth chain transitions
     # (PD 2026-06-01 PM: "컷사이 넘어갈때 f/o 통해서 어색함을 없애야해").
