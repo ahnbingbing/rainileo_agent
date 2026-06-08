@@ -942,6 +942,17 @@ def _render_realfootage_with_retry(concept: dict, target: dt.date,
     best_out = None
     best_card_id = ""
     best_key = (-1, -1)  # (intro_satisfied, score)
+    attempt_outs: list = []   # PD 2026-06-08: every attempt writes episode_rf_*.mp4;
+                              # delete the rejected ones so retries don't flood episodes/.
+
+    def _finish(chosen):
+        for p in attempt_outs:
+            try:
+                if chosen is None or str(p) != str(chosen):
+                    Path(p).unlink(missing_ok=True)
+            except Exception:
+                pass
+        return chosen
 
     def _score_of(report) -> int:
         try:
@@ -989,6 +1000,8 @@ def _render_realfootage_with_retry(concept: dict, target: dt.date,
         out, report, card_id = _render_realfootage_direct(cur_concept, target, con, progress_cb)
         last_out = out or last_out
         last_card_id = card_id or last_card_id
+        if out:
+            attempt_outs.append(out)
         # track best-scoring attempt so we ship the best after the cap (not last).
         # NEVER track a face-violating attempt as best — a human face must not ship.
         intro_ok = (not intro_day) or _is_self_intro(cur_concept)
@@ -1003,12 +1016,12 @@ def _render_realfootage_with_retry(concept: dict, target: dt.date,
             # Review unavailable (e.g., no API key) — don't loop blindly.
             log.warning("Giri report unavailable — accepting attempt %d", attempt)
             _arc(card_id)
-            return out
+            return _finish(out)
         if verdict in GIRI_PASS_VERDICTS and intro_ok:
             if progress_cb:
                 progress_cb(f":white_check_mark: 기리 통과 (시도 {attempt}): {verdict}")
             _arc(card_id)
-            return out
+            return _finish(out)
         if verdict in GIRI_PASS_VERDICTS and not intro_ok and progress_cb:
             progress_cb(":repeat: 기리는 통과했지만 자기소개 회차가 아님 — 재생성")
         if attempt >= max_attempts:
@@ -1019,13 +1032,13 @@ def _render_realfootage_with_retry(concept: dict, target: dt.date,
                     progress_cb(f":no_entry: {max_attempts}회 모두 얼굴 노출/렌더 실패 — 슬롯 비움(발행 안 함)")
                 log.warning("real_footage: all %d attempts face-violating/failed — skipping slot",
                             max_attempts)
-                return None
+                return _finish(None)
             if progress_cb:
                 progress_cb(f":warning: 기리 미통과 {max_attempts}회 — 최고({'자기소개' if best_key[0] else '일반'} {best_key[1]}/10) 결과 사용")
             log.warning("real_footage failed Giri after %d attempts — using best %s",
                         max_attempts, best_key)
             _arc(best_card_id)
-            return best_out
+            return _finish(best_out)
         # Re-propose with feedback and retry.
         feedback = _giri_feedback_to_text(report)
         if intro_day and not intro_ok:
@@ -1042,7 +1055,7 @@ def _render_realfootage_with_retry(concept: dict, target: dt.date,
                 cur_concept = new_concepts[0]
         except Exception as e:
             log.warning("re-propose failed (%s) — keeping prior concept", e)
-    return last_out
+    return _finish(last_out)
 
 
 def _giri_review_realfootage(video: Path, concept: dict, target: dt.date,
