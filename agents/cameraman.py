@@ -1463,8 +1463,53 @@ def _vlm_post_render_caption_rewrite(work_dir: Path, manifests: dict,
         progress_cb(f":sparkles: [4b/6] VLM 캡션 {n_updated}컷 재작성 완료")
 
 
+def _hold_final_caption(manifests: dict, in_dir: Path) -> None:
+    """PD 2026-06-08 여운: keep the LAST cut's final caption visible until the clip
+    actually ends. The last cut is extended ~2s (rf = more real footage, av = gentle
+    slow) for a lingering ending; without this the caption would vanish at its
+    scripted end and the linger would play caption-less. Sets the last cut's last
+    scene `end` to the clip's real duration. Idempotent; fail-safe."""
+    try:
+        cap_path = Path(manifests.get("captions") or "")
+        cuts = manifests.get("cuts") or []
+        if not cap_path.exists() or not cuts:
+            return
+        last_tag = None
+        for item in cuts:
+            t = item.get("tag")
+            if t and (Path(in_dir) / f"{t}.mp4").exists():
+                last_tag = t  # last cut that actually rendered (skips dropped cuts)
+        if not last_tag:
+            return
+        mp4 = Path(in_dir) / f"{last_tag}.mp4"
+        dur = float(subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nw=1:nk=1", str(mp4)],
+            capture_output=True, text=True, timeout=15).stdout.strip() or 0)
+        if dur <= 0.1:
+            return
+        data = json.loads(cap_path.read_text(encoding="utf-8"))
+        body = data.get(last_tag)
+        if not isinstance(body, dict):
+            return
+        scenes = body.get("scenes") or []
+        if not scenes:
+            return
+        last = max(scenes, key=lambda s: float(s.get("start", 0) or 0))
+        if float(last.get("end", 0) or 0) < dur - 0.1:
+            last["end"] = round(dur, 2)
+            cap_path.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                                encoding="utf-8")
+            log.info("여운: held final caption of %s to clip end %.1fs", last_tag, dur)
+    except Exception as e:
+        log.warning("hold final caption failed: %s", e)
+
+
 def _burn_captions_cmd(manifests: dict, in_dir: Path, out_dir: Path) -> list[str]:
-    """Build burn_captions.py command with optional font override from Director."""
+    """Build burn_captions.py command with optional font override from Director.
+    Also holds the final caption to the last clip's end (여운) — done here so all
+    burn call sites get it for free."""
+    _hold_final_caption(manifests, in_dir)
     cmd = [
         "python3", "scripts/burn_captions.py",
         "--manifest", manifests["captions"],
@@ -2122,25 +2167,33 @@ def _trim_real_footage_clips(manifests: dict, anim_dir: Path,
             log.info("real_footage %s: drop zoom effect '%s' → play real footage (static)",
                      tag, effect)
             effect = "static"
-        # LAST body cut 여운 (PD 2026-06-08): play the real footage THROUGH the
-        # caption (motion under the text), then FREEZE the final frame ~2s for a
-        # quiet held ending — "캡션 뜨고 바로 끝나는 느낌"을 없앤다. The held end
-        # is only the last ~2s (not the whole clip), so it reads as a deliberate
-        # 여운 beat, not a "정지 화면".
+        # LAST cut 여운 (PD 2026-06-08, CORRECTED): NOT a freeze. Play ~2s MORE of
+        # the ACTUAL real footage past the caption — the video keeps moving and the
+        # caption stays alive over it (the final caption is held to clip end later by
+        # _hold_final_caption). "마지막을 그냥 멈추는게 아니라 동영상을 2초 더 넣으라고
+        # 캡션을 보여주는 상태에서." Only if the source clip genuinely runs out do we
+        # pad the shortfall by a brief freeze (last resort).
         if tag == last_body_tag:
             cap_end = float(cap_end_by_tag.get(tag, 0))
-            end_freeze = float(os.getenv("RF_END_FREEZE_S", "2.0"))
+            linger = float(os.getenv("RF_END_LINGER_S", "2.0"))
             src_dur = entry.get("src_dur")
             avail = (float(src_dur) - trim_start) if src_dur else None
-            play = max(trim_dur, cap_end + 0.3)   # real footage at least to caption end
-            if avail is not None:
-                play = min(play, avail)
+            natural = max(trim_dur, cap_end + 0.3)   # caption must at least finish
+            want = natural + linger                  # +2s of real video past that
+            play = want if avail is None else min(want, avail)
             trim_dur = play
-            vf, time_args = _build_edit_effect_filter(
-                "freeze_to_caption_end", trim_dur, extra_pad=end_freeze)
-            effect = "freeze_to_caption_end"
-            log.info("last cut %s — play %.1fs + end freeze hold %.1fs",
-                     tag, play, end_freeze)
+            shortfall = max(0.0, want - play)        # footage ran out this much
+            if shortfall > 0.15:
+                vf, time_args = _build_edit_effect_filter(
+                    "freeze_to_caption_end", trim_dur, extra_pad=shortfall)
+                effect = "freeze_to_caption_end"
+                log.info("last cut %s — play %.1fs real + %.1fs freeze (footage short)",
+                         tag, play, shortfall)
+            else:
+                vf, time_args = _build_edit_effect_filter("static", trim_dur)
+                effect = "static"
+                log.info("last cut %s — 여운: play %.1fs real footage (+%.1fs linger)",
+                         tag, play, linger)
         else:
             vf, time_args = _build_edit_effect_filter(effect, trim_dur)
 
@@ -2409,14 +2462,10 @@ def _build_edit_effect_filter(effect: str, dur: float, extra_pad: float = 0.0) -
     여운 on the final cut when the caption exceeds the trimmed clip length."""
     e = (effect or "static").strip().lower()
     if e == "freeze_to_caption_end":
-        # Pad final frame for `extra_pad` sec (여운). PD 2026-06-08: FADE OUT during
-        # the held frame so the ending breathes instead of cutting hard (and it
-        # softly hides any leftover crop edge). Fade starts when the freeze begins.
-        if extra_pad and extra_pad > 0.1:
-            fade_d = min(extra_pad, max(0.6, extra_pad - 0.2))
-            fade_st = max(0.0, dur + extra_pad - fade_d)
-            return (f"tpad=stop_mode=clone:stop_duration={extra_pad:.2f},"
-                    f"fade=t=out:st={fade_st:.2f}:d={fade_d:.2f}"), []
+        # LAST-RESORT only (PD 2026-06-08): used when the real clip ran out of footage
+        # and we can't extend the 여운 with real video. Freeze the final frame for
+        # `extra_pad` sec. NO fade-out — the caption must stay visible over the hold
+        # (the 여운 is "caption alive while video continues", not a fade to black).
         return f"tpad=stop_mode=clone:stop_duration={extra_pad:.2f}", []
     if e in ("", "static", "none"):
         return "", []
@@ -3910,15 +3959,17 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         is_last_body = (next_cc.get("function") == "wink_ending")
         # The genuinely final cut of the episode (wink, or last body if no wink)
         is_last_overall = (i == len(cuts) - 1)
-        # PD 2026-06-08: av needs MORE 여운 — the actual last cut was ending abruptly
-        # (wink had fade_out=0, no freeze). Mirror rf RF_END_FREEZE_S: freeze the final
-        # frame for ~2s and fade out DURING that freeze. Applied below, after fades.
-        end_freeze = float(os.getenv("AV_END_FREEZE_S", "2.0"))
+        # PD 2026-06-08 (CORRECTED): the 여운 is NOT a freeze + fade-out — the caption
+        # must STAY ALIVE and the video just plays ~2s longer (handled in Step 3b by
+        # extending the last cut, + _hold_final_caption). So the final cut must NOT
+        # fade to black (that would kill the caption). Give it fade-in only, no out.
         # Fade params
-        if is_wink:
-            fade_in_d, fade_out_d = 0.5, 0.0  # match lingering; out handled by freeze
+        if is_last_overall:
+            fade_in_d, fade_out_d = (0.5 if is_wink else (0.3 if i > 0 else 0.0)), 0.0
+        elif is_wink:
+            fade_in_d, fade_out_d = 0.5, 0.0
         elif is_last_body:
-            fade_in_d, fade_out_d = 0.3, (0.0 if is_last_overall else 1.5)
+            fade_in_d, fade_out_d = 0.3, 1.5  # lingering out into the wink
         else:
             fade_in_d, fade_out_d = (0.3 if i > 0 else 0.0), 0.3
         # Build filter expression
@@ -3928,12 +3979,6 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         if fade_out_d > 0:
             fade_out_st = max(0, dur - fade_out_d)
             filters.append(f"fade=t=out:st={fade_out_st}:d={fade_out_d}")
-        # Final cut 여운: clone-freeze last frame, then fade out across the freeze tail.
-        if is_last_overall and end_freeze > 0.1:
-            filters.append(f"tpad=stop_mode=clone:stop_duration={end_freeze:.2f}")
-            fade_d = min(end_freeze, max(0.6, end_freeze - 0.2))
-            fade_st = max(0.0, dur + end_freeze - fade_d)
-            filters.append(f"fade=t=out:st={fade_st:.2f}:d={fade_d:.2f}")
         if not filters:
             continue
         faded_mp4 = anim_dir / f"{tag}_faded.mp4"
@@ -3959,18 +4004,45 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
     # setpts=<ratio>*PTS — captions were already authored against the
     # target playback length. cc metadata lives in concept_cuts (manifests
     # cuts only carry tag + asset).
+    av_linger = float(os.getenv("AV_END_LINGER_S", "2.0"))
     for i, item in enumerate(cuts):
         tag = item.get("tag")
         cc = concept_cuts[i] if i < len(concept_cuts) else {}
         tgt = int(cc.get("target_duration_seconds") or 0)
         src = int(cc.get("duration_seconds") or 0)
-        # Last cut already carries an end-freeze tail (Step 3a 여운) — don't re-stretch it.
-        if i == len(cuts) - 1:
-            continue
-        if tgt <= 0 or src <= 0 or tgt <= src or not tag:
-            continue
+        is_last = (i == len(cuts) - 1)
         src_mp4 = anim_dir / f"{tag}.mp4"
         if not src_mp4.exists():
+            continue
+        if is_last and av_linger > 0.1:
+            # 여운 (PD 2026-06-08 CORRECTED): the last cut plays ~2s LONGER with the
+            # motion still going (NOT a frozen frame) and the caption held over it
+            # (_hold_final_caption). av has no extra generated footage, so gently slow
+            # the cut to add the linger — continuous slowed motion, not a freeze.
+            try:
+                actual = float(subprocess.run(
+                    ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                     "-of", "default=nw=1:nk=1", str(src_mp4)],
+                    capture_output=True, text=True, timeout=15).stdout.strip() or (src or 5))
+            except Exception:
+                actual = float(src or 5)
+            if actual <= 0.1:
+                continue
+            ratio = (actual + av_linger) / actual
+            slowed_mp4 = anim_dir / f"{tag}_slow.mp4"
+            cmd = [
+                "ffmpeg", "-y", "-i", str(src_mp4),
+                "-filter:v", f"setpts={ratio:.3f}*PTS",
+                "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                "-preset", "fast", "-crf", "18", str(slowed_mp4),
+            ]
+            _run(cmd, f":hourglass: [3b/6] 여운 {tag} {actual:.1f}s→{actual+av_linger:.1f}s "
+                 f"(last cut +{av_linger:.0f}s, motion continues)", progress_cb, dry_run)
+            if not dry_run and slowed_mp4.exists():
+                src_mp4.unlink()
+                slowed_mp4.rename(src_mp4)
+            continue
+        if tgt <= 0 or src <= 0 or tgt <= src or not tag:
             continue
         ratio = tgt / src
         slowed_mp4 = anim_dir / f"{tag}_slow.mp4"
