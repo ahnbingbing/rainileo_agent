@@ -1531,6 +1531,71 @@ def _burn_captions_cmd(manifests: dict, in_dir: Path, out_dir: Path) -> list[str
     return cmd
 
 
+def _lint_seedance_prompt(prompt: str) -> list[str]:
+    """PD 2026-06-08: Seedance is expensive and weak at backgrounds — surface
+    rigor gaps BEFORE the spend so we know why a render came out wrong. Log-only
+    (the hard background BLOCK lives in the Validator, pre-render). Checks the
+    prompt has a VERY detailed, camera-sweep background + the key guardrails."""
+    p = prompt or ""
+    pl = p.lower()
+    issues = []
+    bg_kw = sum(1 for k in (
+        "wall", "floor", "window", "light", "ceiling", "sofa", "bench", "piano",
+        "table", "vanity", "sink", "tile", "cabinet", "shelf", "curtain", "door",
+        "rug", "mat", "바닥", "벽", "창", "조명", "천장") if k in pl)
+    if len(p) < 400 or bg_kw < 5:
+        issues.append(f"THIN background (len={len(p)}, bg_terms={bg_kw}) — PD wants a "
+                      "camera-sweep room description (walls→floor→furniture→light, "
+                      "each element one by one); Seedance will freelance the room")
+    if ("ryani" in pl or "랴니" in pl or "french bulldog" in pl) and "no tail" not in pl:
+        issues.append("Ryani present but missing 'NO tail' marking canon")
+    if "static" not in pl and "background objects" not in pl:
+        issues.append("no background-stillness guardrail")
+    if issues:
+        log.warning("Seedance prompt lint (%d): %s", len(issues), " | ".join(issues))
+    return issues
+
+
+def _seedance_preflight(cmd: list[str]) -> list[str]:
+    """PD 2026-06-08 cost guard: NEVER let a Seedance call go out without at least
+    ONE image visual (text-only generation wastes the expensive call and drifts).
+    Guarantee an existing image is attached; if none, fall back to the canonical
+    pair ref; if even that is missing, REFUSE (raise) rather than spend. Also lint
+    the prompt for background richness + guardrails."""
+    cmd = list(cmd)
+
+    def _val(flag):
+        if flag in cmd:
+            i = cmd.index(flag)
+            if i + 1 < len(cmd):
+                return cmd[i + 1]
+        return None
+
+    mode = _val("--mode") or "i2v"
+    img_flags = ("--image", "--last-frame", "--ref-image")
+    has_image = any(
+        i + 1 < len(cmd) and cmd[i + 1] and Path(cmd[i + 1]).exists()
+        for i, a in enumerate(cmd) if a in img_flags
+    )
+    if not has_image:
+        fb = ROOT / REF_LIBRARY.get("pair", "")
+        if not fb.exists():
+            raise RuntimeError(
+                "Seedance preflight: no image visual available and no fallback ref "
+                "— refusing a text-only generation (cost guard, PD 2026-06-08).")
+        if mode == "i2v":
+            if "--image" in cmd:
+                cmd[cmd.index("--image") + 1] = str(fb)
+            else:
+                cmd += ["--image", str(fb)]
+        else:  # ref / interp
+            cmd += ["--ref-image", str(fb)]
+        log.warning("Seedance preflight: no valid image → attached fallback pair ref "
+                    "(%s) to guarantee ≥1 visual", fb.name)
+    _lint_seedance_prompt(_val("--prompt") or "")
+    return cmd
+
+
 def _run(cmd: list[str], step: str, progress_cb: ProgressCb = None,
          dry_run: bool = False) -> subprocess.CompletedProcess | None:
     if progress_cb:
@@ -1540,6 +1605,9 @@ def _run(cmd: list[str], step: str, progress_cb: ProgressCb = None,
         log.info("  [dry-run] %s", " ".join(cmd))
         print(f"  [dry-run] {' '.join(cmd)}")
         return None
+    # PD 2026-06-08: guarantee ≥1 image + lint prompt on every real Seedance dispatch.
+    if len(cmd) >= 2 and "animate_seedance_i2v.py" in str(cmd[1]):
+        cmd = _seedance_preflight(cmd)
     proc = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=600)
     if proc.returncode != 0:
         err = proc.stderr[-2000:] if proc.stderr else proc.stdout[-2000:]
