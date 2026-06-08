@@ -3049,6 +3049,17 @@ def _cut_character_ok(mp4_path: Path, who: str = "both", n_frames: int = 3) -> b
                     "gold/amber), white chin tuft, lean young-adult body, natural "
                     "real-cat look. (A nose scar is NOT required — current Leo has a "
                     "faint one but baby/kitten Leo had none; do not fail on the scar.)")
+            ask_blaze = w in ("ryani", "both")
+            blaze_q = (
+                " SEPARATELY and CAREFULLY, judge ONE specific Ryani defect that a "
+                "holistic look misses: the white BLAZE down her face. Correct = a THIN "
+                "NARROW stripe/line from nose up between the eyes. DEFECT = the blaze is "
+                "THICK, WIDE, BROAD, or covers a large area of the muzzle/forehead "
+                "(Seedance commonly over-widens it). Set blaze_too_thick=true ONLY when "
+                "Ryani's face is frontal enough to see the blaze AND it is clearly too "
+                "thick/wide; otherwise false (side profile / not visible = false)."
+            ) if ask_blaze else ""
+            blaze_field = ",\"blaze_too_thick\":true|false" if ask_blaze else ""
             prompt = (
                 "These frames are from ONE rendered cut. Judge the pet character "
                 "fidelity for: " + " ".join(specs) + " IMPORTANT: a side profile or "
@@ -3056,8 +3067,8 @@ def _cut_character_ok(mp4_path: Path, who: str = "both", n_frames: int = 3) -> b
                 "defect. Flag a problem ONLY when a pet is frontal/clearly visible AND "
                 "its markings/features are clearly wrong, OR the render looks obviously "
                 "AI-generated/distorted (warped face, melted/extra features, wrong "
-                "proportions, plastic/fake look). Return ONLY JSON: "
-                "{\"clear\":true|false,\"character_ok\":true|false}.")
+                "proportions, plastic/fake look)." + blaze_q + " Return ONLY JSON: "
+                "{\"clear\":true|false,\"character_ok\":true|false" + blaze_field + "}.")
             contents = list(parts) + [prompt]
             resp = client.models.generate_content(
                 model=os.getenv("VLM_MODEL", "gemini-2.5-flash"),
@@ -3069,10 +3080,12 @@ def _cut_character_ok(mp4_path: Path, who: str = "both", n_frames: int = 3) -> b
             d = _json.loads((resp.text or "{}").strip())
             clear = bool(d.get("clear", d.get("frontal")))
             ok = bool(d.get("character_ok", d.get("markings_ok")))
-            bad = clear and not ok
+            blaze_bad = bool(d.get("blaze_too_thick")) if ask_blaze else False
+            bad = (clear and not ok) or blaze_bad
             if bad:
-                log.info("cut character gate: %s drift/generative in %s",
-                         w, Path(mp4_path).name)
+                log.info("cut character gate: %s %s in %s", w,
+                         "BLAZE-too-thick" if blaze_bad else "drift/generative",
+                         Path(mp4_path).name)
             return not bad
     except Exception as e:
         log.warning("cut marking check failed (%s) — keeping cut", e)
@@ -3613,11 +3626,11 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                     if light_hint.strip() not in prompt:
                         prompt = prompt + light_hint
 
-        def _seedance_i2v(p: str):
+        def _seedance_i2v(p: str, image=None):
             cmd = [
                 "python3", "scripts/animate_seedance_i2v.py",
                 "--mode", "i2v",
-                "--image", str(first_frame_path),
+                "--image", str(image or first_frame_path),
                 "--prompt", p,
                 "--seconds", seconds,
                 "--model", os.getenv("SEEDANCE_MODEL", DEFAULT_MODEL_SEEDANCE),
@@ -3628,15 +3641,15 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         # was failing a single cut → whole av episode retried (same prompt) → av
         # never produced. On that error, retry the cut with a sanitized prompt
         # (strip proper nouns / risky verbs per CLAUDE.md motion rules).
-        def _seedance_i2v_safe(p: str):
+        def _seedance_i2v_safe(p: str, image=None):
             try:
-                _seedance_i2v(p)
+                _seedance_i2v(p, image=image)
             except RuntimeError as e:
                 if "SensitiveContent" in str(e) or "BadRequest" in str(e):
                     log.warning("Seedance moderation on %s — sanitized retry", tag)
                     if progress_cb:
                         progress_cb(f":shield: {tag} 모더레이션 — 정제 프롬프트 재시도")
-                    _seedance_i2v(_sanitize_motion_prompt(p))
+                    _seedance_i2v(_sanitize_motion_prompt(p), image=image)
                 else:
                     raise
         _seedance_i2v_safe(prompt)
@@ -3653,22 +3666,34 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         if _who and not dry_run and out_mp4.exists():
             if not _cut_character_ok(out_mp4, _who):
                 resolved = False
+                # ROOT-CAUSE fix (PD 2026-06-08): a chain cut's i2v input is the
+                # PREVIOUS cut's last frame, so marking drift (e.g. blaze widening)
+                # compounds down the chain and a same-input regen can't fix it.
+                # On a chain cut, regenerate from the FRESH canonical GPT still
+                # (built from the thin-blaze ref) instead of the drifted chain frame.
+                _fresh_still = regen_dir / f"{tag}.png"
+                _regen_img = (_fresh_still if (cc.get("chain_from_prev")
+                              and _fresh_still.exists()
+                              and _fresh_still != first_frame_path) else None)
+                if _regen_img and progress_cb:
+                    progress_cb(f":arrows_counterclockwise: {tag} 체인 드리프트 → "
+                                f"원본 스틸로 재생성")
                 for r in range(3):
                     if progress_cb:
                         progress_cb(f":repeat: {tag} 캐릭터 드리프트({_who}) — 재생성 {r+1}/3")
                     try:
-                        _seedance_i2v_safe(prompt + _emph)
+                        _seedance_i2v_safe(prompt + _emph, image=_regen_img)
                     except Exception as e:
                         log.warning("regen %d failed for %s: %s", r + 1, tag, e); break
                     if _cut_character_ok(out_mp4, _who):
                         resolved = True; break
                 if not resolved:
-                    # different prompt (calmer, character-forward)
+                    # different prompt (calmer, character-forward) — also from fresh still
                     alt = "Gentle natural motion, camera holds still." + _emph
                     if progress_cb:
                         progress_cb(f":repeat: {tag} — 다른 프롬프트로 재도전")
                     try:
-                        _seedance_i2v_safe(alt)
+                        _seedance_i2v_safe(alt, image=_regen_img)
                         resolved = _cut_character_ok(out_mp4, _who)
                     except Exception:
                         pass
@@ -3700,11 +3725,17 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         # Last body cut = the cut immediately before a wink_ending cut
         next_cc = concept_cuts[i + 1] if i + 1 < len(concept_cuts) else {}
         is_last_body = (next_cc.get("function") == "wink_ending")
+        # The genuinely final cut of the episode (wink, or last body if no wink)
+        is_last_overall = (i == len(cuts) - 1)
+        # PD 2026-06-08: av needs MORE 여운 — the actual last cut was ending abruptly
+        # (wink had fade_out=0, no freeze). Mirror rf RF_END_FREEZE_S: freeze the final
+        # frame for ~2s and fade out DURING that freeze. Applied below, after fades.
+        end_freeze = float(os.getenv("AV_END_FREEZE_S", "2.0"))
         # Fade params
         if is_wink:
-            fade_in_d, fade_out_d = 0.5, 0.0  # match lingering, no out
+            fade_in_d, fade_out_d = 0.5, 0.0  # match lingering; out handled by freeze
         elif is_last_body:
-            fade_in_d, fade_out_d = 0.3, 1.5  # lingering out
+            fade_in_d, fade_out_d = 0.3, (0.0 if is_last_overall else 1.5)
         else:
             fade_in_d, fade_out_d = (0.3 if i > 0 else 0.0), 0.3
         # Build filter expression
@@ -3714,6 +3745,12 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         if fade_out_d > 0:
             fade_out_st = max(0, dur - fade_out_d)
             filters.append(f"fade=t=out:st={fade_out_st}:d={fade_out_d}")
+        # Final cut 여운: clone-freeze last frame, then fade out across the freeze tail.
+        if is_last_overall and end_freeze > 0.1:
+            filters.append(f"tpad=stop_mode=clone:stop_duration={end_freeze:.2f}")
+            fade_d = min(end_freeze, max(0.6, end_freeze - 0.2))
+            fade_st = max(0.0, dur + end_freeze - fade_d)
+            filters.append(f"fade=t=out:st={fade_st:.2f}:d={fade_d:.2f}")
         if not filters:
             continue
         faded_mp4 = anim_dir / f"{tag}_faded.mp4"
@@ -3744,6 +3781,9 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         cc = concept_cuts[i] if i < len(concept_cuts) else {}
         tgt = int(cc.get("target_duration_seconds") or 0)
         src = int(cc.get("duration_seconds") or 0)
+        # Last cut already carries an end-freeze tail (Step 3a 여운) — don't re-stretch it.
+        if i == len(cuts) - 1:
+            continue
         if tgt <= 0 or src <= 0 or tgt <= src or not tag:
             continue
         src_mp4 = anim_dir / f"{tag}.mp4"
