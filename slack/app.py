@@ -297,45 +297,74 @@ def upload_cmd(ack, body, respond):
 # (예약 publishAt 해제 → 공개 안 됨, 되돌릴 수 있음). `/veto <id> delete` = 완전 삭제.
 # 인자: card_id prefix 또는 youtube_video_id.
 # ──────────────────────────────────────────────────────────────────────
+def _do_veto(vid: str, delete: bool = False) -> str:
+    """Shared veto core (PD 2026-06-09): take down a scheduled/published video
+    (private by default, since launch videos are scheduled publishAt) + revoke
+    cards.uploaded so arc/cooldown drop it. Returns a status string."""
+    from youtube.upload import veto_video
+    try:
+        action = veto_video(vid, delete=delete)
+    except Exception as e:
+        log.exception("veto failed for %s", vid)
+        return f":x: veto 실패 ({vid}): {str(e)[:300]}"
+    try:
+        with db() as con:
+            con.execute(
+                "UPDATE cards SET uploaded=0, state=?, updated_at=datetime('now') "
+                "WHERE youtube_video_id=?",
+                ("vetoed_deleted" if delete else "vetoed", vid))
+            try:
+                con.execute("UPDATE launch_threads SET vetoed=1 WHERE video_id=?", (vid,))
+            except Exception:
+                pass
+    except Exception as e:
+        log.warning("veto db update failed for %s: %s", vid, e)
+    return f":white_check_mark: veto 완료 — `{vid}` {action} (쿨다운/아크 회수됨)"
+
+
 @app.command("/veto")
 def veto_cmd(ack, body, respond):
     ack()
     parts = (body.get("text") or "").strip().split()
     if not parts:
-        respond("usage: `/veto <card_id_prefix | youtube_video_id> [delete]`")
+        # No arg: list today's + tomorrow's launch videos so PD can /veto <id>.
+        import datetime as _dt
+        try:
+            with db() as con:
+                rows = con.execute(
+                    "SELECT slot, lane, video_id, title FROM launch_threads "
+                    "WHERE vetoed=0 AND target >= ? ORDER BY target, slot",
+                    (_dt.date.today().isoformat(),)).fetchall()
+        except Exception:
+            rows = []
+        if not rows:
+            respond("usage: `/veto <youtube_video_id | card_id_prefix> [delete]`\n"
+                    "_또는 각 영상 쓰레드에 `veto` 라고 답글._\n"
+                    "_(취소할 예약 런칭 영상이 없어요.)_")
+            return
+        lines = [":no_entry: *취소 가능한 런칭 영상* — `/veto <video_id>` 또는 쓰레드에 `veto`"]
+        for r in rows:
+            lane_lbl = "AV" if r["lane"] == "ai_vtuber" else "RF"
+            lines.append(f"  • {r['slot']} {lane_lbl} `{r['video_id']}` — "
+                         f"{(r['title'] or '')[:40]}")
+        respond("\n".join(lines))
         return
-    ident = parts[0]
+    ident = parts[0].strip("`<>")
     do_delete = len(parts) > 1 and parts[1].lower() in ("delete", "del", "삭제")
     with db() as con:
         row = con.execute(
-            "SELECT card_id, youtube_video_id, theme FROM cards "
+            "SELECT card_id, youtube_video_id FROM cards "
             "WHERE youtube_video_id=? OR card_id LIKE ? || '%' "
             "ORDER BY updated_at DESC LIMIT 1",
             (ident, ident),
         ).fetchone()
-    if not row or not row["youtube_video_id"]:
-        respond(f":x: `{ident}` 에 매칭되는 업로드 영상이 없어요 (youtube_video_id 없음)")
+    # Accept a raw youtube_video_id even if no card row matches (launch path).
+    vid = (row["youtube_video_id"] if row and row["youtube_video_id"] else ident)
+    if not vid:
+        respond(f":x: `{ident}` 에 매칭되는 영상이 없어요")
         return
-    card_id = row["card_id"]
-    vid = row["youtube_video_id"]
-    respond(f":no_entry: veto `{card_id[:8]}` → {vid} "
-            f"({'삭제' if do_delete else '비공개 전환'})...")
-    try:
-        from youtube.upload import veto_video
-        action = veto_video(vid, delete=do_delete)
-        with db() as con:
-            # revoke uploaded flag so the clip cooldown / arc no longer counts it,
-            # and mark state so it won't be re-treated as live.
-            con.execute(
-                "UPDATE cards SET uploaded=0, state=?, updated_at=datetime('now') "
-                "WHERE card_id=?",
-                ("vetoed_deleted" if do_delete else "vetoed", card_id),
-            )
-        respond(f":white_check_mark: veto 완료 — `{card_id[:8]}` {action} "
-                f"(쿨다운/아크 카운트 회수됨)")
-    except Exception as e:
-        log.exception("veto failed for %s", card_id[:8])
-        respond(f":x: veto 실패: {str(e)[:600]}")
+    respond(f":no_entry: veto → {vid} ({'삭제' if do_delete else '비공개 전환'})...")
+    respond(_do_veto(vid, delete=do_delete))
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -674,79 +703,36 @@ def launch_cmd(ack, body, respond, client):
 
     def _run():
         from agents.launch import launch_pipeline
-        # open a thread root so all 4 episodes + progress live together
-        root = None
-        try:
-            r = client.chat_postMessage(
-                channel=WORKROOM,
-                text=f":clapper: *런칭 데이* {target.isoformat()} — 4슬롯 생산 시작")
-            root = r.get("ts")
-        except Exception:
-            pass
-
+        # PD 2026-06-09: per-slot threads (4 threads/day) — launch_pipeline opens
+        # each slot's own thread via slack_client/slack_channel. Day-level progress
+        # posts to the channel (un-threaded summary).
         def _progress(msg):
             if _stop_flag.is_set():
                 raise InterruptedError("중지 명령으로 중단됨")
             try:
-                client.chat_postMessage(channel=WORKROOM, text=msg, thread_ts=root)
+                client.chat_postMessage(channel=WORKROOM, text=msg)
             except Exception:
                 pass
-
-        def _video(path):
-            try:
-                client.files_upload_v2(
-                    channel=WORKROOM, thread_ts=root,
-                    file=str(path), title=Path(path).name,
-                    initial_comment=f":movie_camera: {Path(path).name} — 문제 있으면 `/veto`")
-            except Exception as e:
-                log.warning("launch video upload failed: %s", e)
-
-        def _ask(questions):
-            # Layer ③ week-1 blocking ask: post numbered Qs, wait for PD reply,
-            # map "1. ans / 2. ans" lines back to questions. Timeout → non-blocking
-            # (questions stay pending for /answer).
-            import os as _os, re as _re
-            from agents.producer import wait_for_pd
-            qtext = "\n".join(f"  {i+1}. {q['question']}" for i, q in enumerate(questions))
-            try:
-                client.chat_postMessage(
-                    channel=WORKROOM, thread_ts=root,
-                    text=(":raising_hand: *컨셉에 필요한데 모르는 게 있어요* "
-                          "— 답해주시면 영구 기억하고 다신 안 물어요.\n" + qtext +
-                          "\n(예: `1. 랴니는 물 엄청 좋아해, 분수에 뛰어듦`)"))
-            except Exception:
-                pass
-            timeout = int(_os.getenv("KNOWLEDGE_ASK_TIMEOUT", "1800"))
-            replies = wait_for_pd(root, timeout_sec=timeout, seen_ts={root})
-            ans: dict = {}
-            for rep in replies:
-                for line in rep.splitlines():
-                    m = _re.match(r"\s*(\d+)[.)]\s*(.+)", line)
-                    if m:
-                        idx = int(m.group(1)) - 1
-                        if 0 <= idx < len(questions):
-                            ans[questions[idx]["question"]] = m.group(2).strip()
-                if len(questions) == 1 and rep.strip() and not ans:
-                    ans[questions[0]["question"]] = rep.strip()
-            return ans
 
         try:
             results = launch_pipeline(target, progress_cb=_progress,
-                                      video_cb=_video, do_upload=do_upload,
-                                      dry_run=dry_run, ask_cb=_ask)
-            # summary line with veto hints
-            lines = [":checkered_flag: *런칭 요약*"]
+                                      video_cb=None, do_upload=do_upload,
+                                      dry_run=dry_run, ask_cb=None,
+                                      slack_client=client, slack_channel=WORKROOM)
+            # day-level summary in the channel, with per-video veto hints
+            lines = [":checkered_flag: *런칭 요약* — 취소는 각 영상 쓰레드에 `veto` "
+                     "(또는 `/veto <video_id>`)"]
             for r in results:
                 vid = r.get("video_id")
+                lane_lbl = "AV" if r.get("lane") == "ai_vtuber" else "RF"
                 tag = (f"<https://youtube.com/shorts/{vid}|{vid}>" if vid
                        else "_미업로드_")
-                lines.append(f"  • {r['slot']} {r['lane']} → {tag}")
-            client.chat_postMessage(channel=WORKROOM, text="\n".join(lines),
-                                    thread_ts=root)
+                lines.append(f"  • {r['slot']} {lane_lbl} → {tag}")
+            client.chat_postMessage(channel=WORKROOM, text="\n".join(lines))
         except Exception as e:
             log.exception("launch pipeline failed")
             client.chat_postMessage(
-                channel=WORKROOM, thread_ts=root,
+                channel=WORKROOM,
                 text=f":x: 런칭 파이프라인 실패:\n```{str(e)[:1200]}```")
 
     threading.Thread(target=_run, daemon=True).start()
@@ -1173,6 +1159,27 @@ def handle_thread_replies(message, client, context):
     remake_keywords = {"다시", "remake", "리메이크", "재생산"}
     if any(kw in text_lower for kw in remake_keywords):
         _handle_remake(event, client, thread_ts, text_lower)
+        return
+
+    # ── In-thread veto (PD 2026-06-09): reply "veto" inside a slot's thread to
+    # cancel THAT video. (Slash commands can't carry thread context, so the
+    # in-thread trigger is a plain message — it does carry thread_ts.) Optional
+    # "veto delete" / "veto 삭제" to fully delete instead of unlist.
+    veto_keywords = {"veto", "베토", "비토", "거부"}
+    if text_lower.split()[0] in veto_keywords if text_lower.split() else False:
+        from agents.launch import video_id_for_thread
+        with db() as con:
+            vid = video_id_for_thread(con, thread_ts)
+        if not vid:
+            client.chat_postMessage(
+                channel=channel, thread_ts=thread_ts,
+                text=":warning: 이 쓰레드에 연결된 업로드 영상이 없어요 "
+                     "(아직 예약 전이거나 런칭 슬롯 쓰레드가 아님). 메인에서 "
+                     "`/veto <video_id>` 로도 취소할 수 있어요.")
+            return
+        do_delete = any(w in text_lower for w in ("delete", "del", "삭제"))
+        action = _do_veto(vid, delete=do_delete)
+        client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=action)
         return
 
     # ── Subject tagging handler ──

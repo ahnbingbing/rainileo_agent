@@ -35,6 +35,41 @@ TIMESLOTS: list[str] = os.getenv(
 LANES = ("ai_vtuber", "real_footage")
 
 
+# ── Per-video Slack thread ↔ video mapping (PD 2026-06-09) ────────────────
+# Each launch video gets its OWN Slack thread. `/veto` inside a thread → veto
+# that thread's video; `/veto <video_id>` from the main channel works too. We
+# persist the mapping so the (separate-process) slack listener can resolve it.
+def _ensure_launch_threads_table(con) -> None:
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS launch_threads ("
+        " thread_ts TEXT PRIMARY KEY, channel TEXT, video_id TEXT, lane TEXT,"
+        " slot TEXT, target TEXT, title TEXT, vetoed INTEGER DEFAULT 0)")
+    con.commit()
+
+
+def record_launch_thread(con, *, thread_ts, channel, video_id, lane, slot,
+                         target, title) -> None:
+    _ensure_launch_threads_table(con)
+    con.execute(
+        "INSERT INTO launch_threads (thread_ts, channel, video_id, lane, slot, "
+        "target, title, vetoed) VALUES (?,?,?,?,?,?,?,0) "
+        "ON CONFLICT(thread_ts) DO UPDATE SET video_id=excluded.video_id, "
+        "title=excluded.title",
+        (thread_ts, channel, video_id, lane, slot, str(target), title))
+    con.commit()
+
+
+def video_id_for_thread(con, thread_ts: str) -> str | None:
+    try:
+        _ensure_launch_threads_table(con)
+        row = con.execute(
+            "SELECT video_id FROM launch_threads WHERE thread_ts=?",
+            (thread_ts,)).fetchone()
+        return row[0] if row and row[0] else None
+    except Exception:
+        return None
+
+
 def day_assignments(target: dt.date) -> list[tuple[str, str]]:
     """Return [(lane, "HH:MM"), ...] for the 4 daily slots, lane×timeslot
     counterbalanced via a 2-day Latin square.
@@ -102,7 +137,9 @@ def launch_pipeline(target: dt.date, *,
                     do_upload: bool = True,
                     dry_run: bool = False,
                     max_slots: int | None = None,
-                    ask_cb: Callable[[list], dict] | None = None) -> list[dict]:
+                    ask_cb: Callable[[list], dict] | None = None,
+                    slack_client=None,
+                    slack_channel: str | None = None) -> list[dict]:
     """Produce the day's 4 launch episodes per the Latin-square assignment.
 
     Returns a list of slot result dicts: {lane, slot, output, video_id,
@@ -140,61 +177,106 @@ def launch_pipeline(target: dt.date, *,
         # PD 2026-06-08: each slot proposes ITS OWN concept and renders it in one
         # thread, so the slow av Writer/Director proposals overlap each other AND
         # the rf renders (was: propose-all-then-render, serial → ~45min for 4).
-        if progress_cb:
-            progress_cb(f":bulb: {hhmm} {lane} 컨셉 생성 중...")
+        # PD 2026-06-09: each slot also gets its OWN Slack thread — all of this
+        # slot's progress + its result mp4 land there, and `/veto` in that thread
+        # vetoes THIS video.
+        lane_lbl = "AV" if lane == "ai_vtuber" else "RF"
+        slot_ts = None
+        if slack_client and slack_channel:
+            try:
+                r = slack_client.chat_postMessage(
+                    channel=slack_channel,
+                    text=(f":clapper: *{hhmm} {lane_lbl}* — {target.isoformat()} "
+                          f"제작 시작 (이 쓰레드에 진행상황·결과영상. 취소하려면 "
+                          f"이 쓰레드에 `veto` 라고 답글)"))
+                slot_ts = r.get("ts")
+            except Exception as e:
+                log.warning("slot thread open failed (%s %s): %s", hhmm, lane, e)
+
+        def sp(m: str):
+            print(m, flush=True)
+            if slack_client and slack_channel and slot_ts:
+                try:
+                    slack_client.chat_postMessage(channel=slack_channel, text=m,
+                                                  thread_ts=slot_ts)
+                except Exception:
+                    pass
+            elif progress_cb:
+                progress_cb(m)
+
+        def sv(p):
+            if slack_client and slack_channel and slot_ts:
+                try:
+                    slack_client.files_upload_v2(
+                        channel=slack_channel, thread_ts=slot_ts, file=str(p),
+                        title=Path(p).name,
+                        initial_comment=":movie_camera: 결과 — 취소하려면 이 쓰레드에 `veto` 라고 답글")
+                    return
+                except Exception as e:
+                    log.warning("slot video upload failed: %s", e)
+            if video_cb:
+                video_cb(p)
+
+        sp(f":bulb: {hhmm} {lane_lbl} 컨셉 생성 중...")
         try:
             batch = propose_concepts(target, dict(context),
-                                     style_filter=lane, progress_cb=progress_cb)
+                                     style_filter=lane, progress_cb=sp)
         except Exception as e:
             log.warning("propose %s failed: %s", lane, e)
+            sp(f":x: {hhmm} {lane_lbl} 컨셉 실패: {str(e)[:140]}")
             return None
         if not batch:
-            if progress_cb:
-                progress_cb(f":warning: {hhmm} {lane}: 컨셉 없음 — 슬롯 비움")
+            sp(f":warning: {hhmm} {lane_lbl}: 컨셉 없음 — 슬롯 비움")
             return None
         concept = batch[0]
         concept["render_style"] = lane
         try:
             concept = (resolve_knowledge_questions(
-                [concept], target, ask_cb=slot_ask, progress_cb=progress_cb)
+                [concept], target, ask_cb=slot_ask, progress_cb=sp)
                 or [concept])[0]
         except Exception as e:
             log.warning("knowledge Q resolve failed (%s): %s", lane, e)
         if dry_run:
             return {"lane": lane, "slot": hhmm, "title": concept.get("title"),
-                    "publish_at": publish_at_for(target, hhmm)}
+                    "publish_at": publish_at_for(target, hhmm), "thread_ts": slot_ts}
         # render (each thread its own db connection — sqlite isn't shareable)
-        if progress_cb:
-            progress_cb(f":factory: {hhmm} {lane} 렌더: {concept.get('title','?')}")
+        sp(f":factory: {hhmm} {lane_lbl} 렌더: {concept.get('title','?')}")
         try:
-            outs = produce_and_render([concept], target, progress_cb=progress_cb)
+            outs = produce_and_render([concept], target, progress_cb=sp)
         except Exception as e:
             log.exception("launch render failed (%s %s): %s", hhmm, lane, e)
-            if progress_cb:
-                progress_cb(f":x: {hhmm} {lane} 렌더 실패: {str(e)[:140]}")
+            sp(f":x: {hhmm} {lane_lbl} 렌더 실패: {str(e)[:140]}")
             return None
         out = outs[0] if outs else None
         if not out:
-            if progress_cb:
-                progress_cb(f":x: {hhmm} {lane}: 기리 미통과/렌더 실패 — 슬롯 비움(junk 금지)")
+            sp(f":x: {hhmm} {lane_lbl}: 기리 미통과/렌더 실패 — 슬롯 비움(junk 금지)")
             return None
-        if video_cb:
-            try:
-                video_cb(out)
-            except Exception as e:
-                log.warning("video_cb failed: %s", e)
+        sv(out)
         vid = None
         publish_at = publish_at_for(target, hhmm)
         if do_upload and os.getenv("YOUTUBE_AUTO_UPLOAD", "1") == "1":
             try:
                 tcon = _db()
-                vid = _auto_upload_episode(tcon, out, target, progress_cb,
+                vid = _auto_upload_episode(tcon, out, target, sp,
                                            publish_at_iso=publish_at)
+                # PD 2026-06-09: map this slot's thread → video_id so /veto works.
+                if vid and slot_ts and slack_channel:
+                    try:
+                        record_launch_thread(
+                            tcon, thread_ts=slot_ts, channel=slack_channel,
+                            video_id=vid, lane=lane, slot=hhmm, target=target,
+                            title=concept.get("title", ""))
+                    except Exception as e:
+                        log.warning("record_launch_thread failed: %s", e)
                 tcon.close()
             except Exception as e:
                 log.warning("launch upload failed (%s %s): %s", hhmm, lane, e)
+        if vid:
+            sp(f":white_check_mark: {hhmm} {lane_lbl} 예약완료 — video_id=`{vid}` "
+               f"공개예정 {publish_at}. 취소: 이 쓰레드에 `veto` 답글 (또는 메인에서 "
+               f"`/veto {vid}`)")
         return {"lane": lane, "slot": hhmm, "output": str(out),
-                "video_id": vid, "publish_at": publish_at}
+                "video_id": vid, "publish_at": publish_at, "thread_ts": slot_ts}
 
     results: list[dict] = []
     # PD 2026-06-08: run ONE pipeline PER LANE (rf ∥ av) in parallel, but slots
@@ -255,43 +337,36 @@ def main() -> int:
             print(f"  {hhmm}  {lane}  → publish_at {publish_at_for(target, hhmm)}")
         return 0
 
-    # Slack wiring: when a workroom is configured (e.g. the daily launchd job),
-    # open a thread root and route progress + the 4 mp4s there. Falls back to
-    # stdout-only when Slack isn't available.
+    # Slack wiring (PD 2026-06-09): post a day-level header to the workroom
+    # channel, then let each slot open its OWN thread (4 threads/day) for its
+    # progress + result mp4 + `/veto`. Day-level progress_cb posts to the channel
+    # (un-threaded summary); per-slot detail lives in each slot's thread. Falls
+    # back to stdout-only when Slack isn't available.
     progress_cb = lambda m: print(m, flush=True)
-    video_cb = None
-    client = ch = root = None
+    client = ch = None
     try:
         ch = os.environ.get("SLACK_WORKROOM_CHANNEL")
         tok = os.environ.get("SLACK_BOT_TOKEN")
         if ch and tok:
             from slack_sdk import WebClient
             client = WebClient(token=tok)
-            r = client.chat_postMessage(
+            client.chat_postMessage(
                 channel=ch,
-                text=f":clapper: *런칭 데이* {target.isoformat()} — 4슬롯 생산 시작")
-            root = r.get("ts")
+                text=(f":rocket: *런칭 데이* {target.isoformat()} — 4슬롯 생산 시작 "
+                      f"(슬롯별 쓰레드에서 진행상황·결과영상 확인 + `/veto`)"))
 
-            def progress_cb(m, _c=client, _ch=ch, _root=root):  # noqa
+            def progress_cb(m, _c=client, _ch=ch):  # noqa — day-level summary only
                 print(m, flush=True)
                 try:
-                    _c.chat_postMessage(channel=_ch, text=m, thread_ts=_root)
-                except Exception:
-                    pass
-
-            def video_cb(p, _c=client, _ch=ch, _root=root):  # noqa
-                try:
-                    _c.files_upload_v2(
-                        channel=_ch, thread_ts=_root, file=str(p),
-                        title=Path(p).name,
-                        initial_comment=f":movie_camera: {Path(p).name} — 문제 있으면 `/veto`")
+                    _c.chat_postMessage(channel=_ch, text=m)
                 except Exception:
                     pass
     except Exception as e:
         log.warning("slack wiring failed (stdout only): %s", e)
 
-    launch_pipeline(target, progress_cb=progress_cb, video_cb=video_cb,
-                    do_upload=not args.no_upload, max_slots=args.max_slots)
+    launch_pipeline(target, progress_cb=progress_cb, video_cb=None,
+                    do_upload=not args.no_upload, max_slots=args.max_slots,
+                    slack_client=client, slack_channel=ch)
     return 0
 
 

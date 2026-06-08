@@ -394,9 +394,28 @@ def get_or_refresh_plan(con: sqlite3.Connection, today: str) -> str:
 # both-together intro, then individual character intros with past⇄present
 # memory-lane — so a new audience meets the two leads. Set LAUNCH_START_DATE
 # (YYYY-MM-DD) = Day 1; offsets 0/1/2 below. Empty env → no overlay (plan-driven).
-def _launch_intro_directive(today: str, render_style: str) -> str | None:
+def _launch_start_date(con: sqlite3.Connection | None) -> str:
+    """PD 2026-06-09: Day1 = the FIRST day a video actually went up — anchor the
+    intro sequence to that, not a fixed pre-set date (so a slipped launch keeps
+    Day1/2/3 correct). DB-first: earliest `cards.date` that has a youtube_video_id.
+    Falls back to LAUNCH_START_DATE env (used on Day1 itself, before any upload
+    exists). Empty string if neither."""
+    if con is not None:
+        try:
+            row = con.execute(
+                "SELECT MIN(date) FROM cards WHERE youtube_video_id IS NOT NULL "
+                "AND youtube_video_id != ''").fetchone()
+            if row and row[0]:
+                return str(row[0])[:10]
+        except Exception as e:
+            log.warning("launch_start_date DB lookup failed: %s", e)
+    return os.getenv("LAUNCH_START_DATE", "").strip()
+
+
+def _launch_intro_directive(today: str, render_style: str,
+                            start: str | None = None) -> str | None:
     import datetime as dt
-    start = os.getenv("LAUNCH_START_DATE", "").strip()
+    start = (start or os.getenv("LAUNCH_START_DATE", "")).strip()
     if not start:
         return None
     try:
@@ -452,7 +471,8 @@ def next_directive(con: sqlite3.Connection, *, today: str, render_style: str) ->
         return ""
     # Launch-week intro overlay takes precedence (deterministic — no LLM
     # re-hallucination during the critical first impressions).
-    overlay = _launch_intro_directive(today, render_style)
+    overlay = _launch_intro_directive(today, render_style,
+                                      start=_launch_start_date(con))
     if overlay:
         return overlay
     try:
