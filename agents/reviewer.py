@@ -540,17 +540,21 @@ def review(video: Path, storyboard: list[dict] | None = None,
         muzzle_ok = checks.get("muzzle_pass_rate", 0) > 0.5
         marking_pass = sum([blaze_ok, eyebrow_ok, muzzle_ok])
 
-        # PD 2026-06-08: the marking pixel-check + hard cap is for AI-rendered
-        # cuts (ai_vtuber / Seedance drift). On REAL footage the dog IS the real
-        # Ryani — her markings are ground-truth-correct; the brightness heuristic
-        # just false-negatives on real angles/lighting. Hard-capping real_footage
-        # forced verdict="수정 필요" and the retry loop ran 100× (re-proposing can
-        # never "fix" a real clip's markings). So for real_footage: SIGNAL only.
-        is_rf = (concept or {}).get("render_style", "") == "real_footage"
+        # PD 2026-06-08: the marking pixel-check + hard cap is for AI-RENDERED cuts
+        # (ai_vtuber, or real_footage photo_i2v where Seedance can drift Ryani's
+        # blaze). On a PURE real-clip rf episode the dog IS the real Ryani — her
+        # markings are correct and the heuristic just false-negatives on real
+        # angles → skip the cap. BUT if the rf episode has a photo_i2v (AI) cut,
+        # keep the cap so drifted markings ARE gated (PD: "퀄리티 좋을 때만 i2v 줌인").
+        _rs = (concept or {}).get("render_style", "")
+        _has_photo_i2v = any(
+            (c.get("source_hint") or "").strip().lower() == "photo_i2v"
+            for c in (concept or {}).get("cuts", []))
+        is_rf = _rs == "real_footage" and not _has_photo_i2v
         dims = report.get("dimensions", {})
         if is_rf:
             report.setdefault("_marking_overrides", []).append(
-                f"real_footage — 마킹 하드캡 미적용(실제 강아지). 픽셀신호 pass={marking_pass}/3")
+                f"real_footage(순수 실제클립) — 마킹 하드캡 미적용. 픽셀신호 pass={marking_pass}/3")
         else:
             vlm_char = dims.get("character_clarity", 7)
             # 이마줄 빠지면 캐릭터 최대 5점 (VLM이 10점 줘도 무시)

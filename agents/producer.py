@@ -635,19 +635,9 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     for c in concepts:
         c["render_style"] = "real_footage"
         c["author"] = "realfootage_singlepass"
-        # PD 2026-06-08: ENFORCE "finale = real video, not photo_i2v". A photo_i2v
-        # cut is Seedance-animated → drifts the character (Ryani's blaze grew at the
-        # end of 162227). Photos are mid-roll auxiliary; the last cut must be a real
-        # clip. If the writer put a photo last, swap it with the last real-video cut.
-        cuts = c.get("cuts") or []
-        def _is_photo(cut):
-            return (cut.get("source_hint") or "").strip().lower() == "photo_i2v"
-        if cuts and _is_photo(cuts[-1]):
-            vid_idxs = [i for i, cu in enumerate(cuts) if not _is_photo(cu)]
-            if vid_idxs:
-                j = vid_idxs[-1]
-                cuts[-1], cuts[j] = cuts[j], cuts[-1]
-                log.info("rf: moved photo_i2v cut out of the finale slot (→ real video)")
+        # PD 2026-06-08: do NOT force finale=video. A photo_i2v finale / Ryani
+        # zoom is fine WHEN the quality (marking accuracy) is good — the quality
+        # gate decides, not a blanket rule. (Earlier blanket auto-swap removed.)
     # PD 2026-06-06: persist the stage artifact so we can trace WHERE a
     # problem (e.g. subject/object reversal) was introduced.
     try:
