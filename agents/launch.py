@@ -121,62 +121,51 @@ def launch_pipeline(target: dt.date, *,
                          for ln, hh in assignments)
         progress_cb(f":rocket: 런칭 4슬롯 — {target.isoformat()}\n  {plan}")
 
-    # Group slots by lane so we propose the right COUNT per lane in one go.
-    by_lane: dict[str, list[str]] = {}
-    for lane, hhmm in assignments:
-        by_lane.setdefault(lane, []).append(hhmm)
-
     context = _gather_context(con, target)
-    lane_concepts: dict[str, list[dict]] = {}
-    for lane, slots in by_lane.items():
-        if progress_cb:
-            progress_cb(f":bulb: {lane} {len(slots)}편 컨셉 생성 중...")
-        lane_concepts[lane] = _propose_n_for_lane(
-            target, context, lane, len(slots), progress_cb)
-        # Layer ③: resolve any knowledge_questions the concepts raised before
-        # rendering (week-1 blocking / later non-blocking).
-        try:
-            from agents.producer import resolve_knowledge_questions
-            lane_concepts[lane] = resolve_knowledge_questions(
-                lane_concepts[lane], target, ask_cb=ask_cb, progress_cb=progress_cb)
-        except Exception as e:
-            log.warning("knowledge Q resolve failed (%s): %s", lane, e)
-
-    if dry_run:
-        results = []
-        for lane, hhmm in assignments:
-            queue = lane_concepts.get(lane, [])
-            c = queue.pop(0) if queue else None
-            results.append({"lane": lane, "slot": hhmm,
-                            "title": (c or {}).get("title"),
-                            "publish_at": publish_at_for(target, hhmm)})
-        if progress_cb:
-            for r in results:
-                progress_cb(f"  [dry] {r['slot']} {r['lane']}: {r['title']}")
-        return results
-
-    # Build the slot jobs (one concept per slot).
-    jobs: list[tuple[str, str, dict]] = []
-    for lane, hhmm in assignments:
-        queue = lane_concepts.get(lane, [])
-        if not queue:
-            if progress_cb:
-                progress_cb(f":warning: {hhmm} {lane}: 컨셉 없음 — 슬롯 비움")
-            continue
-        jobs.append((lane, hhmm, queue.pop(0)))
-
-    # WAL so the parallel renders (each its own connection) don't lock each other.
+    # WAL so parallel slots (each its own connection) don't lock each other.
     try:
         con.execute("PRAGMA journal_mode=WAL")
     except Exception:
         pass
+    from agents.producer import propose_concepts, resolve_knowledge_questions
 
-    def _render_slot(lane: str, hhmm: str, concept: dict) -> dict | None:
-        # PD 2026-06-08: rf and av use different engines (rf=ffmpeg+Gemini,
-        # av=Seedance) so they parallelize well. Each thread uses its OWN db
-        # connection (sqlite connections aren't thread-safe to share).
+    concurrency = max(1, int(os.getenv("LAUNCH_CONCURRENCY", "3")))
+    sequential = concurrency == 1 or len(assignments) <= 1
+    # In parallel mode the knowledge Q&A is non-blocking — concurrent threads can't
+    # each block on a PD reply. (Cron is non-blocking anyway; questions still post
+    # + persist for /answer. For week-1 blocking, run /launch with LAUNCH_CONCURRENCY=1.)
+    slot_ask = ask_cb if sequential else None
+
+    def _slot_pipeline(lane: str, hhmm: str) -> dict | None:
+        # PD 2026-06-08: each slot proposes ITS OWN concept and renders it in one
+        # thread, so the slow av Writer/Director proposals overlap each other AND
+        # the rf renders (was: propose-all-then-render, serial → ~45min for 4).
         if progress_cb:
-            progress_cb(f":factory: {hhmm} {lane} 생산: {concept.get('title','?')}")
+            progress_cb(f":bulb: {hhmm} {lane} 컨셉 생성 중...")
+        try:
+            batch = propose_concepts(target, dict(context),
+                                     style_filter=lane, progress_cb=progress_cb)
+        except Exception as e:
+            log.warning("propose %s failed: %s", lane, e)
+            return None
+        if not batch:
+            if progress_cb:
+                progress_cb(f":warning: {hhmm} {lane}: 컨셉 없음 — 슬롯 비움")
+            return None
+        concept = batch[0]
+        concept["render_style"] = lane
+        try:
+            concept = (resolve_knowledge_questions(
+                [concept], target, ask_cb=slot_ask, progress_cb=progress_cb)
+                or [concept])[0]
+        except Exception as e:
+            log.warning("knowledge Q resolve failed (%s): %s", lane, e)
+        if dry_run:
+            return {"lane": lane, "slot": hhmm, "title": concept.get("title"),
+                    "publish_at": publish_at_for(target, hhmm)}
+        # render (each thread its own db connection — sqlite isn't shareable)
+        if progress_cb:
+            progress_cb(f":factory: {hhmm} {lane} 렌더: {concept.get('title','?')}")
         try:
             outs = produce_and_render([concept], target, progress_cb=progress_cb)
         except Exception as e:
@@ -208,20 +197,24 @@ def launch_pipeline(target: dt.date, *,
                 "video_id": vid, "publish_at": publish_at}
 
     results: list[dict] = []
-    concurrency = max(1, int(os.getenv("LAUNCH_CONCURRENCY", "2")))
-    if concurrency == 1 or len(jobs) <= 1:
-        for lane, hhmm, concept in jobs:
-            r = _render_slot(lane, hhmm, concept)
+    if sequential:
+        for lane, hhmm in assignments:
+            r = _slot_pipeline(lane, hhmm)
             if r:
                 results.append(r)
     else:
         from concurrent.futures import ThreadPoolExecutor
         if progress_cb:
-            progress_cb(f":fast_forward: {len(jobs)}슬롯 병렬 렌더 (동시 {concurrency}개)")
+            progress_cb(f":fast_forward: {len(assignments)}슬롯 완전 병렬 "
+                        f"(컨셉+렌더 동시 {concurrency}개)")
         with ThreadPoolExecutor(max_workers=concurrency) as ex:
-            for r in ex.map(lambda j: _render_slot(*j), jobs):
+            for r in ex.map(lambda a: _slot_pipeline(*a), assignments):
                 if r:
                     results.append(r)
+
+    if dry_run and progress_cb:
+        for r in results:
+            progress_cb(f"  [dry] {r['slot']} {r['lane']}: {r.get('title')}")
 
     if progress_cb:
         ok = sum(1 for r in results if r.get("output"))

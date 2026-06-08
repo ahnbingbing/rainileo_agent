@@ -131,7 +131,7 @@ def _call_openai_fallback(system: str, user: str, max_tokens: int = 16000) -> st
         from openai import OpenAI
     except ImportError:
         raise RuntimeError("openai package not installed")
-    client = OpenAI()
+    client = OpenAI(timeout=int(os.getenv("LLM_TIMEOUT_S", "45")), max_retries=0)
     model = os.environ.get("OPENAI_FALLBACK_MODEL", "gpt-5")
     resp = client.chat.completions.create(
         model=model,
@@ -1281,7 +1281,7 @@ def _call_openai_text(system: str, user: str, model: str = "gpt-5") -> str:
         from openai import OpenAI
     except ImportError:
         raise RuntimeError("openai package not installed")
-    client = OpenAI()
+    client = OpenAI(timeout=int(os.getenv("LLM_TIMEOUT_S", "45")), max_retries=0)
     resp = client.chat.completions.create(
         model=model,
         messages=[
