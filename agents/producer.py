@@ -1289,7 +1289,7 @@ def produce_and_render(concepts: list[dict], target: dt.date,
             system = (ROOT / "prompts" / "writer_system.md").read_text(encoding="utf-8")
             from agents.writer import strip_fences
             card = None
-            for attempt in range(2):
+            for attempt in range(3):
                 os.environ["WRITER_MAX_TOKENS"] = "16384"
                 card_text = call_llm(system, json.dumps(hint, ensure_ascii=False))
                 try:
@@ -1298,7 +1298,16 @@ def produce_and_render(concepts: list[dict], target: dt.date,
                 except json.JSONDecodeError:
                     log.warning("JSON parse failed (attempt %d), retrying...", attempt + 1)
             if card is None:
-                raise RuntimeError("LLM returned invalid JSON after 2 attempts")
+                # PD 2026-06-08: the card-writer LLM returning bad JSON (esp. when
+                # network degradation forces the Anthropic fallback) used to KILL
+                # the whole av slot. The Writer/Director concept already has the
+                # cuts/title/etc., so build the card straight from it (like rf's
+                # Branch D bypass) — the setdefault + concept-propagation below
+                # fill the rest. av no longer dies on a flaky card-writer response.
+                log.warning("card-writer JSON failed — building card from concept directly")
+                if progress_cb:
+                    progress_cb(":wrench: card-writer JSON 실패 — 컨셉으로 직접 카드화(폴백)")
+                card = {}
 
             # Fill in defaults that the LLM may omit
             import uuid
