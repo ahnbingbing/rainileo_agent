@@ -69,6 +69,7 @@ Concept-level:
 ### Tier 2 — REVISE (worth $1.50 to redo)
 - **Weak causal chain**: cut N's action doesn't follow from cut N-1's setup. Story feels like disconnected vignettes.
 - **Missing reveal mechanic**: the gag depends on a reveal but action_beats don't actually stage the reveal beat (the moment of discovery).
+- **Appearance caption without staged entrance (PD 2026-06-08 — 욕실편 "레오 등장")**: a caption/beat introduces or reveals a character ("등장", "나타나다", "시야에 들어온", "그때 누군가", "고개를 내밀다") but the render won't show an entrance — either the character is already on-screen in the PREVIOUS cut (so in chain mode they can't enter), or the reveal cut's motion_prompt doesn't stage them walking/poking INTO frame from off-screen. The "appears" line then lies about the footage. REVISE — tell the Director to EITHER stage the entrance (character absent in prior cut + reveal cut motion_prompt = "enters from off-screen X"), OR change the caption to match continuous presence ("뒤에서 지켜보던 레오"). Caption-appearance ⇔ video-entrance must agree.
 - **Background drift planned in**: cuts share set_anchor but motion_prompts describe noticeably different layouts (e.g. cut 1 = piano on left, cut 3 = piano on right). Chain mode will fail to lock.
 - **Tone collision**: Caption Agent wrote a quiet observational caption over a Director motion_prompt describing frantic action.
 - **Cafe/outdoor missing harness**: set_anchor requires harness but motion_prompts don't mention it (Cameraman injects it but the planned action assumes bare pets).

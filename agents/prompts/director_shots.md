@@ -218,6 +218,16 @@ Required whenever a cut places a pet at/in the sink:
 ### Water-source coherence for any water/drinking payoff (NON-NEGOTIABLE)
 PD 2026-06-08: if a cut's gag/payoff is a pet **drinking or interacting with water** (e.g., "Leo drinks the water Ryani was washed with"), the water MUST come from the SAME established source shown in frame, and the pet must be staged AT that source. Don't have Leo drink "그 물" while standing on a stool across the room with no water near his mouth — show him at the sink lapping from the faucet stream / the cup on the sink ledge / the basin he can actually reach. The source, the water, and the drinking mouth must be in one coherent space. If the payoff needs Leo at the sink, put Leo at the sink (on the chair/edge), not on a separate perch.
 
+### STAGE the entrance — if the story reveals a character, make them ENTER (NON-NEGOTIABLE)
+PD 2026-06-08 (욕실편 "레오 등장" 오류): the Writer's beat was a reveal — "그때, 랴니의 시야에 들어온 누군가" (Leo appears) — a good dramatic beat. But the cuts kept Leo **statically sitting in the background the whole take**, so the "appears" caption became a lie. The fix is NOT to weaken the caption — it's to **stage the entrance in the motion_prompt and deliver it via i2v**, so the appearance is REAL.
+
+When a caption/beat introduces or reveals a character ("등장", "나타나다", "시야에 들어온", "고개를 내밀다", "그때 누군가"):
+1. **That character must be ABSENT (off-frame) in the cut(s) BEFORE the reveal.** In chain mode this is critical: each cut chains from the previous cut's last frame, so if the character is in the earlier frame they're already on screen and CANNOT enter. Plan their on-screen timeline: keep them out of the setup cuts' motion_prompts entirely.
+2. **In the reveal cut, write the motion_prompt so the character physically ENTERS the frame** — e.g. "the orange tabby walks IN from the right edge of frame / pokes his head in from behind the doorway / steps into view from off-screen left", with a clear from-off-screen direction. Use `seedance_mode="ref"` (or i2v from a first frame that does NOT yet contain the character) so the entrance can actually render.
+3. If you CANNOT stage a true entrance (e.g. the chosen footage/refs force the character to be present), then change the beat/caption to match reality ("뒤에서 지켜보던 레오") — never claim an entrance the render won't show.
+
+In short: appearance in the caption ⇔ entrance in the video. Make them agree by STAGING the entrance, not by dumbing down the line.
+
 ### Caption position decision (per cut)
 For each cut, decide **`caption_position`** based on where the pets occupy the frame:
 - Pets centered or in upper half → `caption_position = "bottom"` (default, captions don't cover them)
