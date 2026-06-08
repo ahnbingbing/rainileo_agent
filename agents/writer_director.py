@@ -1317,13 +1317,16 @@ def _call_gemini_text(system: str, user: str,
     api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         raise RuntimeError("GOOGLE_API_KEY not set")
-    try:
-        import google.generativeai as genai
-    except ImportError:
-        raise RuntimeError("google.generativeai not installed")
-    genai.configure(api_key=api_key)
-    m = genai.GenerativeModel(model, system_instruction=system)
-    resp = m.generate_content(user)
+    # PD 2026-06-08: NEW google.genai SDK w/ http timeout — the legacy SDK hung
+    # 600s on DNS failures (the Caption Agent competition's gemini_pro provider was
+    # the last 600s sink → ~1h45m av runs).
+    from google import genai as _genai
+    from google.genai import types as _gtypes
+    gclient = _genai.Client(api_key=api_key, http_options=_gtypes.HttpOptions(
+        timeout=int(os.getenv("LLM_TIMEOUT_S", "45")) * 1000))
+    resp = gclient.models.generate_content(
+        model=model, contents=user,
+        config=_gtypes.GenerateContentConfig(system_instruction=system or None))
     return (resp.text or "").strip()
 
 
