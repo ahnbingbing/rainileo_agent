@@ -1322,22 +1322,21 @@ def _vlm_post_render_caption_rewrite(work_dir: Path, manifests: dict,
         return
     if progress_cb:
         progress_cb(":mag: [4b/6] VLM 후처리 검수 + 캡션 재작성 시작...")
-    # 1-3. VLM describe per cut
+    # 1-3. VLM describe per cut. PD 2026-06-08: was legacy google.generativeai →
+    # 600s hang per call on DNS blips (×3×6 cuts = hours; this stalled av AFTER the
+    # Seedance cuts were already billed). NEW google.genai SDK with http timeout.
+    _vlm_sys = (
+        "You watch a 5-second YouTube Short cut for the 'Ryani & Leo' channel and "
+        "describe in 1-2 short Korean sentences what ACTUALLY happens. Be specific "
+        "about subject positions, movements, AND any explicit sounds (짖다/왕왕/야옹/"
+        "냐옹). If a pet doesn't bark or meow, do NOT mention it. Ground-truth "
+        "observer only — no speculation.")
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        vlm_model = genai.GenerativeModel(
-            "gemini-2.5-flash",
-            system_instruction=(
-                "You watch a 5-second YouTube Short cut for the 'Ryani & "
-                "Leo' channel and describe in 1-2 short Korean sentences "
-                "what ACTUALLY happens. Be specific about subject "
-                "positions, movements, AND any explicit sounds (짖다/왕왕/"
-                "야옹/냐옹). If a pet doesn't bark or meow in the clip, do "
-                "NOT mention barking or meowing. Ground-truth observer "
-                "only — no speculation."
-            ),
-        )
+        from google import genai as _g
+        from google.genai import types as _gt
+        _vlm_client = _g.Client(api_key=api_key, http_options=_gt.HttpOptions(
+            timeout=int(os.getenv("VLM_TIMEOUT_MS", "90000"))))
+        _vlm_model_name = os.getenv("VLM_MODEL", "gemini-2.5-flash")
     except Exception as e:
         log.warning("VLM init failed: %s", e); return
 
@@ -1372,22 +1371,27 @@ def _vlm_post_render_caption_rewrite(work_dir: Path, manifests: dict,
         parts = [f"Cut: {tag}. 3 keyframes at 0.5s, 2.5s, 4.5s of this 5s clip."]
         for j in frames:
             try:
-                parts.append(PILImage.open(j))
+                parts.append(_gt.Part.from_bytes(data=j.read_bytes(),
+                                                 mime_type="image/jpeg"))
             except Exception:
                 pass
         parts.append("1-2 short Korean sentences describing what actually happens.")
-        # PD 2026-06-02: VLM 실패 = 재도전. 3회 시도, 마지막 시도에도 실패 시
-        # cut은 미분석 상태로 두되 다른 cut들은 진행.
+        # PD 2026-06-02: VLM 실패 = 재도전. PD 2026-06-08: 2회로 축소 + bounded
+        # timeout (DNS blip이 600s×3 행이던 것 해소).
         actual = ""
-        for attempt in range(3):
+        for attempt in range(2):
             try:
-                resp = vlm_model.generate_content(parts)
+                resp = _vlm_client.models.generate_content(
+                    model=_vlm_model_name, contents=parts,
+                    config=_gt.GenerateContentConfig(
+                        system_instruction=_vlm_sys,
+                        thinking_config=_gt.ThinkingConfig(thinking_budget=0)))
                 actual = (resp.text or "").strip()
                 if actual:
                     break
             except Exception as e:
-                log.warning("VLM describe attempt %d/%d failed for %s: %s",
-                            attempt + 1, 3, tag, e)
+                log.warning("VLM describe attempt %d/2 failed for %s: %s",
+                            attempt + 1, tag, e)
                 actual = ""
         if actual:
             cc["vlm_actual_action"] = actual
@@ -3541,6 +3545,27 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         )
     elif progress_cb:
         progress_cb(":loud_sound: [4/6] Bumpers exist — skip")
+
+    # PD 2026-06-08: PERSIST the expensive Seedance render BEFORE the fragile
+    # finishing steps (VLM caption / burn / assemble). If anything downstream
+    # fails or hangs, the billed Seedance cuts are saved here so we can re-caption
+    # without re-paying Seedance. (Answers "seedance 결과 남겨두고 캡션부터 fix".)
+    if not dry_run:
+        try:
+            raw_dir = ROOT / "data" / "output" / "seedance_raw" / f"{ts}_{card.get('card_id','')[:8]}"
+            raw_dir.mkdir(parents=True, exist_ok=True)
+            for mp4 in sorted(anim_dir.glob("*.mp4")):
+                shutil.copy2(mp4, raw_dir / mp4.name)
+            (raw_dir / "manifests.json").write_text(
+                json.dumps({"sources": manifests.get("sources"),
+                            "captions": manifests.get("captions"),
+                            "card_id": card.get("card_id")}, ensure_ascii=False),
+                encoding="utf-8")
+            log.info("Seedance raw cuts archived → %s", raw_dir)
+            if progress_cb:
+                progress_cb(f":floppy_disk: Seedance 컷 보존 → seedance_raw/{raw_dir.name}")
+        except Exception as ex:
+            log.warning("Seedance raw archive failed (non-fatal): %s", ex)
 
     # Step 4b (PD 2026-06-02): VLM post-render check → caption rewrite.
     # Gemini Flash analyzes each animated cut's actual content, then the
