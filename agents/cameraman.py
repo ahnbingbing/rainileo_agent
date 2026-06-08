@@ -1664,6 +1664,43 @@ def _measure_clip_motion(mp4: Path) -> float:
 PHOTO_I2V_MIN_MOTION = float(os.getenv("PHOTO_I2V_MIN_MOTION", "3.0"))
 
 
+def _find_replacement_real_clip(subject: str, exclude: set | None = None) -> dict | None:
+    """PD 2026-06-08: when an rf photo_i2v cut of Ryani drifts her markings, swap it
+    for a REAL video clip (no Seedance distortion). Find a quality real clip with the
+    needed subject, ensure it's local (re-download if pruned). Returns a sources-entry
+    dict or None."""
+    exclude = exclude or set()
+    try:
+        con = _db()
+        rows = con.execute(
+            "SELECT asset_id, file_path, duration_sec, has_human, source_uuid, "
+            "subjects_csv FROM assets WHERE kind='video' AND vlm_analyzed_at IS NOT NULL "
+            "AND quality_score >= 0.7 AND subjects_csv LIKE '%ryani%' "
+            "ORDER BY quality_score DESC, captured_iso DESC LIMIT 30"
+        ).fetchall()
+    except Exception as e:
+        log.warning("replacement clip query failed: %s", e)
+        return None
+    for r in rows:
+        aid = r[0]
+        if aid in exclude:
+            continue
+        if subject == "both" and "leo" not in (r[5] or "").lower():
+            continue  # need both pets
+        fp = r[1]
+        if fp and not Path(fp).is_absolute():
+            fp = str(ROOT / fp)
+        if not fp or not Path(fp).exists():
+            fp = _ensure_local(fp, r[4])  # re-download pruned
+        if fp and Path(fp).exists():
+            return {"source": fp, "trim_start": 0.0,
+                    "trim_dur": min(5.0, float(r[2]) if r[2] else 5.0),
+                    "has_human": int(r[3] or 0),
+                    "src_dur": float(r[2]) if r[2] else None,
+                    "source_uuid": r[4] or "", "asset_id": aid}
+    return None
+
+
 def _prerender_photo_i2v_cuts(manifests: dict, work_dir: Path,
                                 progress_cb: ProgressCb = None,
                                 dry_run: bool = False) -> None:
@@ -1777,6 +1814,25 @@ def _prerender_photo_i2v_cuts(manifests: dict, work_dir: Path,
             "trim_start": 0.0,
             "trim_dur": float(seconds),
         }
+        # PD 2026-06-08: per-cut Ryani marking gate (angle-aware) on the photo_i2v
+        # output. If Ryani's blaze drifted (frontal + wrong), DISCARD and swap in a
+        # real video clip — no Seedance distortion. (rf side of the per-cut gate.)
+        if not dry_run:
+            who = ""
+            for ccx in (manifests.get("concept_cuts") or []):
+                if (ccx.get("tag") or ccx.get("cut_tag")) == tag:
+                    who = (ccx.get("who") or "").lower(); break
+            if who in ("ryani", "both") and not _cut_ryani_marking_ok(out_mp4):
+                repl = _find_replacement_real_clip(who)
+                if repl:
+                    sources[tag] = repl
+                    log.info("photo_i2v %s: Ryani drift → replaced with real clip %s",
+                             tag, repl.get("asset_id"))
+                    if progress_cb:
+                        progress_cb(f":arrows_counterclockwise: {tag} 랴니 마킹 드리프트 "
+                                    f"— 실제 영상으로 교체")
+                elif progress_cb:
+                    progress_cb(f":warning: {tag} 마킹 드리프트, 교체 클립 없음 — photo_i2v 유지")
         n_rendered += 1
     if n_rendered:
         log.info("photo_i2v: %d cuts pre-rendered", n_rendered)
@@ -2052,8 +2108,11 @@ def _trim_real_footage_clips(manifests: dict, anim_dir: Path,
         # after the trim_dur, auto-extend via freeze_last_frame for 여운.
         if tag == last_body_tag:
             cap_end = cap_end_by_tag.get(tag, 0)
-            # 여운: linger ~1.5s after the caption ends.
-            desired = max(trim_dur, float(cap_end) + 1.5)
+            # 여운: linger after the caption ends. PD 2026-06-08: last cut still
+            # ended too fast → ~3s (was 1.5s). Plays real footage if the clip is
+            # long enough, else freezes the shortfall.
+            _linger = float(os.getenv("RF_LAST_CUT_LINGER_S", "3.0"))
+            desired = max(trim_dur, float(cap_end) + _linger)
             src_dur = entry.get("src_dur")
             avail = (float(src_dur) - trim_start) if src_dur else None
             # PD 2026-06-06: a FROZEN last frame reads as a static photo
@@ -2891,6 +2950,83 @@ def _run_t2v_pipeline(manifests: dict, card: dict, work_dir: Path,
     return out
 
 
+_RYANI_MARKING_EMPHASIS = (
+    " CRITICAL — Ryani the black French Bulldog must keep her exact markings every "
+    "frame: a THIN narrow white Boston-Terrier-style blaze (a fine line, NOT a wide "
+    "splash, do NOT enlarge it) from nose up the forehead, small white dot above "
+    "each eye, silver-grey aged muzzle, white chin, white chest patch, bat ears, NO "
+    "tail. Only black/white/grey — no brown. Keep the blaze thin and the face "
+    "identical to the input; do not redraw or distort her markings.")
+
+
+def _cut_ryani_marking_ok(mp4_path: Path, n_frames: int = 3) -> bool:
+    """PD 2026-06-08: per-cut Ryani marking gate for i2v output (av + rf photo_i2v),
+    checked RIGHT AFTER the cut renders (not at end-of-episode). ANGLE-AWARE: a side
+    profile legitimately hides the blaze, so only FAIL when Ryani's face is frontal
+    AND her white blaze/markings are clearly wrong (Seedance drift). Fail-open (True)
+    on any error / no API — never block on infra issues.
+    Returns True = keep, False = drift detected (caller regenerates or replaces)."""
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key or not Path(mp4_path).exists():
+        return True
+    try:
+        from google import genai as _g
+        from google.genai import types as _gt
+        import tempfile as _tf
+        dur = 5.0
+        try:
+            dur = float(subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=nw=1:nk=1", str(mp4_path)],
+                capture_output=True, text=True, timeout=15).stdout.strip() or 5.0)
+        except Exception:
+            pass
+        client = _g.Client(api_key=api_key, http_options=_gt.HttpOptions(
+            timeout=int(os.getenv("VLM_TIMEOUT_MS", "90000"))))
+        parts = []
+        with _tf.TemporaryDirectory() as td:
+            for i in range(n_frames):
+                t = dur * (i + 0.5) / n_frames
+                fp = Path(td) / f"m{i}.jpg"
+                subprocess.run(["ffmpeg", "-y", "-nostats", "-loglevel", "error",
+                                "-ss", f"{t:.2f}", "-i", str(mp4_path),
+                                "-frames:v", "1", str(fp)], check=False, timeout=20)
+                if fp.exists():
+                    parts.append(_gt.Part.from_bytes(data=fp.read_bytes(),
+                                                     mime_type="image/jpeg"))
+            if not parts:
+                return True
+            prompt = (
+                "These frames are from one cut featuring Ryani, a black French "
+                "Bulldog. Her signature: a THIN white blaze (narrow line nose→"
+                "forehead), white eyebrow dots, silver-grey muzzle, white chin, "
+                "white chest patch — only black/white/grey, NO brown, NO tail. "
+                "Check if her face is rendered correctly. IMPORTANT: if her face is "
+                "in side profile or turned away (blaze naturally not visible), that "
+                "is FINE — not a defect. Only flag a problem when her face is "
+                "FRONTAL/near-frontal AND the blaze/markings are clearly wrong "
+                "(e.g. blaze too thick/large, wrong shape, brown tint, distorted). "
+                "Return ONLY JSON: {\"frontal\":true|false,\"markings_ok\":true|false}.")
+            contents = list(parts) + [prompt]
+            resp = client.models.generate_content(
+                model=os.getenv("VLM_MODEL", "gemini-2.5-flash"),
+                contents=contents,
+                config=_gt.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    thinking_config=_gt.ThinkingConfig(thinking_budget=0)))
+            import json as _json
+            d = _json.loads((resp.text or "{}").strip())
+            frontal = bool(d.get("frontal"))
+            ok = bool(d.get("markings_ok"))
+            bad = frontal and not ok
+            if bad:
+                log.info("cut marking gate: Ryani blaze DRIFT in %s", Path(mp4_path).name)
+            return not bad
+    except Exception as e:
+        log.warning("cut marking check failed (%s) — keeping cut", e)
+        return True
+
+
 def _sanitize_motion_prompt(prompt: str) -> str:
     """PD 2026-06-08: rewrite a motion_prompt that tripped Ark text moderation
     (InputTextSensitiveContentDetected) into a safe one — strip proper nouns
@@ -3440,17 +3576,58 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         # was failing a single cut → whole av episode retried (same prompt) → av
         # never produced. On that error, retry the cut with a sanitized prompt
         # (strip proper nouns / risky verbs per CLAUDE.md motion rules).
-        try:
-            _seedance_i2v(prompt)
-        except RuntimeError as e:
-            if "SensitiveContent" in str(e) or "BadRequest" in str(e):
-                safe = _sanitize_motion_prompt(prompt)
-                log.warning("Seedance moderation on %s — retrying sanitized prompt", tag)
-                if progress_cb:
-                    progress_cb(f":shield: {tag} 모더레이션 — 정제 프롬프트로 재시도")
-                _seedance_i2v(safe)
-            else:
-                raise
+        def _seedance_i2v_safe(p: str):
+            try:
+                _seedance_i2v(p)
+            except RuntimeError as e:
+                if "SensitiveContent" in str(e) or "BadRequest" in str(e):
+                    log.warning("Seedance moderation on %s — sanitized retry", tag)
+                    if progress_cb:
+                        progress_cb(f":shield: {tag} 모더레이션 — 정제 프롬프트 재시도")
+                    _seedance_i2v(_sanitize_motion_prompt(p))
+                else:
+                    raise
+        _seedance_i2v_safe(prompt)
+
+        # PD 2026-06-08: per-cut Ryani marking gate (angle-aware) RIGHT AFTER render.
+        # Bad (frontal face + drifted blaze) → regenerate the cut with strengthened
+        # marking canon ×3 → 1 alt prompt → drop. Dropping breaks the chain/story →
+        # flag for PD-confirmed Writer/Producer rework (Phase 2).
+        _has_ryani = any(k in (prompt or "").lower()
+                         for k in ("ryani", "랴니", "french bulldog"))
+        if _has_ryani and not dry_run and out_mp4.exists():
+            if not _cut_ryani_marking_ok(out_mp4):
+                resolved = False
+                for r in range(3):
+                    if progress_cb:
+                        progress_cb(f":repeat: {tag} 랴니 마킹 드리프트 — 재생성 {r+1}/3")
+                    try:
+                        _seedance_i2v_safe(prompt + _RYANI_MARKING_EMPHASIS)
+                    except Exception as e:
+                        log.warning("regen %d failed for %s: %s", r + 1, tag, e); break
+                    if _cut_ryani_marking_ok(out_mp4):
+                        resolved = True; break
+                if not resolved:
+                    # different prompt (calmer, marking-forward)
+                    alt = ("Gentle natural motion, camera holds still."
+                           + _RYANI_MARKING_EMPHASIS)
+                    if progress_cb:
+                        progress_cb(f":repeat: {tag} — 다른 프롬프트로 재도전")
+                    try:
+                        _seedance_i2v_safe(alt)
+                        resolved = _cut_ryani_marking_ok(out_mp4)
+                    except Exception:
+                        pass
+                if not resolved:
+                    log.warning("av cut %s: Ryani marking unresolved — dropping cut", tag)
+                    if progress_cb:
+                        progress_cb(f":x: {tag} 마킹 해결 실패 — 컷 드롭 "
+                                    f"(스토리 영향 → PD 컨펌 후 재작업 필요)")
+                    try:
+                        out_mp4.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    manifests.setdefault("_dropped_cuts", []).append(tag)
 
     # Step 3a: per-cut fade-out + fade-in for smooth chain transitions
     # (PD 2026-06-01 PM: "컷사이 넘어갈때 f/o 통해서 어색함을 없애야해").
