@@ -969,6 +969,23 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
             fp = a["file_path"]
             if not Path(fp).is_absolute():
                 fp = str(ROOT / fp)
+            # PD 2026-06-08: the efficient-storage model prunes originals after VLM
+            # tagging, but the av i2v preprocess NEEDS the source photo. Re-download
+            # it on demand by source_uuid (this was why av produced 0 episodes —
+            # every cut's photo was "not found"). uuid from the asset or the DB.
+            if not Path(fp).exists():
+                uuid = a.get("source_uuid")
+                if not uuid and a.get("asset_id"):
+                    try:
+                        _r = _db().execute(
+                            "SELECT source_uuid FROM assets WHERE asset_id=?",
+                            (a["asset_id"],)).fetchone()
+                        uuid = _r[0] if _r else None
+                    except Exception:
+                        uuid = None
+                rec = _ensure_local(fp, uuid)
+                if rec:
+                    fp = rec
             sources[item["tag"]] = fp
 
     sources_path = work_dir / "sources.json"
