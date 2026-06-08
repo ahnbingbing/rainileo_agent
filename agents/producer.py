@@ -1447,9 +1447,14 @@ def produce_and_render(concepts: list[dict], target: dt.date,
                     progress_cb(f":movie_camera: [{i}/{len(concepts)}] 렌더 + 검수 루프: {concept.get('title', '?')}")
                 try:
                     from agents.retry_loop import render_with_retry
+                    # PD 2026-06-08 COST CONTROL: each av retry re-renders ALL
+                    # Seedance i2v cuts (real $). Cap retries low (env AV_MAX_RETRIES,
+                    # default 1) so a failing av slot doesn't re-charge Seedance 3-4×
+                    # for 0 output. Better to skip the slot than burn money looping.
                     out, review_report = render_with_retry(
                         card["card_id"], concept,
-                        max_retries=3, progress_cb=progress_cb,
+                        max_retries=int(os.getenv("AV_MAX_RETRIES", "1")),
+                        progress_cb=progress_cb,
                     )
                     if out:
                         outputs.append(out)
