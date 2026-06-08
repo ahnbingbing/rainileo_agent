@@ -2999,12 +2999,13 @@ _LEO_MARKING_EMPHASIS = (
 
 
 def _cut_character_ok(mp4_path: Path, who: str = "both", n_frames: int = 3) -> bool:
-    """PD 2026-06-08: per-cut CHARACTER fidelity gate for i2v output (av + rf
-    photo_i2v), checked RIGHT AFTER the cut renders. Covers Ryani AND Leo (PD: "레오
-    캐릭터가 너무 생성형"). ANGLE-AWARE: a side profile that hides markings is FINE;
-    only FAIL when a pet is frontal/clear AND clearly wrong, OR the render looks
-    obviously AI-generated/distorted (warped face, wrong proportions). Fail-open
-    (True) on any error / no API. Returns True = keep, False = bad (regen/replace)."""
+    """PD 2026-06-08: per-cut CHARACTER gate for i2v output (av + rf photo_i2v),
+    checked RIGHT AFTER the cut renders. Ryani/Leo markings (incl. a dedicated
+    blaze-thickness question) + AI-distortion. ANGLE-AWARE: a side profile hiding
+    markings is FINE; fail only when a pet is frontal/clear AND clearly wrong.
+    Scene/intent defects are a SEPARATE focused call (`_cut_scene_ok`) — bundling
+    dilutes attention (the facecheck lesson). Fail-open (True) on error / no API.
+    Returns True = keep, False = bad."""
     api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key or not Path(mp4_path).exists():
         return True
@@ -3061,14 +3062,15 @@ def _cut_character_ok(mp4_path: Path, who: str = "both", n_frames: int = 3) -> b
             ) if ask_blaze else ""
             blaze_field = ",\"blaze_too_thick\":true|false" if ask_blaze else ""
             prompt = (
-                "These frames are from ONE rendered cut. Judge the pet character "
+                "These frames are from ONE rendered cut. Judge the pet CHARACTER "
                 "fidelity for: " + " ".join(specs) + " IMPORTANT: a side profile or "
                 "turned-away face that naturally hides markings is FINE — not a "
-                "defect. Flag a problem ONLY when a pet is frontal/clearly visible AND "
-                "its markings/features are clearly wrong, OR the render looks obviously "
-                "AI-generated/distorted (warped face, melted/extra features, wrong "
-                "proportions, plastic/fake look)." + blaze_q + " Return ONLY JSON: "
-                "{\"clear\":true|false,\"character_ok\":true|false" + blaze_field + "}.")
+                "defect. Flag a character problem ONLY when a pet is frontal/clearly "
+                "visible AND its markings/features are clearly wrong, OR a pet looks "
+                "obviously AI-distorted (warped face, melted/extra features, wrong "
+                "proportions, plastic/fake look)." + blaze_q +
+                " Return ONLY JSON: {\"clear\":true|false,\"character_ok\":true|false"
+                + blaze_field + "}.")
             contents = list(parts) + [prompt]
             resp = client.models.generate_content(
                 model=os.getenv("VLM_MODEL", "gemini-2.5-flash"),
@@ -3083,12 +3085,112 @@ def _cut_character_ok(mp4_path: Path, who: str = "both", n_frames: int = 3) -> b
             blaze_bad = bool(d.get("blaze_too_thick")) if ask_blaze else False
             bad = (clear and not ok) or blaze_bad
             if bad:
-                log.info("cut character gate: %s %s in %s", w,
-                         "BLAZE-too-thick" if blaze_bad else "drift/generative",
-                         Path(mp4_path).name)
+                why = "BLAZE-too-thick" if blaze_bad else "drift/generative"
+                log.info("cut character gate: %s %s in %s", w, why, Path(mp4_path).name)
             return not bad
     except Exception as e:
         log.warning("cut marking check failed (%s) — keeping cut", e)
+        return True
+
+
+def _cut_scene_ok(mp4_path: Path, scene_ref_path=None, expected_facts: str = "",
+                  n_frames: int = 3) -> bool:
+    """PD 2026-06-08: per-cut SCENE gate — a DEDICATED, focused VLM call (separate
+    from the character gate, because bundling many questions dilutes attention and
+    the model defaults to 'fine' — verified: bundled missed the floor-sink, focused
+    caught it). Two dimensions, both judged on the actual render so it catches what a
+    pre-render text check can't:
+      (B) UNIVERSAL defect — open-ended 'is there an OBVIOUS real-world-impossible
+          defect?' (melted/floating objects, duplicated furniture, impossible limbs).
+      (C) INTENT match — compare the render against the room reference photo +
+          authoritative set facts; flag a CLEAR fixture/furniture mismatch (the
+          floor-sink: facts say the sink is mounted at counter height but the render
+          grounds it). Catches CONTEXT-specific errors a generic judge can't.
+    This generalizes 'judge each stage's output' instead of hand-coding a Tier-1
+    rule per failure mode (PD request). Strictness = ONLY-WHEN-OBVIOUS: fail-open
+    (True) on uncertainty / stylistic / error / no API. Returns True = keep."""
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key or not Path(mp4_path).exists():
+        return True
+    try:
+        from google import genai as _g
+        from google.genai import types as _gt
+        import tempfile as _tf
+        dur = 5.0
+        try:
+            dur = float(subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=nw=1:nk=1", str(mp4_path)],
+                capture_output=True, text=True, timeout=15).stdout.strip() or 5.0)
+        except Exception:
+            pass
+        client = _g.Client(api_key=api_key, http_options=_gt.HttpOptions(
+            timeout=int(os.getenv("VLM_TIMEOUT_MS", "90000"))))
+        parts = []
+        with _tf.TemporaryDirectory() as td:
+            for i in range(n_frames):
+                t = dur * (i + 0.5) / n_frames
+                fp = Path(td) / f"s{i}.jpg"
+                subprocess.run(["ffmpeg", "-y", "-nostats", "-loglevel", "error",
+                                "-ss", f"{t:.2f}", "-i", str(mp4_path),
+                                "-frames:v", "1", str(fp)], check=False, timeout=20)
+                if fp.exists():
+                    parts.append(_gt.Part.from_bytes(data=fp.read_bytes(),
+                                                     mime_type="image/jpeg"))
+            if not parts:
+                return True
+            n_render = len(parts)
+            have_ref = False
+            try:
+                if scene_ref_path and Path(scene_ref_path).exists():
+                    parts.append(_gt.Part.from_bytes(
+                        data=Path(scene_ref_path).read_bytes(), mime_type="image/jpeg"))
+                    have_ref = True
+            except Exception:
+                have_ref = False
+            ref_clause = (
+                f" The LAST image is the REFERENCE PHOTO of how this room is supposed "
+                f"to look; the first {n_render} image(s) are the rendered cut."
+                if have_ref else "")
+            facts_clause = (f" Authoritative facts about this room/set (ground truth): "
+                            f"{expected_facts}" if expected_facts else "")
+            prompt = (
+                "You check ONLY the SCENE/SET of a rendered pet video cut — ignore the "
+                "pets' markings (another checker handles that). Look CAREFULLY." +
+                ref_clause + facts_clause +
+                " Decide TWO things: (1) obvious_defect = is there an OBVIOUS, "
+                "unmistakable real-world-impossible defect a real photo would never "
+                "have? (an object melted/warped/dissolving; an item floating with no "
+                "support; the SAME furniture duplicated; an impossible/extra/merged "
+                "limb). (2) intent_mismatch = compared to the reference/facts above, is "
+                "a MAJOR fixture or furniture CLEARLY in the wrong place or wrong form? "
+                "The key example: a sink/basin/washbasin that the facts say is MOUNTED "
+                "at counter height but in the render is sitting DOWN ON THE FLOOR — that "
+                "is intent_mismatch=true. Also: a fixture missing or relocated to an "
+                "impossible spot. For BOTH: ignore minor differences in lighting, angle, "
+                "camera framing, pet pose, small decor — and when genuinely in doubt, "
+                "answer FALSE (we only act on clear problems). Return ONLY JSON: "
+                "{\"obvious_defect\":true|false,\"intent_mismatch\":true|false,"
+                "\"note\":\"3-6 word reason if either true, else empty\"}.")
+            contents = list(parts) + [prompt]
+            resp = client.models.generate_content(
+                model=os.getenv("VLM_MODEL", "gemini-2.5-flash"),
+                contents=contents,
+                config=_gt.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    thinking_config=_gt.ThinkingConfig(thinking_budget=0)))
+            import json as _json
+            d = _json.loads((resp.text or "{}").strip())
+            defect = bool(d.get("obvious_defect"))
+            mismatch = bool(d.get("intent_mismatch")) if (have_ref or expected_facts) else False
+            bad = defect or mismatch
+            if bad:
+                why = "scene-defect" if defect else "intent-mismatch"
+                log.info("cut scene gate: %s[%s] in %s", why, d.get("note", ""),
+                         Path(mp4_path).name)
+            return not bad
+    except Exception as e:
+        log.warning("cut scene check failed (%s) — keeping cut", e)
         return True
 
 
@@ -3104,33 +3206,59 @@ def _who_and_emph(prompt: str) -> tuple[str, str]:
     return who, emph
 
 
+def _set_expected_facts(set_anchor: str) -> str:
+    """Load the authoritative PD facts for a set (set_library[anchor].pd_notes) as a
+    single string for the intent-match gate — the floor-sink case needs the fact
+    'sink mounted at counter height' to be catchable. Empty string if none."""
+    if not set_anchor:
+        return ""
+    try:
+        lib_path = ROOT / "data" / "set_library.json"
+        if not lib_path.exists():
+            return ""
+        data = json.loads(lib_path.read_text(encoding="utf-8"))
+        notes = (data.get(set_anchor) or {}).get("pd_notes") or []
+        if isinstance(notes, str):
+            notes = [notes]
+        return " ".join(str(n) for n in notes)[:1200]
+    except Exception:
+        return ""
+
+
 def _gate_and_heal(out_mp4, prompt, who, emph, regen, progress_cb, dry_run,
-                   manifests, tag) -> bool:
+                   manifests, tag, scene_ref_path=None, expected_facts: str = "") -> bool:
     """PD 2026-06-08 per-cut self-heal, shared by i2v + ref dispatch. After a cut
-    renders, run the angle-aware character gate (Ryani blaze etc.); on failure
-    regenerate via the `regen(prompt_text)` callable ×3 with strengthened canon →
-    1 alt prompt → drop the cut (flag for PD-confirmed story rework). Returns True
-    if the cut is kept/clean, False if dropped."""
+    renders, run the angle-aware render gate (character markings + scene coherence +
+    intent-vs-reference); on failure regenerate via the `regen(prompt_text)` callable
+    ×3 with strengthened canon → 1 alt prompt → drop the cut (flag for PD-confirmed
+    story rework). `scene_ref_path`/`expected_facts` enable the intent-match check.
+    Returns True if the cut is kept/clean, False if dropped."""
+    def _ok():
+        # Two focused calls (character + scene) — bundling dilutes attention.
+        if not _cut_character_ok(out_mp4, who):
+            return False
+        return _cut_scene_ok(out_mp4, scene_ref_path=scene_ref_path,
+                             expected_facts=expected_facts)
     if not who or dry_run or not out_mp4.exists():
         return True
-    if _cut_character_ok(out_mp4, who):
+    if _ok():
         return True
     resolved = False
     for r in range(3):
         if progress_cb:
-            progress_cb(f":repeat: {tag} 캐릭터 드리프트({who}) — 재생성 {r+1}/3")
+            progress_cb(f":repeat: {tag} 캐릭터/장면 이상({who}) — 재생성 {r+1}/3")
         try:
             regen(prompt + emph)
         except Exception as e:
             log.warning("regen %d failed for %s: %s", r + 1, tag, e); break
-        if _cut_character_ok(out_mp4, who):
+        if _ok():
             resolved = True; break
     if not resolved:
         if progress_cb:
             progress_cb(f":repeat: {tag} — 다른 프롬프트로 재도전")
         try:
             regen("Gentle natural motion, camera holds still." + emph)
-            resolved = _cut_character_ok(out_mp4, who)
+            resolved = _ok()
         except Exception:
             pass
     if not resolved:
@@ -3621,7 +3749,9 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                 # angle-aware Ryani/Leo gate + self-heal (regen ×3 → alt → drop).
                 _who, _emph = _who_and_emph(prompt)
                 _gate_and_heal(out_mp4, prompt, _who, _emph, _seedance_ref_safe,
-                               progress_cb, dry_run, manifests, tag)
+                               progress_cb, dry_run, manifests, tag,
+                               scene_ref_path=scene_ref_path,
+                               expected_facts=_set_expected_facts(set_anchor))
                 continue
 
         if mode == "interp":
@@ -3755,8 +3885,11 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                 progress_cb(f":arrows_counterclockwise: {tag} 체인 드리프트 → 원본 스틸로 재생성")
             _seedance_i2v_safe(p, image=_regen_img)
 
+        _i2v_sa = cc.get("set_anchor") or set_anchor
         _gate_and_heal(out_mp4, prompt, _who, _emph, _i2v_regen,
-                       progress_cb, dry_run, manifests, tag)
+                       progress_cb, dry_run, manifests, tag,
+                       scene_ref_path=scene_ref_path,
+                       expected_facts=_set_expected_facts(_i2v_sa))
 
     # Step 3a: per-cut fade-out + fade-in for smooth chain transitions
     # (PD 2026-06-01 PM: "컷사이 넘어갈때 f/o 통해서 어색함을 없애야해").
