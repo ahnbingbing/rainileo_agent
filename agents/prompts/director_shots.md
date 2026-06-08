@@ -49,6 +49,13 @@ If `character_knowledge` for that character is empty (Phase F not yet run, or `u
 
 For `render_style = ai_vtuber`: **set every cut's `seedance_mode` to `"ref"` by default.** This skips the GPT image-generation step and lets Seedance generate the cut directly from your prompt + character reference sheets. Your full scene/pose/space/camera description in `motion_prompt` is honored. Only use `i2v` when you have a strong reason to anchor the still to a specific photo composition (rare).
 
+### Background fidelity — Seedance's WEAK spot (PD 2026-06-08, top priority)
+Seedance renders CHARACTER motion well but BACKGROUNDS poorly — it invents/warps rooms unless heavily anchored. So for every indoor/home cut, attack the background on TWO fronts:
+1. **Feed reference IMAGES — this matters MOST (PD: "이미지를 넣어주는게 중요해, 최우선").** Keep `seedance_mode="ref"` and make sure the set has a real `scene_ref` photo + `scene_ref_extras` (Omni, multi-POV photos of that exact room). The Cameraman attaches scene_ref + up to 9 Omni extras automatically in ref mode; your job is to PICK the right `set_anchor` so those images are the genuine learned 할머니집 (or closest matching) room — never a set with no/blurry reference. The image is the anchor; the text reinforces it. (Empirically, the image is what makes the room come out right — text facts alone drift.)
+2. **Write the set_description like a 3D model** (see the set_description field spec below) — exhaustive, grounded verbatim in `set_library[set_anchor].persistent_background` + `room_layout_3d`, repeated every cut. Under-specifying = guaranteed broken background.
+
+If the needed room has no good reference image in the library, say so via a `knowledge_question` rather than guessing — a texted-only background will look generative.
+
 For `render_style = real_footage`: default cuts to `"real"`. Use `"interp"` only for gap-fill bridges.
 
 **Episode format awareness**: Writer set `episode_format = "short"` or `"mid"`.
@@ -496,7 +503,7 @@ Return the same JSON array the Writer gave you, with each cut augmented:
     },
 
     "set_anchor": "set_library에서 선택한 set_id. 예: 'home_livingroom'",
-    "set_description": "이 컨셉의 메인 공간을 매우 구체적으로 묘사한 한 문단. 모든 컷의 motion_prompt 앞에 Cameraman이 그대로 prepend 함. **Writer가 제공한 episode_date + episode_time + set_library[set_anchor].window_directions를 종합해 정확한 조명**을 명시. 반드시 포함: (1) 방 타입 + 바닥재 + 벽지 색 + 천장 (2) 창문 위치/크기 + 자연광 방향 + episode_time + 계절 기반 정확한 광 강도/색 (3) 주요 가구의 색·재질·정확한 위치 (4) 벽에 걸린 것/장식/식물 (5) 조명 도구. 예: 'Korean grandma's apartment living room, early summer morning around 06:30. Beige laminate wood floor. Off-white textured wallpaper. Single large SOUTH-facing window in the back wall with sheer mint-green curtains, cool indirect dawn light just starting — no direct sun yet, room is still mostly dim. Center-frame is a deep blue wooden-framed two-seater sofa...' 100~280 chars.",
+    "set_description": "이 컨셉의 메인 공간을 3D 모델링 스펙처럼 EXHAUSTIVE하게 묘사한 문단. 모든 컷의 motion_prompt 앞에 Cameraman이 그대로 prepend 함. ⚠️ Seedance는 캐릭터 움직임은 잘하지만 BACKGROUND를 잘 못 만든다 (PD 2026-06-08) — 그래서 배경은 모자라게 쓰면 무조건 깨진다. OVER-SPECIFY가 원칙. **반드시 `set_library[set_anchor].persistent_background` (summary / wall_treatment / floor_type / main_furniture[] / window_or_light) 와 `room_layout_3d` (있으면 floor plan)을 근거로** 작성 — 즉 그 방을 찍은 실제 학습 footage에서 나온 사실을 그대로 옮겨라. 새 가구/배치를 지어내지 마라. 마치 3D 씬을 기술하듯 다음을 모두 포함: (1) 방 타입·대략 크기·형태 + 바닥재(색·재질) + 벽(색·마감) + 천장 (2) 각 벽에 무엇이 있는지 (창문 위치·크기, 그림/시계/선반, 문) (3) 모든 주요 가구를 **각각 한 번씩** — 색·재질·크기·프레임 내 위치(좌/우/중앙, 전경/후경, 깊이)로 (4) episode_date+episode_time+window_directions 종합한 정확한 조명(방향·강도·색온도; 실내 인공조명이면 그것도) (5) 작은 소품/식물/질감. 길이 제한 없음 — 보통 400~900자, 필요하면 더. 예시(축약): 'Korean grandma's single-house living room (충주), ONE open room ~5×4m, white wood plank floor (light, no rug), white painted walls. BACK wall: a built-in wooden-frame daybed-bench ~2m wide with blue fabric cushions, no backrest, integrated storage; ABOVE it a band of frosted-glass high windows letting soft even daylight from upper-back. LEFT corner: black glossy upright piano. RIGHT wall: vintage wooden wall-clock above a dark antique console; the entryway beside it. OPPOSITE the bench: low white 3-drawer TV stand with a flat TV. Open kitchen connects on one side, dark-navy subway-tile backsplash, ~6-seat wooden dining table. Early-summer late afternoon ~17:00, warm soft daylight, gentle shadows. SAME description every cut in this space.'",
 
     "cuts": [
       {
