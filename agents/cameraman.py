@@ -2104,35 +2104,25 @@ def _trim_real_footage_clips(manifests: dict, anim_dir: Path,
             log.info("real_footage %s: drop zoom effect '%s' → play real footage (static)",
                      tag, effect)
             effect = "static"
-        # PD 2026-06-02: if this is the LAST body cut and its caption ends
-        # after the trim_dur, auto-extend via freeze_last_frame for 여운.
+        # LAST body cut 여운 (PD 2026-06-08): play the real footage THROUGH the
+        # caption (motion under the text), then FREEZE the final frame ~2s for a
+        # quiet held ending — "캡션 뜨고 바로 끝나는 느낌"을 없앤다. The held end
+        # is only the last ~2s (not the whole clip), so it reads as a deliberate
+        # 여운 beat, not a "정지 화면".
         if tag == last_body_tag:
-            cap_end = cap_end_by_tag.get(tag, 0)
-            # 여운: linger after the caption ends. PD 2026-06-08: last cut still
-            # ended too fast → ~3s (was 1.5s). Plays real footage if the clip is
-            # long enough, else freezes the shortfall.
-            _linger = float(os.getenv("RF_LAST_CUT_LINGER_S", "3.0"))
-            desired = max(trim_dur, float(cap_end) + _linger)
+            cap_end = float(cap_end_by_tag.get(tag, 0))
+            end_freeze = float(os.getenv("RF_END_FREEZE_S", "2.0"))
             src_dur = entry.get("src_dur")
             avail = (float(src_dur) - trim_start) if src_dur else None
-            # PD 2026-06-06: a FROZEN last frame reads as a static photo
-            # ("동영상을 이미지로 캡쳐한 느낌"). If the source clip is long
-            # enough, PLAY the real footage through the 여운 so motion continues.
-            # Only freeze the shortfall when the clip truly runs out.
-            if avail is not None and avail >= desired - 0.1:
-                trim_dur = desired
-                vf, time_args = _build_edit_effect_filter(effect, trim_dur)
-                log.info("last cut %s — play real footage to %.1fs (no freeze)",
-                         tag, desired)
-            else:
-                play = avail if avail else trim_dur
-                pad = max(0.0, desired - play)
-                trim_dur = play
-                vf, time_args = _build_edit_effect_filter(
-                    "freeze_to_caption_end", trim_dur, extra_pad=pad)
-                effect = "freeze_to_caption_end"
-                log.info("last cut %s — play %.1fs + freeze pad %.1fs",
-                         tag, play, pad)
+            play = max(trim_dur, cap_end + 0.3)   # real footage at least to caption end
+            if avail is not None:
+                play = min(play, avail)
+            trim_dur = play
+            vf, time_args = _build_edit_effect_filter(
+                "freeze_to_caption_end", trim_dur, extra_pad=end_freeze)
+            effect = "freeze_to_caption_end"
+            log.info("last cut %s — play %.1fs + end freeze hold %.1fs",
+                     tag, play, end_freeze)
         else:
             vf, time_args = _build_edit_effect_filter(effect, trim_dur)
 
