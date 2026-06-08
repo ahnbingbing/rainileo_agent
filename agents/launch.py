@@ -197,20 +197,33 @@ def launch_pipeline(target: dt.date, *,
                 "video_id": vid, "publish_at": publish_at}
 
     results: list[dict] = []
-    if sequential:
-        for lane, hhmm in assignments:
+    # PD 2026-06-08: run ONE pipeline PER LANE (rf ∥ av) in parallel, but slots
+    # WITHIN a lane sequentially. So at most 2 run at once (1 rf + 1 av) — they use
+    # different engines (rf=ffmpeg+Gemini, av=Seedance) so they overlap well, and
+    # the smaller concurrency avoids the DNS-query burst that flaky resolvers throttle.
+    by_lane: dict[str, list[str]] = {}
+    for lane, hhmm in assignments:
+        by_lane.setdefault(lane, []).append(hhmm)
+
+    def _run_lane(lane: str, slots: list[str]) -> list[dict]:
+        out = []
+        for hhmm in slots:           # sequential within the lane
             r = _slot_pipeline(lane, hhmm)
             if r:
-                results.append(r)
+                out.append(r)
+        return out
+
+    if sequential or len(by_lane) <= 1:
+        for lane, slots in by_lane.items():
+            results.extend(_run_lane(lane, slots))
     else:
         from concurrent.futures import ThreadPoolExecutor
         if progress_cb:
-            progress_cb(f":fast_forward: {len(assignments)}슬롯 완전 병렬 "
-                        f"(컨셉+렌더 동시 {concurrency}개)")
-        with ThreadPoolExecutor(max_workers=concurrency) as ex:
-            for r in ex.map(lambda a: _slot_pipeline(*a), assignments):
-                if r:
-                    results.append(r)
+            progress_cb(f":fast_forward: {len(by_lane)}개 레인 파이프라인 병렬 "
+                        f"(rf ∥ av, 레인 내부는 순차)")
+        with ThreadPoolExecutor(max_workers=len(by_lane)) as ex:
+            for lane_results in ex.map(lambda kv: _run_lane(*kv), list(by_lane.items())):
+                results.extend(lane_results)
 
     if dry_run and progress_cb:
         for r in results:
