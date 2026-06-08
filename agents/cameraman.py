@@ -2066,7 +2066,8 @@ def _trim_real_footage_clips(manifests: dict, anim_dir: Path,
         crop_vf = ""
         if has_human or crop_hint:
             if not dry_run:
-                crop_vf = _vlm_pet_crop_filter(src_path, trim_start)
+                crop_vf = _vlm_pet_crop_filter(
+                    src_path, trim_start, float(entry.get("trim_dur") or 0.0))
             if not crop_vf:
                 # fall back to directional hint, or a center zoom if a human is
                 # present but no direction was given (never leave a face in).
@@ -2098,7 +2099,8 @@ def _trim_real_footage_clips(manifests: dict, anim_dir: Path,
         progress_cb(f":scissors: [1/3] {n} clips trimmed → animated/")
 
 
-def _vlm_pet_crop_filter(src_path: Path, trim_start: float = 0.0) -> str:
+def _vlm_pet_crop_filter(src_path: Path, trim_start: float = 0.0,
+                         trim_dur: float = 0.0) -> str:
     """PD 2026-06-06 HARD RULE: a human FACE must NEVER be visible in
     real_footage. For a clip with a human, ask Gemini for the largest 9:16
     portrait window that contains the pet(s) and EXCLUDES every human (face
@@ -2150,13 +2152,37 @@ def _vlm_pet_crop_filter(src_path: Path, trim_start: float = 0.0) -> str:
         pets = box.get("pets") or {}
         human = box.get("human") or {}
         # PD 2026-06-08: the pets+human VLM call under-reports the FACE (it called a
-        # bench man "lower body"). Override the avoid-target with a dedicated,
-        # reliable face box so the 9:16 window slides AWAY from the actual face.
+        # bench man "lower body"), and a single probe frame misses a face that
+        # appears LATER in the clip. Sample several frames across the trim window,
+        # get a reliable face box for each, and UNION them — the static crop must
+        # exclude the face wherever it appears. Use the union as the avoid-target.
+        face_union = None  # (x,y,w,h) fractions
         try:
             from agents.facecheck import face_box as _face_box
-            fb = _face_box(frame)
-            if fb and float(fb.get("w", 0)) > 0 and float(fb.get("h", 0)) > 0:
-                human = fb
+            ts0 = trim_start
+            span = trim_dur if trim_dur and trim_dur > 0 else 4.0
+            offsets = [0.3, span * 0.5, max(0.3, span - 0.3)]
+            seen_frac = []
+            for k, off in enumerate(offsets):
+                pf = src_path.parent / f".faceprobe_{src_path.stem}_{k}.jpg"
+                subprocess.run(["ffmpeg", "-y", "-nostats", "-loglevel", "error",
+                                "-ss", f"{ts0 + off:.2f}", "-i", str(src_path),
+                                "-frames:v", "1", str(pf)], check=False)
+                if pf.exists():
+                    fb = _face_box(pf)
+                    if fb and float(fb.get("w", 0)) > 0 and float(fb.get("h", 0)) > 0:
+                        seen_frac.append(fb)
+                    try:
+                        pf.unlink()
+                    except Exception:
+                        pass
+            if seen_frac:
+                x0 = min(float(f["x"]) for f in seen_frac)
+                y0 = min(float(f["y"]) for f in seen_frac)
+                x1 = max(float(f["x"]) + float(f["w"]) for f in seen_frac)
+                y1 = max(float(f["y"]) + float(f["h"]) for f in seen_frac)
+                face_union = {"x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0}
+                human = face_union  # slide the window away from the whole face span
         except Exception:
             pass
         # ★ ROTATION FIX (PD 2026-06-06): use the EXTRACTED FRAME's dims
@@ -2222,6 +2248,24 @@ def _vlm_pet_crop_filter(src_path: Path, trim_start: float = 0.0) -> str:
         cy = _far(y_lo, y_hi, H, float(human.get("y", 0)), float(human.get("h", 0)), ch)
         cw = int(cw) // 2 * 2; ch = int(ch) // 2 * 2
         cx = min(max(0, int(cx)), W - cw); cy = min(max(0, int(cy)), H - ch)
+        # HARD vertical exclusion of the face union (PD 2026-06-08): the slide can
+        # leave a face partly inside the window when it overlaps the pets' band.
+        # Force the window fully below the face bottom (or fully above its top),
+        # whichever fits — exclude the face even at the cost of cropping some pet
+        # (the no-face rule wins). If neither fits, leave it (post-render check +
+        # slot-skip is the final guard).
+        if face_union:
+            fx = float(face_union["x"]) * W; fy = float(face_union["y"]) * H
+            fw = float(face_union["w"]) * W; fh = float(face_union["h"]) * H
+            overlap = not (cy >= fy + fh or cy + ch <= fy or cx >= fx + fw or cx + cw <= fx)
+            if overlap:
+                below = int(fy + fh)            # window top at face bottom
+                above = int(fy - ch)            # window bottom at face top
+                if below + ch <= H:
+                    cy = max(0, below)
+                elif above >= 0:
+                    cy = min(above, H - ch)
+                cy = min(max(0, int(cy)), H - ch)
         return f"crop={cw}:{ch}:{cx}:{cy}"
     except Exception as ex:
         log.warning("vlm crop failed for %s: %s", src_path.name, ex)
