@@ -179,15 +179,21 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
          # Day2+("저녁엔 이래요"). Reference ep 20260519_231625 = both together, daytime.
          "both": _is_both(r["subjects_csv"]),
          "tod": _tod(r["captured_iso"]),
+         # PD 2026-06-09: surface framing signals so the Writer prefers shots where
+         # Leo/Ryani look PRETTY — pet large/clear/engaging — over distant/cluttered
+         # ones. comp=medium/close-up + focus=a pet + looking_at=camera = flattering.
+         "comp": r["composition"] or "", "focus": r["focus_subject"] or "",
          **_extra_vlm(r)}
         for r in con.execute(
             """
             SELECT asset_id, activity, subjects_csv, mood, scene_description, pd_notes,
-                   duration_sec, captured_iso, location_type, notes, has_human, lighting
+                   duration_sec, captured_iso, location_type, notes, has_human, lighting,
+                   composition, focus_subject
             FROM assets
             WHERE vlm_analyzed_at IS NOT NULL AND kind='video' AND quality_score >= 0.7
             ORDER BY
               CASE WHEN subjects_csv LIKE '%ryani%' AND subjects_csv LIKE '%leo%' THEN 0 ELSE 1 END,
+              CASE WHEN lower(coalesce(composition,'')) IN ('overhead','wide','far') THEN 1 ELSE 0 END,
               captured_iso DESC
             LIMIT 28
             """,
