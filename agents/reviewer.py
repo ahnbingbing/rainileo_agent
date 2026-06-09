@@ -582,23 +582,23 @@ def review(video: Path, storyboard: list[dict] | None = None,
             report.setdefault("_marking_overrides", []).append(
                 f"real_footage(순수 실제클립) — 마킹 하드캡 미적용. 픽셀신호 pass={marking_pass}/3")
         else:
-            vlm_char = dims.get("character_clarity", 7)
-            # 이마줄 빠지면 캐릭터 최대 5점 (VLM이 10점 줘도 무시)
-            if not blaze_ok:
-                dims["character_clarity"] = min(vlm_char, 5)
-                report.setdefault("_marking_overrides", []).append(
-                    "이마줄 없음 → character_clarity 최대 5점")
-            # 이마줄+눈썹 둘 다 빠지면 최대 3점
-            if not blaze_ok and not eyebrow_ok:
-                dims["character_clarity"] = min(dims.get("character_clarity", 7), 3)
-                report.setdefault("_marking_overrides", []).append(
-                    "이마줄+눈썹 없음 → character_clarity 최대 3점")
-            report["dimensions"] = dims
-            # 마킹 픽셀 체크는 SIGNAL로만 (2026-05-30): 3개 다 실패일 때만 verdict override.
-            if marking_pass < 1 and report.get("판정") == "업로드":
-                report["판정"] = "수정 필요"
-                report["가장_큰_문제"] = f"랴니 마킹 전부 누락 (이마줄={'✓' if blaze_ok else '✗'} 눈썹={'✓' if eyebrow_ok else '✗'} 주둥이={'✓' if muzzle_ok else '✗'})"
-                report["최소_수정안"] = "Seedance prompt에 랴니 마킹 설명 강화 또는 standard 모델로 격상"
+            # PD 2026-06-09: the pixel marking heuristic (이마줄 밝기차 etc.) is
+            # UNRELIABLE — it false-negatives on perfectly good AI renders too (it
+            # measures brightness in a narrow region, can't see a thin blaze on a
+            # greying senior dog / odd angle / lighting). It was forcing "수정 필요" +
+            # needless re-work on EXCELLENT episodes (202307: holistic 9/10 + 즉시
+            # 업로드 + a genuinely THIN correct blaze, yet capped to char=3 + reworked).
+            # Markings are now enforced at RENDER time by the per-cut reference-image
+            # blaze gate (_cut_character_ok); this reviewer's pixel check is therefore
+            # ADVISORY ONLY — it records a note (so PD sees the signal) but does NOT
+            # cap the score or force a verdict change. PD's per-episode veto + the
+            # render gate are the real marking enforcement.
+            llm_says_clear = bool(report.get("ryani_markings_clear", True))
+            report.setdefault("_marking_overrides", []).append(
+                f"마킹 픽셀신호 pass={marking_pass}/3 (blaze={'✓' if blaze_ok else '✗'} "
+                f"눈썹={'✓' if eyebrow_ok else '✗'} 주둥이={'✓' if muzzle_ok else '✗'}) "
+                f"— ADVISORY only (불신뢰 휴리스틱; 렌더 게이트+PD veto가 실제 게이트). "
+                f"LLM markings_clear={llm_says_clear}. 점수/판정 영향 없음.")
     except Exception as e:
         log.warning("Character similarity check failed: %s", e)
 
