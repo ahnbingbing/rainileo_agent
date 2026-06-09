@@ -3254,13 +3254,12 @@ def _cut_character_ok(mp4_path: Path, who: str = "both", n_frames: int = 3) -> b
                 (f" The LAST image is the REFERENCE of Ryani's CORRECT markings — her "
                  f"white forehead BLAZE is a THIN NARROW line. The first "
                  f"{n_render_blaze} image(s) are the rendered cut. COMPARE the rendered "
-                 f"Ryani's blaze to the reference. Be STRICT — PD requires the blaze to "
-                 f"stay a thin line. Set blaze_too_thick=true if the rendered blaze is "
-                 f"EVEN SOMEWHAT wider / thicker / more spread-out than the reference's "
-                 f"thin line, at ANY angle where the blaze is visible (when unsure, "
-                 f"lean TRUE — we'd rather regenerate than ship a widened blaze). Only "
-                 f"set false if the blaze is genuinely as thin as the reference, or not "
-                 f"visible at all (full side/back of head)."
+                 f"Ryani's blaze to the reference. Set blaze_too_thick=true when the "
+                 f"rendered blaze is NOTICEABLY wider than the reference's thin line — a "
+                 f"clearly thicker stripe or a broad patch an attentive viewer would "
+                 f"catch — judged on a FRONTAL/clear view of her face. If her face is "
+                 f"side/turned/unclear, or the blaze is about as thin as the reference, "
+                 f"set FALSE."
                  if blaze_ref else
                  " SEPARATELY judge Ryani's white forehead BLAZE: correct = a THIN "
                  "NARROW line nose→forehead; DEFECT (blaze_too_thick=true) = clearly "
@@ -3469,16 +3468,19 @@ def _gate_and_heal(out_mp4, prompt, who, emph, regen, progress_cb, dry_run,
         except Exception:
             pass
     if not resolved:
-        log.warning("av cut %s: character unresolved — dropping cut", tag)
+        # PD 2026-06-09: DON'T drop a chained cut on an unresolved marking — a missing
+        # cut breaks the one-take chain → the episode fails Giri → the WHOLE concept
+        # re-renders → infinite loop (78min on one slot, observed). KEEP the best-effort
+        # cut (the last regen mp4 stays) + flag it for PD review/veto. A slightly-wide
+        # blaze is far better than an endless re-render loop; PD's per-episode veto is
+        # the final safety net. (Only a genuinely broken render should ever be dropped.)
+        log.warning("av cut %s: marking unresolved after ×3+alt — KEEPING best effort "
+                    "(no drop, avoid re-render loop); flag for PD review", tag)
         if progress_cb:
-            progress_cb(f":x: {tag} 캐릭터 해결 실패 — 컷 드롭 "
-                        f"(스토리 영향 → PD 컨펌 후 재작업 필요)")
-        try:
-            out_mp4.unlink(missing_ok=True)
-        except Exception:
-            pass
-        manifests.setdefault("_dropped_cuts", []).append(tag)
-        return False
+            progress_cb(f":warning: {tag} 마킹 완벽히 못 잡음 — best effort로 유지 "
+                        f"(루프 방지). PD 검수에서 별로면 veto")
+        manifests.setdefault("_marking_imperfect_cuts", []).append(tag)
+        return True
     return True
 
 
