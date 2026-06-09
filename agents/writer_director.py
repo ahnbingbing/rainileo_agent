@@ -196,11 +196,16 @@ def _parse_json_loose(text: str) -> Any:
     try:
         return json.loads(t)
     except json.JSONDecodeError:
-        # Try to find a JSON array or object inside
+        # Try to find a JSON array or object inside, with a trailing-comma repair
+        # (PD 2026-06-09: common LLM-fallback malformation).
         for pattern in (r"\[[\s\S]*\]", r"\{[\s\S]*\}"):
             m = re.search(pattern, t)
             if m:
-                return json.loads(m.group(0))
+                frag = m.group(0)
+                try:
+                    return json.loads(frag)
+                except json.JSONDecodeError:
+                    return json.loads(re.sub(r',\s*([}\]])', r'\1', frag))
         raise
 
 

@@ -515,6 +515,48 @@ def _recently_used_rf_assets(con: sqlite3.Connection,
     return used
 
 
+def _robust_json_parse(text: str, allow_llm_repair: bool = True):
+    """PD 2026-06-09: parse possibly-malformed LLM JSON robustly. With Gemini
+    timing out → Anthropic fallback, the RF singlepass hit 'Expecting , delimiter'
+    and the whole slot failed. Steps: strip fences + extract the outermost array/
+    object → plain loads → trailing-comma repair → an LLM repair round-trip ('fix
+    this into valid JSON'). Raises only if all fail."""
+    def _extract(t: str) -> str:
+        t = (t or "").strip()
+        if t.startswith("```"):
+            t = t.split("\n", 1)[1] if "\n" in t else t[3:]
+            if t.rstrip().endswith("```"):
+                t = t.rstrip()[:-3]
+        t = t.strip()
+        m = re.search(r'\[[\s\S]*\]', t) or re.search(r'\{[\s\S]*\}', t)
+        return m.group(0) if m else t
+
+    s = _extract(text)
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+    # trailing commas before } or ]
+    s2 = re.sub(r',\s*([}\]])', r'\1', s)
+    try:
+        return json.loads(s2)
+    except Exception:
+        pass
+    if allow_llm_repair:
+        try:
+            from agents.llm_cascade import call_text_cascade
+            fixed = call_text_cascade(
+                "You repair malformed JSON. Output ONLY valid JSON — no prose, no "
+                "code fences. Keep ALL content; correct only the syntax (quotes, "
+                "commas, escapes, newlines inside strings).",
+                "Fix this into valid JSON:\n\n" + s,
+                max_tokens=8000).strip()
+            return json.loads(_extract(fixed))
+        except Exception as e:
+            log.warning("JSON LLM-repair failed: %s", e)
+    raise RuntimeError(f"_robust_json_parse: could not parse/repair (len={len(text or '')})")
+
+
 def _propose_realfootage_singlepass(target: dt.date, context: dict,
                                      progress_cb: ProgressCb = None,
                                      prior_feedback: str = "") -> list[dict]:
@@ -615,18 +657,7 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
              "the JSON array.")
     from agents.llm_cascade import call_text_cascade
     text = call_text_cascade(system, user, max_tokens=8000).strip()
-    if text.startswith("```"):
-        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-    if text.endswith("```"):
-        text = text[:-3]
-    text = text.strip()
-    try:
-        concepts = json.loads(text)
-    except json.JSONDecodeError:
-        m = re.search(r'\[[\s\S]*\]', text)
-        if not m:
-            raise RuntimeError(f"real_footage singlepass: no JSON array (len={len(text)})")
-        concepts = json.loads(m.group(0))
+    concepts = _robust_json_parse(text)
     # PD 2026-06-05: NO cut cap — script decides length.
     # PD 2026-06-06: stamp the single-pass author so the render pipeline can
     # SKIP the VLM post-render caption rewrite. The single-pass captions are
