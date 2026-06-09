@@ -458,7 +458,9 @@ Per-cut prompts by mode:
 
 Follow the verified dual-motion pattern when 2 subjects in frame: `"An A and a B ... The A slowly Xs. At the same time the B Ys. Camera gently pushes in."`
 
-### For `generation_mode = text_to_video` (Veo) — output `veo_prompt`
+### For `generation_mode = text_to_video` (Veo) — DEPRECATED for ai_vtuber (PD 2026-06-09)
+⛔ **ai_vtuber MUST use `generation_mode = "image_to_video"` (Seedance), NOT text_to_video.** The legacy Veo t2v path misses every i2v quality gate — the reference-image Ryani-blaze check, the 2-second 여운 ending, and caption handling — so markings come out thick and the video ends abruptly. ALWAYS set `generation_mode: "image_to_video"` for ai_vtuber and use `seedance_mode` (default `ref`). Do NOT output `veo_prompt`-only cuts. (The section below is retained only for reference; do not use it for new ai_vtuber concepts.)
+
 Full scene description, **must include**:
 1. Photo quality booster line at start
 2. Shot size + camera move + angle

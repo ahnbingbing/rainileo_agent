@@ -751,6 +751,24 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
     generation_mode = (concept or {}).get("generation_mode",
                                           payload.get("generation_mode", "image_to_video"))
 
+    # ── PD 2026-06-09 (B — path unification): ai_vtuber ALWAYS goes through the
+    # Seedance image_to_video path, never legacy Veo t2v. The t2v path missed every
+    # i2v improvement (reference-image blaze gate, 2s 여운, caption handling) → thick
+    # markings + fast endings slipped through. Coerce ai_vtuber t2v → i2v, and if the
+    # Director only produced veo_prompt, reuse it as the ref-mode motion_prompt so the
+    # Seedance path always has a prompt. (real_footage t2v is never used.)
+    if generation_mode == "text_to_video" and style == "ai_vtuber":
+        log.info("B-unify: ai_vtuber t2v → Seedance i2v (ref mode); reusing veo_prompt")
+        for cc in concept_cuts:
+            if not (cc.get("motion_prompt") or "").strip():
+                vp = (cc.get("veo_prompt") or "").strip()
+                if vp:
+                    cc["motion_prompt"] = vp
+            cc.setdefault("seedance_mode", "ref")
+        generation_mode = "image_to_video"
+        if isinstance(concept, dict):
+            concept["generation_mode"] = "image_to_video"
+
     # ── text_to_video mode: no assets needed, build from veo_prompts ──
     if generation_mode == "text_to_video" and concept_cuts:
         return _generate_t2v_manifests(card, concept, concept_cuts, style, work_dir)
