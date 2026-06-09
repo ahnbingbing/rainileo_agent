@@ -68,6 +68,8 @@ Also provided: the original storyboard concept and audio analysis.
 
 IMPORTANT: These frames are from a VIDEO, so do NOT penalize for "lack of motion" or "still images". The motion exists in the video between frames. Judge composition, subject clarity, style coherence, and storyboard matching — NOT whether the frame itself moves.
 
+**DO NOT FABRICATE MISSING CUTS (PD 2026-06-09 — critical reviewer-accuracy fix)**: The frames are a SPARSE SAMPLE (~2 per cut) of an already-assembled episode. Every storyboard cut IS present in the final video — the assembler concatenates them all; cut presence is NOT in question and is NOT your job to adjudicate. NEVER claim a cut is "누락/missing/통째로 빠짐" just because you don't see a frame from it — that is a sampling gap, not a missing cut, and such false claims have wrongly blocked good episodes. Likewise, do NOT claim "captions are truncated/cut short" from frame sampling — each frame shows whatever caption was on screen at that instant; a different caption in the next sampled frame is normal scene progression, not truncation. Judge the QUALITY of what you can see (composition, story, character fidelity, caption-vs-clip truthfulness per visible frame), not what you infer to be absent.
+
 **CRITICAL CHECK 0 — Caption-vs-Clip truthfulness (PD 2026-06-03 strict)**:
 Before judging anything else, scan each frame against the burned-in caption visible in that frame:
 - The caption describes specific objects/actions (e.g., "사료가 톡 튕겼어요", "장난감을 쫓아가요", "발라당 누웠어요").
@@ -191,29 +193,48 @@ Return JSON:
 """
 
 
-def _extract_frames(video: Path, n: int = 6) -> list[Path]:
-    """Extract frames: first frame + 1 per cut middle + last frame."""
+def _probe_dur(p: Path) -> float:
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nw=1:nk=1", str(p)],
+            capture_output=True, text=True, timeout=10)
+        return float(r.stdout.strip() or 0)
+    except Exception:
+        return 0.0
+
+
+def _extract_frames(video: Path, n_cuts: int = 4, per_cut: int = 2,
+                    max_frames: int = 16) -> list[Path]:
+    """Sample ~`per_cut` frames PER actual cut across the content region.
+
+    PD 2026-06-09 fix: the old version HARD-CODED 4 content cuts
+    (`cut_dur=(duration-4.0)/4`), so a 5-cut episode sampled at misaligned
+    positions and MISSED a whole cut's time window — the reviewer LLM then saw no
+    frame from that cut and hallucinated "cut N 누락". Now we (a) take the real cut
+    count, (b) probe the actual intro/outro bumper lengths to find the content
+    region, and (c) sample enough frames that EVERY cut is covered."""
     tmpdir = Path(tempfile.mkdtemp(prefix="review_"))
-
-    probe = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "json", str(video)],
-        capture_output=True, text=True,
-    )
-    duration = float(json.loads(probe.stdout)["format"]["duration"])
-
-    times = [0.5]  # first frame (hook)
-    cut_start = 1.5  # after intro bumper
-    cut_dur = (duration - 4.0) / 4  # 4 content cuts
-    for i in range(4):
-        times.append(cut_start + i * cut_dur + cut_dur / 2)
-    times.append(duration - 1.0)  # last frame
+    duration = _probe_dur(video)
+    if duration <= 0:
+        duration = 30.0
+    intro = _probe_dur(ROOT / "assets" / "branding" / "intro_bumper.mp4")
+    outro = _probe_dur(ROOT / "assets" / "branding" / "outro_bumper.mp4")
+    c0 = min(intro + 0.3, duration * 0.25) if intro > 0 else 0.5
+    c1 = max(duration - outro - 0.3, c0 + 1.0) if outro > 0 else duration - 0.6
+    n_cuts = max(1, int(n_cuts or 4))
+    n_mid = min(max_frames - 2, max(4, per_cut * n_cuts))
+    times = [0.5]  # hook (intro bumper region)
+    for k in range(n_mid):
+        frac = (k + 0.5) / n_mid
+        times.append(round(c0 + frac * (c1 - c0), 2))
+    times.append(round(duration - 0.8, 2))  # last (여운/outro)
 
     frames = []
-    for i, t in enumerate(times[:n]):
-        out = tmpdir / f"frame_{i}.jpg"
+    for i, t in enumerate(times):
+        out = tmpdir / f"frame_{i:02d}.jpg"
         subprocess.run(
-            ["ffmpeg", "-y", "-ss", f"{t:.2f}", "-i", str(video),
+            ["ffmpeg", "-y", "-ss", f"{max(0.0, t):.2f}", "-i", str(video),
              "-frames:v", "1", "-q:v", "2", str(out)],
             capture_output=True, timeout=10,
         )
@@ -444,9 +465,14 @@ def review(video: Path, storyboard: list[dict] | None = None,
                                timeout=int(os.getenv("VLM_TIMEOUT_MS", "90000"))))
     model_name = os.getenv("VLM_MODEL", "gemini-2.5-flash")
 
-    # Extract frames
-    log.info("Extracting review frames from %s", video.name)
-    frames = _extract_frames(video)
+    # Extract frames — sample per ACTUAL cut count so no cut is missed.
+    n_cuts = 0
+    if storyboard:
+        n_cuts = len(storyboard)
+    elif concept and isinstance(concept.get("cuts"), list):
+        n_cuts = len(concept["cuts"])
+    log.info("Extracting review frames from %s (n_cuts=%s)", video.name, n_cuts or "?")
+    frames = _extract_frames(video, n_cuts=n_cuts or 4)
 
     # Audio check
     audio = _check_audio(video)
