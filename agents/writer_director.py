@@ -610,6 +610,10 @@ def propose_concepts_v2(target_date: dt.date, context: dict, *,
         # tone, scene_setter, mixed registers, action-first timing.
         captioned = run_caption_agent(directed, progress_cb=progress_cb)
         polished = run_caption_polisher(captioned, progress_cb=progress_cb)
+        # PD 2026-06-09: auto-enrich thin set_descriptions from set_library BEFORE
+        # validation, so a short Director description gets a rich learned-room
+        # background instead of being blocked into an empty slot.
+        polished = _enrich_thin_set_descriptions(polished)
         # Cameraman Validator (2026-06-02): pre-dispatch sanity gate.
         # Catches causal/physical/spatial incoherence before Seedance burns
         # cost. On verdict='blocked', RETRY with Writer revision pass (up
@@ -1463,6 +1467,7 @@ def _retry_blocked_concepts(concepts: list[dict], target_date, context,
                                                     progress_cb=progress_cb)
             revised_polished = run_caption_polisher(revised_captioned,
                                                       progress_cb=progress_cb)
+            revised_polished = _enrich_thin_set_descriptions(revised_polished)
             revised_validated = run_cameraman_validator(revised_polished,
                                                           progress_cb=progress_cb)
             new_c = revised_validated[0] if revised_validated else c
@@ -1597,6 +1602,71 @@ def _enforce_editing_concept_signature(c: dict) -> list[dict]:
             if not alternates:
                 _add("concept", "cross_cutting: cuts do not alternate between spaces")
     return issues
+
+
+def build_set_description_from_library(set_anchor: str) -> str:
+    """PD 2026-06-09: render set_library[anchor].persistent_background (+ room
+    geometry) into a rich camera-sweep set_description, so a THIN Director-written
+    one can be AUTO-ENRICHED from the LEARNED room data instead of getting blocked
+    (→ empty slot). This is the better realization of PD's 'describe the 할머니집
+    from learned data, very detailed' — pull from stored room facts, don't depend
+    on the Director writing 400+ chars every time."""
+    if not set_anchor:
+        return ""
+    try:
+        lib = json.loads((ROOT / "data" / "set_library.json").read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    e = lib.get(set_anchor) or {}
+    pb = e.get("persistent_background") or {}
+    if not isinstance(pb, dict):
+        return ""
+    parts: list[str] = []
+    if pb.get("summary"):
+        parts.append(str(pb["summary"]).strip())
+    wall = pb.get("wall_treatment") or pb.get("wall")
+    floor = pb.get("floor_type") or pb.get("floor")
+    win = pb.get("window_or_light") or pb.get("window") or pb.get("light")
+    if wall:
+        parts.append("벽: " + str(wall).strip())
+    if floor:
+        parts.append("바닥: " + str(floor).strip())
+    mf = pb.get("main_furniture") or pb.get("recurring_items")
+    if isinstance(mf, list) and mf:
+        parts.append("주요 가구(각자 고정된 위치 유지): " +
+                     "; ".join(str(x).strip() for x in mf if x))
+    elif isinstance(mf, str) and mf.strip():
+        parts.append("주요 가구: " + mf.strip())
+    if win:
+        parts.append("창문/조명: " + str(win).strip())
+    # PD-authoritative facts (e.g. sink mounted at counter height)
+    notes = e.get("pd_notes") or []
+    if isinstance(notes, list) and notes:
+        parts.append("고정 사실: " + " ".join(str(n).strip() for n in notes)[:400])
+    if not parts:
+        return ""
+    return ("Korean home interior. " + " ".join(parts) +
+            " 카메라가 방을 천천히 훑듯, 위 요소가 모두 고정된 위치에 보인다. "
+            "배경 오브젝트는 정적이고 펫만 움직인다.")
+
+
+def _enrich_thin_set_descriptions(concepts: list[dict]) -> list[dict]:
+    """PD 2026-06-09: before the validator runs, fill in a thin/missing
+    set_description from set_library so the concept renders with a rich background
+    (Seedance is weak at backgrounds) instead of being BLOCKED into an empty slot."""
+    for c in concepts or []:
+        sa = (c.get("set_anchor") or "").strip()
+        sd = (c.get("set_description") or "").strip()
+        if not sa or len(sd) >= 400:
+            continue
+        built = build_set_description_from_library(sa)
+        if not built:
+            continue
+        # keep any Director specifics, but lead with the rich library description
+        c["set_description"] = built if not sd else (built + " " + sd)
+        log.info("enriched thin set_description '%s' from set_library[%s] (%d→%d chars)",
+                 (c.get("title") or "?")[:40], sa, len(sd), len(c["set_description"]))
+    return concepts
 
 
 def run_cameraman_validator(concepts: list[dict],
