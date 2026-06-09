@@ -3180,7 +3180,8 @@ _LEO_MARKING_EMPHASIS = (
     "warp, plasticize, or redraw his face.")
 
 
-def _cut_character_ok(mp4_path: Path, who: str = "both", n_frames: int = 3) -> bool:
+def _cut_character_ok(mp4_path: Path, who: str = "both", n_frames: int = 3,
+                      strict_blaze: bool = False) -> bool:
     """PD 2026-06-08: per-cut CHARACTER gate for i2v output (av + rf photo_i2v),
     checked RIGHT AFTER the cut renders. Ryani/Leo markings (incl. a dedicated
     blaze-thickness question) + AI-distortion. ANGLE-AWARE: a side profile hiding
@@ -3254,12 +3255,18 @@ def _cut_character_ok(mp4_path: Path, who: str = "both", n_frames: int = 3) -> b
                 (f" The LAST image is the REFERENCE of Ryani's CORRECT markings — her "
                  f"white forehead BLAZE is a THIN NARROW line. The first "
                  f"{n_render_blaze} image(s) are the rendered cut. COMPARE the rendered "
-                 f"Ryani's blaze to the reference. Set blaze_too_thick=true when the "
-                 f"rendered blaze is NOTICEABLY wider than the reference's thin line — a "
-                 f"clearly thicker stripe or a broad patch an attentive viewer would "
-                 f"catch — judged on a FRONTAL/clear view of her face. If her face is "
-                 f"side/turned/unclear, or the blaze is about as thin as the reference, "
-                 f"set FALSE."
+                 f"Ryani's blaze to the reference. " +
+                 ("Be STRICT (this is the final cut where drift peaks): set "
+                  "blaze_too_thick=true if the rendered blaze is EVEN SOMEWHAT wider / "
+                  "more spread-out than the reference's thin line, on any clear view of "
+                  "her face. Only FALSE if it's as thin as the reference or her face "
+                  "isn't clearly visible."
+                  if strict_blaze else
+                  "Set blaze_too_thick=true when the rendered blaze is NOTICEABLY wider "
+                  "than the reference's thin line — a clearly thicker stripe or a broad "
+                  "patch an attentive viewer would catch — judged on a FRONTAL/clear "
+                  "view of her face. If her face is side/turned/unclear, or the blaze is "
+                  "about as thin as the reference, set FALSE.")
                  if blaze_ref else
                  " SEPARATELY judge Ryani's white forehead BLAZE: correct = a THIN "
                  "NARROW line nose→forehead; DEFECT (blaze_too_thick=true) = clearly "
@@ -3432,16 +3439,18 @@ def _set_expected_facts(set_anchor: str) -> str:
 
 
 def _gate_and_heal(out_mp4, prompt, who, emph, regen, progress_cb, dry_run,
-                   manifests, tag, scene_ref_path=None, expected_facts: str = "") -> bool:
+                   manifests, tag, scene_ref_path=None, expected_facts: str = "",
+                   strict_blaze: bool = False) -> bool:
     """PD 2026-06-08 per-cut self-heal, shared by i2v + ref dispatch. After a cut
     renders, run the angle-aware render gate (character markings + scene coherence +
     intent-vs-reference); on failure regenerate via the `regen(prompt_text)` callable
-    ×3 with strengthened canon → 1 alt prompt → drop the cut (flag for PD-confirmed
-    story rework). `scene_ref_path`/`expected_facts` enable the intent-match check.
-    Returns True if the cut is kept/clean, False if dropped."""
+    ×3 with strengthened canon → 1 alt prompt → keep best effort. `scene_ref_path`/
+    `expected_facts` enable the intent-match check. `strict_blaze` (PD 2026-06-09) =
+    use the stricter blaze comparison — set for the LAST cut where chain-drift peaks
+    and PD consistently catches a widened blaze."""
     def _ok():
         # Two focused calls (character + scene) — bundling dilutes attention.
-        if not _cut_character_ok(out_mp4, who):
+        if not _cut_character_ok(out_mp4, who, strict_blaze=strict_blaze):
             return False
         return _cut_scene_ok(out_mp4, scene_ref_path=scene_ref_path,
                              expected_facts=expected_facts)
@@ -3960,7 +3969,8 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                 _gate_and_heal(out_mp4, prompt, _who, _emph, _seedance_ref_safe,
                                progress_cb, dry_run, manifests, tag,
                                scene_ref_path=scene_ref_path,
-                               expected_facts=_set_expected_facts(set_anchor))
+                               expected_facts=_set_expected_facts(set_anchor),
+                               strict_blaze=(i >= len(cuts) - 2))
                 continue
 
         if mode == "interp":
@@ -4095,10 +4105,15 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
             _seedance_i2v_safe(p, image=_regen_img)
 
         _i2v_sa = cc.get("set_anchor") or set_anchor
+        # PD 2026-06-09: chain drift peaks at the FINAL cut → stricter blaze there
+        # (PD repeatedly catches a widened blaze on the last cut). Limited to one cut
+        # + keep-best-effort, so no global re-render loop.
+        _is_last_region = (i >= len(cuts) - 2)  # last 2 cuts: drift peaks
         _gate_and_heal(out_mp4, prompt, _who, _emph, _i2v_regen,
                        progress_cb, dry_run, manifests, tag,
                        scene_ref_path=scene_ref_path,
-                       expected_facts=_set_expected_facts(_i2v_sa))
+                       expected_facts=_set_expected_facts(_i2v_sa),
+                       strict_blaze=_is_last_region)
 
     # Step 3a: per-cut fade-out + fade-in for smooth chain transitions
     # (PD 2026-06-01 PM: "컷사이 넘어갈때 f/o 통해서 어색함을 없애야해").
