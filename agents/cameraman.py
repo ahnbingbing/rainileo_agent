@@ -3215,14 +3215,39 @@ def _cut_character_ok(mp4_path: Path, who: str = "both", n_frames: int = 3) -> b
                     "real-cat look. (A nose scar is NOT required — current Leo has a "
                     "faint one but baby/kitten Leo had none; do not fail on the scar.)")
             ask_blaze = w in ("ryani", "both")
+            # PD 2026-06-09: text-only "is the blaze thin?" was too lenient — Seedance
+            # ref-mode keeps over-widening Ryani's blaze and the gate passed it. Give
+            # the VLM Ryani's CORRECT thin-blaze REFERENCE image to COMPARE against
+            # (the same fix that made the scene gate reliable). Flag whenever the
+            # rendered blaze is clearly WIDER than the reference, at ANY angle where
+            # it's visible (not just frontal).
+            blaze_ref = None
+            n_render_blaze = len(parts)
+            if ask_blaze:
+                _bref = ROOT / "assets" / "character_ref" / "ryani_solo.png"
+                if _bref.exists():
+                    try:
+                        parts.append(_gt.Part.from_bytes(
+                            data=_bref.read_bytes(), mime_type="image/png"))
+                        blaze_ref = True
+                    except Exception:
+                        blaze_ref = False
             blaze_q = (
-                " SEPARATELY and CAREFULLY, judge ONE specific Ryani defect that a "
-                "holistic look misses: the white BLAZE down her face. Correct = a THIN "
-                "NARROW stripe/line from nose up between the eyes. DEFECT = the blaze is "
-                "THICK, WIDE, BROAD, or covers a large area of the muzzle/forehead "
-                "(Seedance commonly over-widens it). Set blaze_too_thick=true ONLY when "
-                "Ryani's face is frontal enough to see the blaze AND it is clearly too "
-                "thick/wide; otherwise false (side profile / not visible = false)."
+                (f" The LAST image is the REFERENCE of Ryani's CORRECT markings — her "
+                 f"white forehead BLAZE is a THIN NARROW line. The first "
+                 f"{n_render_blaze} image(s) are the rendered cut. COMPARE the rendered "
+                 f"Ryani's blaze to the reference. Be STRICT — PD requires the blaze to "
+                 f"stay a thin line. Set blaze_too_thick=true if the rendered blaze is "
+                 f"EVEN SOMEWHAT wider / thicker / more spread-out than the reference's "
+                 f"thin line, at ANY angle where the blaze is visible (when unsure, "
+                 f"lean TRUE — we'd rather regenerate than ship a widened blaze). Only "
+                 f"set false if the blaze is genuinely as thin as the reference, or not "
+                 f"visible at all (full side/back of head)."
+                 if blaze_ref else
+                 " SEPARATELY judge Ryani's white forehead BLAZE: correct = a THIN "
+                 "NARROW line nose→forehead; DEFECT (blaze_too_thick=true) = clearly "
+                 "THICK/WIDE/BROAD covering much of the forehead, at any angle where "
+                 "visible; not-visible/thin = false.")
             ) if ask_blaze else ""
             blaze_field = ",\"blaze_too_thick\":true|false" if ask_blaze else ""
             prompt = (

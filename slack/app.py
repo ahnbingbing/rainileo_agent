@@ -309,10 +309,13 @@ def _do_veto(vid: str, delete: bool = False) -> str:
         return f":x: veto 실패 ({vid}): {str(e)[:300]}"
     try:
         with db() as con:
+            # state='archived' (the cards.state CHECK constraint does NOT allow
+            # 'vetoed' — PD 2026-06-09 bug: the old 'vetoed' value silently failed
+            # the UPDATE so uploaded stayed 1). uploaded=0 is the load-bearing flag
+            # (arc/cooldown only count uploaded=1).
             con.execute(
-                "UPDATE cards SET uploaded=0, state=?, updated_at=datetime('now') "
-                "WHERE youtube_video_id=?",
-                ("vetoed_deleted" if delete else "vetoed", vid))
+                "UPDATE cards SET uploaded=0, state='archived', "
+                "updated_at=datetime('now') WHERE youtube_video_id=?", (vid,))
             try:
                 con.execute("UPDATE launch_threads SET vetoed=1 WHERE video_id=?", (vid,))
             except Exception:
