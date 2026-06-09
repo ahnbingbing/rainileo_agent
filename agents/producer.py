@@ -148,6 +148,21 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
                 "유리 테이블", "외출")
         return any(c in sc for c in cues)
 
+    def _is_both(sub):
+        s = (sub or "").lower()
+        return ("ryani" in s and "leo" in s)
+    def _tod(captured_iso):
+        # PD 2026-06-09: "어둡다"는 루미넌스가 아니라 **찍힌 시간**으로 본다. 늦은 저녁/밤
+        # 클립은 런칭 Day2부터("저녁엔 이래요!"), Day1은 낮/노멀 시점 우선.
+        try:
+            h = int((captured_iso or "")[11:13])
+        except (ValueError, IndexError):
+            return "?"
+        if 7 <= h < 17:
+            return "낮"        # daytime / normal
+        if 17 <= h < 20:
+            return "저녁"      # evening
+        return "밤"            # late night / early morning
     best_videos = [
         {"id": r["asset_id"], "act": r["activity"] or "", "sub": r["subjects_csv"] or "",
          "mood": r["mood"] or "", "sc": _ground_truth_sc(r),
@@ -159,15 +174,22 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
          "has_human": bool(r["has_human"]),
          "motion": _motion_level(r),     # "low" = looks like a still photo
          "outing": _outing_flag(r),      # True = cafe/outing, NOT home
+         # PD 2026-06-09: surface togetherness + time-of-day (by capture time, NOT
+         # luminance). Launch Day1 = 둘이 같이(`both`) + 낮(`tod`=낮) 우선; 저녁/밤 클립은
+         # Day2+("저녁엔 이래요"). Reference ep 20260519_231625 = both together, daytime.
+         "both": _is_both(r["subjects_csv"]),
+         "tod": _tod(r["captured_iso"]),
          **_extra_vlm(r)}
         for r in con.execute(
             """
             SELECT asset_id, activity, subjects_csv, mood, scene_description, pd_notes,
-                   duration_sec, captured_iso, location_type, notes, has_human
+                   duration_sec, captured_iso, location_type, notes, has_human, lighting
             FROM assets
             WHERE vlm_analyzed_at IS NOT NULL AND kind='video' AND quality_score >= 0.7
-            ORDER BY captured_iso DESC
-            LIMIT 20
+            ORDER BY
+              CASE WHEN subjects_csv LIKE '%ryani%' AND subjects_csv LIKE '%leo%' THEN 0 ELSE 1 END,
+              captured_iso DESC
+            LIMIT 28
             """,
         ).fetchall()
     ]
