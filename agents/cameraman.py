@@ -4128,25 +4128,19 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         if not src_mp4.exists():
             continue
         dur = float(cc.get("duration_seconds") or 5)
-        is_wink = cc.get("function") == "wink_ending"
-        # Last body cut = the cut immediately before a wink_ending cut
         next_cc = concept_cuts[i + 1] if i + 1 < len(concept_cuts) else {}
-        is_last_body = (next_cc.get("function") == "wink_ending")
-        # The genuinely final cut of the episode (wink, or last body if no wink)
         is_last_overall = (i == len(cuts) - 1)
-        # PD 2026-06-08 (CORRECTED): the 여운 is NOT a freeze + fade-out — the caption
-        # must STAY ALIVE and the video just plays ~2s longer (handled in Step 3b by
-        # extending the last cut, + _hold_final_caption). So the final cut must NOT
-        # fade to black (that would kill the caption). Give it fade-in only, no out.
-        # Fade params
-        if is_last_overall:
-            fade_in_d, fade_out_d = (0.5 if is_wink else (0.3 if i > 0 else 0.0)), 0.0
-        elif is_wink:
-            fade_in_d, fade_out_d = 0.5, 0.0
-        elif is_last_body:
-            fade_in_d, fade_out_d = 0.3, 1.5  # lingering out into the wink
-        else:
-            fade_in_d, fade_out_d = (0.3 if i > 0 else 0.0), 0.3
+        # PD 2026-06-09: a CHAINED one-take must FLOW — each cut chains from the prev
+        # cut's last frame, so fading to black between every cut (old logic) created
+        # visible ~0.07s black flashes at each boundary (Giri "검은 프레임 삽입"). Fade
+        # ONLY at the episode open (cut1) and at TRUE scene boundaries (a cut that is
+        # NOT chained from the previous). Between chained cuts → HARD CUT (seamless).
+        # The 여운 (last cut) is NOT a fade — it's +2s longer (Step 3b) with the caption
+        # held, so the final cut never fades to black.
+        chained = bool(cc.get("chain_from_prev"))
+        next_chained = bool(next_cc.get("chain_from_prev"))
+        fade_in_d = 0.0 if chained else (0.4 if i == 0 else 0.3)
+        fade_out_d = 0.0 if (next_chained or is_last_overall) else 0.3
         # Build filter expression
         filters = []
         if fade_in_d > 0:
@@ -4165,7 +4159,7 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
             "-preset", "fast", "-crf", "18",
             str(faded_mp4),
         ]
-        label = "wink-in" if is_wink else ("last-body" if is_last_body else "body")
+        label = "open" if i == 0 else ("chained(hard-cut)" if chained else "scene-cut")
         _run(cmd,
              f":curved_arrow: [3a/6] Fade {tag} ({label}: in={fade_in_d}s out={fade_out_d}s)",
              progress_cb, dry_run)
