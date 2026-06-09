@@ -1676,22 +1676,42 @@ def build_set_description_from_library(set_anchor: str) -> str:
             "배경 오브젝트는 정적이고 펫만 움직인다.")
 
 
+def _looks_truncated(s: str) -> bool:
+    """PD 2026-06-09: an LLM output cut off mid-sentence (Gemini/OpenAI hit a token
+    cap) ends without terminal punctuation. The Director's long set_description kept
+    truncating ('...is clean white painted (NOT beige') → Validator blocked every
+    render. Detect it so we can replace it from the library."""
+    t = (s or "").rstrip()
+    if not t:
+        return False
+    return t[-1] not in ".!?。」'\")" + "”’…"
+
+
 def _enrich_thin_set_descriptions(concepts: list[dict]) -> list[dict]:
-    """PD 2026-06-09: before the validator runs, fill in a thin/missing
+    """PD 2026-06-09: before the validator runs, fill in a thin / missing / TRUNCATED
     set_description from set_library so the concept renders with a rich background
     (Seedance is weak at backgrounds) instead of being BLOCKED into an empty slot."""
     for c in concepts or []:
         sa = (c.get("set_anchor") or "").strip()
         sd = (c.get("set_description") or "").strip()
-        if not sa or len(sd) >= 400:
+        if not sa:
+            continue
+        thin = len(sd) < 400
+        truncated = _looks_truncated(sd)
+        if not (thin or truncated):
             continue
         built = build_set_description_from_library(sa)
         if not built:
             continue
-        # keep any Director specifics, but lead with the rich library description
-        c["set_description"] = built if not sd else (built + " " + sd)
-        log.info("enriched thin set_description '%s' from set_library[%s] (%d→%d chars)",
-                 (c.get("title") or "?")[:40], sa, len(sd), len(c["set_description"]))
+        # Truncated → REPLACE (the cut-off tail is unusable). Thin → prepend library.
+        if truncated and not thin:
+            c["set_description"] = built
+            why = "truncated→replaced"
+        else:
+            c["set_description"] = built if not sd else (built + " " + sd)
+            why = "thin→prepended"
+        log.info("set_description %s '%s' from set_library[%s] (%d→%d chars)",
+                 why, (c.get("title") or "?")[:40], sa, len(sd), len(c["set_description"]))
     return concepts
 
 

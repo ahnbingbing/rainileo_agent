@@ -140,7 +140,8 @@ def launch_pipeline(target: dt.date, *,
                     ask_cb: Callable[[list], dict] | None = None,
                     slack_client=None,
                     slack_channel: str | None = None,
-                    lane_filter: str | None = None) -> list[dict]:
+                    lane_filter: str | None = None,
+                    slot_filter: str | None = None) -> list[dict]:
     """Produce the day's 4 launch episodes per the Latin-square assignment.
 
     Returns a list of slot result dicts: {lane, slot, output, video_id,
@@ -153,6 +154,8 @@ def launch_pipeline(target: dt.date, *,
     assignments = day_assignments(target)
     if lane_filter:  # PD 2026-06-09: re-render only one lane's slots (e.g. AV redo)
         assignments = [(ln, hh) for ln, hh in assignments if ln == lane_filter]
+    if slot_filter:  # re-render only one timeslot (e.g. a single failed slot)
+        assignments = [(ln, hh) for ln, hh in assignments if hh == slot_filter]
     if max_slots is not None:
         assignments = assignments[:max_slots]  # shakedown: render a subset
 
@@ -333,6 +336,7 @@ def main() -> int:
                    help="shakedown: only run the first N slots (e.g. 1)")
     p.add_argument("--lane", choices=["ai_vtuber", "real_footage"], default=None,
                    help="re-render only this lane's slots (e.g. AV redo)")
+    p.add_argument("--slot", default=None, help="re-render only this HH:MM timeslot")
     args = p.parse_args()
     # default to TOMORROW (consistent with /daily/test; PD 2026-06-07)
     target = (dt.date.fromisoformat(args.date) if args.date
@@ -371,7 +375,8 @@ def main() -> int:
 
     launch_pipeline(target, progress_cb=progress_cb, video_cb=None,
                     do_upload=not args.no_upload, max_slots=args.max_slots,
-                    slack_client=client, slack_channel=ch, lane_filter=args.lane)
+                    slack_client=client, slack_channel=ch, lane_filter=args.lane,
+                    slot_filter=args.slot)
     return 0
 
 
