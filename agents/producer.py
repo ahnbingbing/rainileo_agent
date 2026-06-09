@@ -656,7 +656,7 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
              "clip's actual sc. Flowing narrative, not dry list. Output ONLY "
              "the JSON array.")
     from agents.llm_cascade import call_text_cascade
-    text = call_text_cascade(system, user, max_tokens=8000).strip()
+    text = call_text_cascade(system, user, max_tokens=12000).strip()  # PD 2026-06-09: avoid truncation
     concepts = _robust_json_parse(text)
     # PD 2026-06-05: NO cut cap — script decides length.
     # PD 2026-06-06: stamp the single-pass author so the render pipeline can

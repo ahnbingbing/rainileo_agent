@@ -135,6 +135,10 @@ def _call_anthropic_raw(system: str, user: str, *, model: str,
                  getattr(usage, "cache_creation_input_tokens", 0),
                  getattr(usage, "cache_read_input_tokens", 0),
                  getattr(usage, "output_tokens", 0))
+    # PD 2026-06-09: detect truncation (output hit max_tokens) → raise so the caller
+    # retries with a higher limit instead of silently passing a cut-off JSON.
+    if getattr(msg, "stop_reason", "") == "max_tokens":
+        raise RuntimeError(f"anthropic output truncated (max_tokens={max_tokens})")
     parts = [b.text for b in msg.content if getattr(b, "type", "") == "text"]
     return "".join(parts).strip()
 
@@ -148,14 +152,19 @@ def _call_openai_fallback(system: str, user: str, max_tokens: int = 16000) -> st
         raise RuntimeError("openai package not installed")
     client = OpenAI(timeout=int(os.getenv("LLM_TIMEOUT_S", "45")), max_retries=0)
     model = os.environ.get("OPENAI_FALLBACK_MODEL", "gpt-5")
+    # PD 2026-06-09: pass the output-token budget (was unset → could truncate the
+    # large Director JSON). gpt-5 uses max_completion_tokens.
     resp = client.chat.completions.create(
         model=model,
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
+        max_completion_tokens=max_tokens,
     )
     log.info("OpenAI fallback used (model=%s)", model)
+    if resp.choices and resp.choices[0].finish_reason == "length":
+        raise RuntimeError(f"openai output truncated (max={max_tokens})")
     return (resp.choices[0].message.content or "").strip()
 
 
@@ -173,11 +182,23 @@ def _call_gemini_fallback(system: str, user: str, max_tokens: int = 16000) -> st
     gclient = _genai.Client(api_key=api_key, http_options=_gtypes.HttpOptions(
         timeout=int(os.getenv("LLM_TIMEOUT_S", "45")) * 1000))
     model_name = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-2.5-pro")
+    # PD 2026-06-09 (THE truncation bug): Gemini defaults max_output_tokens to ~8k,
+    # so the Director's ~20k-token JSON was silently CUT OFF mid-sentence (set_description
+    # ended at 'SOUTH wall', motion_prompt mid-word) → Validator blocked the concept.
+    # Set the real budget + detect MAX_TOKENS truncation → raise.
     resp = gclient.models.generate_content(
         model=model_name, contents=user,
-        config=_gtypes.GenerateContentConfig(system_instruction=system or None),
+        config=_gtypes.GenerateContentConfig(
+            system_instruction=system or None,
+            max_output_tokens=max_tokens),
     )
     log.info("Gemini fallback used (model=%s)", model_name)
+    try:
+        fr = str((resp.candidates or [{}])[0].finish_reason or "")
+        if "MAX_TOKENS" in fr.upper():
+            raise RuntimeError(f"gemini output truncated (max_output_tokens={max_tokens})")
+    except (IndexError, AttributeError):
+        pass
     return (resp.text or "").strip()
 
 

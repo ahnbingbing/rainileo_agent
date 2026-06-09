@@ -38,7 +38,10 @@ def call_text_cascade(system: str, user: str, *,
                 ] if system else []) + [
                     {"role": "user", "content": user}
                 ],
+                max_completion_tokens=max_tokens,  # PD 2026-06-09: was unset → truncation
             )
+            if resp.choices and resp.choices[0].finish_reason == "length":
+                raise RuntimeError("openai output truncated")
             log.info("LLM cascade: OpenAI used")
             circuit.mark_up("openai")
             return (resp.choices[0].message.content or "").strip()
@@ -65,8 +68,16 @@ def call_text_cascade(system: str, user: str, *,
         resp = gclient.models.generate_content(
             model=model_name,
             contents=user,
-            config=_gtypes.GenerateContentConfig(system_instruction=system or None),
+            config=_gtypes.GenerateContentConfig(
+                system_instruction=system or None,
+                max_output_tokens=max_tokens),  # PD 2026-06-09: was unset → ~8k truncation
         )
+        try:
+            fr = str((resp.candidates or [{}])[0].finish_reason or "")
+            if "MAX_TOKENS" in fr.upper():
+                raise RuntimeError("gemini output truncated")
+        except (IndexError, AttributeError):
+            pass
         log.info("LLM cascade: Gemini used")
         circuit.mark_up("gemini")
         return (resp.text or "").strip()
@@ -91,6 +102,8 @@ def call_text_cascade(system: str, user: str, *,
             messages=[{"role": "user", "content": user}],
         )
     log.info("LLM cascade: Anthropic last-resort used")
+    if getattr(msg, "stop_reason", "") == "max_tokens":
+        log.warning("cascade Anthropic output truncated (max_tokens=%s)", max_tokens)
     parts = [b.text for b in msg.content if getattr(b, "type", "") == "text"]
     return "".join(parts).strip()
 
