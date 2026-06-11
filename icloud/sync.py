@@ -418,6 +418,7 @@ def sync_album(
     *,
     subject_map: dict[str, str],
     since: dt.date | None = None,
+    added_since: dt.date | None = None,
     limit: int | None = None,
     dry_run: bool = False,
     download_missing: bool = False,
@@ -452,9 +453,19 @@ def sync_album(
         export_dir = ROOT / "data" / "tmp" / "icloud_export"
         shutil.rmtree(export_dir, ignore_errors=True)
         if not dry_run:
-            bulk_export_to(album_name, export_dir, dry_run=dry_run, since=since)
+            bulk_export_to(album_name, export_dir, dry_run=dry_run,
+                           since=(added_since or since))
 
-    if since:
+    # PD 2026-06-12: when the user ADDS OLD videos (years-old capture dates), filter by
+    # date_added — NOT capture date — so they actually register. (--since filters by
+    # capture date and dropped every old clip the user just imported.)
+    if added_since:
+        def _added(p):
+            da = getattr(p, "date_added", None)
+            return da.date() if da else None
+        photos = [p for p in photos if (_added(p) or dt.date.min) >= added_since]
+        log.info("filter date_added >= %s → %d items", added_since, len(photos))
+    elif since:
         photos = [p for p in photos if p.date and p.date.date() >= since]
     if limit:
         photos = photos[:limit]
@@ -688,6 +699,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--album", required=False, default=os.getenv("ICLOUD_ALBUM", "Ryani & Leo"),
                     help="Photos.app album name to sync (default: 'Ryani & Leo')")
     ap.add_argument("--since", help="YYYY-MM-DD; only process items captured on/after this date")
+    ap.add_argument("--added-since", help="YYYY-MM-DD; only process items ADDED to the "
+                    "library on/after this date (use when importing OLD footage — filters "
+                    "by date_added, not capture date, and scopes the export to --added-after)")
     ap.add_argument("--limit", type=int, help="cap items processed (for testing)")
     ap.add_argument("--subject-map", help="comma list 'name=id,...' or JSON dict; merged over defaults")
     ap.add_argument("--dry-run", action="store_true", help="don't copy files or write DB rows")
@@ -720,6 +734,7 @@ def main(argv: list[str] | None = None) -> int:
 
     subject_map = parse_subject_map(args.subject_map)
     since = dt.date.fromisoformat(args.since) if args.since else None
+    added_since = dt.date.fromisoformat(args.added_since) if args.added_since else None
 
     def _one():
         try:
@@ -727,6 +742,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.album,
                 subject_map=subject_map,
                 since=since,
+                added_since=added_since,
                 limit=args.limit,
                 dry_run=args.dry_run,
                 download_missing=args.download_missing,
