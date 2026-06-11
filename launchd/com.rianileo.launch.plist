@@ -45,6 +45,10 @@
       <key>AV_GATE_HEAL_TRIES</key><string>1</string>
       <key>SEEDANCE_MAX_CALLS</key><string>60</string>
       <key>OPENAI_FALLBACK_MODEL</key><string>gpt-4.1</string>
+      <!-- PD 2026-06-12: run slots SEQUENTIALLY (not parallel). Concurrent slots
+           opened osxphotos at the same time → download lock contention → 0/3
+           pre-download failures → slots emptied. Sequential = no contention. -->
+      <key>LAUNCH_CONCURRENCY</key><string>1</string>
     </dict>
 
     <key>StartCalendarInterval</key>
