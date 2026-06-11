@@ -1340,6 +1340,21 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
 # ──────────────────────────────────────────────────────────────────────
 # Subprocess runner
 # ──────────────────────────────────────────────────────────────────────
+def _clean_caption_text(s: str) -> str:
+    """PD 2026-06-11: enforce the channel caption rules on one line — strip
+    parentheses (no 괄호), a leading speaker label (랴니:/레오:/Ryani:), and quote
+    marks that WRAP a phrase — but KEEP an apostrophe inside an English word
+    (What's, they're). The earlier blunt `replace("'", "")` broke contractions
+    (What's→Whats); this only removes a quote at a word boundary."""
+    if not s:
+        return s
+    s = s.replace("(", "").replace(")", "").replace("（", "").replace("）", "")
+    s = re.sub(r"^\s*(랴니엄마|랴니|레오|Ryani|Leo)\s*[:：]\s*", "", s)
+    # remove wrapping quotes (start/end or next to whitespace) but not intra-word '
+    s = re.sub(r"(?<![A-Za-z])['‘’\"“”]|['‘’\"“”](?![A-Za-z])", "", s)
+    return s.strip()
+
+
 def _retime_cut_scenes(scenes: list, clip_dur: float, min_read: float = 2.5,
                        is_wink: bool = False) -> list:
     """PD 2026-06-11: re-time a cut's caption scenes onto its ACTUAL (post-retime)
@@ -1537,6 +1552,12 @@ def _vlm_post_render_caption_rewrite(work_dir: Path, manifests: dict,
             _clip_dur = 0.0
         _cc_w = concept_cuts[idx] if idx < len(concept_cuts) else {}
         _is_wink = (_cc_w.get("function") == "wink_ending")
+        # PD 2026-06-11: strip parens/speaker-labels/wrapping-quotes (keep English
+        # apostrophes) — the VLM rewrite kept re-adding "(랴니: …)" style decorations.
+        for _sc in new_caps:
+            if isinstance(_sc, dict):
+                _sc["ko"] = _clean_caption_text(_sc.get("ko", ""))
+                _sc["en"] = _clean_caption_text(_sc.get("en", ""))
         new_caps = _retime_cut_scenes(
             new_caps, _clip_dur,
             min_read=float(os.getenv("CAPTION_MIN_SEC", "2.5")), is_wink=_is_wink)
@@ -2555,6 +2576,19 @@ def _trim_real_footage_clips(manifests: dict, anim_dir: Path,
         if transpose_vf:
             vf = ",".join(p for p in (transpose_vf, vf) if p)
 
+        # PD 2026-06-11: fill the 9:16 frame (no black letterbox) as the FINAL vf
+        # step. A landscape clip pans horizontally to reveal its width over time; a
+        # human-cropped clip (crop_vf already chose a face-excluding window) only
+        # fits (no pan, so the sweep can't pan a face back in). Toggle: RF_PANSCAN=0.
+        if os.getenv("RF_PANSCAN", "1") == "1":
+            _dw, _dh = _probe_display_dims(src_path)
+            _is_land = bool(_dw and _dh and (_dw / _dh) > (720.0 / 1280.0))
+            # only landscape needs reframing; a portrait clip already fills 9:16.
+            if _is_land:
+                _do_pan = not bool(crop_vf)
+                vf = ",".join(p for p in (vf, _panscan_fill_filter(
+                    trim_dur, is_landscape=True, pan=_do_pan)) if p)
+
         cmd = ["ffmpeg", "-y", "-nostats", "-loglevel", "error"]
         if transpose_vf:
             cmd.append("-noautorotate")
@@ -2750,6 +2784,54 @@ def _vlm_pet_crop_filter(src_path: Path, trim_start: float = 0.0,
     except Exception as ex:
         log.warning("vlm crop failed for %s: %s", src_path.name, ex)
         return ""
+
+
+def _probe_display_dims(path: Path) -> tuple[int, int]:
+    """Display (rotation-corrected) width,height of a video. (0,0) on failure."""
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+             "stream=width,height:stream_side_data=rotation", "-of", "json", str(path)],
+            capture_output=True, text=True, timeout=15)
+        d = json.loads(r.stdout or "{}")
+        st = (d.get("streams") or [{}])[0]
+        w, h = int(st.get("width") or 0), int(st.get("height") or 0)
+        rot = 0
+        try:
+            rot = int(float(_probe_rotation(path)))
+        except Exception:
+            rot = 0
+        if rot in (90, -90, 270, -270):
+            w, h = h, w   # rotated → display dims swap
+        return w, h
+    except Exception:
+        return 0, 0
+
+
+def _panscan_fill_filter(dur: float, is_landscape: bool, pan: bool = True,
+                         W: int = 720, H: int = 1280) -> str:
+    """PD 2026-06-11: fill the 9:16 frame with NO black letterbox, and for a
+    LANDSCAPE source PAN horizontally across its width over the clip so the sides
+    are revealed over time ("꽉 채우되 좌우로 움직여서 더 보여주도록") — instead of
+    assemble's decrease+pad (which boxed landscape clips into a small center strip).
+    Orientation is decided in Python so the ffmpeg expr has NO conditionals/commas
+    (those broke parsing). Output is exactly WxH so the concat normalize pads nothing.
+    - landscape: scale to fill HEIGHT (width ≥ W), crop a WxH window; pan x sweeps
+      0 → (in_w-W) over `dur` (pan=True; t never exceeds dur so no clamp needed),
+      else centered.
+    - portrait/square: scale to fill WIDTH (height ≥ H), center-crop the height."""
+    if is_landscape:
+        if pan and dur and dur > 0.1:
+            # CENTERED partial sweep across the middle `frac` of the available width,
+            # so the subject (usually centre-framed) stays in view while the sides are
+            # revealed — a full 0→edge pan walked the subject out of frame. Tunable.
+            frac = max(0.1, min(1.0, float(os.getenv("RF_PAN_FRACTION", "0.5"))))
+            a = (1.0 - frac) / 2.0
+            x = f"(in_w-{W})*({a:.3f}+{frac:.3f}*t/{dur:.2f})"
+        else:
+            x = f"(in_w-{W})/2"
+        return f"scale=-2:{H},crop={W}:{H}:{x}:0"
+    return f"scale={W}:-2,crop={W}:{H}:0:(in_h-{H})/2"
 
 
 def _build_crop_filter(crop_out: str, zoom: float = 1.3) -> str:
