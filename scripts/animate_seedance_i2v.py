@@ -186,15 +186,19 @@ def submit_job(api_key: str, model: str, *,
     if mode not in ("i2v", "interp", "ref"):
         raise ValueError(f"unknown mode: {mode}")
 
-    # Duration constraint: BytePlus rejects duration!=5 for the fast model
-    # in r2v (ref) mode with HTTP 400 "InvalidParameter". Clamp here so callers
-    # can ask for 6/8s without per-call special-casing. Observed-valid set:
-    #   fast i2v/interp: 3, 4, 5  (caller's seconds ≤5 already works)
-    #   fast ref       : 5 only
+    # Duration constraint: BytePlus rejects duration!=5 for the fast model with
+    # HTTP 400 "InvalidParameter". EMPIRICALLY (PD 2026-06-11, the 6/12 AV cut4
+    # failure) fast REJECTS duration=4 in i2v too — NOT just ref. The earlier note
+    # that fast i2v accepts 3/4/5 was WRONG; fast accepts ONLY 5 in both ref AND
+    # i2v. So clamp BOTH to exactly 5. Episode cut length is set downstream by the
+    # Step 3b speed-retime (AV_CUT_OUTPUT_SECONDS), NOT by the Seedance duration —
+    # so always asking for 5 here is free. Observed-valid set:
+    #   fast ref / i2v : 5 ONLY
+    #   fast interp    : ≤4 (gap-fill, first+last frame — different content config)
     #   standard       : 3-12 (full range)
     if "fast" in model:
-        if mode == "ref" and seconds != 5:
-            print(f"WARN: fast model in ref mode supports only 5s — "
+        if mode in ("ref", "i2v") and seconds != 5:
+            print(f"WARN: fast model in {mode} mode supports only 5s — "
                   f"clamping seconds={seconds} → 5", file=sys.stderr)
             seconds = 5
         elif seconds > 5:
