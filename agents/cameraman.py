@@ -4353,8 +4353,15 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         # held, so the final cut never fades to black.
         chained = bool(cc.get("chain_from_prev"))
         next_chained = bool(next_cc.get("chain_from_prev"))
-        fade_in_d = 0.0 if chained else (0.4 if i == 0 else 0.3)
-        fade_out_d = 0.0 if (next_chained or is_last_overall) else 0.3
+        # PD 2026-06-11: NO black fade BETWEEN cuts — PD asked for the inter-cut
+        # fade-to-black to be removed (it caused a visible black dip at every non-
+        # chained scene boundary: this cut faded OUT to black + the next faded IN
+        # from black). Only the very first cut fades in from black (gentle episode
+        # open after the intro bumper). Every other boundary is a HARD CUT, and when
+        # CHAIN_TRANSITION=crossfade the assembler dissolves ALL boundaries (below)
+        # so scene changes are smooth without any black.
+        fade_in_d = 0.4 if i == 0 else 0.0
+        fade_out_d = 0.0
         # Build filter expression
         filters = []
         if fade_in_d > 0:
@@ -4514,17 +4521,14 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         "--music", manifests.get("bgm", str(DEFAULT_BGM)),
         "--out", str(out),
     ]
-    # PD 2026-06-09 보강 옵션: CHAIN_TRANSITION=crossfade → chained one-take cuts
-    # dissolve (no fade-to-black flash) instead of hard-cutting. Default
-    # (unset/"hardcut") keeps hard cuts — the chain is usually continuous enough
-    # that a hard cut is seamless; flip to crossfade only if a render looks jumpy.
+    # PD 2026-06-09/11 보강 옵션: CHAIN_TRANSITION=crossfade → cuts dissolve instead
+    # of any black fade. PD 2026-06-11: apply the dissolve to EVERY cut boundary, not
+    # just chain_from_prev ones — the inter-cut fade-to-black is now removed entirely
+    # (above), so a non-chained SCENE boundary would otherwise hard-cut; a short 0.2s
+    # dissolve makes scene changes smooth with no black dip (PD: "컷 사이 검정 f/o 빼기").
     if os.getenv("CHAIN_TRANSITION", "hardcut").lower() == "crossfade":
-        xfade_tags = [
-            it.get("tag")
-            for j, it in enumerate(cuts)
-            if j > 0 and it.get("tag")
-            and bool((concept_cuts[j] if j < len(concept_cuts) else {}).get("chain_from_prev"))
-        ]
+        xfade_tags = [it.get("tag") for j, it in enumerate(cuts)
+                      if j > 0 and it.get("tag")]
         if xfade_tags:
             asm_cmd += ["--xfade-tags", ",".join(xfade_tags),
                         "--xfade-dur", os.getenv("CHAIN_XFADE_DUR", "0.2")]
