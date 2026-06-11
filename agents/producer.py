@@ -640,18 +640,25 @@ def _robust_json_parse(text: str, allow_llm_repair: bool = True):
     raise RuntimeError(f"_robust_json_parse: could not parse/repair (len={len(text or '')})")
 
 
+def _onetake_today(target: dt.date) -> bool:
+    """PD 2026-06-12: one-take is an OCCASIONAL editing option, not the RF default.
+    Deterministic per-day gate — ~1 in RF_ONETAKE_EVERY days (default 3) is a one-take
+    day (stable for a given date so re-proposes agree)."""
+    import hashlib as _hl
+    every = max(1, int(os.getenv("RF_ONETAKE_EVERY", "3")))
+    h = int(_hl.sha1(target.isoformat().encode()).hexdigest(), 16)
+    return (h % every) == 0
+
+
 def _rf_long_candidates(context: dict) -> list[dict]:
     """The 12s+ original clips available to RF, longest-first (id/dur/sc/date).
-    PD 2026-06-12: MUST honor the batch dedup (context['exclude_asset_ids'], set per
-    slot) AND the upload cooldown — else the one-take path picks the SAME longest clip
-    for every slot, so two same-day RF came out on the identical 75s clip. Excluded
-    clips drop out → slot 2 picks the next-longest."""
+    PD 2026-06-12: honor the BATCH dedup (context['exclude_asset_ids'], per slot) so
+    two same-day slots don't grab the identical clip+segment. But do NOT apply the
+    cross-day upload cooldown here — a long clip has lots of unused footage and CAN be
+    reused another day with a DIFFERENT segment ("같은 동영상이더라도 사용하지 않은 구간은
+    향후 사용해도 되잖아"); the one-take picks a varied trim_start so re-use differs."""
     _min = float(os.getenv("RF_ONETAKE_MIN_SEC", "12"))
     _excl = set(context.get("exclude_asset_ids") or [])
-    try:
-        _excl |= _recently_used_rf_assets(_db())
-    except Exception:
-        pass
     pool = (context.get("available_videos") or []) + (context.get("archive_videos") or [])
     longs = [{"id": v.get("id"), "dur": float(v.get("dur") or 0),
               "sc": (v.get("sc") or "")[:240], "date": v.get("date")}
@@ -683,7 +690,7 @@ def _onetake_time_phrase(date_iso: str | None) -> str:
     return f"{round(days / 365.25)}년 전"
 
 
-def _vlm_clip_timeline(asset_id: str, win: float, n: int = 6,
+def _vlm_clip_timeline(asset_id: str, win: float, n: int = 6, trim_start: float = 0.0,
                        progress_cb: ProgressCb = None) -> str:
     """PD 2026-06-11: VLM-sample frames ACROSS a clip's [0,win] window and describe
     what UNFOLDS over time (beginning→middle→end), so a one-take's captions match the
@@ -713,7 +720,7 @@ def _vlm_clip_timeline(asset_id: str, win: float, n: int = 6,
         parts = []
         with _tf.TemporaryDirectory() as td:
             for i in range(n):
-                t = win * (i + 0.5) / n
+                t = trim_start + win * (i + 0.5) / n
                 jpg = Path(td) / f"t{i}.jpg"
                 _sp.run(["ffmpeg", "-y", "-nostats", "-loglevel", "error",
                          "-ss", f"{t:.2f}", "-i", str(local), "-frames:v", "1",
@@ -759,19 +766,34 @@ def _propose_realfootage_onetake(target: dt.date, context: dict,
     win = min(clip_dur, float(os.getenv("RF_ONETAKE_MAX_SEC", "24")))
     sc = long_clip.get("sc") or ""
     when = long_clip.get("date") or ""
+    # PD 2026-06-12: a long clip has lots of footage — DON'T always use the same
+    # [0,win] front segment (the 6/13 dup both showed the first 24s). Pick a VARIED
+    # window: deterministic offset seeded by date+clip so a re-use shows a DIFFERENT,
+    # so-far-unused part of the clip. (Story still completes within `win`.)
+    import hashlib as _hl
+    _slack = max(0.0, clip_dur - win)
+    if _slack > 1.0:
+        _seed = int(_hl.sha1(f"{target.isoformat()}|{cid}".encode()).hexdigest(), 16)
+        trim_start = round((_seed % 1000) / 1000.0 * _slack, 2)
+    else:
+        trim_start = 0.0
     if progress_cb:
         progress_cb(f":clapper: 긴 원테이크 모드 — {cid[-12:] if cid else '?'} "
-                    f"({clip_dur:.0f}s 원본 → {win:.0f}s 원테이크)")
-    # PD 2026-06-11: the static `sc` describes one frame and MISSED the actual story
-    # (the cafe clip = Leo secretly eating the table food while Ryani waits — sc only
-    # said "two pets on chairs"). A one-take's whole point is the moment that UNFOLDS,
-    # so VLM-sample frames ACROSS the window and get a beginning→middle→end timeline
-    # to ground the captions on what really happens. Best-effort (falls back to sc).
-    timeline = _vlm_clip_timeline(cid, win, progress_cb=progress_cb) or ""
+                    f"({clip_dur:.0f}s 원본 → {trim_start:.0f}~{trim_start+win:.0f}s 구간)")
+    # PD 2026-06-11/12: the static `sc` describes one frame and MISSED the actual story
+    # (the cafe clip = Leo secretly eating the table food while Ryani waits). VLM-sample
+    # frames across the CHOSEN [trim_start, trim_start+win] window for a beginning→
+    # middle→end timeline to ground the captions on what really happens.
+    timeline = _vlm_clip_timeline(cid, win, trim_start=trim_start,
+                                  progress_cb=progress_cb) or ""
     _ground = (f"TIMELINE (what unfolds over the clip, beginning→end): {timeline}\n"
                if timeline else "") + f"static scene tags: {sc}"
     _time_phrase = _onetake_time_phrase(long_clip.get("date"))
-    n_caps = max(3, min(8, int(win / 3.0)))   # ~3s per caption (read time)
+    # PD 2026-06-12: the STORY must finish before the clip ends ("이야기가 채 끝나기도
+    # 전에 동영상 종료됨"). Cap captions so they fit the window at a readable pace AND
+    # leave a ~1.2s tail (여운) so the last line lands inside the video.
+    _cap_win = max(2.6, win - 1.2)
+    n_caps = max(3, min(8, int(_cap_win / 2.8)))
     system = (
         "You are the narrator-script writer for the 'Ryani & Leo' pet Shorts "
         "(랴니=11살 암컷 프렌치불독·꼬리 없음, 레오=8개월 수컷 오렌지 고양이). You are given "
@@ -810,11 +832,14 @@ def _propose_realfootage_onetake(target: dt.date, context: dict,
             log.warning("one-take caption gen failed: %s", e)
     if not caps:
         return []
-    # normalize timing onto the window (defensive — same discipline as the burner)
+    # PD 2026-06-12: distribute captions within _cap_win (leaving the 여운 tail) so the
+    # last line FINISHES before the video ends — never spill past the clip.
+    caps = caps[:n_caps]
     n = len(caps)
     for j, s in enumerate(caps):
-        s["start"] = round(0.2 if j == 0 else j * win / n, 2)
-        s["end"] = round((j + 1) * win / n if j < n - 1 else max(win - 0.05, s["start"] + 1.0), 2)
+        s["start"] = round(0.2 if j == 0 else j * _cap_win / n, 2)
+        s["end"] = round((j + 1) * _cap_win / n if j < n - 1
+                         else max(_cap_win, s["start"] + 1.0), 2)
     concept = {
         "title": title or "랴니와 레오의 한 장면",
         "narrative_oneliner": oneliner or title,
@@ -832,7 +857,7 @@ def _propose_realfootage_onetake(target: dt.date, context: dict,
             "edit_effect": "none",
             "action": sc,
             "duration_seconds": round(win, 1),
-            "trim_start": 0.0,
+            "trim_start": trim_start,
             "captions": caps,
         }],
         "_onetake": True,
@@ -852,11 +877,13 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     PD 2026-06-06: `prior_feedback` carries the Giri review's findings from a
     failed attempt so this re-proposal fixes them (the Giri-driven retry loop).
     """
-    # PD 2026-06-11: RF DEFAULT = long-original one-take. The montage writer ignores
-    # the prompt rule, so when a long clip exists we take the DETERMINISTIC one-take
-    # path (1 long clip + narrator caption track) instead of this montage writer.
-    # RF_FORCE_ONETAKE=0 reverts to the old montage writer.
-    if os.getenv("RF_FORCE_ONETAKE", "1") == "1":
+    # PD 2026-06-12: one-take is ONE editing OPTION, not the RF default — "스크립트에
+    # 따라 그런 날도 있다는 거지. RF 모두 다 원테이크를 쓰라는 의미가 아냐." So use it only
+    # OCCASIONALLY (deterministic ~1 in RF_ONETAKE_EVERY days) when a strong long clip
+    # exists; most days go through the normal montage writer. RF_FORCE_ONETAKE=1 forces
+    # it (testing); =never disables.
+    _ot_mode = os.getenv("RF_FORCE_ONETAKE", "auto")
+    if _ot_mode != "never" and (_ot_mode == "1" or _onetake_today(target)):
         _longs = _rf_long_candidates(context)
         if _longs:
             try:
