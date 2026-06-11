@@ -141,7 +141,8 @@ def launch_pipeline(target: dt.date, *,
                     slack_client=None,
                     slack_channel: str | None = None,
                     lane_filter: str | None = None,
-                    slot_filter: str | None = None) -> list[dict]:
+                    slot_filter: str | None = None,
+                    exclude_asset_ids: list | None = None) -> list[dict]:
     """Produce the day's 4 launch episodes per the Latin-square assignment.
 
     Returns a list of slot result dicts: {lane, slot, output, video_id,
@@ -182,7 +183,10 @@ def launch_pipeline(target: dt.date, *,
     # PD 2026-06-10: shared across this batch's slots — asset_ids already used by
     # an earlier slot, so later slots avoid re-using them (the 6/11 two-RF-identical-
     # clips bug). set.add across threads is GIL-safe for our best-effort diversity.
-    batch_used_assets: set = set()
+    # PD 2026-06-11: pre-seed with caller-supplied exclusions so a SEPARATE single-
+    # slot run (e.g. RF 18:00 rendered after RF 08:00, when test renders aren't
+    # uploaded so the cooldown is inert) still avoids the other slot's clips.
+    batch_used_assets: set = set(exclude_asset_ids or [])
 
     def _slot_pipeline(lane: str, hhmm: str) -> dict | None:
         # PD 2026-06-08: each slot proposes ITS OWN concept and renders it in one
