@@ -282,6 +282,16 @@ def launch_pipeline(target: dt.date, *,
             # the first propose excluded them but a retry re-picked them (재탕).
             if batch_used_assets:
                 concept["_batch_exclude_asset_ids"] = sorted(batch_used_assets)
+            # PD 2026-06-12: RESERVE this concept's clips NOW (before the slow render)
+            # so a later slot's propose already excludes them. Two RF one-takes both
+            # grabbed the longest clip for 6/13 because the mark only happened AFTER
+            # render. (set.add is GIL-safe; the after-render mark below is a backstop.)
+            try:
+                for _c in (concept.get("cuts") or []):
+                    if _c.get("asset_id"):
+                        batch_used_assets.add(_c["asset_id"])
+            except Exception:
+                pass
             try:
                 outs = produce_and_render([concept], target, progress_cb=sp)
             except Exception as e:

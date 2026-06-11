@@ -641,13 +641,23 @@ def _robust_json_parse(text: str, allow_llm_repair: bool = True):
 
 
 def _rf_long_candidates(context: dict) -> list[dict]:
-    """The 12s+ original clips available to RF, longest-first (id/dur/sc/date)."""
+    """The 12s+ original clips available to RF, longest-first (id/dur/sc/date).
+    PD 2026-06-12: MUST honor the batch dedup (context['exclude_asset_ids'], set per
+    slot) AND the upload cooldown — else the one-take path picks the SAME longest clip
+    for every slot, so two same-day RF came out on the identical 75s clip. Excluded
+    clips drop out → slot 2 picks the next-longest."""
     _min = float(os.getenv("RF_ONETAKE_MIN_SEC", "12"))
+    _excl = set(context.get("exclude_asset_ids") or [])
+    try:
+        _excl |= _recently_used_rf_assets(_db())
+    except Exception:
+        pass
     pool = (context.get("available_videos") or []) + (context.get("archive_videos") or [])
     longs = [{"id": v.get("id"), "dur": float(v.get("dur") or 0),
               "sc": (v.get("sc") or "")[:240], "date": v.get("date")}
              for v in pool
-             if isinstance(v.get("dur"), (int, float)) and v.get("dur") >= _min]
+             if isinstance(v.get("dur"), (int, float)) and v.get("dur") >= _min
+             and v.get("id") not in _excl]
     longs.sort(key=lambda v: -(v.get("dur") or 0))
     # de-dup by id
     seen, out = set(), []
