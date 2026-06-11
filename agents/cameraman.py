@@ -1340,6 +1340,30 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
 # ──────────────────────────────────────────────────────────────────────
 # Subprocess runner
 # ──────────────────────────────────────────────────────────────────────
+def _retime_cut_scenes(scenes: list, clip_dur: float, min_read: float = 2.5,
+                       is_wink: bool = False) -> list:
+    """PD 2026-06-11: re-time a cut's caption scenes onto its ACTUAL (post-retime)
+    clip duration — cap the scene count to what fits at `min_read`s each, then
+    distribute evenly + gap-free, first at 0.1s. Keeps text/order; fixes only
+    start/end. This is applied to the VLM caption-rewrite output too, so the Caption
+    Agent's own start/end can't re-introduce 0.5s flash captions that land too late
+    to read (PD: 자막이 너무 늦게 나와 읽을 시간이 없어). Wink cuts keep their
+    intentional brief caption untouched."""
+    scenes = [s for s in (scenes or []) if (s.get("ko") or s.get("en"))]
+    if not scenes or is_wink:
+        return scenes
+    span = max(float(clip_dur or 0) or (len(scenes) * min_read), min_read)
+    max_n = max(1, int(span / min_read))
+    if len(scenes) > max_n:
+        scenes = scenes[:max_n]
+    n = len(scenes)
+    for j, s in enumerate(scenes):
+        s["start"] = round(0.1 if j == 0 else j * span / n, 2)
+        s["end"] = round((j + 1) * span / n if j < n - 1
+                         else max(span - 0.05, s["start"] + 1.0), 2)
+    return scenes
+
+
 def _vlm_post_render_caption_rewrite(work_dir: Path, manifests: dict,
                                         cuts: list[dict], concept_cuts: list[dict],
                                         anim_dir: Path, progress_cb=None,
@@ -1498,6 +1522,24 @@ def _vlm_post_render_caption_rewrite(work_dir: Path, manifests: dict,
         new_caps = new_cut.get("captions") or []
         if not new_caps:
             continue
+        # PD 2026-06-11: normalize the rewritten captions' timing to the ACTUAL
+        # rendered clip (post-retime) so the Caption Agent's start/end can't
+        # reintroduce flash captions (the 0.5s/1.2s scenes PD flagged).
+        _clip_dur = 0.0
+        try:
+            _mp4 = anim_dir / f"{tag}.mp4"
+            if _mp4.exists():
+                _clip_dur = float(subprocess.run(
+                    ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                     "-of", "default=nw=1:nk=1", str(_mp4)],
+                    capture_output=True, text=True, timeout=15).stdout.strip() or 0)
+        except Exception:
+            _clip_dur = 0.0
+        _cc_w = concept_cuts[idx] if idx < len(concept_cuts) else {}
+        _is_wink = (_cc_w.get("function") == "wink_ending")
+        new_caps = _retime_cut_scenes(
+            new_caps, _clip_dur,
+            min_read=float(os.getenv("CAPTION_MIN_SEC", "2.5")), is_wink=_is_wink)
         cap_data[tag]["scenes"] = new_caps
         # Drop legacy top-level ko/en
         cap_data[tag].pop("ko", None)
