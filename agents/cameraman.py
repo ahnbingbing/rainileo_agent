@@ -3618,6 +3618,88 @@ def _cut_scene_ok(mp4_path: Path, scene_ref_path=None, expected_facts: str = "",
         return True
 
 
+# Dynamic actions Seedance often FAILS to render (falls back to a static shot) —
+# the cut "서핑인데 서핑 안 함" class. We only run the (cost-bearing) action gate on
+# cuts whose prompt PROMISES one of these, so static/gentle cuts are never re-gen'd.
+_DYNAMIC_ACTION_KEYWORDS = (
+    "surf", "surfing", "swim", "swimming", "paddle", "jump", "leap", "leaping",
+    "jumping", "run", "running", "dash", "sprint", "dive", "diving", "splash",
+    "splashing", "ride", "riding", "wave", "flooded", "underwater", "fly", "flying",
+    "float", "floating", "spin", "spinning", "chase", "chasing", "pounce",
+    "서핑", "수영", "헤엄", "점프", "뛰어", "달리", "물장구", "파도", "잠수", "날아", "떠",
+)
+
+
+def _cut_action_ok(mp4_path: Path, action_prompt: str, n_frames: int = 3) -> bool:
+    """PD 2026-06-11 (렌더 바로 고치기): verify the cut actually RENDERED the dynamic
+    action its prompt promised. Seedance frequently drops a hard/surreal action
+    (cat surfing, dog swimming) and falls back to the pets just sitting on the floor
+    — the caption then lies ("서핑 고양이" over a dry-floor shot). We ONLY run this on
+    cuts whose prompt promises a dynamic action (keyword-gated, so static cuts cost
+    nothing) and fail ONLY when the action is CLEARLY absent. Fail-open (keep) on
+    uncertainty / no API / error."""
+    pl = (action_prompt or "").lower()
+    if not any(k in pl for k in _DYNAMIC_ACTION_KEYWORDS):
+        return True  # no dynamic action promised → nothing to verify
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key or not Path(mp4_path).exists():
+        return True
+    try:
+        from google import genai as _g
+        from google.genai import types as _gt
+        import tempfile as _tf
+        client = _g.Client(api_key=api_key, http_options=_gt.HttpOptions(
+            timeout=int(os.getenv("VLM_TIMEOUT_MS", "90000"))))
+        dur = 5.0
+        try:
+            dur = float(subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=nw=1:nk=1", str(mp4_path)],
+                capture_output=True, text=True, timeout=15).stdout.strip() or 5.0)
+        except Exception:
+            pass
+        parts = []
+        with _tf.TemporaryDirectory() as td:
+            for i in range(n_frames):
+                t = dur * (i + 0.5) / n_frames
+                fp = Path(td) / f"a{i}.jpg"
+                subprocess.run(["ffmpeg", "-y", "-nostats", "-loglevel", "error",
+                                "-ss", f"{t:.2f}", "-i", str(mp4_path),
+                                "-frames:v", "1", str(fp)], check=False, timeout=20)
+                if fp.exists():
+                    parts.append(_gt.Part.from_bytes(data=fp.read_bytes(),
+                                                     mime_type="image/jpeg"))
+            if not parts:
+                return True
+            prompt = (
+                f"These are frames from a 5-second pet video cut. The cut was SUPPOSED "
+                f"to depict this action: \"{action_prompt[:300]}\". Ignore camera, "
+                f"lighting, and markings. Judge ONLY the pets' main ACTION: does the "
+                f"intended dynamic action (e.g. surfing, swimming, jumping, running, "
+                f"splashing, a flooded/water scene) actually appear, or are the pets "
+                f"clearly just SITTING / STANDING / LYING STILL on a normal dry floor "
+                f"with the action ABSENT? Answer action_absent=true ONLY if the key "
+                f"dynamic action is unmistakably missing. When in doubt answer false "
+                f"(we keep the cut). Return ONLY JSON: "
+                f"{{\"action_absent\":true|false,\"note\":\"3-6 words\"}}.")
+            resp = client.models.generate_content(
+                model=os.getenv("VLM_MODEL", "gemini-2.5-flash"),
+                contents=list(parts) + [prompt],
+                config=_gt.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    thinking_config=_gt.ThinkingConfig(thinking_budget=0)))
+            import json as _json
+            d = _json.loads((resp.text or "{}").strip())
+            absent = bool(d.get("action_absent"))
+            if absent:
+                log.info("cut action gate: action absent [%s] in %s",
+                         d.get("note", ""), Path(mp4_path).name)
+            return not absent
+    except Exception as e:
+        log.warning("cut action check failed (%s) — keeping cut", e)
+        return True
+
+
 def _who_and_emph(prompt: str) -> tuple[str, str]:
     """Infer which pets a motion prompt is about + the matching marking-canon
     emphasis to append on a regen. Shared by the i2v and ref gate sites so both
@@ -3660,14 +3742,22 @@ def _gate_and_heal(out_mp4, prompt, who, emph, regen, progress_cb, dry_run,
     use the stricter blaze comparison — set for the LAST cut where chain-drift peaks
     and PD consistently catches a widened blaze."""
     def _ok():
-        # Two focused calls (character + scene) — bundling dilutes attention.
+        # Focused calls (character + scene + action) — bundling dilutes attention.
+        # Returns None if OK, else the failing dimension so the heal can target it.
         if not _cut_character_ok(out_mp4, who, strict_blaze=strict_blaze):
-            return False
-        return _cut_scene_ok(out_mp4, scene_ref_path=scene_ref_path,
-                             expected_facts=expected_facts)
+            return "character"
+        if not _cut_scene_ok(out_mp4, scene_ref_path=scene_ref_path,
+                             expected_facts=expected_facts):
+            return "scene"
+        # PD 2026-06-11: did the promised DYNAMIC action actually render? (surf/swim
+        # /jump). Keyword-gated inside, so static cuts cost nothing.
+        if not _cut_action_ok(out_mp4, prompt):
+            return "action"
+        return None
     if not who or dry_run or not out_mp4.exists():
         return True
-    if _ok():
+    reason = _ok()
+    if reason is None:
         return True
     # PD 2026-06-10 COST: each regen is a full Seedance call. The old ×3 + alt =
     # up to 4 re-renders PER CUT (×6 cuts × episode-retry → the ~$100 runaway).
@@ -3677,12 +3767,24 @@ def _gate_and_heal(out_mp4, prompt, who, emph, regen, progress_cb, dry_run,
     resolved = False
     for r in range(_heal_tries):
         if progress_cb:
-            progress_cb(f":repeat: {tag} 캐릭터/장면 이상({who}) — 재생성 {r+1}/{_heal_tries}")
+            progress_cb(f":repeat: {tag} {reason} 이상({who}) — 재생성 {r+1}/{_heal_tries}")
+        # PD 2026-06-11: an ACTION failure (Seedance dropped the surf/swim/jump) needs
+        # the ACTION re-emphasized, not just the marking canon — repeating the same
+        # prompt re-drops it. Steer the regen hard at the missing motion.
+        if reason == "action":
+            heal_prompt = (
+                prompt + " IMPORTANT: the animal must CLEARLY and fully PERFORM the "
+                "described dynamic action (actually surfing on / swimming through / "
+                "leaping into the water), the motion filling the frame — it must NOT "
+                "be sitting, standing, or lying still on a dry floor. " + emph)
+        else:
+            heal_prompt = prompt + emph
         try:
-            regen(prompt + emph)
+            regen(heal_prompt)
         except Exception as e:
             log.warning("regen %d failed for %s: %s", r + 1, tag, e); break
-        if _ok():
+        reason = _ok()
+        if reason is None:
             resolved = True; break
     if not resolved and os.getenv("AV_GATE_ALT_PROMPT", "0") == "1":
         if progress_cb:
@@ -3699,12 +3801,15 @@ def _gate_and_heal(out_mp4, prompt, who, emph, regen, progress_cb, dry_run,
         # cut (the last regen mp4 stays) + flag it for PD review/veto. A slightly-wide
         # blaze is far better than an endless re-render loop; PD's per-episode veto is
         # the final safety net. (Only a genuinely broken render should ever be dropped.)
-        log.warning("av cut %s: marking unresolved after ×3+alt — KEEPING best effort "
-                    "(no drop, avoid re-render loop); flag for PD review", tag)
+        log.warning("av cut %s: %s unresolved after heal — KEEPING best effort "
+                    "(no drop, avoid re-render loop); flag for PD review", tag, reason)
         if progress_cb:
-            progress_cb(f":warning: {tag} 마킹 완벽히 못 잡음 — best effort로 유지 "
+            _label = {"action": "액션(서핑/수영 등) 렌더 실패",
+                      "scene": "장면 이상", "character": "마킹"}.get(reason, reason)
+            progress_cb(f":warning: {tag} {_label} — best effort로 유지 "
                         f"(루프 방지). PD 검수에서 별로면 veto")
-        manifests.setdefault("_marking_imperfect_cuts", []).append(tag)
+        _key = "_action_imperfect_cuts" if reason == "action" else "_marking_imperfect_cuts"
+        manifests.setdefault(_key, []).append(tag)
         return True
     return True
 
