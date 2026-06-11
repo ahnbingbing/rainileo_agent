@@ -714,6 +714,19 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     _pseen = {p.get("id") for p in _photos if p.get("id")}
     _photos += [p for p in context.get("archive_photos", [])
                 if p.get("id") and p.get("id") not in _pseen]
+    # PD 2026-06-11: the exclude (batch-dedup) MUST also cover the PHOTO pool and
+    # the separately-passed archive_videos field — the 6/12 RF 18:00 reused two
+    # RF 08:00 clips because they re-entered as photo / raw-archive candidates that
+    # the video-only filter above never touched (재탕 누수). Apply _excl to every
+    # pool the writer can pick from, but never starve it (keep ≥6).
+    if _excl:
+        _pk = [p for p in _photos
+               if p.get("id") not in _excl and p.get("asset_id") not in _excl]
+        if len(_pk) >= 6:
+            _photos = _pk
+    _arch_field = [v for v in context.get("archive_videos", [])
+                   if not _excl or (v.get("id") not in _excl
+                                    and v.get("asset_id") not in _excl)]
     rf_context = {
         "target_date": target.isoformat(),
         "available_videos": avail_videos,
@@ -721,7 +734,7 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         # PD 2026-06-07: archive (older) clips for past⇄present memory-lane /
         # character-intro episodes. Each has years_ago — if you use one, the
         # caption MUST state the time point ("○년 전", "입양 첫날", "그때는…").
-        "archive_videos": context.get("archive_videos", []),
+        "archive_videos": _arch_field,
         "archive_year_summary": context.get("archive_year_summary", {}),
         "video_date_clusters": context.get("video_date_summary", {}),
     }
