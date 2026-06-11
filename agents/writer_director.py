@@ -1386,6 +1386,16 @@ def _build_caption_agent_user_prompt(concepts: list[dict]) -> str:
 
                 "action": cut.get("action", "") or cut.get("description", ""),
                 "action_beats": cut.get("action_beats", []),
+                # PD 2026-06-11 bugfix: what the VLM saw ACTUALLY render (set by the
+                # post-render rewrite). It was NEVER passed here, so the prompt's
+                # ground-truth rules (no false "등장"/entrance, onomatopoeia only when
+                # the sound/motion was observed) silently had no data to work with.
+                # NOTE: this is for TRUTHFULNESS guards (don't claim what wasn't shown)
+                # — it does NOT mean dumb the story down to a failed render. When the
+                # render misses the planned beat (e.g. Seedance didn't draw the surf),
+                # the right fix is RE-GEN, not downgrading the caption. (PD: gen이
+                # 잘못된 것 — 나중에 할일.)
+                "vlm_actual_action": cut.get("vlm_actual_action", ""),
                 "motion_prompt": (cut.get("motion_prompt") or "")[:800],
                 "duration_seconds": cut.get("duration_seconds", 5),
                 "chain_from_prev": cut.get("chain_from_prev", False),
