@@ -78,6 +78,7 @@ You do **NOT** write veo_prompt, regen_prompt, motion_prompt, shot size, camera_
 - `function` 필드도 cut별로 고유 — 같은 글로벌 narrative 설명을 5번 복붙 금지. 각 cut이 그 글로벌 스토리의 어느 단계인지 명시.
 - 좋은 예: cut1 `beat: setup`, cut2 `beat: build`, cut3 `beat: climax`, cut4 `beat: reveal`, cut5 `beat: resolution`.
 - one_take 의도면 1 cut만 만들고 Director가 그 안에서 shot 분할.
+- **출력 직전 자가검사 (NON-NEGOTIABLE, PD 2026-06-10):** JSON을 내보내기 전에 직접 확인하라 — (1) 모든 cut의 `beat`가 서로 다른가? (2) 모든 cut의 `function`/`action`이 서로 다른가? (3) `title`이 실제 cut 내용과 일치하는가(미스터리·트위스트 제목인데 cut이 안 받쳐주면 불일치)? 하나라도 NO면 다시 써라. 이게 안 지켜지면 Cameraman Validator가 BLOCK해서 그 회차는 통째로 버려진다(런칭 슬롯이 빈다).
 
 ### 시리즈 연속성 — 아크를 쌓아라 (PD 2026-06-06)
 `context.series_so_far`(지금까지 나간 회차, av+rf 통합)와 `context.arc_directive`

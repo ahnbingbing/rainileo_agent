@@ -17,6 +17,8 @@ import argparse
 import json
 import logging
 import os
+
+from agents import models as _models
 import re
 import sqlite3
 import sys
@@ -48,7 +50,7 @@ Select the best **{n_select}** photos for this concept:
 ## Selection criteria (STRICT)
 1. **Beat matching**: each photo should match a narrative beat (hook, develop, emotion, closer, etc.)
 2. **Ryani recognition**: if Ryani is in the photo, her white markings (chin, chest, paws) MUST be clearly visible. Reject dark/shadow photos where she looks like a solid black blob.
-3. **Leo recognition**: orange tabby stripes + amber eyes visible. Face must be in frame.
+3. **Leo recognition**: orange tabby stripes + chartreuse (yellow-green) eyes visible. Face must be in frame.
 4. **No decoration**: reject photos that already have ANY stickers/filters/text overlays (decoration_level=light or heavy). Only use completely clean/undecorated original photos (decoration_level=none).
 5. **Date/location coherence (CRITICAL for real_footage)**:
    - If the concept is a single episode/moment → ALL clips must be from the SAME DATE and SAME LOCATION. Check `captured_iso` dates and `location_type`.
@@ -315,12 +317,12 @@ def vlm_select(candidates: list[dict], concept: dict,
 
 def _llm_text_fallback(prompt: str, max_tokens: int = 2048) -> str:
     """Text generation cascade for photo_selector (PD 2026-06-02: no Anthropic
-    for any text). OpenAI GPT-5 → Gemini 2.5 Pro → Anthropic last resort."""
+    for any text). OpenAI gpt-4.1 → Gemini 2.5 Pro → Anthropic last resort."""
     try:
         from openai import OpenAI
         client = OpenAI()
         resp = client.chat.completions.create(
-            model="gpt-5",
+            model=_models.OPENAI_TEXT,
             messages=[{"role": "user", "content": prompt}],
         )
         return (resp.choices[0].message.content or "").strip()
@@ -330,7 +332,7 @@ def _llm_text_fallback(prompt: str, max_tokens: int = 2048) -> str:
         import os as _os
         import google.generativeai as genai
         genai.configure(api_key=_os.environ["GOOGLE_API_KEY"])
-        m = genai.GenerativeModel("gemini-2.5-pro")
+        m = genai.GenerativeModel(_models.GEMINI_TEXT)
         resp = m.generate_content(prompt)
         return (resp.text or "").strip()
     except Exception as e:
@@ -338,7 +340,7 @@ def _llm_text_fallback(prompt: str, max_tokens: int = 2048) -> str:
     import anthropic
     client = anthropic.Anthropic()
     resp = client.messages.create(
-        model="claude-opus-4-7", max_tokens=max_tokens,
+        model=_models.ANTHROPIC_TEXT, max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}],
     )
     return resp.content[0].text.strip()

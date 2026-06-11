@@ -39,6 +39,8 @@ ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 log = logging.getLogger("agents.reviewer")
 
+from agents import canon  # central character canon — judge the SAME pets we generate
+
 REVIEW_GUIDE = (ROOT / "notes" / "shorts_review_agent_giri.md").read_text(encoding="utf-8") \
     if (ROOT / "notes" / "shorts_review_agent_giri.md").exists() else ""
 
@@ -103,6 +105,10 @@ IMPORTANT STYLE RULES:
 - **BGM**: Must match the concept's mood. Cozy concept = gentle/lofi BGM. Fun concept = playful/upbeat BGM. Do NOT use epic/cinematic/orchestral BGM for cute pet content.
 - **Cut repetition**: If multiple cuts show the same pose/scene/background, that is a MAJOR issue. Every cut must be visually distinct. Penalize heavily for repeated scenes.
 - **Storytelling check**: Unusual scenes are OK if there's a story behind them. Penalize only if NO narrative context.
+- **INTENTIONAL SURREAL HOOK — DO NOT PENALIZE (PD 2026-06-11, important)**: ai_vtuber is ENCOURAGED to defy real-world physics when the impossibility IS the hook — that is the channel's signature fun, not a defect. GOOD intentional surrealism (score the hook HIGHER, never lower): 랴니가 거실에서 수영(a dog swimming across the living-room floor), pets floating, indoor rain/snow, a room filling with water. Do NOT write "비현실적/물리 법칙 위반/말이 안 됨" as a problem when the concept or caption FRAMES it as a playful fantasy — that is the SINGLE MOST COMMON reviewer mistake, and a hook like 거실 수영 must be REWARDED as the opening/emotional hook, not flagged. The test: **"Could a human animator have drawn this ON PURPOSE as a fun gag?"** If YES → it's an intentional hook, ALLOW it and reward it.
+  - **세면대 범람 → 서핑 = GOOD example, but the MECHANIC must be coherent (PD 2026-06-11)**: the correct, ALLOWED version is — a sink MOUNTED AT COUNTER HEIGHT overflows, the water cascades DOWN and floods the living-room floor, and Ryani/Leo surf on that flood. That is a great hook → reward it. The FORBIDDEN version is a glitch: the sink BASIN itself sitting ON THE FLOOR (grounded at floor level). Same scene, two outcomes: high sink + overflow + flood + surf = HOOK (allow); sink basin on the floor = DEFECT (penalize). Judge which one rendered.
+  - This is DIFFERENT from a BROKEN RENDER (still a real defect, still penalize): geometry/anatomy that is GLITCHED rather than fantastical — a melted/orb/dissolving face, an extra or merged limb, a character half-fused into furniture, drift to a different breed, OR a fixture grounded incoherently (the floor-sink above). These look like the model malfunctioned, not like a deliberate fun image. Penalize those normally.
+  - Rule of thumb: physics-defying-but-cleanly-drawn = HOOK (allow); incoherent/glitched/ugly = DEFECT (penalize).
 - **Caption quality — TV동물농장/세나개 나레이션 톤 필수**:
   - Captions should read like TV동물농장 narration: "오늘도 어김없이 레오는...", "과연 참을 수 있을까요?", "아니나 다를까..."
   - Or 세나개 style: explaining WHY the pet does something: "이건 사냥 본능이에요", "놀자는 신호입니다"
@@ -120,8 +126,8 @@ IMPORTANT STYLE RULES:
   - Action specificity: "delivers toy" = carrying + arriving + dropping. Not just sitting nearby.
   - Penalize HEAVILY: all cuts same angle/distance, pets always together, no spatial movement, vague actions.
 - **Character appearance accuracy** (PD 2026-06-02: TIGHTENED):
-  - **Ryani (French Bulldog, 11yr)**: a THIN Boston Terrier-style WHITE BLAZE (narrow line, NOT a wide splash) from nose to forehead, white dot above each eye, silver-grey aged muzzle, white chin, large white chest patch, large bat ears, ABSOLUTELY NO TAIL (her rear is bare — flag any tail rendering as a major failure), stocky compact body, only black/white/grey — no brown.
-  - **Leo (orange tabby, ~8mo)**: pale yellow-green chartreuse eyes (NOT gold-amber), faint scar across nose bridge, white chin tuft. Tail often in question mark shape. Lean agile body, paler cream-orange cheeks/belly than the back.
+  - {canon.REVIEW_RYANI}
+  - {canon.REVIEW_LEO}
   - **Marking enforcement (HARD CAP — AI-RENDERED CUTS ONLY)**: this applies to AI-generated frames (ai_vtuber, or real_footage photo_i2v cuts) where Seedance can drift. If the automated marking check (이마줄/눈썹/회색주둥이/흰가슴) reports 3+ ❌ across AI-rendered cuts, overall score MUST NOT exceed 7/10; 4/4 ❌ → max 5/10, verdict="수정 필요". **EXCEPTION (PD 2026-06-08): for real_footage real-clip cuts, the dog IS the real Ryani — her markings are correct by definition; do NOT penalize markings on real clips (the pixel heuristic false-negatives on real angles/lighting). Judge real clips on story/clarity, not the marking pixel check.**
   - **Cross-cut consistency**: pets should look IDENTICAL across cuts within the same episode. Different breed renderings between cuts 1 and 4 = major drift, cap at 6.
 - **Animal behavior accuracy**: Body language must match the scene's emotion and be species-accurate:
@@ -448,6 +454,73 @@ def _check_character_similarity(frames: list[Path],
     return result
 
 
+def _check_face_integrity(client, model_name, frames, _types) -> dict:
+    """PD 2026-06-10: dedicated FOCUSED gate for AI face corruption — the kind
+    Seedance photo_i2v / i2v produces (a melted/smeared face, mismatched eyes, a
+    floating white blob/orb stuck on the forehead) that BOTH the marking check and
+    the holistic review miss (markings can read 'correct' on a melted face, so the
+    holistic reviewer passed a clearly-distorted Ryani at 9/10). Separate call =
+    undivided VLM attention (the proven "don't bundle" lesson). Worded to flag ONLY
+    clear AI corruption, NOT a real face that is merely sleepy / blurry / side-on /
+    low-light. Fail-open (no defect) on error. Returns {face_defect, severity,
+    worst_frame, detail}."""
+    from PIL import Image
+    # PD 2026-06-10: feed FACE-CROPPED frames. With full frames a small artifact
+    # (a floating forehead orb) got lost when 16 images shared one call's attention
+    # — the same orb was reliably caught once each frame was cropped to the face
+    # region (top ~62% of a vertical 9:16 pet frame, where the head sits). Verified
+    # on 003111: full-batch missed it, face-crop batch caught it.
+    prompt = (
+        "These are FACE-CROPPED frames from an animal video. Some cuts animate a "
+        "still photo with AI, which can corrupt the face. Examine EACH animal's face. "
+        "Flag ONLY clear AI corruption: a melted / smeared / distorted muzzle or eyes, "
+        "grossly asymmetric or mismatched eyes, a face that warps unnaturally, or a "
+        "floating white blob / orb / dot artifact stuck on the face or forehead. Do "
+        "NOT flag a real, natural face for being sleepy, eyes-closed, motion-blurred, "
+        "side-profile, or low-light — those are perfectly fine. Return ONLY JSON: "
+        '{"face_defect": true|false, "severity": "none"|"minor"|"major", '
+        '"worst_frame": <1-based int, or 0>, "detail": "<defect + which animal/where, '
+        'or empty>"}.'
+    )
+    try:
+        parts = []
+        for fp in frames:
+            img = Image.open(fp)
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            # crop to the head region (top 62%) so a small artifact isn't diluted
+            img = img.crop((0, 0, img.width, int(img.height * 0.62)))
+            if max(img.size) > 1024:
+                r = 1024 / max(img.size)
+                img = img.resize((int(img.width * r), int(img.height * r)))
+            buf = BytesIO()
+            img.save(buf, format="JPEG", quality=88)
+            parts.append(_types.Part.from_bytes(data=buf.getvalue(),
+                                                mime_type="image/jpeg"))
+        parts.append(prompt)
+        resp = client.models.generate_content(
+            model=model_name, contents=parts,
+            config=_types.GenerateContentConfig(response_mime_type="application/json"))
+        t = (resp.text or "").strip()
+        t = re.sub(r"^```(?:json)?\s*", "", t)
+        t = re.sub(r"\s*```$", "", t)
+        data = json.loads(t)
+        # The model sometimes returns a per-frame LIST — collapse to the worst hit.
+        if isinstance(data, list):
+            hits = [d for d in data if isinstance(d, dict) and d.get("face_defect")]
+            if hits:
+                worst = next((d for d in hits if (d.get("severity") or "").lower() == "major"), hits[0])
+                return {"face_defect": True, "severity": worst.get("severity", "minor"),
+                        "worst_frame": worst.get("worst_frame", 0),
+                        "detail": worst.get("detail", "")}
+            return {"face_defect": False, "severity": "none", "worst_frame": 0, "detail": ""}
+        return data if isinstance(data, dict) else {
+            "face_defect": False, "severity": "none", "worst_frame": 0, "detail": ""}
+    except Exception as e:
+        log.warning("face integrity check failed: %s", e)
+        return {"face_defect": False, "severity": "none", "worst_frame": 0, "detail": ""}
+
+
 def review(video: Path, storyboard: list[dict] | None = None,
            concept: dict | None = None) -> dict:
     """Full review: extract frames + audio check + VLM review.
@@ -601,6 +674,44 @@ def review(video: Path, storyboard: list[dict] | None = None,
                 f"LLM markings_clear={llm_says_clear}. 점수/판정 영향 없음.")
     except Exception as e:
         log.warning("Character similarity check failed: %s", e)
+
+    # Face-integrity gate (PD 2026-06-10): focused call catches AI face corruption
+    # (melted face / mismatched eyes / floating orb) that the marking check AND the
+    # holistic review both miss — markings can read 'correct' on a melted face. A
+    # major defect FAILS the episode; a minor one caps the score + downgrades verdict.
+    try:
+        fi = _check_face_integrity(client, model_name, frames, _types)
+        report["face_integrity"] = fi
+        sev = (fi.get("severity") or "none").lower()
+        detail = fi.get("detail", "") or ""
+        # A clear, describable artifact (orb/blob/melted/distorted/asymmetric) must
+        # NOT auto-publish even if the VLM softly labels it "minor" — PD's hard rule
+        # on face accuracy. Vague minors stay a downgrade-but-pass.
+        is_artifact = bool(re.search(
+            r"orb|blob|dot|melt|smear|distort|warp|deform|asymmetr|mismatch",
+            detail, re.IGNORECASE))
+        if fi.get("face_defect") and (sev in ("minor", "major") or is_artifact):
+            fail = (sev == "major") or is_artifact
+            note = (f"AI 얼굴 무결성 결함({'major' if fail else sev}): {detail}"
+                    f" [frame {fi.get('worst_frame')}]")
+            prev = report.get("가장_큰_문제", "") or ""
+            report["가장_큰_문제"] = note if (not prev or "없" in prev[:6]) else f"{note} / {prev}"
+            cap = 5 if fail else 7
+            try:
+                report["점수"] = min(int(report.get("점수", 10)), cap)
+            except Exception:
+                report["점수"] = cap
+            cur = report.get("판정", "")
+            if fail:
+                report["판정"] = "수정 필요"   # NOT in GIRI_PASS → won't auto-publish
+            elif cur in ("업로드", "즉시 업로드"):
+                report["판정"] = "소폭 수정 후 업로드"
+            report["최종_결정"] = report["판정"]
+            report["_face_integrity_override"] = note
+            log.info("face-integrity gate: %s → 판정=%s 점수=%s", note,
+                     report["판정"], report["점수"])
+    except Exception as e:
+        log.warning("Face integrity gate failed: %s", e)
 
     # Cleanup
     for f in frames:

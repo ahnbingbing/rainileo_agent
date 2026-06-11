@@ -129,7 +129,7 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
                   AND quality_score >= 0.7 AND file_path NOT LIKE '%.heic'
                   AND (decoration_level IS NULL OR decoration_level = 'none')
             ORDER BY has_human ASC, quality_score DESC, captured_iso DESC
-            LIMIT 12
+            LIMIT 70
             """,
         ).fetchall()
     ]
@@ -195,7 +195,7 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
               CASE WHEN subjects_csv LIKE '%ryani%' AND subjects_csv LIKE '%leo%' THEN 0 ELSE 1 END,
               CASE WHEN lower(coalesce(composition,'')) IN ('overhead','wide','far') THEN 1 ELSE 0 END,
               captured_iso DESC
-            LIMIT 28
+            LIMIT 100
             """,
         ).fetchall()
     ]
@@ -222,7 +222,7 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
     for v in best_videos:
         v["years_ago"] = _years_ago(v.get("date", ""))
     _recent_ids = {v["id"] for v in best_videos}
-    ARCHIVE_PER_YEAR = int(os.getenv("ARCHIVE_PER_YEAR", "3"))
+    ARCHIVE_PER_YEAR = int(os.getenv("ARCHIVE_PER_YEAR", "8"))  # PD 2026-06-11: more old footage in the pool
     archive_videos: list[dict] = []
     _per_year: dict[str, int] = {}
     for r in con.execute(
@@ -254,6 +254,38 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
             **_extra_vlm(r)})
     archive_videos.sort(key=lambda v: v.get("date", ""))  # oldest → newest
     archive_year_summary = dict(sorted(_per_year.items()))
+
+    # PD 2026-06-11: year-stratified OLD photos too — 2500+ photos exist but only the
+    # recent ~50 reached the writer, so aged baby Ryani/Leo (2016~) was never usable
+    # (the Ryani-intro needs exactly that). Same year-cap pattern as archive_videos.
+    _recent_photo_ids = {p["id"] for p in best_photos}
+    archive_photos: list[dict] = []
+    _ppy: dict[str, int] = {}
+    for r in con.execute(
+        """
+        SELECT asset_id, activity, subjects_csv, mood, background, scene_description,
+               pd_notes, notes, captured_iso, has_human
+        FROM assets
+        WHERE vlm_analyzed_at IS NOT NULL AND kind='photo' AND quality_score >= 0.7
+          AND captured_iso IS NOT NULL AND file_path NOT LIKE '%.heic'
+          AND (decoration_level IS NULL OR decoration_level = 'none')
+        ORDER BY quality_score DESC, captured_iso DESC
+        """,
+    ).fetchall():
+        if r["asset_id"] in _recent_photo_ids:
+            continue
+        yr = (r["captured_iso"] or "")[:4]
+        if not yr or _ppy.get(yr, 0) >= ARCHIVE_PER_YEAR:
+            continue
+        _ppy[yr] = _ppy.get(yr, 0) + 1
+        archive_photos.append({
+            "id": r["asset_id"], "act": r["activity"] or "",
+            "sub": r["subjects_csv"] or "", "mood": r["mood"] or "",
+            "bg": r["background"] or "", "sc": _ground_truth_sc(r),
+            "date": (r["captured_iso"] or "")[:10],
+            "years_ago": _years_ago(r["captured_iso"] or ""),
+            "has_human": bool(r["has_human"]), **_extra_vlm(r)})
+    archive_photos.sort(key=lambda v: v.get("date", ""))
 
     # Episode stories from #episode channel (least-used first)
     episode_stories = [
@@ -408,6 +440,7 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
         "available_photos": best_photos,
         "available_videos": best_videos,
         "archive_videos": archive_videos,          # PD 2026-06-07: past clips for memory-lane (years_ago stamped)
+        "archive_photos": archive_photos,          # PD 2026-06-11: year-stratified OLD photos (baby Ryani/Leo)
         "archive_year_summary": archive_year_summary,
         "video_date_clusters": video_date_summary,
         "video_locations": {r[0]: r[1] for r in con.execute(
@@ -463,6 +496,15 @@ def propose_concepts(target: dt.date, context: dict, style_filter: str | None = 
     # 3 quality axes PD demanded (caption wit/말맛, editing rhythm,
     # story depth/twist) + grounding + readability. ONE clean prompt,
     # then _render_realfootage_direct (no card-writer re-dramatization).
+    # PD 2026-06-10 (a): reset LLM circuit breakers at the START of each proposal run
+    # so a provider that recovered (OpenAI/Gemini back up) is re-probed instead of the
+    # whole run staying routed to the last fallback (Anthropic) on stale-open circuits.
+    try:
+        from agents import circuit as _circuit
+        _circuit.reset_all()
+    except Exception:
+        pass
+
     if style_filter == "real_footage":
         return _propose_realfootage_singlepass(target, context, progress_cb)
 
@@ -482,11 +524,24 @@ def propose_concepts(target: dt.date, context: dict, style_filter: str | None = 
 
     try:
         from agents.writer_director import propose_concepts_v2
-        return propose_concepts_v2(
-            target, context,
-            style_filter=style_filter,
-            progress_cb=progress_cb,
-        )
+        # PD 2026-06-10 (b): drop concepts with NO cuts before they reach the Validator.
+        # A degraded LLM (only Anthropic up) sometimes returns an empty "shell" concept;
+        # the Validator then blocks it "fatally incomplete — no cuts" and the slot
+        # re-proposes → wasteful churn. Filter empties; if ALL are empty, retry ONCE,
+        # then return only concepts that actually have cuts (else empty → slot shows
+        # '컨셉 없음' cleanly, no churn loop).
+        concepts = propose_concepts_v2(
+            target, context, style_filter=style_filter, progress_cb=progress_cb) or []
+        good = [c for c in concepts if (c.get("cuts") or [])]
+        if not good and concepts:
+            if progress_cb:
+                progress_cb(":warning: 컨셉에 컷이 없음(LLM 불완전 출력) — 1회 재시도")
+            retry = propose_concepts_v2(
+                target, context, style_filter=style_filter, progress_cb=progress_cb) or []
+            good = [c for c in retry if (c.get("cuts") or [])]
+        if concepts and not good and progress_cb:
+            progress_cb(":x: 재시도 후에도 컷 없는 컨셉만 — LLM 불안정, 슬롯 비움(churn 방지)")
+        return good
     except Exception as e:
         log.warning("writer_director failed (%s) — falling back to legacy single-pass", e)
         if progress_cb:
@@ -609,6 +664,16 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     # PD 2026-06-06: exclude clips used in the last N real_footage episodes so
     # the same footage isn't reused back-to-back (4-episode cooldown).
     avail_videos = context.get("available_videos", [])
+    # PD 2026-06-11: MERGE old/archive footage into the main candidate pool. It used
+    # to be a separate "memory-lane only" field, so RF kept re-using the same recent
+    # ~28 clips (med_2026_05_25_144138 appeared in ALL 4 last episodes = "재탕") and
+    # NEVER touched the years of older footage (2015/16 baby Ryani etc. — perfect for
+    # the Ryani-intro). Merging gives a much bigger pool, so the cooldown can exclude
+    # reused clips without starving (no more "relax → reuse"), and old footage becomes
+    # a first-class pick. years_ago is already stamped for time-grounded captions.
+    _arch = context.get("archive_videos", [])
+    _seen = {v.get("id") for v in avail_videos if v.get("id")}
+    avail_videos = avail_videos + [v for v in _arch if v.get("id") and v.get("id") not in _seen]
     try:
         _con = _db()
         cooldown = _recently_used_rf_assets(_con)
@@ -627,10 +692,32 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
                 progress_cb(f":warning: 쿨다운 후 클립 부족({len(filtered)}개) — 완화 적용")
     except Exception as e:
         log.warning("cooldown filter failed: %s", e)
+    # PD 2026-06-10: exclude clips already used by an EARLIER slot in THIS batch so
+    # two same-day RF episodes don't come out near-identical (6/11 bug: both RF used
+    # the exact same 7 photos). Best-effort — relax if it would starve the writer.
+    _excl = set(context.get("exclude_asset_ids") or [])
+    if _excl:
+        _kept = [v for v in avail_videos
+                 if v.get("id") not in _excl and v.get("asset_id") not in _excl]
+        if len(_kept) >= 6:
+            if len(_kept) < len(avail_videos) and progress_cb:
+                progress_cb(f":twisted_rightwards_arrows: 배치 내 중복 회피 — 이미 쓴 클립 "
+                            f"{len(avail_videos) - len(_kept)}개 제외")
+            avail_videos = _kept
+        else:
+            log.warning("batch-dedup left only %d clips (<6) — relaxing", len(_kept))
+    # PD 2026-06-11: merge OLD photos into the photo pool too (2500+ photos exist;
+    # the recent ~50 + year-stratified old ones), and pass MANY more to the writer
+    # (was [:10]) so RF actually has a big diverse library (video+photo, all years)
+    # instead of re-using the same recent handful.
+    _photos = list(context.get("available_photos", []))
+    _pseen = {p.get("id") for p in _photos if p.get("id")}
+    _photos += [p for p in context.get("archive_photos", [])
+                if p.get("id") and p.get("id") not in _pseen]
     rf_context = {
         "target_date": target.isoformat(),
         "available_videos": avail_videos,
-        "available_photos": context.get("available_photos", [])[:10],
+        "available_photos": _photos[:100],
         # PD 2026-06-07: archive (older) clips for past⇄present memory-lane /
         # character-intro episodes. Each has years_ago — if you use one, the
         # caption MUST state the time point ("○년 전", "입양 첫날", "그때는…").
@@ -1086,6 +1173,29 @@ def _render_realfootage_with_retry(concept: dict, target: dt.date,
             return _finish(out)
         if verdict in GIRI_PASS_VERDICTS and not intro_ok and progress_cb:
             progress_cb(":repeat: 기리는 통과했지만 자기소개 회차가 아님 — 재생성")
+        # PD 2026-06-11 캡션-salvage: a caption-shaped Giri fail does NOT need a full
+        # re-render. Rewrite the captions on THIS already-rendered episode (VLM ground-
+        # truth, no Seedance) and re-review before spending another render attempt.
+        if out and intro_ok and verdict not in GIRI_PASS_VERDICTS:
+            try:
+                from agents import caption_salvage as _csv
+                if _csv.is_caption_fixable(report):
+                    salv = _csv.salvage(card_id, report, progress_cb=progress_cb)
+                    if salv and Path(salv).exists():
+                        attempt_outs.append(salv)
+                        srep = _giri_review_realfootage(salv, cur_concept, target, progress_cb)
+                        sverdict = (srep or {}).get("판정", "")
+                        if sverdict in GIRI_PASS_VERDICTS:
+                            if progress_cb:
+                                progress_cb(f":white_check_mark: 캡션-salvage 후 기리 통과: {sverdict}")
+                            _arc(card_id)
+                            return _finish(salv)
+                        if srep and not srep.get("_face_violation"):
+                            skey = (1 if intro_ok else 0, _score_of(srep))
+                            if skey > best_key:
+                                best_key, best_out, best_card_id = skey, salv, card_id
+            except Exception as e:
+                log.warning("caption salvage attempt (rf) failed: %s", e)
         if attempt >= max_attempts:
             # Never ship a face-violating episode — if every attempt had a face,
             # best_out is None → skip this slot entirely (no episode > a face).
@@ -1509,23 +1619,69 @@ def produce_and_render(concepts: list[dict], target: dt.date,
                     progress_cb(f":movie_camera: [{i}/{len(concepts)}] 렌더 + 검수 루프: {concept.get('title', '?')}")
                 try:
                     from agents.retry_loop import render_with_retry
-                    # PD 2026-06-08 COST CONTROL: each av retry re-renders ALL
-                    # Seedance i2v cuts (real $). Cap retries low (env AV_MAX_RETRIES,
-                    # default 1) so a failing av slot doesn't re-charge Seedance 3-4×
-                    # for 0 output. Better to skip the slot than burn money looping.
+                    # PD 2026-06-08/10 COST CONTROL: each av retry re-renders ALL
+                    # Seedance i2v cuts (real $) — and that COMPOUNDS with the per-cut
+                    # gate retries and the self-heal rounds (the 6/10 test hit ~246
+                    # Seedance cuts = ~$100 when this was 3). Back to 1: a Giri-failed
+                    # AV is saved for PD review (not re-rendered ×N). Cheap recovery
+                    # (Validator-block re-propose, no Seedance) lives in launch's slot
+                    # loop; the hard SEEDANCE_MAX_CALLS ceiling backstops everything.
                     out, review_report = render_with_retry(
                         card["card_id"], concept,
-                        max_retries=int(os.getenv("AV_MAX_RETRIES", "1")),
+                        # PD 2026-06-10: 0 = render ONCE, no whole-episode re-render
+                        # (that redid all 6 cuts incl. their per-cut heals — the cost
+                        # multiplier). A Giri-fail is SAVED for PD review (save-AV),
+                        # not re-rendered. Per-cut quality = _gate_and_heal (1 try).
+                        max_retries=int(os.getenv("AV_MAX_RETRIES", "0")),
                         progress_cb=progress_cb,
                     )
-                    if out:
+                    # PD 2026-06-10: an AV render that PASSED Giri publishes; one that
+                    # rendered but FAILED Giri must NOT auto-publish (junk) — but the
+                    # mp4 must be SAVED, not discarded, so PD can review/salvage it.
+                    # render_with_retry leaves the file on disk; we surface its path and
+                    # keep it out of `outputs` (publish list) when the verdict failed.
+                    _verdict = (review_report or {}).get("판정", "")
+                    _passed = _verdict in GIRI_PASS_VERDICTS if review_report else bool(out)
+                    if out and _passed:
                         outputs.append(out)
-                        # Increment use_count for episode stories
                         try:
                             con.execute("UPDATE episode_stories SET use_count = use_count + 1")
                             con.commit()
                         except Exception:
                             pass
+                    elif out:
+                        # PD 2026-06-11 캡션-salvage: before saving an AV render as
+                        # "failed", check if Giri failed only on CAPTIONS — if so,
+                        # rewrite the captions on this render (no Seedance) and re-review.
+                        # A pass → publish; else fall through to save-for-PD.
+                        salvaged = False
+                        try:
+                            from agents import caption_salvage as _csv
+                            if _csv.is_caption_fixable(review_report):
+                                salv = _csv.salvage(card["card_id"], review_report,
+                                                    progress_cb=progress_cb)
+                                if salv and Path(salv).exists():
+                                    from agents.reviewer import review as _giri_av
+                                    srep = _giri_av(salv,
+                                                    storyboard=concept.get("cuts", []),
+                                                    concept=concept)
+                                    if (srep or {}).get("판정") in GIRI_PASS_VERDICTS:
+                                        outputs.append(salv)
+                                        salvaged = True
+                                        if progress_cb:
+                                            progress_cb(f":white_check_mark: AV 캡션-salvage "
+                                                        f"후 기리 통과 → 게시: {salv}")
+                        except Exception as e:
+                            log.warning("AV caption salvage failed: %s", e)
+                        # rendered but not publishable — saved for PD review
+                        if not salvaged:
+                            try:
+                                from pathlib import Path as _P
+                                if _P(out).exists() and progress_cb:
+                                    progress_cb(f":floppy_disk: AV 영상 저장됨(미게시, 검수 "
+                                                f"'{_verdict or '미통과'}'): {out}")
+                            except Exception:
+                                pass
                 except ImportError:
                     # Fallback if retry_loop not available
                     out = render_card(card["card_id"], progress_cb=progress_cb, use_brain=True, concept=concept)

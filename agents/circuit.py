@@ -28,3 +28,11 @@ def mark_down(provider: str, seconds: int | None = None) -> None:
 
 def mark_up(provider: str) -> None:
     _DOWN.pop(provider, None)
+
+
+def reset_all() -> None:
+    """PD 2026-06-10: clear ALL circuit state so the next call re-probes every
+    provider. Call at the START of a run — a provider that recovered during the
+    cooldown window (OpenAI/Gemini back up) shouldn't keep the whole run routed to
+    the last fallback (Anthropic). Cheap insurance against a stale-open circuit."""
+    _DOWN.clear()

@@ -52,6 +52,9 @@ except ImportError:
     SSL_CTX = ssl.create_default_context()
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from agents import canon as _canon  # central character canon (single source)
 CHARACTER_SHEET = ROOT / "agents" / "prompts" / "character_sheets.md"
 log = logging.getLogger("generate_character_scene")
 
@@ -79,34 +82,17 @@ def build_character_prompt(scene_prompt: str, subjects: str = "both",
     """
     sheet = load_character_sheet()
 
-    # Canonical character canon — PD 2026-06-08: image gen MUST NOT destroy the
-    # characters' traits. Match the cameraman's per-cut marking canon exactly:
-    # Ryani = SPAYED FEMALE, THIN blaze (not wide), NO tail; Leo = MALE, chartreuse
-    # (yellow-green) eyes — NOT amber/gold (the old prompt's "amber" was wrong and
-    # actively drifted Leo's eyes).
-    RYANI_CANON = (
-        "Ryani — REAL black French Bulldog, SPAYED FEMALE (she/her, 11-year-old "
-        "senior; clearly female, NO male anatomy). Markings (keep EXACTLY, do not "
-        "redraw): a THIN NARROW white blaze (a fine Boston-Terrier line from nose up "
-        "the forehead — NOT a wide splash, do NOT enlarge it), a small white dot above "
-        "each eye, silver-grey aged muzzle, white chin, white chest patch, white toes, "
-        "bat ears, ABSOLUTELY NO TAIL. Only black/white/grey — NO brown. Petite, "
-        "refined, feminine build (NOT a muscular barrel-chested male). A REAL dog, not "
-        "a cartoon.")
-    LEO_CANON = (
-        "Leo — REAL orange tabby cat, MALE (he/him, young ~8 months). Pale "
-        "YELLOW-GREEN / chartreuse eyes (NOT amber, NOT gold), white chin tuft, white "
-        "whiskers, lean agile young-adult body, paler cream-orange cheeks and belly "
-        "than the back. A REAL cat, not a cartoon.")
+    # Character identity canon — central source of truth (agents/canon.py).
+    # PD 2026-06-08: image gen MUST NOT destroy the characters' traits
+    # (Ryani = SPAYED FEMALE, THIN blaze, NO tail; Leo = MALE, chartreuse eyes,
+    # NOT amber/gold). PD 2026-06-09: de-duplicated — edit agents/canon.py only.
     if subjects == "leo":
         char_focus = "Focus on Leo (레오) — the orange tabby cat."
-        canon = LEO_CANON
     elif subjects == "ryani":
         char_focus = "Focus on Ryani (랴니) — the black French Bulldog."
-        canon = RYANI_CANON
     else:
         char_focus = "Both Leo (orange tabby cat) and Ryani (black French Bulldog) appear."
-        canon = RYANI_CANON + " " + LEO_CANON
+    canon = _canon.image_canon(subjects)
 
     prompt = f"""PHOTOREALISTIC image that looks like a REAL PHOTOGRAPH taken with a professional camera.
 

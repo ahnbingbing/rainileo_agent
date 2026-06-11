@@ -179,6 +179,11 @@ def launch_pipeline(target: dt.date, *,
     # + persist for /answer. For week-1 blocking, run /launch with LAUNCH_CONCURRENCY=1.)
     slot_ask = ask_cb if sequential else None
 
+    # PD 2026-06-10: shared across this batch's slots — asset_ids already used by
+    # an earlier slot, so later slots avoid re-using them (the 6/11 two-RF-identical-
+    # clips bug). set.add across threads is GIL-safe for our best-effort diversity.
+    batch_used_assets: set = set()
+
     def _slot_pipeline(lane: str, hhmm: str) -> dict | None:
         # PD 2026-06-08: each slot proposes ITS OWN concept and renders it in one
         # thread, so the slow av Writer/Director proposals overlap each other AND
@@ -223,40 +228,72 @@ def launch_pipeline(target: dt.date, *,
             if video_cb:
                 video_cb(p)
 
-        sp(f":bulb: {hhmm} {lane_lbl} 컨셉 생성 중...")
-        try:
-            batch = propose_concepts(target, dict(context),
-                                     style_filter=lane, progress_cb=sp)
-        except Exception as e:
-            log.warning("propose %s failed: %s", lane, e)
-            sp(f":x: {hhmm} {lane_lbl} 컨셉 실패: {str(e)[:140]}")
-            return None
-        if not batch:
+        # PD 2026-06-10: AV resilience. A Validator BLOCK is a pre-render (LLM-only,
+        # cheap) rejection — instead of emptying the slot on one bad concept (av went
+        # 0/2 on 6/11: one slot dup-beat-blocked, one photo-failed), RE-PROPOSE a
+        # fresh AV concept up to N×. This never spends Seedance (produce_and_render
+        # skips blocked concepts). Render-fail retry (×AV_MAX_RETRIES=3) is separate
+        # and lives INSIDE produce_and_render. RF keeps 1 propose (it has its own Giri
+        # retry loop). Pass batch_used_assets so each slot avoids the others' clips.
+        max_repropose = int(os.getenv("AV_BLOCK_REPROPOSE", "5")) if lane == "ai_vtuber" else 1
+        concept = None
+        outs: list = []
+        for _att in range(1, max_repropose + 1):
+            suffix = f" (재제안 {_att}/{max_repropose})" if _att > 1 else ""
+            sp(f":bulb: {hhmm} {lane_lbl} 컨셉 생성 중...{suffix}")
+            ctx = dict(context)
+            if batch_used_assets:
+                ctx["exclude_asset_ids"] = sorted(batch_used_assets)
+            try:
+                batch = propose_concepts(target, ctx, style_filter=lane, progress_cb=sp)
+            except Exception as e:
+                log.warning("propose %s failed: %s", lane, e)
+                sp(f":x: {hhmm} {lane_lbl} 컨셉 실패: {str(e)[:140]}")
+                continue
+            if not batch:
+                sp(f":warning: {hhmm} {lane_lbl}: 컨셉 없음{suffix}")
+                continue
+            cand = batch[0]
+            cand["render_style"] = lane
+            try:
+                cand = (resolve_knowledge_questions(
+                    [cand], target, ask_cb=slot_ask, progress_cb=sp) or [cand])[0]
+            except Exception as e:
+                log.warning("knowledge Q resolve failed (%s): %s", lane, e)
+            concept = cand
+            if dry_run:
+                return {"lane": lane, "slot": hhmm, "title": concept.get("title"),
+                        "publish_at": publish_at_for(target, hhmm), "thread_ts": slot_ts}
+            _v = (cand.get("cameraman_validation") or {}).get("verdict", "")
+            if _v == "blocked" and _att < max_repropose:
+                sp(f":arrows_counterclockwise: {hhmm} {lane_lbl} Validator 블록 "
+                   f"({(cand.get('cameraman_validation') or {}).get('summary','')[:60]}) "
+                   f"— 재제안 ({_att}/{max_repropose})")
+                continue
+            # render (each thread its own db connection — sqlite isn't shareable)
+            sp(f":factory: {hhmm} {lane_lbl} 렌더: {concept.get('title','?')}")
+            try:
+                outs = produce_and_render([concept], target, progress_cb=sp)
+            except Exception as e:
+                log.exception("launch render failed (%s %s): %s", hhmm, lane, e)
+                sp(f":x: {hhmm} {lane_lbl} 렌더 실패: {str(e)[:140]}")
+                outs = []
+            break  # rendered (block-reproposes already 'continue'd above)
+        if concept is None:
             sp(f":warning: {hhmm} {lane_lbl}: 컨셉 없음 — 슬롯 비움")
-            return None
-        concept = batch[0]
-        concept["render_style"] = lane
-        try:
-            concept = (resolve_knowledge_questions(
-                [concept], target, ask_cb=slot_ask, progress_cb=sp)
-                or [concept])[0]
-        except Exception as e:
-            log.warning("knowledge Q resolve failed (%s): %s", lane, e)
-        if dry_run:
-            return {"lane": lane, "slot": hhmm, "title": concept.get("title"),
-                    "publish_at": publish_at_for(target, hhmm), "thread_ts": slot_ts}
-        # render (each thread its own db connection — sqlite isn't shareable)
-        sp(f":factory: {hhmm} {lane_lbl} 렌더: {concept.get('title','?')}")
-        try:
-            outs = produce_and_render([concept], target, progress_cb=sp)
-        except Exception as e:
-            log.exception("launch render failed (%s %s): %s", hhmm, lane, e)
-            sp(f":x: {hhmm} {lane_lbl} 렌더 실패: {str(e)[:140]}")
             return None
         out = outs[0] if outs else None
         if not out:
             sp(f":x: {hhmm} {lane_lbl}: 기리 미통과/렌더 실패 — 슬롯 비움(junk 금지)")
             return None
+        # PD 2026-06-10: record this episode's clips so later slots in THIS batch
+        # avoid re-using them (the 6/11 two-RF-identical-clips bug).
+        try:
+            for _c in (concept.get("cuts") or []):
+                if _c.get("asset_id"):
+                    batch_used_assets.add(_c["asset_id"])
+        except Exception:
+            pass
         sv(out)
         vid = None
         publish_at = publish_at_for(target, hhmm)

@@ -27,7 +27,7 @@
     <array>
       <string>/Users/ahnbingbing/code/rianileo-agent/.venv/bin/python</string>
       <string>-m</string>
-      <string>agents.launch</string>
+      <string>agents.launch_selfheal</string>
     </array>
 
     <key>WorkingDirectory</key><string>/Users/ahnbingbing/code/rianileo-agent</string>
@@ -39,11 +39,17 @@
       <key>LOG_LEVEL</key><string>INFO</string>
       <key>ARC_ENABLED</key><string>1</string>
       <key>YOUTUBE_AUTO_UPLOAD</key><string>1</string>
+      <key>CHAIN_TRANSITION</key><string>crossfade</string>
+      <key>AV_CUT_OUTPUT_SECONDS</key><string>4</string>
+      <key>AV_MAX_RETRIES</key><string>0</string>
+      <key>AV_GATE_HEAL_TRIES</key><string>1</string>
+      <key>SEEDANCE_MAX_CALLS</key><string>60</string>
+      <key>OPENAI_FALLBACK_MODEL</key><string>gpt-4.1</string>
     </dict>
 
     <key>StartCalendarInterval</key>
     <dict>
-      <key>Hour</key><integer>0</integer>
+      <key>Hour</key><integer>1</integer>
       <key>Minute</key><integer>0</integer>
     </dict>
 

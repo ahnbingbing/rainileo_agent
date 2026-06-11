@@ -21,6 +21,8 @@ import datetime as dt
 import json
 import logging
 import os
+
+from agents import models as _models
 import re
 import sqlite3
 from pathlib import Path
@@ -50,8 +52,8 @@ CHARACTER_SHEETS = PROMPTS_DIR / "character_sheets.md"
 SORA_LESSONS = ROOT / "notes" / "sora2_motion_lessons.md"
 PROVEN_MOTION_PROMPTS = ROOT / "notes" / "proven_motion_prompts.json"
 
-WRITER_MODEL = os.getenv("WRITER_MODEL", "claude-opus-4-7")
-DIRECTOR_MODEL = os.getenv("DIRECTOR_MODEL", "claude-opus-4-7")
+WRITER_MODEL = os.getenv("WRITER_MODEL", _models.ANTHROPIC_TEXT)
+DIRECTOR_MODEL = os.getenv("DIRECTOR_MODEL", _models.ANTHROPIC_TEXT)
 
 # Few-shot threshold
 GIRI_FEWSHOT_MIN = float(os.getenv("GIRI_FEWSHOT_MIN", "8.0"))
@@ -64,7 +66,7 @@ GIRI_FEWSHOT_N = int(os.getenv("GIRI_FEWSHOT_N", "2"))
 def _call_anthropic(system: str, user: str, *, model: str,
                     max_tokens: int = 16000,
                     cache_system: bool = True) -> str:
-    """LLM cascade (PD 2026-06-02 reorder): OpenAI GPT-5 (primary) →
+    """LLM cascade (PD 2026-06-02 reorder): OpenAI gpt-4.1 (primary) →
     Gemini 2.5 Pro → Anthropic (last fallback).
 
     Function name kept as `_call_anthropic` for code-history compatibility,
@@ -144,16 +146,16 @@ def _call_anthropic_raw(system: str, user: str, *, model: str,
 
 
 def _call_openai_fallback(system: str, user: str, max_tokens: int = 16000) -> str:
-    """OpenAI GPT-5 fallback. Loses Anthropic prompt caching but keeps the
+    """OpenAI gpt-4.1 fallback. Loses Anthropic prompt caching but keeps the
     pipeline productive."""
     try:
         from openai import OpenAI
     except ImportError:
         raise RuntimeError("openai package not installed")
     client = OpenAI(timeout=int(os.getenv("LLM_TIMEOUT_S", "45")), max_retries=0)
-    model = os.environ.get("OPENAI_FALLBACK_MODEL", "gpt-5")
+    model = os.environ.get("OPENAI_FALLBACK_MODEL", _models.OPENAI_TEXT)
     # PD 2026-06-09: pass the output-token budget (was unset → could truncate the
-    # large Director JSON). gpt-5 uses max_completion_tokens.
+    # large Director JSON). gpt-4.1 uses max_completion_tokens.
     resp = client.chat.completions.create(
         model=model,
         messages=[
@@ -181,7 +183,7 @@ def _call_gemini_fallback(system: str, user: str, max_tokens: int = 16000) -> st
     from google.genai import types as _gtypes
     gclient = _genai.Client(api_key=api_key, http_options=_gtypes.HttpOptions(
         timeout=int(os.getenv("LLM_TIMEOUT_S", "45")) * 1000))
-    model_name = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-2.5-pro")
+    model_name = os.environ.get("GEMINI_FALLBACK_MODEL", _models.GEMINI_TEXT)
     # PD 2026-06-09 (THE truncation bug): Gemini defaults max_output_tokens to ~8k,
     # so the Director's ~20k-token JSON was silently CUT OFF mid-sentence (set_description
     # ended at 'SOUTH wall', motion_prompt mid-word) → Validator blocked the concept.
@@ -889,7 +891,7 @@ def run_caption_agent(concepts: list[dict],
 
     user = _build_caption_agent_user_prompt(concepts)
     try:
-        # PD 2026-06-02 3-way competition: run Sonnet + GPT-5 + Gemini 2.5 Pro
+        # PD 2026-06-02 3-way competition: run Sonnet + gpt-4.1 + Gemini 2.5 Pro
         # in parallel, judge with Opus 4.7, apply winner. Cost ~$0.08/concept.
         scripted = _caption_agent_competition(system, user, progress_cb=progress_cb)
     except Exception as e:
@@ -1198,7 +1200,7 @@ def _rewrite_duplicate_captions(concept: dict, progress_cb=None) -> None:
     try:
         out = _call_anthropic(
             rewrite_system, user,
-            model=os.environ.get("CAPTION_AGENT_MODEL", "claude-sonnet-4-6"),
+            model=os.environ.get("CAPTION_AGENT_MODEL", _models.ANTHROPIC_LIGHT),
             max_tokens=2000,
         )
         rewrites = _parse_json_loose(out)
@@ -1233,7 +1235,7 @@ def _rewrite_duplicate_captions(concept: dict, progress_cb=None) -> None:
 
 def _caption_agent_competition(system: str, user: str,
                                  progress_cb=None) -> list:
-    """PD 2026-06-02: run Sonnet 4.6 + GPT-5 + Gemini 2.5 Pro in parallel,
+    """PD 2026-06-02: run Sonnet 4.6 + gpt-4.1 + Gemini 2.5 Pro in parallel,
     then use Opus 4.7 as judge to pick the best-fit caption set. Returns
     the winning JSON array.
 
@@ -1243,13 +1245,13 @@ def _caption_agent_competition(system: str, user: str,
     """
     import concurrent.futures as _cf
     # PD 2026-06-02: NEVER use Anthropic for caption/text generation.
-    # Cascade order for writing = GPT-5 > Gemini Pro > Anthropic (last resort).
+    # Cascade order for writing = gpt-4.1 > Gemini Pro > Anthropic (last resort).
     # Caption competition now only runs OpenAI + Gemini in parallel.
     # Anthropic stays in `_call_anthropic`'s last-fallback hop for other agents.
     providers = {
-        "openai_gpt5": lambda: _call_openai_text(system, user, model="gpt-5"),
+        "openai_gpt5": lambda: _call_openai_text(system, user, model=_models.OPENAI_TEXT),
         "gemini_pro": lambda: _call_gemini_text(
-            system, user, model="gemini-2.5-pro",
+            system, user, model=_models.GEMINI_TEXT,
         ),
     }
     raw_outputs: dict[str, str] = {}
@@ -1280,7 +1282,7 @@ def _caption_agent_competition(system: str, user: str,
         if progress_cb:
             progress_cb(f":trophy: Caption: {winner} (자동 선택, 단일 성공)")
         return parsed[winner]
-    # Judge (PD 2026-06-02: NO Anthropic for text — use GPT-5 as judge).
+    # Judge (PD 2026-06-02: NO Anthropic for text — use gpt-4.1 as judge).
     judge_system = (
         "You are a Korean YouTube Shorts caption judge for the channel "
         "Ryani & Leo. You see N caption proposals for the same storyboard. "
@@ -1302,9 +1304,9 @@ def _caption_agent_competition(system: str, user: str,
         + "\n\nPick the winner per the rules and return the JSON object."
     )
     try:
-        # Judge runs on OpenAI GPT-5 (PD 2026-06-02: no Anthropic for text).
+        # Judge runs on OpenAI gpt-4.1 (PD 2026-06-02: no Anthropic for text).
         out = _call_openai_text(judge_system, judge_user,
-                                  model=os.environ.get("CAPTION_JUDGE_MODEL", "gpt-5"))
+                                  model=os.environ.get("CAPTION_JUDGE_MODEL", _models.OPENAI_TEXT))
         verdict = _parse_json_loose(out)
         winner = verdict.get("winner") if isinstance(verdict, dict) else None
         reason = verdict.get("reason", "") if isinstance(verdict, dict) else ""
@@ -1324,7 +1326,7 @@ def _caption_agent_competition(system: str, user: str,
     return parsed[winner]
 
 
-def _call_openai_text(system: str, user: str, model: str = "gpt-5") -> str:
+def _call_openai_text(system: str, user: str, model: str = _models.OPENAI_TEXT) -> str:
     """OpenAI text generation via Responses API. Returns the full text body."""
     try:
         from openai import OpenAI
@@ -1342,7 +1344,7 @@ def _call_openai_text(system: str, user: str, model: str = "gpt-5") -> str:
 
 
 def _call_gemini_text(system: str, user: str,
-                       model: str = "gemini-2.5-pro") -> str:
+                       model: str = _models.GEMINI_TEXT) -> str:
     """Gemini text generation. Returns the body."""
     api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key:
@@ -1739,7 +1741,7 @@ def run_cameraman_validator(concepts: list[dict],
             user = _build_validator_user_prompt(c)
             out_text = _call_anthropic(
                 system, user,
-                model=os.environ.get("VALIDATOR_MODEL", "claude-sonnet-4-6"),
+                model=os.environ.get("VALIDATOR_MODEL", _models.ANTHROPIC_LIGHT),
                 max_tokens=4000,
             )
             result = _parse_json_loose(out_text)
@@ -2145,10 +2147,33 @@ def _consolidate_short_to_one_take(c: dict) -> None:
     # Chain mode: keep cuts, just enforce per-cut Seedance limits.
     # Cameraman will chain cut N (N>1) onto cut N-1's last frame.
     c["chain_mode"] = True
+    # PD 2026-06-10 (A): a chained i2v cut INHERITS the previous cut's last-frame
+    # composition, so chaining EVERY cut locked the framing and the Director's varied
+    # shot_size never rendered → "비슷한 컷이 계속" (cuts all look the same). Fix: when a
+    # cut's shot_size differs from the previous by ≥ AV_CHAIN_SHOT_DELTA levels, render
+    # it INDEPENDENT (ref mode) so the new framing actually appears; small/no change →
+    # chain for continuity. Restores shot variety while keeping a one-take feel.
+    _SHOT_ORD = {
+        "extreme_close_up": 0, "ecu": 0, "extreme_closeup": 0,
+        "close_up": 1, "cu": 1, "closeup": 1,
+        "medium_close_up": 2, "mcu": 2, "medium_closeup": 2,
+        "medium_shot": 3, "ms": 3, "medium": 3,
+        "medium_wide": 4, "mws": 4, "medium_wide_shot": 4, "medium_full": 4,
+        "wide_shot": 5, "ws": 5, "wide": 5, "full_shot": 5, "fs": 5,
+        "establishing": 6, "els": 6, "extreme_wide": 6, "ews": 6,
+    }
+    def _shot_ord(s):
+        return _SHOT_ORD.get((s or "").strip().lower().replace("-", "_"), 3)
+    _chain_delta = int(os.getenv("AV_CHAIN_SHOT_DELTA", "2"))
     for i, cut in enumerate(cuts):
         cut["duration_seconds"] = min(int(cut.get("duration_seconds") or 5), 5)
         if i == 0:
             cut.setdefault("seedance_mode", "ref")
+        elif abs(_shot_ord(cut.get("shot_size"))
+                 - _shot_ord(cuts[i - 1].get("shot_size"))) >= _chain_delta:
+            # big framing change → independent ref-mode render (new composition)
+            cut["seedance_mode"] = "ref"
+            cut["chain_from_prev"] = False
         else:
             cut["seedance_mode"] = "i2v"
             cut["chain_from_prev"] = True

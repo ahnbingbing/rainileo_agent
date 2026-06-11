@@ -311,8 +311,21 @@ def download_asset_by_uuid(uuid: str, dest_dir: Path) -> str | None:
     cmd = [cli, "export", str(dest_dir), "--uuid", uuid, "--download-missing",
            "--update", method, "--skip-edited", "--skip-bursts",
            "--filename", "{uuid}", "--retry", "2"]
+    # PD 2026-06-10: SERIALIZE osxphotos exports with a cross-process file lock.
+    # The launch batch runs an RF cut and an AV cut concurrently; two osxphotos
+    # exports hitting the Photos library at once made one transiently fail (return
+    # nothing) — which killed the whole AV slot (av went 0/2 on 6/11). One export
+    # at a time removes that contention. The lock is held only for the subprocess.
+    import fcntl as _fcntl
+    import tempfile as _tempfile
+    _lockpath = Path(_tempfile.gettempdir()) / "rianileo_osxphotos.lock"
     try:
-        subprocess.run(cmd, check=False, stdin=subprocess.DEVNULL, timeout=180)
+        with open(_lockpath, "w") as _lk:
+            _fcntl.flock(_lk, _fcntl.LOCK_EX)
+            try:
+                subprocess.run(cmd, check=False, stdin=subprocess.DEVNULL, timeout=180)
+            finally:
+                _fcntl.flock(_lk, _fcntl.LOCK_UN)
     except Exception as e:
         log.warning("download_asset_by_uuid failed for %s: %s", uuid, e)
         return None

@@ -187,7 +187,9 @@ def build_cmd(clips: list[Path], cut_durations: list[float],
               music: Path, out: Path,
               volume: float, fadein: float, fadeout: float,
               cut_speed: float = 1.3,
-              per_cut_speeds: dict[int, float] | None = None) -> list[str]:
+              per_cut_speeds: dict[int, float] | None = None,
+              xfade_into: set[int] | None = None,
+              xfade_dur: float = 0.2) -> list[str]:
     """Build the full ffmpeg invocation.
 
     `clips` is the FULL ordered list of video inputs in the final episode.
@@ -259,8 +261,44 @@ def build_cmd(clips: list[Path], cut_durations: list[float],
             f"setsar=1,fps=30[v{i}]"
         )
     v_inputs = "".join(f"[v{i}]" for i in range(n))
-    video_chain = ";".join(norm_chains) + ";" + \
-                  f"{v_inputs}concat=n={n}:v=1:a=0[vout]"
+    # PD 2026-06-09 보강 옵션: between CHAINED one-take cuts, a short crossfade
+    # (dissolve) instead of a hard cut — smooths any minor chain discontinuity
+    # WITHOUT the fade-to-black flash. `xfade_into` = the set of clip indices
+    # whose transition INTO them should dissolve (a chained cut). All other
+    # boundaries (bumpers, true scene cuts) stay hard concat. Default (empty
+    # set) = the existing single concat, so nothing changes unless enabled.
+    xfade_into = xfade_into or set()
+    if xfade_into:
+        def _post_dur(idx: int) -> float:
+            raw = ffprobe_duration(clips[idx])
+            sp = 1.0 if idx in bumper_indices else per_cut_speeds.get(idx, cut_speed)
+            return raw / sp if sp else raw
+        # xfade requires BOTH inputs at an identical timebase, but `concat`
+        # emits tb=1/1000000 while a raw fps=30 input is tb=1/30 — feeding a
+        # concat result straight into xfade fails ("timebase do not match").
+        # Stamp every transition output with settb=1/30 so the running `acc`
+        # label always matches the next raw [vi] input.
+        TB = "settb=1/30"
+        seg = []
+        acc = "[v0]"
+        acc_dur = _post_dur(0)
+        for i in range(1, n):
+            lbl = "[vout]" if i == n - 1 else f"[vx{i}]"
+            if i in xfade_into:
+                off = max(0.0, acc_dur - xfade_dur)
+                seg.append(f"{acc}[v{i}]xfade=transition=fade:"
+                           f"duration={xfade_dur}:offset={off:.3f},{TB}{lbl}")
+                acc_dur = off + _post_dur(i)
+            else:
+                seg.append(f"{acc}[v{i}]concat=n=2:v=1:a=0,{TB}{lbl}")
+                acc_dur = acc_dur + _post_dur(i)
+            acc = lbl
+        video_chain = ";".join(norm_chains) + ";" + ";".join(seg)
+        xfade_total = xfade_dur * len(xfade_into)
+    else:
+        video_chain = ";".join(norm_chains) + ";" + \
+                      f"{v_inputs}concat=n={n}:v=1:a=0[vout]"
+        xfade_total = 0.0
 
     # Adjust cut_durations for BGM timing — each cut shrinks by its own speed.
     if cut_durations:
@@ -284,7 +322,9 @@ def build_cmd(clips: list[Path], cut_durations: list[float],
     outro_has_audio = outro_idx is not None and has_audio_stream(clips[outro_idx])
     intro_dur = ffprobe_duration(clips[intro_idx]) if intro_idx is not None else 0.0
     outro_dur = ffprobe_duration(clips[outro_idx]) if outro_idx is not None else 0.0
-    cuts_total = sum(cut_durations)
+    # Crossfades overlap adjacent cuts, shrinking the cuts block by xfade_dur
+    # per crossfade — subtract so BGM/section timing stays aligned to video.
+    cuts_total = max(0.0, sum(cut_durations) - xfade_total)
     total = intro_dur + cuts_total + outro_dur
 
     # BGM segments — we may need it for the whole episode, for cuts-only,
@@ -391,6 +431,12 @@ def main() -> int:
                    help=f"fade-in seconds (default {MUSIC_FADEIN_S})")
     p.add_argument("--fadeout", type=float, default=MUSIC_FADEOUT_S,
                    help=f"fade-out seconds (default {MUSIC_FADEOUT_S})")
+    p.add_argument("--xfade-tags", default="",
+                   help="comma-separated cut tags whose transition INTO them "
+                        "is a crossfade/dissolve (chained one-take cuts). "
+                        "Empty = all hard cuts (default).")
+    p.add_argument("--xfade-dur", type=float, default=0.2,
+                   help="crossfade duration in seconds (default 0.2)")
     p.add_argument("--dry-run", action="store_true",
                    help="print the ffmpeg command, do not run it")
     args = p.parse_args()
@@ -480,9 +526,21 @@ def main() -> int:
         if per_cut_speeds:
             print(f"Per-cut tempo  : {per_cut_speeds}")
 
+    # Map crossfade cut tags → clip indices (same offset logic as tempo).
+    xfade_into: set[int] = set()
+    xfade_tags = {t.strip() for t in args.xfade_tags.split(",") if t.strip()}
+    if xfade_tags:
+        for i, tag in enumerate(cut_order):
+            if tag in xfade_tags and i > 0:  # i==0 has no prev cut to dissolve from
+                clip_i = i + (1 if intro_idx is not None else 0)
+                xfade_into.add(clip_i)
+        if xfade_into:
+            print(f"Crossfade into : {sorted(xfade_into)} (dur={args.xfade_dur}s)")
+
     cmd = build_cmd(clips, cut_durations, intro_idx, outro_idx, music, out,
                     args.volume, args.fadein, args.fadeout,
-                    per_cut_speeds=per_cut_speeds)
+                    per_cut_speeds=per_cut_speeds,
+                    xfade_into=xfade_into, xfade_dur=args.xfade_dur)
 
     print(f"Captions manifest: {_rel(captions_path)}")
     if intro:

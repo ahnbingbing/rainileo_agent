@@ -291,21 +291,11 @@ def _asset_inventory(con: sqlite3.Connection) -> dict:
 # age that planning needs (visual markings live in character_sheets.md, the full
 # source). PD 2026-06-07: the planner was INVENTING traits (e.g. "랴니 물 공포
 # 극복") because no real facts were fed. Keep this in sync with character_sheets.md.
-CHARACTER_FACTS = (
-    "## 캐릭터 사실 (권위 — 여기 없는 성격/능력/공포는 발명 금지)\n"
-    "- **레오(레오)**: 8개월 **수컷** 고양이(주황 태비). 2025-11-15 떠돌이로 구조됨 → "
-    "랴니를 엄마로 여김('랴니엄마'는 레오 POV 호칭). 장난꾸러기·사냥꾼·매복 전문. "
-    "세차를 무서워함. 고양이라 물을 피하고 물가에서 구경하는 쪽.\n"
-    "- **랴니(랴니)**: 11살 **암컷(중성화)** 프렌치불독, 꼬리 없음. 의젓한 누나/엄마, "
-    "차분·현명. ★ **물을 엄청 좋아하는 '물 매니아'**: 물만 보면 흥분해서 짖고, 특히 "
-    "**고무호스/분수** 물을 보면 격하게 흥분해 **분수에 뛰어들려고 난리**. **수영도 아주 잘함"
-    "('펠프스급')**. 겨울엔 **눈을 좋아하고 얼음 썰매를 탄다**. (거짓 금지: '랴니 물 공포/물 "
-    "무서워함'은 완전히 틀림 — 정반대. 단 2016 아기 시절엔 잠깐 무서워했음 → 과거 회상에서만.) "
-    "세차도 안 무서워함(레오와 대비).\n"
-    "- **여름 물놀이/분수/수영 + 겨울 눈/얼음썰매 컨셉의 주인공 = 랴니.** 레오는 물가 구경/마른 쪽.\n"
-    "- ⚠️ 위 목록에 없는 공포·능력·트레잇을 새로 지어내지 마라. 나이도 정확히(레오 8개월/"
-    "랴니 11살) — 뒤바꾸지 마라.\n"
-)
+# Character authority facts — central source of truth (agents/canon.py).
+# PD 2026-06-09: de-duplicated from arc/cameraman/generate_character_scene.
+# Edit the facts in agents/canon.py; this stays importable as arc.CHARACTER_FACTS.
+from agents import canon as _canon
+CHARACTER_FACTS = _canon.CHARACTER_FACTS
 
 
 def _learned_facts(con: sqlite3.Connection) -> str:

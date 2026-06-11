@@ -29,7 +29,18 @@ from typing import Any, Callable
 
 from dotenv import load_dotenv
 
+from agents import canon  # central character canon (single source of truth)
+
 ROOT = Path(__file__).resolve().parent.parent
+
+# PD 2026-06-10 COST GUARD: a hard ceiling on Seedance i2v calls per PROCESS. The
+# self-heal test spent ~$100 in a day because retry layers COMPOUND — per-cut
+# character/face gate re-renders × AV_MAX_RETRIES (whole-episode) × self-heal
+# rounds → 246 Seedance cuts in one run. This counter is the absolute backstop:
+# once a run exceeds SEEDANCE_MAX_CALLS it REFUSES further Seedance dispatches
+# (raises) instead of silently burning money. A normal 4-episode batch is ~24
+# cuts; 40 leaves headroom for modest retries but kills a runaway.
+_SEEDANCE_CALL_COUNT = 0
 load_dotenv(ROOT / ".env")
 log = logging.getLogger("agents.cameraman")
 
@@ -113,6 +124,7 @@ REF_LIBRARY = {
     # Per-character / per-pose slots — these files may not exist yet.
     # Director can name them; _resolve_ref() falls back to "pair" cleanly.
     "ryani_solo":       "assets/character_ref/ryani_solo.png",
+    "ryani_young":      "assets/character_ref/ryani_young.png",  # PD 2026-06-11: 어린 랴니(2015, 회색 주둥이 없음) — 과거/회상 컷용
     "leo_solo":         "assets/character_ref/leo_solo.png",
     "ryani_playbow":    "assets/character_ref/ryani_playbow.png",
     "leo_pounce":       "assets/character_ref/leo_pounce.png",
@@ -1666,6 +1678,17 @@ def _run(cmd: list[str], step: str, progress_cb: ProgressCb = None,
         return None
     # PD 2026-06-08: guarantee ≥1 image + lint prompt on every real Seedance dispatch.
     if len(cmd) >= 2 and "animate_seedance_i2v.py" in str(cmd[1]):
+        # PD 2026-06-10 COST GUARD: hard per-process Seedance ceiling.
+        global _SEEDANCE_CALL_COUNT
+        _budget = int(os.getenv("SEEDANCE_MAX_CALLS", "40"))
+        _SEEDANCE_CALL_COUNT += 1
+        if _SEEDANCE_CALL_COUNT > _budget:
+            raise RuntimeError(
+                f"SEEDANCE 예산 초과: 이 프로세스에서 i2v 호출 {_SEEDANCE_CALL_COUNT} > "
+                f"SEEDANCE_MAX_CALLS={_budget}. 비용 폭주 방지로 더 이상 렌더하지 않음 "
+                f"(PD 2026-06-10). 의도적이면 env로 상향.")
+        if progress_cb:
+            progress_cb(f":coin: Seedance 호출 {_SEEDANCE_CALL_COUNT}/{_budget}")
         cmd = _seedance_preflight(cmd)
     proc = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=600)
     if proc.returncode != 0:
@@ -1897,6 +1920,93 @@ def _find_replacement_real_clip(subject: str, exclude: set | None = None) -> dic
     return None
 
 
+def _cut_face_ok(mp4_path: Path, n_frames: int = 4) -> bool:
+    """PD 2026-06-10: per-cut FACE-INTEGRITY gate. SEPARATE from the marking gate
+    (`_cut_character_ok`) — a melted/distorted face or a floating orb artifact can
+    have 'correct' markings, so the marking gate passes it (it passed 003111's
+    orb-face, and so did Giri at 9/10). Focused VLM call on FACE-CROPPED frames:
+    cropping the head region is what made this reliable (full frames diluted the
+    VLM's attention and the small orb slipped through). Returns True = face OK,
+    False = clear AI face corruption (caller swaps the cut to a real clip).
+    Fail-open (True) on error / no API."""
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key or not Path(mp4_path).exists():
+        return True
+    try:
+        from google import genai as _g
+        from google.genai import types as _gt
+        from PIL import Image as _Img
+        import tempfile as _tf
+        dur = 5.0
+        try:
+            dur = float(subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=nw=1:nk=1", str(mp4_path)],
+                capture_output=True, text=True, timeout=15).stdout.strip() or 5.0)
+        except Exception:
+            pass
+        client = _g.Client(api_key=api_key, http_options=_gt.HttpOptions(
+            timeout=int(os.getenv("VLM_TIMEOUT_MS", "90000"))))
+        parts = []
+        with _tf.TemporaryDirectory() as td:
+            for i in range(n_frames):
+                t = dur * (i + 0.5) / n_frames
+                fp = Path(td) / f"f{i}.jpg"
+                subprocess.run(["ffmpeg", "-y", "-nostats", "-loglevel", "error",
+                                "-ss", f"{t:.2f}", "-i", str(mp4_path),
+                                "-frames:v", "1", str(fp)], check=False, timeout=20)
+                if not fp.exists():
+                    continue
+                img = _Img.open(fp).convert("RGB")
+                img = img.crop((0, 0, img.width, int(img.height * 0.62)))  # head region
+                if max(img.size) > 1024:
+                    r = 1024 / max(img.size)
+                    img = img.resize((int(img.width * r), int(img.height * r)))
+                cp = Path(td) / f"c{i}.jpg"
+                img.save(cp, format="JPEG", quality=88)
+                parts.append(_gt.Part.from_bytes(data=cp.read_bytes(),
+                                                 mime_type="image/jpeg"))
+            if not parts:
+                return True
+            prompt = (
+                "These are FACE-CROPPED frames from ONE rendered animal cut (a still "
+                "photo animated by AI, which can corrupt the face). Flag ONLY clear AI "
+                "corruption: a melted / smeared / distorted muzzle or eyes, grossly "
+                "asymmetric or mismatched eyes, a face that warps unnaturally, or a "
+                "floating white blob / orb / dot artifact stuck on the face or "
+                "forehead. Do NOT flag a real, natural face for being sleepy, "
+                "eyes-closed, motion-blurred, side-profile, or low-light. Return ONLY "
+                'JSON {"face_defect": true|false, "detail": "<what/where, or empty>"}.'
+            )
+            parts.append(prompt)
+            resp = client.models.generate_content(
+                model=os.getenv("VLM_MODEL", "gemini-2.5-flash"), contents=parts,
+                config=_gt.GenerateContentConfig(response_mime_type="application/json"))
+            t = (resp.text or "").strip()
+            t = re.sub(r"^```(?:json)?\s*", "", t)
+            t = re.sub(r"\s*```$", "", t)
+            data = json.loads(t)
+            # The model sometimes returns a per-frame LIST instead of one object.
+            if isinstance(data, list):
+                hits = [d for d in data if isinstance(d, dict) and d.get("face_defect")]
+                defect = bool(hits)
+                detail = hits[0].get("detail", "") if hits else ""
+            elif isinstance(data, dict):
+                defect = bool(data.get("face_defect"))
+                detail = data.get("detail", "")
+            else:
+                defect = False
+                detail = ""
+            if defect:
+                log.info("cut face gate: DEFECT on %s — %s",
+                         Path(mp4_path).name, detail)
+                return False
+            return True
+    except Exception as e:
+        log.warning("cut face gate failed for %s: %s", mp4_path, e)
+        return True
+
+
 def _prerender_photo_i2v_cuts(manifests: dict, work_dir: Path,
                                 progress_cb: ProgressCb = None,
                                 dry_run: bool = False) -> None:
@@ -2018,17 +2128,24 @@ def _prerender_photo_i2v_cuts(manifests: dict, work_dir: Path,
             for ccx in (manifests.get("concept_cuts") or []):
                 if (ccx.get("tag") or ccx.get("cut_tag")) == tag:
                     who = (ccx.get("who") or "").lower(); break
-            if who in ("ryani", "leo", "both") and not _cut_character_ok(out_mp4, who):
-                repl = _find_replacement_real_clip(who)
+            marking_bad = (who in ("ryani", "leo", "both")
+                           and not _cut_character_ok(out_mp4, who))
+            # PD 2026-06-10: ALSO swap when the face itself is AI-corrupted (orb /
+            # melted), regardless of markings — this is the gap that let 003111's
+            # orb-face through (markings were 'fine'). Runs on every photo_i2v cut.
+            face_bad = not _cut_face_ok(out_mp4)
+            if marking_bad or face_bad:
+                reason = "얼굴 왜곡(orb/녹음)" if face_bad else "랴니 마킹 드리프트"
+                repl = _find_replacement_real_clip(who or "both")
                 if repl:
                     sources[tag] = repl
-                    log.info("photo_i2v %s: Ryani drift → replaced with real clip %s",
-                             tag, repl.get("asset_id"))
+                    log.info("photo_i2v %s: %s → replaced with real clip %s",
+                             tag, reason, repl.get("asset_id"))
                     if progress_cb:
-                        progress_cb(f":arrows_counterclockwise: {tag} 랴니 마킹 드리프트 "
+                        progress_cb(f":arrows_counterclockwise: {tag} {reason} "
                                     f"— 실제 영상으로 교체")
                 elif progress_cb:
-                    progress_cb(f":warning: {tag} 마킹 드리프트, 교체 클립 없음 — photo_i2v 유지")
+                    progress_cb(f":warning: {tag} {reason}, 교체 클립 없음 — photo_i2v 유지")
         n_rendered += 1
     if n_rendered:
         log.info("photo_i2v: %d cuts pre-rendered", n_rendered)
@@ -2199,8 +2316,25 @@ def _ensure_local(file_path: str, source_uuid: str | None) -> str | None:
         if not source_uuid:
             return file_path  # nothing we can do — let caller handle missing
         from icloud.sync import download_asset_by_uuid
+        import time as _time
         dest = Path(file_path).parent if file_path else (ROOT / "data" / "assets" / "clips")
-        dl = download_asset_by_uuid(source_uuid, dest)
+        # PD 2026-06-10: under the concurrent launch batch (an RF cut and an AV cut
+        # export from the Photos library at the same time) a single osxphotos export
+        # can transiently fail and return None — which used to kill the whole AV slot
+        # (av went 0/2 on 6/11 this way). Retry with backoff so transient library
+        # contention doesn't drop the cut; the same download succeeds in isolation.
+        dl = None
+        for _attempt in range(3):
+            try:
+                dl = download_asset_by_uuid(source_uuid, dest)
+            except Exception as _e:
+                log.warning("download_asset_by_uuid attempt %d failed for %s: %s",
+                            _attempt + 1, source_uuid, _e)
+                dl = None
+            if dl:
+                break
+            if _attempt < 2:
+                _time.sleep(1.5 * (_attempt + 1))  # 1.5s, then 3.0s backoff
         if not dl:
             return None
         # Move/rename the downloaded {uuid}.ext to the expected file_path.
@@ -2746,6 +2880,11 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
 
     # Step 3: assemble
     out = ROOT / "data" / "output" / "episodes" / f"episode_rf_{ts}.mp4"
+    # PD 2026-06-11: persist render params for caption-salvage (re-caption these
+    # rendered clips on a Giri caption-fail, no re-extract/re-render).
+    _persist_render_meta(work_dir, manifests, manifests.get("cuts") or [],
+                         (manifests.get("concept") or {}).get("cuts") or [],
+                         style="real_footage")
     _run(
         ["python3", "scripts/assemble_episode.py",
          "--captions", manifests["captions"],
@@ -2756,6 +2895,27 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
         ":clapper: [3/3] Final assembly",
         progress_cb, dry_run,
     )
+    # PD 2026-06-11: a real_footage episode that came out far too short (e.g. the
+    # 9.4s episode_rf_..._010216) = most cuts were DROPPED (failed asset download /
+    # missing clip), even though the concept had 6 cuts × 7-8s. Don't publish a stub
+    # — FAIL so the slot stays empty and self-heal/retry can rebuild it from the now
+    # much-bigger pool. Floor via RF_MIN_SECONDS (default 14s incl. ~5s bumpers).
+    if not dry_run and out.exists():
+        try:
+            _dur = float(subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=nw=1:nk=1", str(out)],
+                capture_output=True, text=True, timeout=15).stdout.strip() or 0)
+        except Exception:
+            _dur = 0.0
+        _min = float(os.getenv("RF_MIN_SECONDS", "14"))
+        if 0 < _dur < _min:
+            if progress_cb:
+                progress_cb(f":x: RF 에피소드 너무 짧음 ({_dur:.1f}s < {_min:.0f}s) "
+                            f"— 컷 드롭 의심, stub 공개 방지로 실패 처리")
+            raise RuntimeError(
+                f"real_footage too short ({_dur:.1f}s < {_min}s) — likely dropped "
+                f"cuts; refusing to publish a stub")
     return out
 
 
@@ -3165,19 +3325,9 @@ def _run_t2v_pipeline(manifests: dict, card: dict, work_dir: Path,
     return out
 
 
-_RYANI_MARKING_EMPHASIS = (
-    " CRITICAL — Ryani the black French Bulldog must keep her exact markings every "
-    "frame: a THIN narrow white Boston-Terrier-style blaze (a fine line, NOT a wide "
-    "splash, do NOT enlarge it) from nose up the forehead, small white dot above "
-    "each eye, silver-grey aged muzzle, white chin, white chest patch, bat ears, NO "
-    "tail. Only black/white/grey — no brown. Keep the blaze thin and the face "
-    "identical to the input; do not redraw or distort her markings.")
-
-_LEO_MARKING_EMPHASIS = (
-    " CRITICAL — Leo the orange tabby cat must look like the REAL cat, not AI-"
-    "generated: pale yellow-green / chartreuse eyes (NOT gold or amber), white chin "
-    "tuft, lean young-adult body, natural real-cat face and proportions. Do not "
-    "warp, plasticize, or redraw his face.")
+# Per-cut Seedance marking injection — central canon (agents/canon.py).
+_RYANI_MARKING_EMPHASIS = canon.RYANI_MARKING
+_LEO_MARKING_EMPHASIS = canon.LEO_MARKING
 
 
 def _cut_character_ok(mp4_path: Path, who: str = "both", n_frames: int = 3,
@@ -3371,11 +3521,18 @@ def _cut_scene_ok(mp4_path: Path, scene_ref_path=None, expected_facts: str = "",
                 "You check ONLY the SCENE/SET of a rendered pet video cut — ignore the "
                 "pets' markings (another checker handles that). Look CAREFULLY." +
                 ref_clause + facts_clause +
-                " Decide TWO things: (1) obvious_defect = is there an OBVIOUS, "
-                "unmistakable real-world-impossible defect a real photo would never "
-                "have? (an object melted/warped/dissolving; an item floating with no "
-                "support; the SAME furniture duplicated; an impossible/extra/merged "
-                "limb). (2) intent_mismatch = compared to the reference/facts above, is "
+                " Decide TWO things: (1) obvious_defect = is the image GLITCHED / "
+                "CORRUPTED in a way a competent artist would NEVER draw on purpose? "
+                "(an object melted/warped/dissolving/smeared; the SAME furniture "
+                "duplicated; an impossible/extra/merged/broken limb; a face or body "
+                "fused into furniture; garbled anatomy). ⚠️ A scene that merely breaks "
+                "REAL-WORLD PHYSICS but is CLEANLY and COHERENTLY drawn is NOT a defect "
+                "— this channel intentionally uses surreal/fantasy gags (a pet SWIMMING "
+                "indoors, a pet floating, water flooding a room and the cat surfing on "
+                "it, indoor rain). Those are the HOOK, not bugs: obvious_defect=false "
+                "for them. Only flag (1) when the render looks like a model GLITCH, not "
+                "a deliberate fantasy. (2) intent_mismatch = compared to the "
+                "reference/facts above, is "
                 "a MAJOR fixture or furniture CLEARLY in the wrong place or wrong form? "
                 "The key example: a sink/basin/washbasin that the facts say is MOUNTED "
                 "at counter height but in the render is sitting DOWN ON THE FLOOR — that "
@@ -3458,17 +3615,22 @@ def _gate_and_heal(out_mp4, prompt, who, emph, regen, progress_cb, dry_run,
         return True
     if _ok():
         return True
+    # PD 2026-06-10 COST: each regen is a full Seedance call. The old ×3 + alt =
+    # up to 4 re-renders PER CUT (×6 cuts × episode-retry → the ~$100 runaway).
+    # Default to ONE heal attempt; the alt-prompt extra render is opt-in. If still
+    # not on-model, KEEP best-effort (advisory) — PD veto is the final net.
+    _heal_tries = max(0, int(os.getenv("AV_GATE_HEAL_TRIES", "1")))
     resolved = False
-    for r in range(3):
+    for r in range(_heal_tries):
         if progress_cb:
-            progress_cb(f":repeat: {tag} 캐릭터/장면 이상({who}) — 재생성 {r+1}/3")
+            progress_cb(f":repeat: {tag} 캐릭터/장면 이상({who}) — 재생성 {r+1}/{_heal_tries}")
         try:
             regen(prompt + emph)
         except Exception as e:
             log.warning("regen %d failed for %s: %s", r + 1, tag, e); break
         if _ok():
             resolved = True; break
-    if not resolved:
+    if not resolved and os.getenv("AV_GATE_ALT_PROMPT", "0") == "1":
         if progress_cb:
             progress_cb(f":repeat: {tag} — 다른 프롬프트로 재도전")
         try:
@@ -3861,6 +4023,11 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
             continue
 
         seconds_int = int(cc.get("duration_seconds", 5))
+        # NOTE (PD 2026-06-10): the fast Seedance model (dreamina-seedance-2-0-fast)
+        # ONLY accepts 5s for BOTH ref and i2v — it rejects duration=3/4 with HTTP 400
+        # "duration not valid for ... in i2v" (verified). So per-cut RENDER length can't
+        # be shortened on the fast model; EPISODE length is controlled by POST-TRIMMING
+        # each rendered 5s cut to AV_CUT_OUTPUT_SECONDS in Step 3 (render stays 5s).
         # Fast model + ref mode = 5s hard cap. Clamp to avoid Ark API error.
         model_in_use = os.getenv("SEEDANCE_MODEL", DEFAULT_MODEL_SEEDANCE)
         if "fast" in model_in_use and mode == "ref" and seconds_int > FAST_MODEL_REF_MAX_SECONDS:
@@ -3870,7 +4037,42 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         seconds = str(seconds_int)
 
         if mode == "ref":
-            ref_names = cc.get("references") or ["pair"]
+            # PD 2026-06-10 ROOT FIX (마킹): the "pair" ref image
+            # (official_ryani_leo.png) is WRONG — Ryani has NO white blaze and both
+            # pets wear hanbok — so a cut generated against it can NEVER reproduce
+            # Ryani's thin blaze, and the marking gate (which judges vs the CORRECT
+            # ryani_solo.png) fails forever → endless costly re-renders. Anchor
+            # generation to the CORRECT solo refs (matching the gate) so markings
+            # render right the FIRST time. Pick by who's in the cut; substitute any
+            # explicit "pair" too.
+            ref_names = cc.get("references")
+            if not ref_names or ref_names == ["pair"]:
+                _who = (cc.get("who") or "both").lower()
+                ref_names = (["ryani_solo"] if _who == "ryani"
+                             else ["leo_solo"] if _who == "leo"
+                             else ["ryani_solo", "leo_solo"])
+            else:
+                _seen: set = set()
+                ref_names = [r for n in ref_names
+                             for r in (["ryani_solo", "leo_solo"] if n == "pair" else [n])
+                             if not (r in _seen or _seen.add(r))]
+            # PD 2026-06-11 (b): age-aware Ryani reference. A cut framed as PAST /
+            # young Ryani (memory-lane "9년전", "어린/아기/강아지", years_ago≥3) must use
+            # the YOUNG reference (black face, NO grey muzzle) — the senior ryani_solo
+            # made "어린 랴니" captions clash with an aged render. Detect from the cut's
+            # text + years_ago and swap ryani_solo → ryani_young for that cut only.
+            _blob = " ".join(str(cc.get(k, "")) for k in
+                             ("motion_prompt", "regen_prompt", "beat", "function",
+                              "action", "description")) + " " + json.dumps(
+                cc.get("captions") or [], ensure_ascii=False)
+            _ya = cc.get("years_ago")
+            _young = (bool(re.search(r"어린|아기|강아지|새끼|퍼피|puppy|young Ryani|어렸|"
+                                     r"\d+\s*년\s*전|years ago|과거|옛날", _blob, re.IGNORECASE))
+                      or (isinstance(_ya, (int, float)) and _ya >= 3))
+            if _young:
+                ref_names = ["ryani_young" if n == "ryani_solo" else n for n in ref_names]
+                if progress_cb:
+                    progress_cb(f":baby: {tag} 과거/어린 랴니 컷 — young 레퍼런스 사용")
             ref_paths = [_resolve_ref(n) for n in ref_names]
             ref_paths = [p for p in ref_paths if p is not None]
             if not ref_paths:
@@ -4211,7 +4413,15 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                 src_mp4.unlink()
                 slowed_mp4.rename(src_mp4)
             continue
-        if tgt <= 0 or src <= 0 or tgt <= src or not tag:
+        # PD 2026-06-10: control EPISODE LENGTH per video. The fast Seedance model is
+        # locked to 5s/cut (it rejects 3/4s), so the only way to make a multi-cut Short
+        # the right length is to retime each cut in post. target can now be SHORTER than
+        # src (speed-up via setpts<1) — unlike a tail-trim this keeps the chain seamless
+        # (no jump at the boundary). AV_CUT_OUTPUT_SECONDS sets the default target for AV
+        # cuts when the Director didn't (e.g. 4 → 5s cut plays in 4s, subtle 1.25x).
+        if tgt <= 0:
+            tgt = int(os.getenv("AV_CUT_OUTPUT_SECONDS", "0") or 0)
+        if tgt <= 0 or src <= 0 or tgt == src or not tag:
             continue
         ratio = tgt / src
         slowed_mp4 = anim_dir / f"{tag}_slow.mp4"
@@ -4223,7 +4433,8 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
             "-preset", "fast", "-crf", "18",
             str(slowed_mp4),
         ]
-        _run(cmd, f":hourglass: [3b/6] Slow {tag} {src}s→{tgt}s ({ratio:.2f}x)",
+        _verb = "Slow" if ratio > 1 else "Speed"
+        _run(cmd, f":hourglass: [3b/6] {_verb} {tag} {src}s→{tgt}s ({ratio:.2f}x)",
              progress_cb, dry_run)
         if not dry_run and slowed_mp4.exists():
             src_mp4.unlink()
@@ -4283,13 +4494,35 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
 
     # Step 6: assemble
     out = ROOT / "data" / "output" / "episodes" / f"episode_av_{ts}.mp4"
+    asm_cmd = [
+        "python3", "scripts/assemble_episode.py",
+        "--captions", manifests["captions"],
+        "--intro-bumper", str(INTRO_BUMPER),
+        "--outro-bumper", str(OUTRO_BUMPER),
+        "--music", manifests.get("bgm", str(DEFAULT_BGM)),
+        "--out", str(out),
+    ]
+    # PD 2026-06-09 보강 옵션: CHAIN_TRANSITION=crossfade → chained one-take cuts
+    # dissolve (no fade-to-black flash) instead of hard-cutting. Default
+    # (unset/"hardcut") keeps hard cuts — the chain is usually continuous enough
+    # that a hard cut is seamless; flip to crossfade only if a render looks jumpy.
+    if os.getenv("CHAIN_TRANSITION", "hardcut").lower() == "crossfade":
+        xfade_tags = [
+            it.get("tag")
+            for j, it in enumerate(cuts)
+            if j > 0 and it.get("tag")
+            and bool((concept_cuts[j] if j < len(concept_cuts) else {}).get("chain_from_prev"))
+        ]
+        if xfade_tags:
+            asm_cmd += ["--xfade-tags", ",".join(xfade_tags),
+                        "--xfade-dur", os.getenv("CHAIN_XFADE_DUR", "0.2")]
+    # PD 2026-06-11: persist render params so a Giri caption-fail can be salvaged
+    # (re-caption these rendered cuts, no Seedance re-render).
+    _persist_render_meta(work_dir, manifests, cuts, concept_cuts,
+                         xfade_tags=locals().get("xfade_tags"),
+                         style="ai_vtuber")
     _run(
-        ["python3", "scripts/assemble_episode.py",
-         "--captions", manifests["captions"],
-         "--intro-bumper", str(INTRO_BUMPER),
-         "--outro-bumper", str(OUTRO_BUMPER),
-         "--music", manifests.get("bgm", str(DEFAULT_BGM)),
-         "--out", str(out)],
+        asm_cmd,
         ":clapper: [6/6] Final assembly",
         progress_cb, dry_run,
     )
@@ -4322,6 +4555,88 @@ def _prune_tmp_workdirs(keep: int | None = None) -> None:
         log.warning("tmp prune failed: %s", e)
 
 
+def _persist_render_meta(work_dir: Path, manifests: dict, cuts: list,
+                         concept_cuts: list | None = None,
+                         xfade_tags: list | None = None,
+                         style: str = "") -> None:
+    """PD 2026-06-11 캡션-salvage: persist the few render parameters that are NOT
+    re-derivable from disk (BGM track, cut order, xfade tags, the concept) so a
+    Giri caption-failure can be SALVAGED — re-caption the already-rendered cuts in
+    work_dir/animated and re-assemble with the SAME BGM — instead of throwing the
+    expensive Seedance render away and re-proposing. captions.json + animated/
+    already persist; this fills the gap. Best-effort, never raises."""
+    try:
+        meta = {
+            "card_id": (manifests.get("card_id")
+                        or (manifests.get("concept") or {}).get("card_id") or ""),
+            "style": style or manifests.get("render_style") or "",
+            "bgm": manifests.get("bgm") or str(DEFAULT_BGM),
+            "captions": str(manifests.get("captions") or (work_dir / "captions.json")),
+            "anim_dir": str(work_dir / "animated"),
+            "cut_tags": [c.get("tag") for c in (cuts or []) if c.get("tag")],
+            "xfade_tags": list(xfade_tags or []),
+            "font_override": manifests.get("font_override") or "",
+            "concept": manifests.get("concept") or {},
+            "concept_cuts": concept_cuts or [],
+        }
+        (work_dir / "render_meta.json").write_text(
+            json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        log.warning("render_meta persist failed (salvage may be unavailable): %s", e)
+
+
+def _prestage_concept_assets(concept: dict | None, card: dict | None,
+                             progress_cb: ProgressCb = None) -> None:
+    """PD 2026-06-11: DOWNLOAD all of a concept's source assets to disk BEFORE the
+    render starts (serialized via the osxphotos lock), so the render never dies
+    mid-preprocess on a missing photo ("not found"). The efficient-storage model
+    keeps originals only on-demand; pre-staging front-loads every re-download in one
+    serial pass and surfaces a genuinely-unavailable asset before any render time is
+    spent. Missing-after-prestage assets are left for the per-cut gate to swap/drop."""
+    cuts = list((concept or {}).get("cuts") or [])
+    if not cuts and card:
+        try:
+            cuts = json.loads(card.get("payload_json") or "{}").get("cuts") or []
+        except Exception:
+            cuts = []
+    aids: list[str] = []
+    for c in cuts:
+        for k in ("asset_id", "secondary_asset_id"):
+            if c.get(k):
+                aids.append(c[k])
+    aids = list(dict.fromkeys(aids))
+    if not aids:
+        return
+    con = _db()
+    need = []
+    for aid in aids:
+        try:
+            r = con.execute("SELECT file_path, source_uuid FROM assets WHERE asset_id=?",
+                            (aid,)).fetchone()
+        except Exception:
+            r = None
+        if not r:
+            continue
+        fp, uuid = r[0], r[1]
+        if fp and not Path(fp).is_absolute():
+            fp = str(ROOT / fp)
+        if fp and uuid and not Path(fp).exists():
+            need.append((aid, fp, uuid))
+    if not need:
+        return
+    if progress_cb:
+        progress_cb(f":arrow_down: 렌더 전 자산 사전 다운로드 {len(need)}개 (직렬)")
+    ok = 0
+    for aid, fp, uuid in need:
+        rec = _ensure_local(fp, uuid)
+        if rec and Path(rec).exists():
+            ok += 1
+        elif progress_cb:
+            progress_cb(f":warning: 사전 다운로드 실패 {str(aid)[:24]} — 렌더 중 교체/드롭")
+    if progress_cb:
+        progress_cb(f":white_check_mark: 사전 다운로드 {ok}/{len(need)} 완료")
+
+
 def render_card(card_id_prefix: str, *,
                 progress_cb: ProgressCb = None,
                 dry_run: bool = False,
@@ -4338,6 +4653,14 @@ def render_card(card_id_prefix: str, *,
         log.info("Card %s → style=%s, %d assets", card_id[:8], style, len(assets))
         if progress_cb:
             progress_cb(f":movie_camera: Rendering `{card_id[:8]}` with **{style}** pipeline")
+
+        # PD 2026-06-11: pre-download ALL source assets up front (serialized) so the
+        # render never fails mid-preprocess on a pruned/missing photo ("not found").
+        if not dry_run:
+            try:
+                _prestage_concept_assets(concept, card, progress_cb)
+            except Exception as e:
+                log.warning("asset prestage failed (non-fatal): %s", e)
 
         ts = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
         work_dir = ROOT / "data" / "tmp" / f"cameraman_{card_id[:8]}_{ts}"

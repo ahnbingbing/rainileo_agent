@@ -1,4 +1,4 @@
-"""Shared LLM cascade (PD 2026-06-02): OpenAI GPT-5 → Gemini 2.5 Pro →
+"""Shared LLM cascade (PD 2026-06-02): OpenAI gpt-4.1 → Gemini 2.5 Pro →
 Anthropic (last resort). Used everywhere in the codebase that previously
 called anthropic.Anthropic() directly. PD strict rule: NO Anthropic for
 text generation when other providers are available.
@@ -6,6 +6,8 @@ text generation when other providers are available.
 from __future__ import annotations
 import logging
 import os
+
+from agents import models as _models
 from typing import Optional
 
 log = logging.getLogger("agents.llm_cascade")
@@ -13,14 +15,15 @@ log = logging.getLogger("agents.llm_cascade")
 
 def call_text_cascade(system: str, user: str, *,
                       max_tokens: int = 8000,
-                      anthropic_model: str = "claude-opus-4-7") -> str:
-    """Try OpenAI GPT-5 → Gemini 2.5 Pro → Anthropic, in that order.
+                      anthropic_model: str | None = None) -> str:
+    """Try OpenAI gpt-4.1 → Gemini 2.5 Pro → Anthropic, in that order.
     Returns the first successful response text. Raises if all three fail.
     `anthropic_model` is only used on the last fallback hop.
     """
-    # 1. OpenAI — fail FAST to Gemini (PD 2026-06-08: gpt-5 was timing out every
-    # call and the SDK's internal retries × a 120s timeout made one proposal take
-    # 6+ min → the launch batch stalled for hours). Short timeout + no SDK retries.
+    # 1. OpenAI — fail FAST to Gemini. NEVER use a reasoning model (gpt-5) here: it
+    # returned empty output + timed out, silently dropping the whole cascade to
+    # Anthropic (PD 2026-06-08/11). Model = models.OPENAI_TEXT (gpt-4.1). Short
+    # timeout + no SDK retries so a slow provider can't stall the launch batch.
     _llm_timeout = int(os.environ.get("LLM_TIMEOUT_S", "45"))
     from agents import circuit
     # PD 2026-06-08: circuit breaker — skip a provider that just failed (cooldown)
@@ -32,7 +35,7 @@ def call_text_cascade(system: str, user: str, *,
             from openai import OpenAI
             client = OpenAI(timeout=_llm_timeout, max_retries=0)
             resp = client.chat.completions.create(
-                model=os.environ.get("OPENAI_FALLBACK_MODEL", "gpt-5"),
+                model=_models.OPENAI_TEXT,
                 messages=([
                     {"role": "system", "content": system}
                 ] if system else []) + [
@@ -64,7 +67,7 @@ def call_text_cascade(system: str, user: str, *,
             raise RuntimeError("GOOGLE_API_KEY missing")
         gclient = _genai.Client(api_key=api_key, http_options=_gtypes.HttpOptions(
             timeout=int(os.getenv("LLM_TIMEOUT_S", "45")) * 1000))
-        model_name = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-2.5-pro")
+        model_name = _models.GEMINI_TEXT
         resp = gclient.models.generate_content(
             model=model_name,
             contents=user,
@@ -90,14 +93,14 @@ def call_text_cascade(system: str, user: str, *,
     client = anthropic.Anthropic()
     if system:
         msg = client.messages.create(
-            model=anthropic_model,
+            model=(anthropic_model or _models.ANTHROPIC_TEXT),
             max_tokens=max_tokens,
             system=system,
             messages=[{"role": "user", "content": user}],
         )
     else:
         msg = client.messages.create(
-            model=anthropic_model,
+            model=(anthropic_model or _models.ANTHROPIC_TEXT),
             max_tokens=max_tokens,
             messages=[{"role": "user", "content": user}],
         )
