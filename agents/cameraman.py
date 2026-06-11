@@ -3780,7 +3780,13 @@ def _gate_and_heal(out_mp4, prompt, who, emph, regen, progress_cb, dry_run,
         else:
             heal_prompt = prompt + emph
         try:
-            regen(heal_prompt)
+            # PD 2026-06-11: pass the failing reason so the regen can pick the right
+            # INPUT FRAME (action → chain anchor / prev last frame; marking → fresh
+            # still). Back-compat: closures that don't accept it fall back to 1-arg.
+            try:
+                regen(heal_prompt, reason)
+            except TypeError:
+                regen(heal_prompt)
         except Exception as e:
             log.warning("regen %d failed for %s: %s", r + 1, tag, e); break
         reason = _ok()
@@ -4460,10 +4466,23 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                       and _fresh_still.exists()
                       and _fresh_still != first_frame_path) else None)
 
-        def _i2v_regen(p: str):
-            if _regen_img and progress_cb:
-                progress_cb(f":arrows_counterclockwise: {tag} 체인 드리프트 → 원본 스틸로 재생성")
-            _seedance_i2v_safe(p, image=_regen_img)
+        def _i2v_regen(p: str, reason: str = None):
+            # PD 2026-06-11: pick the regen INPUT FRAME by failure reason — same as
+            # the surgical single-cut re-gen, but inside the chain code.
+            #  - ACTION failure on a chained cut → re-gen from the PREVIOUS cut's last
+            #    frame (the chain anchor = first_frame_path) so the scene continuity
+            #    (e.g. the flooded room) carries and the dynamic action can render.
+            #    Re-genning from the fresh DRY still drops the water → the surf fails
+            #    again (the exact #1 cut4 bug).
+            #  - marking drift → re-gen from the fresh canonical still (clean blaze).
+            if reason == "action" and cc.get("chain_from_prev"):
+                if progress_cb:
+                    progress_cb(f":ocean: {tag} 액션 재생성 → 이전 컷 last frame(체인 앵커)에서")
+                _seedance_i2v_safe(p, image=first_frame_path)
+            else:
+                if _regen_img and progress_cb:
+                    progress_cb(f":arrows_counterclockwise: {tag} 체인 드리프트 → 원본 스틸로 재생성")
+                _seedance_i2v_safe(p, image=_regen_img)
 
         _i2v_sa = cc.get("set_anchor") or set_anchor
         # PD 2026-06-09: chain drift peaks at the FINAL cut → stricter blaze there
