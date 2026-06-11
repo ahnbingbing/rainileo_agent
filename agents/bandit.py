@@ -277,6 +277,91 @@ def report(con: sqlite3.Connection | None = None) -> str:
     return "\n".join(lines)
 
 
+def _card_title(con: sqlite3.Connection, card_id: str) -> str:
+    """Human-readable episode title for the digest (cards has no `title` column —
+    it lives in payload_json or falls back to theme)."""
+    try:
+        r = con.execute("SELECT theme, payload_json FROM cards WHERE card_id=?",
+                        (card_id,)).fetchone()
+    except Exception:
+        r = None
+    if not r:
+        return "(제목 없음)"
+    theme = r[0] if not hasattr(r, "keys") else r["theme"]
+    payload = r[1] if not hasattr(r, "keys") else r["payload_json"]
+    try:
+        d = json.loads(payload or "{}")
+        t = d.get("title")
+        if isinstance(t, dict):
+            t = t.get("ko") or t.get("en")
+        if t:
+            return str(t)[:48]
+    except Exception:
+        pass
+    return (str(theme)[:48] if theme else "(제목 없음)")
+
+
+def daily_digest(con: sqlite3.Connection | None = None, *, days: int = 4) -> str:
+    """PD 2026-06-11: a DAILY per-video metrics digest (not the weekly strategy
+    posteriors). Lists every published episode from the last `days` days with its
+    48h views + retention, newest first, plus a one-line lane leader. Built to be
+    glanceable every morning."""
+    own = con is None
+    if own:
+        con = _db()
+    ensure_table(con)
+    try:
+        rows = con.execute(
+            """SELECT video_id, card_id, lane, timeslot, publish_at, views_48h,
+                      retention_pct, source, fetched_at
+               FROM video_performance
+               WHERE publish_at >= datetime('now', ?)
+               ORDER BY publish_at DESC""",
+            (f"-{int(days)} days",)).fetchall()
+    except Exception as e:
+        log.warning("daily_digest query failed: %s", e)
+        rows = []
+    lines = [f":bar_chart: *일일 지표* — 최근 {days}일 공개 영상"]
+    if not rows:
+        lines.append("\n아직 집계된 공개 영상 지표가 없어요. (YouTube는 공개 후 "
+                     "~48시간 뒤부터 조회수·시청유지율이 집계됩니다 — 첫 공개 6/10이라 "
+                     "곧 채워집니다.)")
+        return "\n".join(lines)
+    cur_day = None
+    tot_views = 0
+    for r in rows:
+        get = (lambda k: r[k]) if hasattr(r, "keys") else \
+            (lambda k, _r=r, _i=["video_id", "card_id", "lane", "timeslot",
+                                 "publish_at", "views_48h", "retention_pct",
+                                 "source", "fetched_at"]: _r[_i.index(k)])
+        pub = (get("publish_at") or "")[:16].replace("T", " ")
+        day = pub[:10]
+        if day != cur_day:
+            cur_day = day
+            lines.append(f"\n*{day}*")
+        lane = "AV" if (get("lane") or "").lower() == "ai_vtuber" else "RF"
+        slot = get("timeslot") or "--:--"
+        views = int(get("views_48h") or 0)
+        ret = float(get("retention_pct") or 0.0)
+        src = get("source") or ""
+        tot_views += views
+        title = _card_title(con, get("card_id") or "")
+        flag = "" if src not in ("error", "") else " ⚠️집계대기"
+        lines.append(f"  {slot} {lane} · 👁 {views:,} · ⏯ {ret:.0f}% · {title}{flag}")
+    lines.append(f"\n합계 조회수(최근 {days}일): {tot_views:,}")
+    # compact lane leader from the posteriors (skip if not enough data)
+    try:
+        a = analyze(con)
+        lane_lvl = a["levels"].get("lane", {})
+        if lane_lvl:
+            best = max(lane_lvl.items(), key=lambda kv: kv[1]["p_best"])
+            lines.append(f"우세 레인: {best[0]} (P(best)={best[1]['p_best']}, "
+                         f"표본 {a['n_total']}편)")
+    except Exception:
+        pass
+    return "\n".join(lines)
+
+
 def choose_lane(con: sqlite3.Connection | None = None) -> str:
     """Thompson-sample the marginal lane posteriors → the lane to favor next."""
     import random
@@ -311,12 +396,31 @@ def main() -> int:
                     help="Thompson-sample next lane + timeslot")
     ap.add_argument("--slack", action="store_true",
                     help="post the report to SLACK_WORKROOM_CHANNEL (weekly job)")
+    ap.add_argument("--daily", action="store_true",
+                    help="DAILY per-video metrics digest (use with --slack to post)")
     args = ap.parse_args()
     did = False
     if args.collect:
         got = collect()
         print(f"collected/updated {len(got)} rows")
         did = True
+    # PD 2026-06-11: --daily = per-video digest (every morning). Without --daily,
+    # --slack still posts the weekly strategy posteriors (Monday job, unchanged).
+    if args.daily:
+        digest = daily_digest()
+        print(digest)
+        did = True
+        if args.slack:
+            try:
+                from slack_sdk import WebClient
+                ch = os.environ.get("SLACK_WORKROOM_CHANNEL")
+                if ch:
+                    WebClient(token=os.environ["SLACK_BOT_TOKEN"]).chat_postMessage(
+                        channel=ch, text=digest)
+                    print("posted daily digest to slack")
+            except Exception as e:
+                log.warning("slack daily post failed: %s", e)
+        return 0
     rep = None
     if args.report or args.slack or not did:
         rep = report()
