@@ -220,7 +220,8 @@ def _osxphotos_cli() -> str | None:
     return None
 
 
-def bulk_export_to(album_name: str, dest_dir: Path, dry_run: bool = False) -> bool:
+def bulk_export_to(album_name: str, dest_dir: Path, dry_run: bool = False,
+                   since: "dt.date | None" = None) -> bool:
     """PD 2026-06-07 (Option A): export the album to `dest_dir` with each file
     named by the photo UUID ({uuid}.<ext>), downloading iCloud-only originals
     via PhotoKit. We then INGEST FROM THESE EXPORTED FILES (our own copies) —
@@ -247,6 +248,12 @@ def bulk_export_to(album_name: str, dest_dir: Path, dry_run: bool = False) -> bo
         "--filename", "{uuid}",   # name by UUID so we can map exported→PhotoInfo
         "--retry", "2",
     ]
+    # PD 2026-06-12: WITHOUT this, --download-missing re-downloads EVERY pruned
+    # original in the album (7306 items under the efficient-storage model). Scope the
+    # export to items ADDED to the library on/after `since` so a routine sync only
+    # pulls NEW content, not the whole archive.
+    if since:
+        cmd += ["--added-after", since.isoformat()]
     log.info("Option A export (download-missing → %s, filename={uuid}):", dest_dir)
     log.info("  %s", " ".join(cmd))
     try:
@@ -445,7 +452,7 @@ def sync_album(
         export_dir = ROOT / "data" / "tmp" / "icloud_export"
         shutil.rmtree(export_dir, ignore_errors=True)
         if not dry_run:
-            bulk_export_to(album_name, export_dir, dry_run=dry_run)
+            bulk_export_to(album_name, export_dir, dry_run=dry_run, since=since)
 
     if since:
         photos = [p for p in photos if p.date and p.date.date() >= since]
