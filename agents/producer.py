@@ -1458,6 +1458,13 @@ def produce_and_render(concepts: list[dict], target: dt.date,
                 # is rebuilt so a retry can re-run the single-pass writer with
                 # the failed attempt's Giri feedback injected.
                 rf_context = _gather_context(con, target)
+                # PD 2026-06-11: carry the batch exclusions (stamped by launch onto
+                # the concept) into the retry context, so a Giri-retry re-propose
+                # keeps avoiding the other slot's clips (else 시도2 re-picked them).
+                _bx = concept.get("_batch_exclude_asset_ids")
+                if _bx:
+                    rf_context["exclude_asset_ids"] = sorted(
+                        set(rf_context.get("exclude_asset_ids") or []) | set(_bx))
                 out = _render_realfootage_with_retry(
                     concept, target, con, rf_context, progress_cb)
                 if out:

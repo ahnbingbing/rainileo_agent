@@ -276,6 +276,12 @@ def launch_pipeline(target: dt.date, *,
                 continue
             # render (each thread its own db connection — sqlite isn't shareable)
             sp(f":factory: {hhmm} {lane_lbl} 렌더: {concept.get('title','?')}")
+            # PD 2026-06-11: stamp the batch exclusions onto the concept so the RF
+            # Giri-retry's RE-propose (which rebuilds a fresh context inside
+            # produce_and_render) still avoids the other slot's clips. Without this
+            # the first propose excluded them but a retry re-picked them (재탕).
+            if batch_used_assets:
+                concept["_batch_exclude_asset_ids"] = sorted(batch_used_assets)
             try:
                 outs = produce_and_render([concept], target, progress_cb=sp)
             except Exception as e:
