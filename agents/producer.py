@@ -727,8 +727,23 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     _arch_field = [v for v in context.get("archive_videos", [])
                    if not _excl or (v.get("id") not in _excl
                                     and v.get("asset_id") not in _excl)]
+    # PD 2026-06-11: RF default = long-original ONE-TAKE. The writer kept ignoring
+    # the prompt rule and montaging 6-9s trims even when 38s/75s clips sat in the
+    # pool — a "label not rule" miss. So PRE-COMPUTE the long candidates and inject
+    # them explicitly + sorted (longest first) so they can't be missed; the prompt
+    # treats a non-empty list as a near-mandate to build a 1-2 cut one-take.
+    _LONG_MIN = float(os.getenv("RF_ONETAKE_MIN_SEC", "12"))
+    _long = sorted(
+        ({"id": v.get("id"), "dur": v.get("dur"),
+          "sc": (v.get("sc") or "")[:160], "date": v.get("date")}
+         for v in (avail_videos + _arch_field)
+         if isinstance(v.get("dur"), (int, float)) and v.get("dur") >= _LONG_MIN),
+        key=lambda v: -(v.get("dur") or 0))[:12]
     rf_context = {
         "target_date": target.isoformat(),
+        # ⭐ long-original one-take candidates (12s+). If non-empty, DEFAULT to using
+        # ONE of these whole as a 1-2 cut one-take instead of trimming a montage.
+        "long_clip_candidates": _long,
         "available_videos": avail_videos,
         "available_photos": _photos[:100],
         # PD 2026-06-07: archive (older) clips for past⇄present memory-lane /
