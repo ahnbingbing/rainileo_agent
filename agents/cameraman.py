@@ -1211,7 +1211,12 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
             # overflowed a 4s clip ("캡션 많은데 영상 짧고"). Also drop captions that
             # can't get a readable min display, and spread the rest evenly (gap-free,
             # no racing).
-            MIN_SCENE = float(os.getenv("CAPTION_MIN_SEC", "1.8"))
+            # PD 2026-06-11: min READ time per caption — was 1.8s, which let a 4s AV
+            # cut carry 2 captions (~2s each) so the punchline appeared too late to
+            # read ("물만 보면…참을 수가 없어요 / 캡션이 너무 늦게 나와 읽을 시간이 없어").
+            # 2.5s floor ⇒ a 4s cut holds ONE caption for its whole length (starts
+            # 0.1s, full read), longer cuts still fit 2-3.
+            MIN_SCENE = float(os.getenv("CAPTION_MIN_SEC", "2.5"))
             try:
                 _concept_dur = float(_cc_here.get("duration_seconds") or 0)
             except Exception:
@@ -1221,6 +1226,13 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
             except Exception:
                 _actual = 0.0
             span = _actual or _concept_dur or (len(scenes) * MIN_SCENE)
+            # PD 2026-06-11: ai_vtuber cuts are SPEED-RETIMED to AV_CUT_OUTPUT_SECONDS
+            # after render. Time the captions to that OUTPUT length, not the writer's
+            # pre-retime duration_seconds — else every caption is stretched onto a
+            # longer timeline than the final clip and lands late / gets clipped.
+            _av_out = float(os.getenv("AV_CUT_OUTPUT_SECONDS", "0") or 0)
+            if style == "ai_vtuber" and _av_out > 0:
+                span = _av_out
             scenes.sort(key=lambda s: float(s.get("start", 0)))
             # cap caption count to what fits the clip at a readable pace
             max_n = max(1, int(span / MIN_SCENE))
