@@ -640,6 +640,107 @@ def _robust_json_parse(text: str, allow_llm_repair: bool = True):
     raise RuntimeError(f"_robust_json_parse: could not parse/repair (len={len(text or '')})")
 
 
+def _rf_long_candidates(context: dict) -> list[dict]:
+    """The 12s+ original clips available to RF, longest-first (id/dur/sc/date)."""
+    _min = float(os.getenv("RF_ONETAKE_MIN_SEC", "12"))
+    pool = (context.get("available_videos") or []) + (context.get("archive_videos") or [])
+    longs = [{"id": v.get("id"), "dur": float(v.get("dur") or 0),
+              "sc": (v.get("sc") or "")[:240], "date": v.get("date")}
+             for v in pool
+             if isinstance(v.get("dur"), (int, float)) and v.get("dur") >= _min]
+    longs.sort(key=lambda v: -(v.get("dur") or 0))
+    # de-dup by id
+    seen, out = set(), []
+    for v in longs:
+        if v["id"] and v["id"] not in seen:
+            seen.add(v["id"]); out.append(v)
+    return out
+
+
+def _propose_realfootage_onetake(target: dt.date, context: dict,
+                                 long_clip: dict, progress_cb: ProgressCb = None,
+                                 prior_feedback: str = "") -> list[dict]:
+    """PD 2026-06-11: DETERMINISTIC long-original one-take. The montage writer
+    ignored every prompt-level instruction to use a long clip whole (still made a
+    6-cut montage with a 75s clip sitting in the pool). So when a long clip exists,
+    bypass that writer: take ONE long clip as a single cut, and have the LLM write
+    only the NARRATOR caption track distributed across its timeline — the STRUCTURE
+    (1 clip, one-take) is fixed in code, the LLM only does captions. RF_FORCE_ONETAKE
+    gates this; RF_ONETAKE_MAX_SEC trims the window to a Shorts length."""
+    from agents.llm_cascade import call_text_cascade
+    cid = long_clip.get("id")
+    clip_dur = float(long_clip.get("dur") or 0)
+    win = min(clip_dur, float(os.getenv("RF_ONETAKE_MAX_SEC", "24")))
+    sc = long_clip.get("sc") or ""
+    when = long_clip.get("date") or ""
+    if progress_cb:
+        progress_cb(f":clapper: 긴 원테이크 모드 — {cid[-12:] if cid else '?'} "
+                    f"({clip_dur:.0f}s 원본 → {win:.0f}s 원테이크)")
+    n_caps = max(3, min(8, int(win / 3.0)))   # ~3s per caption (read time)
+    system = (
+        "You are the narrator-script writer for the 'Ryani & Leo' pet Shorts "
+        "(랴니=11살 암컷 프렌치불독·꼬리 없음, 레오=8개월 수컷 오렌지 고양이). You are given "
+        "ONE continuous real clip and must write a casual KOREAN vlog NARRATOR caption "
+        "track that rides over it as a SINGLE one-take — a coherent little story with a "
+        "beginning, a small middle beat, and a soft ending (여운). NOT a list of "
+        "descriptions: add the pets' inner voice / gentle wit. Rules: each caption "
+        "Korean line + English line; no parentheses, no emoji; never swap ages/species; "
+        f"distribute exactly {n_caps} captions evenly across the {win:.1f}s timeline "
+        "(first starts ~0.2s, ≥2.5s read each, gap-free). Return ONLY JSON: "
+        "{\"title\":\"\",\"oneliner\":\"\",\"captions\":[{\"start\":0.2,\"end\":3.0,"
+        "\"ko\":\"\",\"en\":\"\"}]}.")
+    user = (f"clip_id: {cid}\nclip_duration_used: {win:.1f}s\n"
+            f"date(촬영): {when}\nwhat the clip shows (ground truth): {sc}\n"
+            + (f"\n[수정 피드백] {prior_feedback}\n" if prior_feedback else "")
+            + "\n위 한 클립 위로 흐르는 원테이크 narrator 캡션을 써라.")
+    import json as _json
+    title, oneliner, caps = "", "", []
+    for _ in range(2):
+        try:
+            txt = call_text_cascade(system, user, max_tokens=1400).strip()
+            txt = re.sub(r"^```(?:json)?\s*", "", txt); txt = re.sub(r"\s*```$", "", txt)
+            d = _json.loads(txt)
+            caps = d.get("captions") or []
+            title = (d.get("title") or "").strip()
+            oneliner = (d.get("oneliner") or "").strip()
+            if caps:
+                break
+        except Exception as e:
+            log.warning("one-take caption gen failed: %s", e)
+    if not caps:
+        return []
+    # normalize timing onto the window (defensive — same discipline as the burner)
+    n = len(caps)
+    for j, s in enumerate(caps):
+        s["start"] = round(0.2 if j == 0 else j * win / n, 2)
+        s["end"] = round((j + 1) * win / n if j < n - 1 else max(win - 0.05, s["start"] + 1.0), 2)
+    concept = {
+        "title": title or "랴니와 레오의 한 장면",
+        "narrative_oneliner": oneliner or title,
+        "render_style": "real_footage",
+        "episode_format": "one_take",
+        "editing_concept": "long_take",
+        "tone": "casual_vlog",
+        "subjects": ["ryani", "leo"],
+        "duration_target_sec": int(win) + 6,
+        "cuts": [{
+            "tag": "cut1_onetake",
+            "beat": "onetake",
+            "who": "both",
+            "asset_id": cid,
+            "edit_effect": "none",
+            "action": sc,
+            "duration_seconds": round(win, 1),
+            "trim_start": 0.0,
+            "captions": caps,
+        }],
+        "_onetake": True,
+    }
+    if progress_cb:
+        progress_cb(f":white_check_mark: 원테이크 컨셉 — 1컷 {win:.0f}s, 캡션 {len(caps)}개")
+    return [concept]
+
+
 def _propose_realfootage_singlepass(target: dt.date, context: dict,
                                      progress_cb: ProgressCb = None,
                                      prior_feedback: str = "") -> list[dict]:
@@ -650,6 +751,20 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     PD 2026-06-06: `prior_feedback` carries the Giri review's findings from a
     failed attempt so this re-proposal fixes them (the Giri-driven retry loop).
     """
+    # PD 2026-06-11: RF DEFAULT = long-original one-take. The montage writer ignores
+    # the prompt rule, so when a long clip exists we take the DETERMINISTIC one-take
+    # path (1 long clip + narrator caption track) instead of this montage writer.
+    # RF_FORCE_ONETAKE=0 reverts to the old montage writer.
+    if os.getenv("RF_FORCE_ONETAKE", "1") == "1":
+        _longs = _rf_long_candidates(context)
+        if _longs:
+            try:
+                ot = _propose_realfootage_onetake(
+                    target, context, _longs[0], progress_cb, prior_feedback)
+                if ot:
+                    return ot
+            except Exception as e:
+                log.warning("one-take path failed (%s) — falling back to montage", e)
     if progress_cb:
         msg = ":pencil: real_footage 단일-패스 스토리텔러 (grounded flowing)"
         if prior_feedback:
