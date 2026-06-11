@@ -802,10 +802,21 @@ def _build_polisher_user_prompt(concepts: list[dict]) -> str:
     )
 
 
+def _years_ago_phrase(days: int) -> str:
+    """PD 2026-06-11: natural Korean time-ago phrase — '0.6년 전' reads awkward.
+    <~45d → '' (recent, don't force a time mention); <1y → 'N개월 전'; else 'N년 전'."""
+    if days is None or days < 45:
+        return ""
+    if days < 365:
+        m = max(1, round(days / 30.0))
+        return f"{m}개월 전"
+    return f"{round(days / 365.25)}년 전"
+
+
 def _stamp_years_ago(concepts: list[dict]) -> None:
-    """Stamp cut['years_ago'] from each cut's asset_id captured_iso vs the
-    concept's target date. Memory-lane (PD 2026-06-07): past clips must be
-    narrated with their time point. Best-effort; never raises."""
+    """Stamp cut['years_ago'] (+ cut['time_ago_phrase']) from each cut's asset_id
+    captured_iso vs the concept's target date. Memory-lane (PD 2026-06-07): past
+    clips must be narrated with their time point. Best-effort; never raises."""
     import datetime as _dt
     import sqlite3 as _sql
     db_path = ROOT / "data" / "agent.db"
@@ -844,7 +855,9 @@ def _stamp_years_ago(concepts: list[dict]) -> None:
                     continue
                 try:
                     d0 = _dt.date.fromisoformat(str(row[0])[:10])
-                    cut["years_ago"] = round((tgt - d0).days / 365.25, 1)
+                    _days = (tgt - d0).days
+                    cut["years_ago"] = round(_days / 365.25, 1)
+                    cut["time_ago_phrase"] = _years_ago_phrase(_days)
                 except Exception:
                     continue
     finally:

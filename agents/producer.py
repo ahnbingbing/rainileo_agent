@@ -657,6 +657,82 @@ def _rf_long_candidates(context: dict) -> list[dict]:
     return out
 
 
+def _onetake_time_phrase(date_iso: str | None) -> str:
+    """Natural Korean '촬영 시점' phrase for a clip date — '' if recent (<~45d)."""
+    if not date_iso:
+        return ""
+    try:
+        d0 = dt.date.fromisoformat(str(date_iso)[:10])
+        days = (dt.datetime.now(KST).date() - d0).days
+    except Exception:
+        return ""
+    if days < 45:
+        return ""
+    if days < 365:
+        return f"{max(1, round(days / 30.0))}개월 전"
+    return f"{round(days / 365.25)}년 전"
+
+
+def _vlm_clip_timeline(asset_id: str, win: float, n: int = 6,
+                       progress_cb: ProgressCb = None) -> str:
+    """PD 2026-06-11: VLM-sample frames ACROSS a clip's [0,win] window and describe
+    what UNFOLDS over time (beginning→middle→end), so a one-take's captions match the
+    real story (e.g. Leo sneaking the table food while Ryani waits) instead of a static
+    one-frame guess. Downloads the clip on demand. Empty string on any failure."""
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key or not asset_id:
+        return ""
+    try:
+        from agents.cameraman import _ensure_local
+        con = _db()
+        row = con.execute("SELECT file_path, source_uuid FROM assets WHERE asset_id=?",
+                          (asset_id,)).fetchone()
+        if not row:
+            return ""
+        fp, uuid = row[0], (row[1] if len(row) > 1 else None)
+        if fp and not os.path.isabs(fp):
+            fp = str(ROOT / fp)
+        local = _ensure_local(fp, uuid)
+        if not local or not Path(local).exists():
+            return ""
+        import subprocess as _sp, tempfile as _tf
+        from google import genai as _g
+        from google.genai import types as _gt
+        client = _g.Client(api_key=api_key, http_options=_gt.HttpOptions(
+            timeout=int(os.getenv("VLM_TIMEOUT_MS", "90000"))))
+        parts = []
+        with _tf.TemporaryDirectory() as td:
+            for i in range(n):
+                t = win * (i + 0.5) / n
+                jpg = Path(td) / f"t{i}.jpg"
+                _sp.run(["ffmpeg", "-y", "-nostats", "-loglevel", "error",
+                         "-ss", f"{t:.2f}", "-i", str(local), "-frames:v", "1",
+                         str(jpg)], check=False, timeout=20)
+                if jpg.exists() and jpg.stat().st_size > 1000:
+                    parts.append(_gt.Part.from_bytes(data=jpg.read_bytes(),
+                                                     mime_type="image/jpeg"))
+            if len(parts) < 2:
+                return ""
+            parts.append(
+                f"These {len(parts)} frames are evenly sampled across one {win:.0f}s "
+                "pet clip (in order, earliest first). Describe in 2-4 Korean sentences "
+                "what HAPPENS over time — the ACTION and any CHANGE between frames "
+                "(who does what, who moves/eats/sneaks/waits), not just a static scene. "
+                "고양이=레오, 강아지=랴니. Ground-truth observer; mention only what you see.")
+            resp = client.models.generate_content(
+                model=os.getenv("VLM_MODEL", "gemini-2.5-flash"),
+                contents=parts,
+                config=_gt.GenerateContentConfig(
+                    thinking_config=_gt.ThinkingConfig(thinking_budget=0)))
+            out = (resp.text or "").strip()
+            if out and progress_cb:
+                progress_cb(f":mag: 원테이크 타임라인 분석: {out[:60]}…")
+            return out
+    except Exception as e:
+        log.warning("one-take VLM timeline failed: %s", e)
+        return ""
+
+
 def _propose_realfootage_onetake(target: dt.date, context: dict,
                                  long_clip: dict, progress_cb: ProgressCb = None,
                                  prior_feedback: str = "") -> list[dict]:
@@ -676,23 +752,38 @@ def _propose_realfootage_onetake(target: dt.date, context: dict,
     if progress_cb:
         progress_cb(f":clapper: 긴 원테이크 모드 — {cid[-12:] if cid else '?'} "
                     f"({clip_dur:.0f}s 원본 → {win:.0f}s 원테이크)")
+    # PD 2026-06-11: the static `sc` describes one frame and MISSED the actual story
+    # (the cafe clip = Leo secretly eating the table food while Ryani waits — sc only
+    # said "two pets on chairs"). A one-take's whole point is the moment that UNFOLDS,
+    # so VLM-sample frames ACROSS the window and get a beginning→middle→end timeline
+    # to ground the captions on what really happens. Best-effort (falls back to sc).
+    timeline = _vlm_clip_timeline(cid, win, progress_cb=progress_cb) or ""
+    _ground = (f"TIMELINE (what unfolds over the clip, beginning→end): {timeline}\n"
+               if timeline else "") + f"static scene tags: {sc}"
+    _time_phrase = _onetake_time_phrase(long_clip.get("date"))
     n_caps = max(3, min(8, int(win / 3.0)))   # ~3s per caption (read time)
     system = (
         "You are the narrator-script writer for the 'Ryani & Leo' pet Shorts "
         "(랴니=11살 암컷 프렌치불독·꼬리 없음, 레오=8개월 수컷 오렌지 고양이). You are given "
         "ONE continuous real clip and must write a casual KOREAN vlog NARRATOR caption "
-        "track that rides over it as a SINGLE one-take — a coherent little story with a "
-        "beginning, a small middle beat, and a soft ending (여운). NOT a list of "
-        "descriptions: add the pets' inner voice / gentle wit. Rules: each caption "
-        "Korean line + English line; no parentheses, no emoji; never swap ages/species; "
-        f"distribute exactly {n_caps} captions evenly across the {win:.1f}s timeline "
+        "track that rides over it as a SINGLE one-take. CRITICAL: the captions must "
+        "follow the TIMELINE of what ACTUALLY happens — the beginning beat, the change "
+        "in the middle, the ending — NOT a generic mood. If the timeline says one pet "
+        "does something sneaky/funny while the other waits, THAT is the story; tell it. "
+        "Build a coherent little arc with a soft ending (여운); add the pets' inner "
+        "voice / gentle wit, not flat description. Rules: each caption Korean line + "
+        "English line; NO parentheses, no emoji, no speaker labels (랴니:/레오:); never "
+        "swap ages/species; "
+        + (f"this footage is from {_time_phrase} — you MAY open with that. "
+           if _time_phrase else "this footage is recent — do NOT invent a '○년 전'. ")
+        + f"distribute exactly {n_caps} captions evenly across the {win:.1f}s timeline "
         "(first starts ~0.2s, ≥2.5s read each, gap-free). Return ONLY JSON: "
         "{\"title\":\"\",\"oneliner\":\"\",\"captions\":[{\"start\":0.2,\"end\":3.0,"
         "\"ko\":\"\",\"en\":\"\"}]}.")
     user = (f"clip_id: {cid}\nclip_duration_used: {win:.1f}s\n"
-            f"date(촬영): {when}\nwhat the clip shows (ground truth): {sc}\n"
+            f"촬영 시점: {_time_phrase or '최근'}\n{_ground}\n"
             + (f"\n[수정 피드백] {prior_feedback}\n" if prior_feedback else "")
-            + "\n위 한 클립 위로 흐르는 원테이크 narrator 캡션을 써라.")
+            + "\n위 한 클립의 TIMELINE을 따라 흐르는 원테이크 narrator 캡션을 써라.")
     import json as _json
     title, oneliner, caps = "", "", []
     for _ in range(2):
