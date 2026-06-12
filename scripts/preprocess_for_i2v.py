@@ -159,7 +159,13 @@ def main() -> int:
         size_kb = dst.stat().st_size / 1024
         print(f"  ok {tag:25s} → {_rel(dst)}  ({target_w}×{target_h}, {size_kb:.0f} KB)")
 
-    return 1 if failures else 0
+    # PD 2026-06-12: a PARTIAL failure (some photos missing/pruned) must NOT fail the
+    # whole step — the caller already dropped truly-unavailable cuts; the rest render.
+    # Fail (rc=1) ONLY when EVERY job failed (nothing usable produced).
+    done = len(jobs) - failures
+    if failures:
+        print(f"  preprocess: {done}/{len(jobs)} ok, {failures} skipped", file=sys.stderr)
+    return 0 if done > 0 else 1
 
 
 if __name__ == "__main__":

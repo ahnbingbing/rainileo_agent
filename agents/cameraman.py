@@ -2942,6 +2942,82 @@ def _prune_missing_cuts(manifests: dict, anim_dir: Path,
         progress_cb(f":scissors: 누락 컷 {len(dropped)}개 드롭(파일 없음) — 남은 컷으로 진행: {', '.join(dropped)}")
 
 
+def _drop_unavailable_av_cuts(manifests: dict, progress_cb: ProgressCb = None) -> None:
+    """PD 2026-06-12 graceful degradation: BEFORE the AV preprocess step, make sure
+    each cut's SOURCE photo is local — re-download on demand by UUID — and DROP any cut
+    whose photo still can't be obtained. One missing/pruned photo used to fail the whole
+    'Preprocessing photos' step (rc=1) and empty the slot (6/13 AV 18:00). Now the slot
+    survives on its remaining cuts; only if too few remain do we give up. Updates
+    sources/cuts/concept_cuts/captions/regen_prompts consistently."""
+    try:
+        sources_path = Path(manifests["sources"])
+        sources = json.loads(sources_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    cuts = manifests.get("cuts") or []
+    con = _db()
+    drop: list[str] = []
+    for item in cuts:
+        tag = item.get("tag")
+        if not tag:
+            continue
+        entry = sources.get(tag) or {}
+        src = entry.get("source") or ""
+        if src and not Path(src).is_absolute():
+            src = str(ROOT / src)
+        if src and Path(src).exists():
+            continue
+        uuid = entry.get("source_uuid")
+        if not uuid:
+            aid = (item.get("asset") or {}).get("asset_id") or item.get("asset_id")
+            if aid:
+                try:
+                    r = con.execute("SELECT source_uuid FROM assets WHERE asset_id=?",
+                                    (aid,)).fetchone()
+                    uuid = r[0] if r else None
+                except Exception:
+                    uuid = None
+        restored = _ensure_local(src, uuid) if src else None
+        if restored and Path(restored).exists():
+            entry["source"] = restored
+            sources[tag] = entry
+            continue
+        drop.append(tag)
+    if not drop:
+        return
+    dropset = set(drop)
+    manifests["cuts"] = [c for c in cuts if c.get("tag") not in dropset]
+    for key in ("concept_cuts",):
+        lst = manifests.get(key)
+        if isinstance(lst, list):
+            manifests[key] = [c for c in lst
+                              if (c.get("tag") or c.get("cut_tag")) not in dropset]
+    for t in drop:
+        sources.pop(t, None)
+    sources_path.write_text(json.dumps(sources, ensure_ascii=False, indent=2),
+                            encoding="utf-8")
+    # captions + regen_prompts files
+    for mk in ("captions", "regen_prompts"):
+        try:
+            p = Path(manifests.get(mk, ""))
+            if p.exists():
+                d = json.loads(p.read_text(encoding="utf-8"))
+                for t in drop:
+                    d.pop(t, None)
+                p.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+    remaining = len(manifests["cuts"])
+    log.warning("AV: dropped %d cut(s) with unavailable photos: %s (%d remain)",
+                len(drop), drop, remaining)
+    if progress_cb:
+        progress_cb(f":scissors: 자산 누락 {len(drop)}컷 드롭 → 남은 {remaining}컷으로 진행")
+    if remaining < int(os.getenv("AV_MIN_CUTS", "3")):
+        raise RuntimeError(
+            f"too few cuts left after dropping unavailable photos ({remaining}) — "
+            f"skip slot")
+
+
 def run_real_footage_pipeline(manifests: dict, work_dir: Path,
                               progress_cb: ProgressCb = None,
                               dry_run: bool = False) -> Path:
@@ -3942,6 +4018,12 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
     # past episodes.
     anim_dir = work_dir / "animated"
     anim_dir.mkdir(parents=True, exist_ok=True)
+
+    # Step 0: graceful degradation — re-download or DROP cuts with missing photos so a
+    # single unavailable asset doesn't fail the whole 'Preprocessing photos' step.
+    if not dry_run:
+        _drop_unavailable_av_cuts(manifests, progress_cb)
+        cuts = manifests["cuts"]   # refresh after possible drops
 
     # Step 1: preprocess photos for i2v
     _run(
