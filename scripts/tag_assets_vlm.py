@@ -95,6 +95,11 @@ def _db() -> sqlite3.Connection:
     con = sqlite3.connect(DB_PATH, timeout=30)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys = ON")
+    # PD 2026-06-12: WAL + busy_timeout so a concurrent reader (a status query, the
+    # sync, the launch) doesn't make an UPDATE fail instantly with "database is locked"
+    # — that killed VLM tagging mid-batch twice.
+    con.execute("PRAGMA journal_mode = WAL")
+    con.execute("PRAGMA busy_timeout = 30000")
     return con
 
 

@@ -58,6 +58,10 @@ APPROVE_SIGNALS = {"ㅇㅇ", "ㅇ", "ok", "ㄱㄱ", "좋아", "굿", "ㅎㅎ", "
 def _db() -> sqlite3.Connection:
     con = sqlite3.connect(DB_PATH, timeout=30)
     con.row_factory = sqlite3.Row
+    # PD 2026-06-12: WAL + busy_timeout so concurrent readers/writers (sync, VLM
+    # tagging, launch, status queries) don't fail instantly with "database is locked".
+    con.execute("PRAGMA journal_mode = WAL")
+    con.execute("PRAGMA busy_timeout = 30000")
     return con
 
 
