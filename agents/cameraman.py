@@ -4570,13 +4570,20 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                               "action", "description")) + " " + json.dumps(
                 cc.get("captions") or [], ensure_ascii=False)
             _ya = cc.get("years_ago")
-            _young = (bool(re.search(r"어린|아기|강아지|새끼|퍼피|puppy|young Ryani|어렸|"
-                                     r"\d+\s*년\s*전|years ago|과거|옛날", _blob, re.IGNORECASE))
-                      or (isinstance(_ya, (int, float)) and _ya >= 3))
+            # PD 2026-06-12: "3년 전"(=2023, Ryani 8살)은 애기가 아니다 — 회색 주둥이 있는
+            # senior 그대로여야 한다. 예전 로직이 generic "N년전"·years_ago≥3·"과거/옛날"을
+            # 전부 young으로 처리해 '3년 전' 스토리에 2015 애기 레퍼런스를 끼워넣었다(버그).
+            # 이제: 진짜 강아지 시절(2015~2018, 7년+ 전) 또는 명시적 강아지 단어일 때만 young.
+            _m = re.search(r"(\d+)\s*년\s*전", _blob)
+            _years_back = (int(_m.group(1)) if _m
+                           else (int(_ya) if isinstance(_ya, (int, float)) and _ya else 0))
+            _young = (bool(re.search(r"아기|강아지|새끼|퍼피|puppy|2015|2016|2017",
+                                     _blob, re.IGNORECASE))
+                      or _years_back >= 7)
             if _young:
                 ref_names = ["ryani_young" if n == "ryani_solo" else n for n in ref_names]
                 if progress_cb:
-                    progress_cb(f":baby: {tag} 과거/어린 랴니 컷 — young 레퍼런스 사용")
+                    progress_cb(f":baby: {tag} 강아지시절 랴니 컷 — young 레퍼런스 사용")
             ref_paths = [_resolve_ref(n) for n in ref_names]
             ref_paths = [p for p in ref_paths if p is not None]
             if not ref_paths:
