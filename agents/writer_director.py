@@ -326,6 +326,13 @@ def _build_writer_user_prompt(target_date: dt.date, context: dict,
         "style_filter": style_filter,
         "context": context,
     }
+    # PD 2026-06-12: is a PD-designated concept active? (arc_directive carries the
+    # "[PD 지정 컨셉 …]" prefix.) If so, the few-shots — which are recent high-Giri
+    # concepts and may be the very episodes PD just rejected (e.g. the cafe ones) —
+    # must NOT pull the writer back to their SUBJECT/LOCATION/PREMISE. They were
+    # anchoring the AV writer back to "카페 첫 방문" despite a snack-time directive.
+    _ctx_blob = json.dumps(context, ensure_ascii=False) if isinstance(context, dict) else str(context)
+    _pd_directive_active = "[PD 지정 컨셉" in _ctx_blob or "PD 지정" in _ctx_blob
     if few_shots:
         body["few_shot_exemplars"] = [
             {
@@ -336,11 +343,22 @@ def _build_writer_user_prompt(target_date: dt.date, context: dict,
             }
             for fs in few_shots
         ]
-        body["few_shot_note"] = (
-            "These past concepts scored ≥8 in Giri review. Use them as quality "
-            "anchors for caption tone, story arc, and beat structure. Do NOT "
-            "copy them — they are exemplars, not templates."
-        )
+        if _pd_directive_active:
+            body["few_shot_note"] = (
+                "⚠️ A PD-DESIGNATED concept is active (see context.arc_directive, "
+                "marked '[PD 지정 컨셉 — 최우선]'). The PD directive ALONE decides WHAT this "
+                "episode is about — its subject, location, premise, and beats. These "
+                "few-shot exemplars are ONLY a reference for CAPTION TONE and rhythm. Do "
+                "NOT borrow their location or premise (e.g. if an exemplar is a '카페 첫 "
+                "방문' episode, do NOT make this a cafe episode — follow the PD directive's "
+                "setting instead). Copying the exemplar's concept is a hard failure."
+            )
+        else:
+            body["few_shot_note"] = (
+                "These past concepts scored ≥8 in Giri review. Use them as quality "
+                "anchors for caption tone, story arc, and beat structure. Do NOT "
+                "copy them — they are exemplars, not templates."
+            )
 
     if style_filter:
         instruction = (
