@@ -4033,6 +4033,83 @@ def _cut_action_ok(mp4_path: Path, action_prompt: str, n_frames: int = 3) -> boo
         return True
 
 
+# PD 2026-06-12: feeding concepts (츄르/관절약 튜브, 요거트 그릇, 손에 든 간식) where
+# Seedance keeps dropping the held-treat action and renders the dog head-DOWN eating a
+# crumb off the FLOOR instead. The VLM caption-rewrite then re-describes the floor-eating
+# as if intended ("무한 집중"), so the wrong render shipped. This gate catches it BEFORE
+# the rewrite can paper over it.
+_FEEDING_KEYWORDS = (
+    "tube", "튜브", "churu", "츄르", "lick", "핥", "treat", "간식", "관절", "영양제",
+    "yogurt", "요거트", "그릭", "bowl", "그릇", "from the hand", "손에", "hand-held",
+    "holding", "feeds", "feeding", "snack", "paste",
+)
+
+
+def _cut_feeding_ok(mp4_path: Path, action_prompt: str, n_frames: int = 3) -> bool:
+    """Verify a HAND-HELD-treat feeding cut didn't degrade into floor-eating. Only runs
+    when the prompt promises a held treat (tube/bowl/hand). Fail ONLY when the pet is
+    clearly head-down eating off the FLOOR with no held treat. Fail-open on uncertainty."""
+    pl = (action_prompt or "").lower()
+    if not any(k.lower() in pl for k in _FEEDING_KEYWORDS):
+        return True
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key or not Path(mp4_path).exists():
+        return True
+    try:
+        from google import genai as _g
+        from google.genai import types as _gt
+        import tempfile as _tf
+        client = _g.Client(api_key=api_key, http_options=_gt.HttpOptions(
+            timeout=int(os.getenv("VLM_TIMEOUT_MS", "90000"))))
+        dur = 5.0
+        try:
+            dur = float(subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=nw=1:nk=1", str(mp4_path)],
+                capture_output=True, text=True, timeout=15).stdout.strip() or 5.0)
+        except Exception:
+            pass
+        parts = []
+        with _tf.TemporaryDirectory() as td:
+            for i in range(n_frames):
+                t = dur * (i + 0.5) / n_frames
+                fp = Path(td) / f"f{i}.jpg"
+                subprocess.run(["ffmpeg", "-y", "-nostats", "-loglevel", "error",
+                                "-ss", f"{t:.2f}", "-i", str(mp4_path),
+                                "-frames:v", "1", str(fp)], check=False, timeout=20)
+                if fp.exists():
+                    parts.append(_gt.Part.from_bytes(data=fp.read_bytes(),
+                                                     mime_type="image/jpeg"))
+            if not parts:
+                return True
+            prompt = (
+                f"Frames from a pet video cut. It was SUPPOSED to show a pet being fed a "
+                f"treat HELD BY A HUMAN HAND — a long tube (churu / a paste tube) or a "
+                f"bowl — and the pet licking THAT held treat. Intended: \"{action_prompt[:240]}\". "
+                f"Look at the dog: is it instead clearly head-DOWN with its nose at the "
+                f"FLOOR eating a crumb/kibble off the ground, with NO tube or bowl or hand "
+                f"feeding it? Answer floor_eating=true ONLY if the dog is unmistakably "
+                f"eating off the floor instead of from a held tube/bowl/hand. If a hand/"
+                f"tube/bowl is present or you're unsure, answer false. Return ONLY JSON: "
+                f"{{\"floor_eating\":true|false,\"note\":\"3-6 words\"}}.")
+            resp = client.models.generate_content(
+                model=os.getenv("VLM_MODEL", "gemini-2.5-flash"),
+                contents=list(parts) + [prompt],
+                config=_gt.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    thinking_config=_gt.ThinkingConfig(thinking_budget=0)))
+            import json as _json
+            d = _json.loads((resp.text or "{}").strip())
+            floor = bool(d.get("floor_eating"))
+            if floor:
+                log.info("cut feeding gate: floor-eating [%s] in %s",
+                         d.get("note", ""), Path(mp4_path).name)
+            return not floor
+    except Exception as e:
+        log.warning("cut feeding check failed (%s) — keeping cut", e)
+        return True
+
+
 def _who_and_emph(prompt: str) -> tuple[str, str]:
     """Infer which pets a motion prompt is about + the matching marking-canon
     emphasis to append on a regen. Shared by the i2v and ref gate sites so both
@@ -4086,6 +4163,9 @@ def _gate_and_heal(out_mp4, prompt, who, emph, regen, progress_cb, dry_run,
         # /jump). Keyword-gated inside, so static cuts cost nothing.
         if not _cut_action_ok(out_mp4, prompt):
             return "action"
+        # PD 2026-06-12: a held-treat feeding cut must NOT degrade to floor-eating.
+        if not _cut_feeding_ok(out_mp4, prompt):
+            return "feeding"
         return None
     if not who or dry_run or not out_mp4.exists():
         return True
@@ -4110,6 +4190,12 @@ def _gate_and_heal(out_mp4, prompt, who, emph, regen, progress_cb, dry_run,
                 "described dynamic action (actually surfing on / swimming through / "
                 "leaping into the water), the motion filling the frame — it must NOT "
                 "be sitting, standing, or lying still on a dry floor. " + emph)
+        elif reason == "feeding":
+            heal_prompt = (
+                prompt + " IMPORTANT: a human HAND holds the treat (a long paste tube / "
+                "bowl) up at the pet's mouth and the pet LICKS it directly from the held "
+                "tube/bowl. The pet's head stays UP at the treat. There is NOTHING on the "
+                "floor and the pet must NOT lower its head to eat off the ground. " + emph)
         else:
             heal_prompt = prompt + emph
         try:
