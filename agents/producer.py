@@ -871,6 +871,168 @@ def _propose_realfootage_onetake(target: dt.date, context: dict,
     return [concept]
 
 
+def _vlm_clip_segments(asset_id: str, clip_dur: float, n_frames: int = 9,
+                       progress_cb: ProgressCb = None) -> list[dict]:
+    """PD 2026-06-12 (intra-clip montage): VLM-scan a LONG clip and pick 2-4 distinct
+    INTERESTING segments (start/end seconds + what happens), so we can edit several
+    moments FROM ONE clip into a story ("동영상 내 일부 구간들만 모아서 이야기 전개").
+    Returns [{start, end, what}] sorted by start; [] on failure / too few."""
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key or not asset_id or clip_dur < 8:
+        return []
+    try:
+        from agents.cameraman import _ensure_local
+        con = _db()
+        row = con.execute("SELECT file_path, source_uuid FROM assets WHERE asset_id=?",
+                          (asset_id,)).fetchone()
+        if not row:
+            return []
+        fp, uuid = row[0], (row[1] if len(row) > 1 else None)
+        if fp and not os.path.isabs(fp):
+            fp = str(ROOT / fp)
+        local = _ensure_local(fp, uuid)
+        if not local or not Path(local).exists():
+            return []
+        import subprocess as _sp, tempfile as _tf, json as _json
+        from google import genai as _g
+        from google.genai import types as _gt
+        client = _g.Client(api_key=api_key, http_options=_gt.HttpOptions(
+            timeout=int(os.getenv("VLM_TIMEOUT_MS", "90000"))))
+        stamps, parts = [], []
+        with _tf.TemporaryDirectory() as td:
+            for i in range(n_frames):
+                t = clip_dur * (i + 0.5) / n_frames
+                jpg = Path(td) / f"s{i}.jpg"
+                _sp.run(["ffmpeg", "-y", "-nostats", "-loglevel", "error", "-ss",
+                         f"{t:.2f}", "-i", str(local), "-frames:v", "1", str(jpg)],
+                        check=False, timeout=20)
+                if jpg.exists() and jpg.stat().st_size > 1000:
+                    stamps.append(round(t, 1))
+                    parts.append(_gt.Part.from_bytes(data=jpg.read_bytes(),
+                                                     mime_type="image/jpeg"))
+            if len(parts) < 3:
+                return []
+            _maxseg = float(os.getenv("RF_SEGMENT_MAX_SEC", "6"))
+            prompt = (
+                f"These {len(parts)} frames are sampled from ONE {clip_dur:.0f}s pet "
+                f"clip at these timestamps (seconds): {stamps}. 고양이=레오, 강아지=랴니. "
+                "Pick the 2-4 MOST interesting, DISTINCT moments to build a short story "
+                "(a beginning, a beat, an ending) — each a short segment (≤"
+                f"{_maxseg:.0f}s). For each give start/end seconds (within the clip) and "
+                "a 1-line Korean description of what happens. Segments must be in time "
+                "order and not overlap. Return ONLY JSON: {\"segments\":[{\"start\":0.0,"
+                "\"end\":4.0,\"what\":\"\"}]}.")
+            resp = client.models.generate_content(
+                model=os.getenv("VLM_MODEL", "gemini-2.5-flash"),
+                contents=list(parts) + [prompt],
+                config=_gt.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    thinking_config=_gt.ThinkingConfig(thinking_budget=0)))
+            d = _json.loads((resp.text or "{}").strip())
+            segs = []
+            for s in (d.get("segments") or []):
+                try:
+                    st = max(0.0, float(s.get("start")))
+                    en = min(clip_dur, float(s.get("end")))
+                    if en - st >= 1.5:
+                        segs.append({"start": round(st, 1),
+                                     "end": round(min(en, st + _maxseg), 1),
+                                     "what": str(s.get("what", "")).strip()})
+                except (TypeError, ValueError):
+                    continue
+            segs.sort(key=lambda x: x["start"])
+            if progress_cb and segs:
+                progress_cb(f":scissors: 인트라-클립 구간 {len(segs)}개 발견")
+            return segs[:4]
+    except Exception as e:
+        log.warning("intra-clip segment scan failed: %s", e)
+        return []
+
+
+def _propose_realfootage_intraclip(target: dt.date, context: dict, long_clip: dict,
+                                   progress_cb: ProgressCb = None,
+                                   prior_feedback: str = "") -> list[dict]:
+    """PD 2026-06-12: intra-clip multi-segment montage — collect several moments FROM
+    ONE long clip and edit them into a story. A third RF editing option beside one-take
+    (single continuous segment) and multi-clip montage. Falls back to [] (→ one-take)
+    when fewer than 2 good segments are found."""
+    from agents.llm_cascade import call_text_cascade
+    cid = long_clip.get("id")
+    clip_dur = float(long_clip.get("dur") or 0)
+    segs = _vlm_clip_segments(cid, clip_dur, progress_cb=progress_cb)
+    if len(segs) < 2:
+        return []
+    _time_phrase = _onetake_time_phrase(long_clip.get("date"))
+    seg_lines = "\n".join(f"  segment {i+1} [{s['start']}~{s['end']}s]: {s['what']}"
+                          for i, s in enumerate(segs))
+    system = (
+        "You write the casual KOREAN vlog NARRATOR captions for a 'Ryani & Leo' Short "
+        "(랴니=11살 암컷 프렌치불독·꼬리 없음, 레오=8개월 수컷 오렌지 고양이) that is edited "
+        "from SEVERAL moments of ONE clip. Given the ordered segments below, write ONE "
+        "caption per segment that together tell a coherent little story with a soft "
+        "ending (여운) — follow what each segment ACTUALLY shows, add the pets' inner "
+        "voice/wit. Each: Korean line + English line; NO parentheses, no emoji, no "
+        "speaker labels; never swap ages/species; "
+        + (f"footage from {_time_phrase} — may open with it. " if _time_phrase
+           else "recent footage — no '○년 전'. ")
+        + "Return ONLY JSON: {\"title\":\"\",\"oneliner\":\"\",\"captions\":[\"ko||en\","
+        "...]} with EXACTLY one entry per segment, in order.")
+    user = (f"clip_id: {cid}\n촬영 시점: {_time_phrase or '최근'}\nsegments:\n{seg_lines}\n"
+            + (f"\n[수정 피드백] {prior_feedback}\n" if prior_feedback else "")
+            + "\n각 구간에 1개씩, 순서대로 이어지는 narrator 캡션을 써라.")
+    import json as _json
+    title, oneliner, lines = "", "", []
+    for _ in range(2):
+        try:
+            txt = call_text_cascade(system, user, max_tokens=1200).strip()
+            txt = re.sub(r"^```(?:json)?\s*", "", txt); txt = re.sub(r"\s*```$", "", txt)
+            d = _json.loads(txt)
+            lines = d.get("captions") or []
+            title = (d.get("title") or "").strip()
+            oneliner = (d.get("oneliner") or "").strip()
+            if lines:
+                break
+        except Exception as e:
+            log.warning("intra-clip caption gen failed: %s", e)
+    if not lines:
+        return []
+    cuts = []
+    for i, s in enumerate(segs):
+        dur = round(max(1.5, s["end"] - s["start"]), 1)
+        ko, en = "", ""
+        if i < len(lines) and isinstance(lines[i], str) and "||" in lines[i]:
+            ko, en = (p.strip() for p in lines[i].split("||", 1))
+        elif i < len(lines):
+            ko = str(lines[i]).strip()
+        cuts.append({
+            "tag": f"cut{i+1}_seg",
+            "beat": ("intro" if i == 0 else "closer" if i == len(segs) - 1 else "develop"),
+            "who": "both",
+            "asset_id": cid,
+            "edit_effect": "none",
+            "action": s["what"],
+            "duration_seconds": dur,
+            "trim_start": s["start"],
+            "captions": [{"start": 0.1, "end": max(dur - 0.1, 1.0), "ko": ko, "en": en}],
+        })
+    concept = {
+        "title": title or "랴니와 레오의 순간들",
+        "narrative_oneliner": oneliner or title,
+        "render_style": "real_footage",
+        "episode_format": "intra_clip_montage",
+        "editing_concept": "intra_clip_montage",
+        "tone": "casual_vlog",
+        "subjects": ["ryani", "leo"],
+        "duration_target_sec": int(sum(c["duration_seconds"] for c in cuts)) + 6,
+        "cuts": cuts,
+        "_intraclip": True,
+    }
+    if progress_cb:
+        progress_cb(f":white_check_mark: 인트라-클립 몬타주 — {len(cuts)}구간 "
+                    f"(한 클립에서 추출)")
+    return [concept]
+
+
 def _propose_realfootage_singlepass(target: dt.date, context: dict,
                                      progress_cb: ProgressCb = None,
                                      prior_feedback: str = "") -> list[dict]:
@@ -890,13 +1052,24 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     if _ot_mode != "never" and (_ot_mode == "1" or _onetake_today(target)):
         _longs = _rf_long_candidates(context)
         if _longs:
-            try:
-                ot = _propose_realfootage_onetake(
-                    target, context, _longs[0], progress_cb, prior_feedback)
-                if ot:
-                    return ot
-            except Exception as e:
-                log.warning("one-take path failed (%s) — falling back to montage", e)
+            # PD 2026-06-12: on a long-clip day, pick a single-clip editing option —
+            # one-take (one continuous segment) OR intra-clip montage (several segments
+            # from the same clip). Deterministic ~50/50; if the preferred one yields
+            # nothing (e.g. intra-clip found <2 segments) fall back to the other, then
+            # to the normal montage writer below.
+            import hashlib as _hl
+            _prefer_intra = (int(_hl.sha1(f"intra|{target.isoformat()}".encode())
+                                 .hexdigest(), 16) % 2 == 0)
+            _order = ([_propose_realfootage_intraclip, _propose_realfootage_onetake]
+                      if _prefer_intra else
+                      [_propose_realfootage_onetake, _propose_realfootage_intraclip])
+            for _fn in _order:
+                try:
+                    res = _fn(target, context, _longs[0], progress_cb, prior_feedback)
+                    if res:
+                        return res
+                except Exception as e:
+                    log.warning("long-clip path %s failed: %s", _fn.__name__, e)
     if progress_cb:
         msg = ":pencil: real_footage 단일-패스 스토리텔러 (grounded flowing)"
         if prior_feedback:
