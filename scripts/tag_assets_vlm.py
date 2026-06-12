@@ -338,6 +338,8 @@ def main() -> int:
                    help="only analyze assets where vlm_analyzed_at < this ISO "
                         "timestamp (or NULL). e.g. '2026-06-02 13:00:00'")
     p.add_argument("--delay", type=float, default=0.5, help="seconds between API calls")
+    p.add_argument("--kind", choices=["photo", "video"], default=None,
+                   help="restrict to one asset kind (e.g. --kind video)")
     args = p.parse_args()
 
     con = _db()
@@ -361,6 +363,8 @@ def main() -> int:
         where = "1=1"
     else:
         where = "vlm_analyzed_at IS NULL"
+    if args.kind:
+        where = f"({where}) AND kind = '{args.kind}'"
     limit_clause = f"LIMIT {args.limit}" if args.limit else ""
     rows = con.execute(
         f"SELECT * FROM assets WHERE {where} ORDER BY captured_iso DESC {limit_clause}"
