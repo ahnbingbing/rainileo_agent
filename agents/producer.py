@@ -645,13 +645,13 @@ def _robust_json_parse(text: str, allow_llm_repair: bool = True):
 
 
 def _onetake_today(target: dt.date) -> bool:
-    """PD 2026-06-12: one-take is an OCCASIONAL editing option, not the RF default.
-    Deterministic per-day gate — ~1 in RF_ONETAKE_EVERY days (default 3) is a one-take
-    day (stable for a given date so re-proposes agree)."""
-    import hashlib as _hl
-    every = max(1, int(os.getenv("RF_ONETAKE_EVERY", "3")))
-    h = int(_hl.sha1(target.isoformat().encode()).hexdigest(), 16)
-    return (h % every) == 0
+    """PD 2026-06-12: single-clip mode (one-take / intra-clip) is an OCCASIONAL editing
+    option PER EPISODE, not per-day. The old per-DAY hash made EVERY slot on a 'one-take
+    day' single-clip ("왜 또 다 원테이크"). Use a per-episode coin flip (~RF_ONETAKE_RATE,
+    default 0.3) so only some episodes are single-clip and most are normal montage."""
+    import random as _random
+    rate = max(0.0, min(1.0, float(os.getenv("RF_ONETAKE_RATE", "0.3"))))
+    return _random.random() < rate
 
 
 def _rf_long_candidates(context: dict) -> list[dict]:

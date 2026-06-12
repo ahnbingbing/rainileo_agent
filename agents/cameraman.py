@@ -2546,6 +2546,23 @@ def _trim_real_footage_clips(manifests: dict, anim_dir: Path,
         # BEFORE the edit_effect.
         crop_hint = by_tag_crop.get(tag, "")
         has_human = bool(entry.get("has_human"))
+        # PD 2026-06-12 HARD RULE: a human FACE leaked into a render because the
+        # intra-clip/one-take cuts didn't carry has_human, so the face-crop never ran.
+        # ALWAYS confirm has_human from the DB by the source path — every RF path must
+        # crop the human out, never exclude/skip the clip.
+        if not has_human:
+            try:
+                _rel_src = str(src_path).replace(str(ROOT) + "/", "")
+                _r = _db().execute(
+                    "SELECT has_human FROM assets WHERE file_path=? OR file_path=? "
+                    "OR asset_id LIKE ? LIMIT 1",
+                    (str(src_path), _rel_src, "%" + src_path.stem.split("_")[-1])
+                ).fetchone()
+                if _r and _r[0]:
+                    has_human = True
+                    log.info("trim %s: has_human via DB lookup → crop face out", tag)
+            except Exception:
+                pass
         crop_vf = ""
         if has_human or crop_hint:
             if not dry_run:
@@ -3018,6 +3035,104 @@ def _drop_unavailable_av_cuts(manifests: dict, progress_cb: ProgressCb = None) -
             f"skip slot")
 
 
+def _clip_has_human_face(mp4_path: Path, n_frames: int = 4) -> bool:
+    """PD 2026-06-12 face GATE: VLM-check a rendered RF clip for a visible HUMAN FACE.
+    The crop should have removed it, but if the crop window still includes a face this
+    catches it. ONLY a face counts (hands/legs/back are fine). Fail-open (False) on no
+    API / error — we never block on uncertainty, only act on a CLEAR face."""
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key or not Path(mp4_path).exists():
+        return False
+    try:
+        from google import genai as _g
+        from google.genai import types as _gt
+        import tempfile as _tf
+        dur = 5.0
+        try:
+            dur = float(subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=nw=1:nk=1", str(mp4_path)],
+                capture_output=True, text=True, timeout=15).stdout.strip() or 5.0)
+        except Exception:
+            pass
+        client = _g.Client(api_key=api_key, http_options=_gt.HttpOptions(
+            timeout=int(os.getenv("VLM_TIMEOUT_MS", "90000"))))
+        parts = []
+        with _tf.TemporaryDirectory() as td:
+            for i in range(n_frames):
+                t = dur * (i + 0.5) / n_frames
+                fp = Path(td) / f"f{i}.jpg"
+                subprocess.run(["ffmpeg", "-y", "-nostats", "-loglevel", "error",
+                                "-ss", f"{t:.2f}", "-i", str(mp4_path), "-frames:v", "1",
+                                str(fp)], check=False, timeout=20)
+                if fp.exists() and fp.stat().st_size > 1000:
+                    parts.append(_gt.Part.from_bytes(data=fp.read_bytes(),
+                                                     mime_type="image/jpeg"))
+            if not parts:
+                return False
+            parts.append(
+                "Is a HUMAN FACE visible in ANY of these frames? A human hand, arm, leg, "
+                "torso, or the back of a head is NOT a face — answer only about a visible "
+                "FACE (eyes/nose/mouth, even partial, even in a mirror/reflection). "
+                "Return ONLY JSON: {\"face_visible\": true|false}.")
+            resp = client.models.generate_content(
+                model=os.getenv("VLM_MODEL", "gemini-2.5-flash"),
+                contents=parts,
+                config=_gt.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    thinking_config=_gt.ThinkingConfig(thinking_budget=0)))
+            import json as _json
+            return bool(_json.loads((resp.text or "{}").strip()).get("face_visible"))
+    except Exception as e:
+        log.warning("face gate check failed (%s) — keeping", e)
+        return False
+
+
+def _rf_face_gate(manifests: dict, anim_dir: Path,
+                  progress_cb: ProgressCb = None) -> None:
+    """PD 2026-06-12 ("얼굴 부분을 crop해서 안보이게"): after trimming RF clips, verify NO
+    human FACE survived the crop. For a cut whose render still shows a face, DROP it
+    (a face must NEVER ship) — the crop is the primary guard, this is the safety net.
+    Raises if too few cuts remain."""
+    cuts = manifests.get("cuts") or []
+    drop = []
+    for item in cuts:
+        tag = item.get("tag")
+        mp4 = anim_dir / f"{tag}.mp4"
+        if mp4.exists() and _clip_has_human_face(mp4):
+            drop.append(tag)
+            if progress_cb:
+                progress_cb(f":no_entry: {tag} 사람 얼굴 감지 — 컷 드롭(절대 노출 금지)")
+            log.warning("RF face gate: dropping %s (human face survived crop)", tag)
+    if not drop:
+        return
+    dropset = set(drop)
+    manifests["cuts"] = [c for c in cuts if c.get("tag") not in dropset]
+    for key in ("concept_cuts",):
+        lst = manifests.get(key)
+        if isinstance(lst, list):
+            manifests[key] = [c for c in lst
+                              if (c.get("tag") or c.get("cut_tag")) not in dropset]
+    for t in drop:
+        try:
+            (anim_dir / f"{t}.mp4").unlink(missing_ok=True)
+        except Exception:
+            pass
+        for mk in ("captions",):
+            try:
+                p = Path(manifests.get(mk, ""))
+                if p.exists():
+                    d = json.loads(p.read_text(encoding="utf-8"))
+                    d.pop(t, None)
+                    p.write_text(json.dumps(d, ensure_ascii=False, indent=2),
+                                 encoding="utf-8")
+            except Exception:
+                pass
+    if len(manifests["cuts"]) < int(os.getenv("RF_MIN_CUTS", "2")):
+        raise RuntimeError(
+            f"too few cuts left after dropping face-leaking cuts ({len(manifests['cuts'])})")
+
+
 def run_real_footage_pipeline(manifests: dict, work_dir: Path,
                               progress_cb: ProgressCb = None,
                               dry_run: bool = False) -> Path:
@@ -3036,6 +3151,11 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
     # from caption burn so VLM rewrite can run between them).
     anim_dir = work_dir / "animated"
     _trim_real_footage_clips(manifests, anim_dir, progress_cb, dry_run)
+
+    # Step 1a-face: HARD RULE face gate — drop any cut whose render still shows a human
+    # FACE after the crop (PD 2026-06-12: a face leaked into a render).
+    if not dry_run:
+        _rf_face_gate(manifests, anim_dir, progress_cb)
 
     # Step 1b: VLM post-render check + caption rewrite (same agent as ai_vtuber).
     # PD 2026-06-06 ROOT CAUSE FIX: for single-pass real_footage, the captions
