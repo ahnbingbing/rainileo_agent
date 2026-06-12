@@ -390,6 +390,11 @@ def main() -> int:
         result = analyze_asset(asset, dry_run=args.dry_run)
         if result:
             update_asset_tags(con, asset["asset_id"], result)
+            # PD 2026-06-12: COMMIT immediately after each update so the write lock is
+            # held only for the instant UPDATE — NOT across the next ~20 slow VLM calls
+            # (the old batch-of-20 transaction held the lock ~60s and made a concurrent
+            # render fail with "database is locked"). WAL + short locks = safe parallel.
+            con.commit()
             success += 1
             activity = result.get("activity", "?")
             human = "👤" if result.get("has_human") else ""
@@ -398,11 +403,6 @@ def main() -> int:
         else:
             errors += 1
             print("✗" if not args.dry_run else "(dry)")
-
-        # Periodic commit
-        if i % args.batch_size == 0:
-            con.commit()
-            print(f"  --- committed {i}/{total} ---")
 
         # Rate limiting
         if not args.dry_run and args.delay > 0:
