@@ -2353,6 +2353,17 @@ def _pick_wink_subject(c: dict) -> str:
     if explicit in ("ryani", "leo"):
         return explicit
 
+    # 1b. PD 2026-06-12: a SOLO story (only one pet present — e.g. a memory-lane
+    # "3년 전 랴니의 하루") must have THAT pet wink. Don't fall through to pattern
+    # matching that could pick the absent pet.
+    subs = [str(s).lower() for s in (c.get("subjects") or [])]
+    has_r = any(("ryani" in s or "랴니" in s) for s in subs)
+    has_l = any(("leo" in s or "레오" in s) for s in subs)
+    if has_r and not has_l:
+        return "ryani"
+    if has_l and not has_r:
+        return "leo"
+
     cuts = c.get("cuts") or []
     all_text = ""
     for cut in cuts:
@@ -2425,8 +2436,8 @@ def _build_wink_cut(subject: str, prev_cut: dict) -> dict:
             "(she/her, channel's 랴니엄마). SPAYED FEMALE — smooth feminine "
             "underbelly, NO male genitalia of any kind. THIN Boston "
             "Terrier-style white blaze (a NARROW line, NOT a wide splash) "
-            "from nose to forehead, white dot above each eye, silver-grey "
-            "aged muzzle, white chin, large white chest patch, bat ears, "
+            "from nose to forehead, NO white dot/spot above or on the eyes, "
+            "silver-grey aged muzzle, white chin, large white chest patch, bat ears, "
             "ABSOLUTELY NO TAIL (her rear is bare and tailless), petite "
             "refined feminine body (NOT muscular male), only black/white/"
             "grey, no brown"
