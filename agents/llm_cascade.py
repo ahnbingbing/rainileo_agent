@@ -24,7 +24,7 @@ def call_text_cascade(system: str, user: str, *,
     # returned empty output + timed out, silently dropping the whole cascade to
     # Anthropic (PD 2026-06-08/11). Model = models.OPENAI_TEXT (gpt-4.1). Short
     # timeout + no SDK retries so a slow provider can't stall the launch batch.
-    _llm_timeout = int(os.environ.get("LLM_TIMEOUT_S", "45"))
+    _llm_timeout = int(os.environ.get("LLM_TIMEOUT_S", "90"))
     from agents import circuit
     # PD 2026-06-08: circuit breaker — skip a provider that just failed (cooldown)
     # instead of wasting the 45s timeout on every one of an av concept's ~9 calls.
@@ -66,7 +66,7 @@ def call_text_cascade(system: str, user: str, *,
         if not api_key:
             raise RuntimeError("GOOGLE_API_KEY missing")
         gclient = _genai.Client(api_key=api_key, http_options=_gtypes.HttpOptions(
-            timeout=int(os.getenv("LLM_TIMEOUT_S", "45")) * 1000))
+            timeout=int(os.getenv("LLM_TIMEOUT_S", "90")) * 1000))
         model_name = _models.GEMINI_TEXT
         resp = gclient.models.generate_content(
             model=model_name,
