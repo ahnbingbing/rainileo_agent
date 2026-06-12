@@ -3020,13 +3020,19 @@ def _drop_unavailable_av_cuts(manifests: dict, progress_cb: ProgressCb = None) -
         tag = item.get("tag")
         if not tag:
             continue
-        entry = sources.get(tag) or {}
-        src = entry.get("source") or ""
+        entry = sources.get(tag)
+        # AV stores sources[tag] as a STRING path; other paths use a dict. Handle both.
+        if isinstance(entry, str):
+            src, _is_str = entry, True
+        elif isinstance(entry, dict):
+            src, _is_str = (entry.get("source") or ""), False
+        else:
+            src, _is_str = "", False
         if src and not Path(src).is_absolute():
             src = str(ROOT / src)
         if src and Path(src).exists():
             continue
-        uuid = entry.get("source_uuid")
+        uuid = entry.get("source_uuid") if isinstance(entry, dict) else None
         if not uuid:
             aid = (item.get("asset") or {}).get("asset_id") or item.get("asset_id")
             if aid:
@@ -3038,8 +3044,11 @@ def _drop_unavailable_av_cuts(manifests: dict, progress_cb: ProgressCb = None) -
                     uuid = None
         restored = _ensure_local(src, uuid) if src else None
         if restored and Path(restored).exists():
-            entry["source"] = restored
-            sources[tag] = entry
+            if _is_str:
+                sources[tag] = restored
+            else:
+                entry["source"] = restored
+                sources[tag] = entry
             continue
         drop.append(tag)
     if not drop:
