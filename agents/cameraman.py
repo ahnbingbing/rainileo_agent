@@ -2730,6 +2730,19 @@ def _vlm_pet_crop_filter(src_path: Path, trim_start: float = 0.0,
             frame.unlink()
         except Exception:
             pass
+        # PD 2026-06-12: the model often returns PIXELS despite being asked for 0..1
+        # fractions (pets {x:260,y:381,w:724...}). Treating those as fractions put the
+        # pet bbox far off-frame → the face-crop failed. Normalize to fractions if any
+        # value looks like pixels (>1.5).
+        def _norm_box(b):
+            if not b:
+                return b
+            vals = [float(b.get(k, 0) or 0) for k in ("x", "y", "w", "h")]
+            if max(vals) > 1.5:
+                return {"x": vals[0] / W, "y": vals[1] / H,
+                        "w": vals[2] / W, "h": vals[3] / H}
+            return b
+        pets = _norm_box(pets)
         pw = float(pets.get("w", 0)); ph = float(pets.get("h", 0))
         if pw < 0.05 or ph < 0.05:
             log.warning("vlm crop: pets bbox not found for %s", src_path.name)
@@ -2779,24 +2792,53 @@ def _vlm_pet_crop_filter(src_path: Path, trim_start: float = 0.0,
         cy = _far(y_lo, y_hi, H, float(human.get("y", 0)), float(human.get("h", 0)), ch)
         cw = int(cw) // 2 * 2; ch = int(ch) // 2 * 2
         cx = min(max(0, int(cx)), W - cw); cy = min(max(0, int(cy)), H - ch)
-        # HARD vertical exclusion of the face union (PD 2026-06-08): the slide can
-        # leave a face partly inside the window when it overlaps the pets' band.
-        # Force the window fully below the face bottom (or fully above its top),
-        # whichever fits — exclude the face even at the cost of cropping some pet
-        # (the no-face rule wins). If neither fits, leave it (post-render check +
-        # slot-skip is the final guard).
-        if face_union:
-            fx = float(face_union["x"]) * W; fy = float(face_union["y"]) * H
-            fw = float(face_union["w"]) * W; fh = float(face_union["h"]) * H
-            overlap = not (cy >= fy + fh or cy + ch <= fy or cx >= fx + fw or cx + cw <= fx)
-            if overlap:
-                below = int(fy + fh)            # window top at face bottom
-                above = int(fy - ch)            # window bottom at face top
-                if below + ch <= H:
-                    cy = max(0, below)
-                elif above >= 0:
-                    cy = min(above, H - ch)
-                cy = min(max(0, int(cy)), H - ch)
+        # PD 2026-06-12 HARD RULE (face crop, verified): the loose "contain the whole
+        # pet" window above can still include the human face. SHRINK a 9:16 window
+        # (zoom toward the pet) and SHIFT it until it EXCLUDES the face_union — even at
+        # the cost of cropping the pet's BODY (a tight pet-head close-up; a partial
+        # chin of the human is OK, recognizable EYES are not). Returns "" if no zoom
+        # excludes the face (human holding the pet) → the post-render face gate drops it.
+        pet_cx = px + pwp / 2.0
+        pet_cy = py + php / 2.0
+        fu = face_union
+        if fu:
+            fux = float(fu["x"]) * W; fuy = float(fu["y"]) * H
+            fuw = float(fu["w"]) * W; fuh = float(fu["h"]) * H
+
+            def _ov(wx, wy, ww, wh):
+                return not (wx >= fux + fuw or wx + ww <= fux
+                            or wy >= fuy + fuh or wy + wh <= fuy)
+            chosen = None
+            for frac in (0.96, 0.88, 0.80, 0.72, 0.64, 0.56, 0.48, 0.40, 0.34):
+                wh = H * frac
+                ww = wh * r
+                if ww > W:
+                    ww = W; wh = ww / r
+                wx = min(max(pet_cx - ww / 2.0, 0.0), W - ww)
+                wy = min(max(pet_cy - wh / 2.0, 0.0), H - wh)
+                if not _ov(wx, wy, ww, wh):
+                    chosen = (ww, wh, wx, wy); break
+                # shift away from the face (right-of / left-of, below / above),
+                # keeping the pet centre inside the window
+                for sx in (fux + fuw, fux - ww):
+                    sx = min(max(sx, 0.0), W - ww)
+                    if sx <= pet_cx <= sx + ww and not _ov(sx, wy, ww, wh):
+                        chosen = (ww, wh, sx, wy); break
+                if chosen:
+                    break
+                for sy in (fuy + fuh, fuy - wh):
+                    sy = min(max(sy, 0.0), H - wh)
+                    if sy <= pet_cy <= sy + wh and not _ov(wx, sy, ww, wh):
+                        chosen = (ww, wh, wx, sy); break
+                if chosen:
+                    break
+            if not chosen:
+                log.info("vlm crop: face inseparable from pet in %s — drop via gate",
+                         src_path.name)
+                return ""   # face on the pet → post-render face gate drops the cut
+            cw, ch, cx, cy = chosen
+        cw = int(cw) // 2 * 2; ch = int(ch) // 2 * 2
+        cx = min(max(0, int(cx)), W - cw); cy = min(max(0, int(cy)), H - ch)
         return f"crop={cw}:{ch}:{cx}:{cy}"
     except Exception as ex:
         log.warning("vlm crop failed for %s: %s", src_path.name, ex)
@@ -3071,9 +3113,13 @@ def _clip_has_human_face(mp4_path: Path, n_frames: int = 4) -> bool:
             if not parts:
                 return False
             parts.append(
-                "Is a HUMAN FACE visible in ANY of these frames? A human hand, arm, leg, "
-                "torso, or the back of a head is NOT a face — answer only about a visible "
-                "FACE (eyes/nose/mouth, even partial, even in a mirror/reflection). "
+                "Is a RECOGNIZABLE human face visible in ANY of these frames? "
+                "RECOGNIZABLE = you could identify the person — i.e. the EYES (and "
+                "usually the nose) are clearly visible. A hand, arm, leg, torso, back of "
+                "the head, hair, or only a partial edge (just a chin/jaw, a cheek, the "
+                "side of a face with NO eyes shown) is NOT recognizable — that is OK, "
+                "answer false. Answer true ONLY when the eyes are visible enough to "
+                "identify the person (a clear or near-clear face, incl. a mirror). "
                 "Return ONLY JSON: {\"face_visible\": true|false}.")
             resp = client.models.generate_content(
                 model=os.getenv("VLM_MODEL", "gemini-2.5-flash"),
