@@ -32,6 +32,14 @@ log = logging.getLogger("agents.bandit")
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "data" / "agent.db"
 
+# PD 2026-06-12: load .env so SLACK_BOT_TOKEN/CHANNEL are present when run via launchd
+# (the daily-metrics job posts to Slack but launchd doesn't read .env on its own).
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv(ROOT / ".env")
+except Exception:
+    pass
+
 # Min age before a video's 48h window is considered settled enough to collect.
 MIN_AGE_HOURS = int(os.getenv("BANDIT_MIN_AGE_HOURS", "48"))
 # Re-pull a row if it's younger than this many days (numbers still moving).
@@ -41,8 +49,12 @@ _MC = 4000
 
 
 def _db() -> sqlite3.Connection:
-    con = sqlite3.connect(str(DB_PATH))
+    con = sqlite3.connect(str(DB_PATH), timeout=30)
     con.row_factory = sqlite3.Row
+    # PD 2026-06-12: WAL + busy_timeout — the daily-metrics job crashed with "database
+    # is locked" (collect() during a concurrent sync/render) and never posted to Slack.
+    con.execute("PRAGMA journal_mode = WAL")
+    con.execute("PRAGMA busy_timeout = 30000")
     return con
 
 
