@@ -1488,7 +1488,13 @@ def _lead_with_underused(rows: list, freq, overused_loc) -> list:
         # un-groundable location (NULL/unknown/other) is not a useful lead — sink it.
         no_loc = 1 if (not loc or loc in ("unknown", "other")) else 0
         over = 1 if loc in overused_loc else 0
-        return (no_loc, over, freq.get((loc, act), 0))
+        # PD 2026-06-13: prefer FACE-SAFE clips within each freshness tier. The cap pushes
+        # toward fresh locations, but cafe is human-heavy (12/16 have a bystander) and its
+        # face-crop kept failing the no-human HARD RULE → render blocked. mom (8/9) and
+        # outdoor (115/170) have plenty of no-human clips, so demoting has_human within a
+        # tier surfaces face-safe fresh footage first without sacrificing freshness.
+        human = 1 if v.get("has_human") else 0
+        return (no_loc, over, human, freq.get((loc, act), 0))
     return sorted(rows, key=_key)
 
 
