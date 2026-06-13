@@ -437,6 +437,7 @@ def sync_album(
     limit: int | None = None,
     dry_run: bool = False,
     download_missing: bool = False,
+    backfill: bool = False,
 ) -> dict:
     try:
         import osxphotos  # type: ignore
@@ -495,12 +496,21 @@ def sync_album(
         # else use newest-ingested date_added; else (empty DB) None = bootstrap.
         watermark = (added_since or since
                      or (max(ingested_dates) if ingested_dates else None))
-        if watermark is not None:
+        # PD 2026-06-13 (#2): the watermark MISSES below-watermark items that were in the
+        # album but never ingested (a same-location photo PD wanted wasn't in the DB).
+        # --backfill (ICLOUD_BACKFILL=1) ingests EVERY in-album item not in the DB
+        # (uuid diff, ignore watermark) — bounded by the threshold guard so a big backfill
+        # is an explicit opt-in.
+        _backfill = backfill or os.getenv("ICLOUD_BACKFILL") == "1"
+        if _backfill or watermark is None:
+            new_photos = [p for p in photos if p.uuid not in ingested]
+            if _backfill:
+                log.info("BACKFILL: ingesting all %d in-album items not in DB",
+                         len(new_photos))
+        else:
             new_photos = [p for p in photos
                           if p.uuid not in ingested
                           and (_date_added(p) or dt.date.min) >= watermark]
-        else:
-            new_photos = [p for p in photos if p.uuid not in ingested]
         log.info("album=%d, ingested=%d, watermark(date_added)>=%s, NEW to download=%d",
                  len(photos), len(ingested), watermark, len(new_photos))
         if not new_photos:
@@ -773,6 +783,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--limit", type=int, help="cap items processed (for testing)")
     ap.add_argument("--subject-map", help="comma list 'name=id,...' or JSON dict; merged over defaults")
     ap.add_argument("--dry-run", action="store_true", help="don't copy files or write DB rows")
+    ap.add_argument("--backfill", action="store_true",
+                    help="ingest EVERY in-album item not yet in the DB (uuid diff, "
+                         "ignores the date watermark) — for un-ingested below-watermark "
+                         "photos. Bounded by ICLOUD_NEW_FULL_THRESHOLD / "
+                         "ICLOUD_ALLOW_FULL_EXPORT=1 for large backfills.")
     ap.add_argument("--download-missing", action="store_true",
                     help="if file isn't local, ask Photos.app to fetch from iCloud (slow, per-item AppleScript)")
     ap.add_argument("--watch", action="store_true", help="poll forever (use launchd in prod)")
@@ -814,6 +829,7 @@ def main(argv: list[str] | None = None) -> int:
                 limit=args.limit,
                 dry_run=args.dry_run,
                 download_missing=args.download_missing,
+                backfill=args.backfill,
             )
             print_summary(s)
             # PD 2026-06-07: tag newly-imported assets so the Writer can use
