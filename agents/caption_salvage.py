@@ -268,6 +268,7 @@ def salvage(card_id: str, report: dict, *, progress_cb=None,
     try:
         cm._run(cm._burn_captions_cmd(manifests, anim_dir, captioned_dir),
                 ":speech_balloon: [salvage] 자막 재번 burn", progress_cb, False)
+        cm._fade_out_ending(manifests, captioned_dir, progress_cb)  # 여운 f/o
     except Exception as e:
         log.warning("salvage burn failed: %s", e)
         return None

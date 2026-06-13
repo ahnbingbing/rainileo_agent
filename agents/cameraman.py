@@ -1779,6 +1779,58 @@ def _burn_captions_cmd(manifests: dict, in_dir: Path, out_dir: Path) -> list[str
     return cmd
 
 
+def _fade_out_ending(manifests: dict, captioned_dir: Path, progress_cb=None) -> None:
+    """PD 2026-06-13: end the last content cut with a gentle video (+audio) fade to
+    black — caption included — so the 여운 dissolves instead of hard-cutting to the
+    outro ("딱 끊김"). Runs on the freshly-burned captioned cut (idempotent: burn
+    regenerates it each render). real_footage only. CAPTION_ENDING_FADE_SEC=0 disables."""
+    if (manifests.get("style") or "").lower() != "real_footage":
+        return
+    fd = float(os.getenv("CAPTION_ENDING_FADE_SEC", "0.7"))
+    if fd <= 0:
+        return
+    try:
+        cap_path = Path(manifests.get("captions") or "")
+        if not cap_path.exists():
+            return
+        data = json.loads(cap_path.read_text(encoding="utf-8"))
+        tags = [k for k in data.keys()
+                if not k.startswith("_") and isinstance(data.get(k), dict)]
+        last = None
+        for t in tags:
+            if (Path(captioned_dir) / f"{t}.mp4").exists():
+                last = t
+        if not last:
+            return
+        mp4 = Path(captioned_dir) / f"{last}.mp4"
+        dur = float(subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nw=1:nk=1", str(mp4)],
+            capture_output=True, text=True, timeout=15).stdout.strip() or 0)
+        if dur <= fd + 0.1:
+            return
+        st = round(dur - fd, 2)
+        has_audio = bool(subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries",
+             "stream=index", "-of", "csv=p=0", str(mp4)],
+            capture_output=True, text=True, timeout=15).stdout.strip())
+        tmp = mp4.with_suffix(".fo.mp4")
+        cmd = ["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-i", str(mp4),
+               "-vf", f"fade=t=out:st={st}:d={fd}",
+               "-c:v", "libx264", "-pix_fmt", "yuv420p"]
+        if has_audio:
+            cmd += ["-af", f"afade=t=out:st={st}:d={fd}", "-c:a", "aac"]
+        else:
+            cmd += ["-an"]
+        cmd += [str(tmp)]
+        subprocess.run(cmd, check=True, timeout=180)
+        tmp.replace(mp4)
+        if progress_cb:
+            progress_cb(f":city_sunset: 여운 fade-out {fd:.1f}s — {last}")
+    except Exception as e:
+        log.warning("ending fade-out failed: %s", e)
+
+
 def _lint_seedance_prompt(prompt: str) -> list[str]:
     """PD 2026-06-08: Seedance is expensive and weak at backgrounds — surface
     rigor gaps BEFORE the spend so we know why a render came out wrong. Log-only
@@ -3491,6 +3543,8 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
         ":speech_balloon: [1c/3] Burning captions (post-VLM)",
         progress_cb, dry_run,
     )
+    if not dry_run:
+        _fade_out_ending(manifests, captioned_dir, progress_cb)  # 여운 f/o
 
     # Step 2: ensure bumpers exist
     if not INTRO_BUMPER.exists() or not OUTRO_BUMPER.exists():
