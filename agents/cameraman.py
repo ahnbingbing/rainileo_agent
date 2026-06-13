@@ -1831,6 +1831,167 @@ def _fade_out_ending(manifests: dict, captioned_dir: Path, progress_cb=None) -> 
         log.warning("ending fade-out failed: %s", e)
 
 
+def _editor_guides() -> str:
+    out = ""
+    for rel in ("agents/prompts/editing_direction.md",
+                "agents/prompts/editing_techniques.md"):
+        try:
+            out += "\n\n---\n" + (ROOT / rel).read_text(encoding="utf-8")
+        except Exception:
+            pass
+    return out
+
+
+def _run_editor(concept: dict, manifests: dict, lane: str,
+                progress_cb=None) -> "dict | None":
+    """PD 2026-06-13 (#3): the Editor agent — the only stage that judges INTENT against
+    the actual FOOTAGE. Returns an EditPlan (per-cut technique/tempo/trim, reorder,
+    drop) + intent_mismatch, or None (caller proceeds unedited). EDITOR_AGENT=0 off."""
+    if os.getenv("EDITOR_AGENT", "1") == "0":
+        return None
+    cuts = manifests.get("concept_cuts") or manifests.get("cuts") or []
+    if not cuts:
+        return None
+    try:
+        sys_p = (ROOT / "agents/prompts/editor.md").read_text(encoding="utf-8") \
+            + _editor_guides()
+    except Exception as e:
+        log.warning("editor prompt unreadable: %s", e)
+        return None
+    lines = [f"title: {concept.get('title','')}",
+             f"narrative: {concept.get('narrative_oneliner') or concept.get('oneliner','')}",
+             f"lane: {lane}", "", "CUTS (intent vs ACTUAL footage):"]
+    for c in cuts:
+        tag = c.get("tag") or c.get("cut_tag")
+        foot = (c.get("vlm_actual_action") or c.get("action")
+                or c.get("scene_description") or "")
+        caps = c.get("captions") or []
+        cap_txt = " / ".join((s.get("ko") or "") for s in caps if isinstance(s, dict))
+        lines.append(
+            f"- tag={tag} asset={c.get('asset_id')} dur={c.get('duration_seconds')}\n"
+            f"  intent_beat: {c.get('beat','')}\n"
+            f"  intent_caption: {cap_txt}\n"
+            f"  FOOTAGE(real): {foot}")
+    user = "\n".join(lines) + "\n\nReturn the EditPlan JSON only."
+    try:
+        from agents.llm_cascade import call_text_cascade
+        txt = call_text_cascade(sys_p, user, max_tokens=1400).strip()
+        txt = re.sub(r"^```(?:json)?\s*", "", txt)
+        txt = re.sub(r"\s*```$", "", txt)
+        plan = json.loads(txt)
+        if progress_cb:
+            mm = plan.get("intent_mismatch")
+            msg = f":scissors: Editor: {plan.get('episode_technique','?')}"
+            if mm:
+                msg += f" — ⚠️불일치: {(mm.get('what_footage_shows') or '')[:40]}"
+            progress_cb(msg)
+        log.info("editor plan: tech=%s dropped=%s mismatch=%s",
+                 plan.get("episode_technique"), plan.get("dropped"),
+                 bool(plan.get("intent_mismatch")))
+        return plan
+    except Exception as e:
+        log.warning("editor agent failed: %s", e)
+        return None
+
+
+def _apply_edit_plan(manifests: dict, plan: dict, anim_dir: "Path | None" = None,
+                     progress_cb=None) -> None:
+    """Apply an Editor EditPlan to the manifests in place: DROP / REORDER cuts, set
+    per-cut tempo_factor (→ captions _tempo_factors) and trim_start/trim_dur. Mirrors
+    _rf_face_gate's drop bookkeeping (cuts + concept_cuts + captions JSON). Fail-safe."""
+    if not plan:
+        return
+    try:
+        per_cut = plan.get("per_cut") or []
+        dropped = set(plan.get("dropped") or [])
+        # keep=false also counts as dropped
+        for pc in per_cut:
+            if pc.get("keep") is False and pc.get("tag"):
+                dropped.add(pc.get("tag"))
+        order = [pc.get("tag") for pc in sorted(
+            [p for p in per_cut if p.get("keep") is not False and p.get("tag")],
+            key=lambda p: p.get("order", 1e9))]
+        by_tag = {pc.get("tag"): pc for pc in per_cut}
+        # Safety net: never drop down to an empty episode. If the plan would remove
+        # every cut (e.g. it dropped the sole cut over a caption mismatch), keep them.
+        all_tags = {(_t.get("tag") or _t.get("cut_tag"))
+                    for _t in (manifests.get("concept_cuts")
+                               or manifests.get("cuts") or [])}
+        all_tags.discard(None)
+        if all_tags and not (all_tags - dropped):
+            log.warning("edit plan would drop ALL cuts — ignoring drops")
+            dropped = set()
+            if not order:
+                order = [t for t in all_tags]
+
+        def _tagof(c):
+            return c.get("tag") or c.get("cut_tag")
+
+        # 1) trim_start / trim_dur overrides on the cut lists
+        for key in ("cuts", "concept_cuts"):
+            lst = manifests.get(key)
+            if not isinstance(lst, list):
+                continue
+            for c in lst:
+                pc = by_tag.get(_tagof(c))
+                if not pc:
+                    continue
+                if pc.get("trim_start") is not None:
+                    c["trim_start"] = float(pc["trim_start"])
+                if pc.get("trim_dur"):
+                    c["trim_dur"] = float(pc["trim_dur"])
+                    c["duration_seconds"] = float(pc["trim_dur"])
+        # 2) DROP cuts (manifests + captions JSON + mp4)
+        if dropped:
+            for key in ("cuts", "concept_cuts"):
+                lst = manifests.get(key)
+                if isinstance(lst, list):
+                    manifests[key] = [c for c in lst if _tagof(c) not in dropped]
+            if anim_dir:
+                for t in dropped:
+                    try:
+                        (Path(anim_dir) / f"{t}.mp4").unlink(missing_ok=True)
+                    except Exception:
+                        pass
+        # 3) REORDER + tempo in the captions JSON (cut order = dict order)
+        cap_path = Path(manifests.get("captions") or "")
+        if cap_path.exists():
+            data = json.loads(cap_path.read_text(encoding="utf-8"))
+            meta = {k: v for k, v in data.items() if k.startswith("_")}
+            body = {k: v for k, v in data.items()
+                    if not k.startswith("_") and k not in dropped}
+            # reorder per plan; unknown/leftover tags keep their relative order at end
+            ordered = [t for t in order if t in body] + \
+                      [t for t in body if t not in order]
+            new = {t: body[t] for t in ordered}
+            # tempo factors
+            tempos = meta.get("_tempo_factors")
+            tempos = tempos if isinstance(tempos, dict) else {}
+            for pc in per_cut:
+                t, tf = pc.get("tag"), pc.get("tempo_factor")
+                if t and t in new and tf:
+                    try:
+                        s = float(tf)
+                        if 0.5 <= s <= 2.0:
+                            tempos[t] = s
+                    except (TypeError, ValueError):
+                        pass
+            if tempos:
+                meta["_tempo_factors"] = tempos
+            cap_path.write_text(json.dumps({**meta, **new}, ensure_ascii=False, indent=2),
+                                encoding="utf-8")
+        # 4) reorder the cut lists to match
+        rank = {t: i for i, t in enumerate(order)}
+        for key in ("cuts", "concept_cuts"):
+            lst = manifests.get(key)
+            if isinstance(lst, list):
+                lst.sort(key=lambda c: rank.get(_tagof(c), 1e9))
+        if progress_cb and (dropped or order):
+            progress_cb(f":scissors: EditPlan 적용 — drop={len(dropped)} 재배열={len(order)}컷")
+    except Exception as e:
+        log.warning("apply edit plan failed: %s", e)
+
+
 def _lint_seedance_prompt(prompt: str) -> list[str]:
     """PD 2026-06-08: Seedance is expensive and weak at backgrounds — surface
     rigor gaps BEFORE the spend so we know why a render came out wrong. Log-only
@@ -3492,9 +3653,20 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
     # Step 0d: pre-render split_horizontal / split_vertical cuts (PD 2026-06-03).
     _prerender_split_cuts(manifests, work_dir, progress_cb, dry_run)
 
+    # Step 0e (#3): Editor agent — judge INTENT vs actual FOOTAGE, then set per-cut
+    # technique/tempo/trim, reorder, drop, and flag any intent↔footage mismatch.
+    # Runs BEFORE trim so its trim/drop/reorder shape the actual edit.
+    anim_dir = work_dir / "animated"
+    if not dry_run and os.getenv("EDITOR_AGENT", "1") != "0":
+        manifests["style"] = "real_footage"
+        _plan = _run_editor(manifests.get("concept") or manifests, manifests,
+                            "real_footage", progress_cb)
+        if _plan:
+            _apply_edit_plan(manifests, _plan, anim_dir, progress_cb)
+            manifests["_edit_plan"] = _plan  # carry mismatch for the upstream loop
+
     # Step 1: trim source clips into animated/ (PD 2026-06-02: split trim
     # from caption burn so VLM rewrite can run between them).
-    anim_dir = work_dir / "animated"
     _trim_real_footage_clips(manifests, anim_dir, progress_cb, dry_run)
 
     # Step 1a-face: HARD RULE face gate — drop any cut whose render still shows a human
