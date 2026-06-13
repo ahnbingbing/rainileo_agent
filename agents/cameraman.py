@@ -1530,36 +1530,52 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
     #    elsewhere in the clip, so a cut-level check passes the fabrication).
     mismatched = []  # (tag, idx, vlm, ko, reason)
     n_scenes = 0
+    _BREEDS = {"코기": "corgi", "웰시": "corgi", "corgi": "corgi",
+               "리트리버": "retriever", "retriever": "retriever", "골든": "golden",
+               "푸들": "poodle", "poodle": "poodle", "말티즈": "maltese",
+               "비숑": "bichon", "시바": "shiba", "보더콜리": "border collie",
+               "치와와": "chihuahua", "닥스훈트": "dachshund", "포메": "pomeranian"}
     for tag in tags:
         mp4 = anim_dir / f"{tag}.mp4"
         if not mp4.exists():
             continue
+        # Pass 1: check every scene against its own frame (collect results).
+        scene_vs = []  # (idx, ko, v)
         for idx, sc in enumerate(cap[tag]["scenes"]):
             ko = (sc.get("ko") or "").strip()
             if not ko:
                 continue
             n_scenes += 1
             mid = (float(sc.get("start", 0.1)) + float(sc.get("end", 1.0))) / 2.0
-            v = _check_scene(mp4, mid, ko)
-            if not v:
-                continue
+            scene_vs.append((idx, ko, _check_scene(mp4, mid, ko)))
+        # CUT-LEVEL dominant other-animal (union across the cut's scenes that saw one) —
+        # so a breed-mismatch is caught even when a given scene's OWN frame missed the
+        # other dog (per-frame VLM flicker let "웰시 코기" slip when the retriever had walked
+        # off that exact frame). No extra VLM calls — reuses the per-scene results.
+        cut_oa = " ".join((vv.get("other_animal") or "") for _, _, vv in scene_vs
+                          if vv).lower()
+        # Pass 2: evaluate each scene (using its own frame + the cut-level animal).
+        for idx, ko, v in scene_vs:
             low = ko.lower()
+            _mentioned = {b for w, b in _BREEDS.items() if w in low}
+            if not v:
+                # VLM failed for this scene — we don't know subject visibility, but a
+                # breed the caption names that the CUT never shows is still a safe catch.
+                if _mentioned and cut_oa and not any(b in cut_oa for b in _mentioned):
+                    r = f"견종 불일치(캡션:{'/'.join(_mentioned)}≠화면:{cut_oa[:24]})"
+                    mismatched.append((tag, idx, {"action": "", "other_animal": cut_oa},
+                                       ko, r))
+                    log.info("grounding gate: %s[%d] MISMATCH(cut-level) — %s | ko=%s",
+                             tag, idx, r, ko)
+                continue
             reasons = []
             if (("랴니" in ko) or ("ryani" in low)) and not v.get("ryani_visible"):
                 reasons.append("랴니 미등장")
             if (("레오" in ko) or ("leo" in low)) and not v.get("leo_visible"):
                 reasons.append("레오 미등장")
-            # deterministic breed-mismatch net (the VLM's caption_matches can flicker per
-            # frame — this reliably catches "웰시 코기" over a golden-retriever frame).
-            _BREEDS = {"코기": "corgi", "웰시": "corgi", "corgi": "corgi",
-                       "리트리버": "retriever", "retriever": "retriever", "골든": "golden",
-                       "푸들": "poodle", "poodle": "poodle", "말티즈": "maltese",
-                       "비숑": "bichon", "시바": "shiba", "보더콜리": "border collie",
-                       "치와와": "chihuahua", "닥스훈트": "dachshund", "포메": "pomeranian"}
-            _mentioned = {b for w, b in _BREEDS.items() if w in low}
-            _oa = (v.get("other_animal") or "").lower()
-            if _mentioned and _oa and not any(b in _oa for b in _mentioned):
-                reasons.append(f"견종 불일치(캡션:{'/'.join(_mentioned)}≠화면:{v.get('other_animal')})")
+            _oa_all = ((v.get("other_animal") or "").lower() + " " + cut_oa).strip()
+            if _mentioned and _oa_all and not any(b in _oa_all for b in _mentioned):
+                reasons.append(f"견종 불일치(캡션:{'/'.join(_mentioned)}≠화면:{(v.get('other_animal') or cut_oa)[:24]})")
             if v.get("frame_ok") is False:
                 reasons.append("과노출/암부로 주인공 안보임")
             if v.get("caption_matches") is False and not reasons:
