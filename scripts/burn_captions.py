@@ -144,8 +144,9 @@ KO_BORDER = 7         # px black outline — 손글씨 배경 위 가독성 (bum
 EN_BORDER = 5         # px (bumped from 4)
 SHADOW_X = 4          # px drop shadow X offset (bumped 3→4)
 SHADOW_Y = 4          # px drop shadow Y offset (bumped 3→4)
-KO_Y_FROM_BOTTOM = 220  # KO line bottom edge from screen bottom (bumped 180→220 — bigger KO font needs more clearance above EN)
+KO_Y_FROM_BOTTOM = 220  # KO line bottom edge from screen bottom (min; raised dynamically when EN wraps to 2 lines)
 EN_Y_FROM_BOTTOM = 100  # EN line bottom edge from screen bottom (bumped 90→100)
+KO_EN_GAP = 30          # PD 2026-06-13: min vertical gap between EN block top and KO bottom (stops 2-line-EN overlap)
 FADE_S = 0.30         # fade-in duration in seconds
 SHOW_START_S = 0.25   # delay before captions appear
 TAIL_OFFSET_S = 0.25  # hide captions this many seconds before clip end
@@ -359,20 +360,34 @@ def build_vf_multi(scenes: list[dict], tag: str, duration: float,
         # font has no heart glyphs).
         ko_font, en_font = _font_paths_for_tag_and_text(tag, ko + " " + en)
 
-        if ko:
-            ko_sz = calc_fontsize(ko, ko_font, KO_SIZE_DEFAULT, USABLE_WIDTH)
-            ko_wrapped = wrap_for_render(ko, ko_font, ko_sz, USABLE_WIDTH)
-            ko_file = TMP_DIR / f"{tag}_s{i}.ko.txt"
-            ko_file.write_text(ko_wrapped, encoding="utf-8")
-            ko_y = KO_Y_FROM_TOP if pos == "top" else KO_Y_FROM_BOTTOM
-            filters.append(build_drawtext(
-                ko_font, ko_file, ko_sz, KO_BORDER,
-                ko_y, start, end, FADE_S, position=pos))
+        # EN first so we know its rendered HEIGHT, then place KO clear ABOVE it.
+        # PD 2026-06-13: KO and EN had FIXED distances from the bottom (220 / 100),
+        # so a 2-line EN (≈130px tall) rose into the KO line and the two overlapped.
+        # Compute the EN block height and lift KO's bottom to sit above it + a gap.
+        en_sz = en_wrapped = en_file = None
+        en_block_h = 0
         if en:
             en_sz = calc_fontsize(en, en_font, EN_SIZE_DEFAULT, USABLE_WIDTH)
             en_wrapped = wrap_for_render(en, en_font, en_sz, USABLE_WIDTH)
             en_file = TMP_DIR / f"{tag}_s{i}.en.txt"
             en_file.write_text(en_wrapped, encoding="utf-8")
+            en_lines = en_wrapped.count("\n") + 1
+            en_block_h = int(en_lines * en_sz * 1.25) + 2 * EN_BORDER
+        if ko:
+            ko_sz = calc_fontsize(ko, ko_font, KO_SIZE_DEFAULT, USABLE_WIDTH)
+            ko_wrapped = wrap_for_render(ko, ko_font, ko_sz, USABLE_WIDTH)
+            ko_file = TMP_DIR / f"{tag}_s{i}.ko.txt"
+            ko_file.write_text(ko_wrapped, encoding="utf-8")
+            if pos == "top":
+                ko_y = KO_Y_FROM_TOP
+            else:
+                # KO bottom must clear the EN block (height + gap) above EN's anchor.
+                ko_y = max(KO_Y_FROM_BOTTOM,
+                           EN_Y_FROM_BOTTOM + en_block_h + KO_EN_GAP) if en else KO_Y_FROM_BOTTOM
+            filters.append(build_drawtext(
+                ko_font, ko_file, ko_sz, KO_BORDER,
+                ko_y, start, end, FADE_S, position=pos))
+        if en:
             en_y = EN_Y_FROM_TOP if pos == "top" else EN_Y_FROM_BOTTOM
             filters.append(build_drawtext(
                 en_font, en_file, en_sz, EN_BORDER,
