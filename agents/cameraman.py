@@ -3281,7 +3281,16 @@ def _vlm_pet_crop_filter(src_path: Path, trim_start: float = 0.0,
             from agents.facecheck import face_box as _face_box
             ts0 = trim_start
             span = trim_dur if trim_dur and trim_dur > 0 else 4.0
-            offsets = [0.3, span * 0.5, max(0.3, span - 0.3)]
+            # PD 2026-06-13: a 3-frame probe was too sparse for a long cut — a person
+            # moving into frame BETWEEN samples leaked an eye-nose region the static
+            # crop never knew to avoid (face slipped through at 37.9s of an 11s cut,
+            # caught only by the post-render facecheck's 1.5s grid). Sample at the SAME
+            # ~1.5s density so the face_union covers the face wherever/whenever it
+            # appears across the whole cut. Capped to bound VLM calls.
+            _probe_step = float(os.getenv("FACE_CROP_PROBE_STEP", "1.5"))
+            _nprobe = max(3, min(12, int(span / _probe_step) + 1))
+            offsets = [min(max(0.1, span - 0.1), span * (i + 0.5) / _nprobe)
+                       for i in range(_nprobe)]
             seen_frac = []
             for k, off in enumerate(offsets):
                 pf = src_path.parent / f".faceprobe_{src_path.stem}_{k}.jpg"
