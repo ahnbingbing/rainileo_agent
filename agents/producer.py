@@ -702,6 +702,49 @@ def _onetake_today(target: dt.date) -> bool:
     return _random.random() < rate
 
 
+def _should_onetake(target: dt.date, context: dict) -> dict:
+    """PD 2026-06-13 (#1): the AGENT decides whether this RF episode is a single
+    continuous ONE-TAKE — not a random coin flip ("자꾸 원테이크"). Given the long-clip
+    candidates' actual content + the editing JUDGMENT guide (one-take is occasional;
+    most RF should be a varied edit), it returns {one_take, clip_id, reason}. Defaults
+    to NO unless a clip's continuous moment is itself the story. Fail-safe → NO."""
+    longs = _rf_long_candidates(context)
+    if not longs:
+        return {"one_take": False, "reason": "no long clip available"}
+    lines = "\n".join(
+        f"- {c.get('id')} | {c.get('dur')}s | {(c.get('sc') or '')[:160]}"
+        for c in longs[:8])
+    system = (
+        "You make ONE editing decision for a 'Ryani & Leo' real-footage YouTube "
+        "Short: should this episode be a SINGLE CONTINUOUS ONE-TAKE (one clip, one "
+        "unbroken moment played through) — or a normal VARIED edit (montage / several "
+        "clips / different techniques)? One-take is an OCCASIONAL choice: pick it ONLY "
+        "when ONE clip's continuous moment is ITSELF the whole story — a self-contained "
+        "little arc that would lose its magic if cut up. Most episodes should NOT be "
+        "one-take; DEFAULT TO false. Judge from the clips' real content below. Return "
+        "ONLY JSON: {\"one_take\": true|false, \"clip_id\": \"<id or empty>\", "
+        "\"reason\": \"<short>\"}." + _editing_direction_block())
+    user = ("Long-clip candidates (longest first):\n" + lines +
+            "\n\nDecide one_take true/false. If true, give the clip_id whose continuous "
+            "moment best stands alone as the whole story.")
+    try:
+        from agents.llm_cascade import call_text_cascade
+        txt = call_text_cascade(system, user, max_tokens=300).strip()
+        txt = re.sub(r"^```(?:json)?\s*", "", txt)
+        txt = re.sub(r"\s*```$", "", txt)
+        d = json.loads(txt)
+        ot = bool(d.get("one_take"))
+        cid = (d.get("clip_id") or "").strip()
+        if cid not in {c.get("id") for c in longs}:
+            cid = longs[0].get("id")
+        log.info("one-take decision: %s (clip=%s) — %s", ot, cid if ot else "-",
+                 (d.get("reason") or "")[:140])
+        return {"one_take": ot, "clip_id": cid, "reason": d.get("reason", "")}
+    except Exception as e:
+        log.warning("one-take decision failed (%s) → varied edit", e)
+        return {"one_take": False, "reason": "decision error"}
+
+
 def _rf_long_candidates(context: dict) -> list[dict]:
     """The 12s+ original clips available to RF, longest-first (id/dur/sc/date).
     PD 2026-06-12: honor the BATCH dedup (context['exclude_asset_ids'], per slot) so
@@ -1212,15 +1255,22 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     PD 2026-06-06: `prior_feedback` carries the Giri review's findings from a
     failed attempt so this re-proposal fixes them (the Giri-driven retry loop).
     """
-    # PD 2026-06-12: one-take is ONE editing OPTION, not the RF default — "스크립트에
-    # 따라 그런 날도 있다는 거지. RF 모두 다 원테이크를 쓰라는 의미가 아냐." So use it only
-    # OCCASIONALLY (deterministic ~1 in RF_ONETAKE_EVERY days) when a strong long clip
-    # exists; most days go through the normal montage writer. RF_FORCE_ONETAKE=1 forces
-    # it (testing); =never disables.
+    # PD 2026-06-13 (#1): one-take is ONE editing OPTION, not the RF default. The
+    # decision is made by the AGENT (_should_onetake) reading the clips' content + the
+    # editing JUDGMENT guide — NOT a random/деterministic coin flip ("자꾸 원테이크").
+    # one-take is chosen only when a single clip's continuous moment is itself the
+    # story; most episodes go to the normal montage writer below. RF_FORCE_ONETAKE=1
+    # forces it (testing); =never disables.
     _ot_mode = os.getenv("RF_FORCE_ONETAKE", "auto")
-    if _ot_mode != "never" and (_ot_mode == "1" or _onetake_today(target)):
+    _ot_decision = ({"one_take": True, "clip_id": None} if _ot_mode == "1"
+                    else _should_onetake(target, context) if _ot_mode != "never"
+                    else {"one_take": False})
+    if _ot_decision.get("one_take"):
         _longs = _rf_long_candidates(context)
         if _longs:
+            # Route to the agent-chosen clip (fallback: longest available).
+            _pick = next((c for c in _longs
+                          if c.get("id") == _ot_decision.get("clip_id")), _longs[0])
             # PD 2026-06-12: on a long-clip day, pick a single-clip editing option —
             # one-take (one continuous segment) OR intra-clip montage (several segments
             # from the same clip). Deterministic ~50/50; if the preferred one yields
@@ -1244,7 +1294,7 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
                 _order = [_propose_realfootage_onetake, _propose_realfootage_intraclip]
             for _fn in _order:
                 try:
-                    res = _fn(target, context, _longs[0], progress_cb, prior_feedback)
+                    res = _fn(target, context, _pick, progress_cb, prior_feedback)
                     if res:
                         return res
                 except Exception as e:
