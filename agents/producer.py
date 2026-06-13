@@ -828,6 +828,31 @@ def _free_trim_start(clip_dur: float, used_segs: list, win: float,
     return None
 
 
+# PD 2026-06-13: channel-made COLLAGES / promos / bumper-style montages must NEVER be
+# used as source footage (a "Ryani & Leo · cozy moments" collage video was picked as a
+# cut → branding mid-episode, used 2 days running). The asset VLM already describes
+# these ("콜라주", "여러 사진", "테이프로 붙여진"); filter the candidate pools on it.
+_COLLAGE_RE = re.compile(
+    r"콜라주|collage|montage|여러\s*(장의\s*)?사진|테이프로\s*붙|사진을?\s*모아|"
+    r"그리드|grid\s*of|폴라로이드|polaroid|채널\s*(로고|브랜딩)|워터마크|watermark", re.I)
+
+
+def _is_collage_or_branding(sc: str) -> bool:
+    return bool(sc and _COLLAGE_RE.search(sc))
+
+
+def _drop_collages(items: list) -> list:
+    """Remove channel collage/branding assets from a candidate pool (by VLM 'sc')."""
+    out = []
+    for v in (items or []):
+        if _is_collage_or_branding((v.get("sc") or "") if isinstance(v, dict) else ""):
+            log.info("RF pool: dropping collage/branding asset %s",
+                     (v.get("id") if isinstance(v, dict) else v))
+            continue
+        out.append(v)
+    return out
+
+
 def _rf_long_candidates(context: dict) -> list[dict]:
     """The 12s+ original clips available to RF, longest-first (id/dur/sc/date).
     PD 2026-06-12: honor the BATCH dedup (context['exclude_asset_ids'], per slot) so
@@ -851,7 +876,8 @@ def _rf_long_candidates(context: dict) -> list[dict]:
                 _db(), days=int(os.getenv("RF_SEGMENT_HISTORY_DAYS", "60")))
         except Exception as e:
             log.warning("one-take cooldown lookup failed: %s", e)
-    pool = (context.get("available_videos") or []) + (context.get("archive_videos") or [])
+    pool = _drop_collages((context.get("available_videos") or [])
+                          + (context.get("archive_videos") or []))
     longs = [{"id": v.get("id"), "dur": float(v.get("dur") or 0),
               "sc": (v.get("sc") or "")[:240], "date": v.get("date")}
              for v in pool
@@ -1415,7 +1441,8 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     # motion_prompt grounded in the photo.
     # PD 2026-06-06: exclude clips used in the last N real_footage episodes so
     # the same footage isn't reused back-to-back (4-episode cooldown).
-    avail_videos = context.get("available_videos", [])
+    # PD 2026-06-13: drop channel collage/branding videos before anything else.
+    avail_videos = _drop_collages(context.get("available_videos", []))
     # PD 2026-06-11: MERGE old/archive footage into the main candidate pool. It used
     # to be a separate "memory-lane only" field, so RF kept re-using the same recent
     # ~28 clips (med_2026_05_25_144138 appeared in ALL 4 last episodes = "재탕") and
@@ -1423,7 +1450,7 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     # the Ryani-intro). Merging gives a much bigger pool, so the cooldown can exclude
     # reused clips without starving (no more "relax → reuse"), and old footage becomes
     # a first-class pick. years_ago is already stamped for time-grounded captions.
-    _arch = context.get("archive_videos", [])
+    _arch = _drop_collages(context.get("archive_videos", []))
     _seen = {v.get("id") for v in avail_videos if v.get("id")}
     avail_videos = avail_videos + [v for v in _arch if v.get("id") and v.get("id") not in _seen]
     try:
@@ -1462,9 +1489,9 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     # the recent ~50 + year-stratified old ones), and pass MANY more to the writer
     # (was [:10]) so RF actually has a big diverse library (video+photo, all years)
     # instead of re-using the same recent handful.
-    _photos = list(context.get("available_photos", []))
+    _photos = _drop_collages(list(context.get("available_photos", [])))
     _pseen = {p.get("id") for p in _photos if p.get("id")}
-    _photos += [p for p in context.get("archive_photos", [])
+    _photos += [p for p in _drop_collages(context.get("archive_photos", []))
                 if p.get("id") and p.get("id") not in _pseen]
     # PD 2026-06-11: the exclude (batch-dedup) MUST also cover the PHOTO pool and
     # the separately-passed archive_videos field — the 6/12 RF 18:00 reused two
