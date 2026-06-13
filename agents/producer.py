@@ -509,48 +509,68 @@ def propose_concepts(target: dt.date, context: dict, style_filter: str | None = 
     except Exception:
         pass
 
-    if style_filter == "real_footage":
-        return _propose_realfootage_singlepass(target, context, progress_cb)
-
-    if os.getenv("USE_WRITER_DIRECTOR", "1") == "0":
-        return _propose_concepts_legacy(target, context, style_filter)
-
-    # PD 2026-06-06: feed the UNIFIED arc (av+rf share one series) into the
-    # ai_vtuber writer too — series-so-far + showrunner directive (rolling
-    # ~1-month season plan w/ season·holiday·trend·monthly re-intro·fantasy).
+    # PD 2026-06-13: MACRO Reviewer — fetch the channel macro context (recent episodes
+    # + performance + audience comments) ONCE, inject it into the Writer, then after the
+    # Writer drafts, review for freshness/audience-fit and rewrite up to N times. This
+    # catches "too similar to what we already shipped" that Giri (single-episode) can't.
+    from agents import reviewer_macro as _rv
     try:
-        from agents import arc as _arc
-        context["series_so_far"] = _arc.series_so_far(_db(), n=10)
-        context["arc_directive"] = _arc.next_directive(
-            _db(), today=target.isoformat(), render_style="ai_vtuber")
+        _macro = _rv.fetch_macro_context(_db())
+        context["macro_context"] = _rv.macro_context_text(_macro)
     except Exception as e:
-        log.warning("arc directive (av) failed: %s", e)
+        log.warning("macro context fetch failed: %s", e)
+        _macro = {}
 
-    try:
-        from agents.writer_director import propose_concepts_v2
-        # PD 2026-06-10 (b): drop concepts with NO cuts before they reach the Validator.
-        # A degraded LLM (only Anthropic up) sometimes returns an empty "shell" concept;
-        # the Validator then blocks it "fatally incomplete — no cuts" and the slot
-        # re-proposes → wasteful churn. Filter empties; if ALL are empty, retry ONCE,
-        # then return only concepts that actually have cuts (else empty → slot shows
-        # '컨셉 없음' cleanly, no churn loop).
-        concepts = propose_concepts_v2(
-            target, context, style_filter=style_filter, progress_cb=progress_cb) or []
-        good = [c for c in concepts if (c.get("cuts") or [])]
-        if not good and concepts:
-            if progress_cb:
-                progress_cb(":warning: 컨셉에 컷이 없음(LLM 불완전 출력) — 1회 재시도")
-            retry = propose_concepts_v2(
+    def _one_pass() -> list:
+        if style_filter == "real_footage":
+            return _propose_realfootage_singlepass(
+                target, context, progress_cb,
+                prior_feedback=context.get("reviewer_feedback", "")) or []
+        if os.getenv("USE_WRITER_DIRECTOR", "1") == "0":
+            return _propose_concepts_legacy(target, context, style_filter)
+        # PD 2026-06-06: feed the UNIFIED arc into the ai_vtuber writer.
+        try:
+            from agents import arc as _arc
+            context["series_so_far"] = _arc.series_so_far(_db(), n=10)
+            context["arc_directive"] = _arc.next_directive(
+                _db(), today=target.isoformat(), render_style="ai_vtuber")
+        except Exception as e:
+            log.warning("arc directive (av) failed: %s", e)
+        try:
+            from agents.writer_director import propose_concepts_v2
+            concepts = propose_concepts_v2(
                 target, context, style_filter=style_filter, progress_cb=progress_cb) or []
-            good = [c for c in retry if (c.get("cuts") or [])]
-        if concepts and not good and progress_cb:
-            progress_cb(":x: 재시도 후에도 컷 없는 컨셉만 — LLM 불안정, 슬롯 비움(churn 방지)")
-        return good
-    except Exception as e:
-        log.warning("writer_director failed (%s) — falling back to legacy single-pass", e)
+            good = [c for c in concepts if (c.get("cuts") or [])]
+            if not good and concepts:
+                if progress_cb:
+                    progress_cb(":warning: 컨셉에 컷이 없음(LLM 불완전 출력) — 1회 재시도")
+                retry = propose_concepts_v2(
+                    target, context, style_filter=style_filter, progress_cb=progress_cb) or []
+                good = [c for c in retry if (c.get("cuts") or [])]
+            if concepts and not good and progress_cb:
+                progress_cb(":x: 재시도 후에도 컷 없는 컨셉만 — LLM 불안정, 슬롯 비움(churn 방지)")
+            return good
+        except Exception as e:
+            log.warning("writer_director failed (%s) — falling back to legacy", e)
+            if progress_cb:
+                progress_cb(f":warning: Writer+Director 실패 ({str(e)[:80]}) — legacy fallback")
+            return _propose_concepts_legacy(target, context, style_filter)
+
+    max_rw = int(os.getenv("REVIEWER_MAX_REWRITES", "5"))
+    concepts: list = []
+    for _attempt in range(max_rw + 1):
+        concepts = _one_pass()
+        if not concepts:
+            break
+        verdict = _rv.run_reviewer(concepts, _macro, style_filter or "both", progress_cb)
+        if verdict.get("pass") or _attempt >= max_rw:
+            break
+        context["reviewer_feedback"] = (
+            "[Reviewer 거시 피드백 — 최근 업로드와 차별화하라] "
+            + (verdict.get("rewrite_directive") or ""))
         if progress_cb:
-            progress_cb(f":warning: Writer+Director 실패 ({str(e)[:80]}) — legacy로 fallback")
-        return _propose_concepts_legacy(target, context, style_filter)
+            progress_cb(f":repeat: Reviewer 재작성 {_attempt + 1}/{max_rw}")
+    return concepts
 
 
 REALFOOTAGE_SINGLEPASS_PROMPT = ROOT / "agents" / "prompts" / "realfootage_concept.md"
@@ -1540,6 +1560,9 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         "archive_videos": _arch_field,
         "archive_year_summary": context.get("archive_year_summary", {}),
         "video_date_clusters": context.get("video_date_summary", {}),
+        # PD 2026-06-13: MACRO context (recent episodes + performance + audience comments)
+        # so the writer AVOIDS repeating what we just shipped, from the very first draft.
+        "macro_context_recent_uploads": context.get("macro_context", ""),
     }
     user = json.dumps(rf_context, ensure_ascii=False, default=str)
     # PD 2026-06-06: feed the showrunner directive (rolling ~1-month season plan

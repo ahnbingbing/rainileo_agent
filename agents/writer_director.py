@@ -331,6 +331,12 @@ def _build_writer_user_prompt(target_date: dt.date, context: dict,
         "style_filter": style_filter,
         "context": context,
     }
+    # PD 2026-06-13: surface the MACRO context + any Reviewer rewrite directive at the
+    # top level so the Writer can't miss them — avoid repeating recent uploads.
+    if isinstance(context, dict) and context.get("macro_context"):
+        body["macro_context_recent_uploads"] = context["macro_context"]
+    if isinstance(context, dict) and context.get("reviewer_feedback"):
+        body["reviewer_rewrite_directive"] = context["reviewer_feedback"]
     # PD 2026-06-12: is a PD-designated concept active? (arc_directive carries the
     # "[PD 지정 컨셉 …]" prefix.) If so, the few-shots — which are recent high-Giri
     # concepts and may be the very episodes PD just rejected (e.g. the cafe ones) —
