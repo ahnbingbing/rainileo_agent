@@ -341,15 +341,19 @@ def run_reviewer(drafts: list, ctx: dict, lane: str, progress_cb=None) -> dict:
             verdict["macro_notes"] = (verdict.get("macro_notes") or "") + " [vhash-override:fail]"
             log.info("reviewer vhash override → fail (ratio=%s comparable=%d)",
                      vo["repeat_ratio"], vo["comparable"])
-        elif (not verdict["pass"] and vo["comparable"] >= pass_min_cmp
-                and vo["repeat_ratio"] <= pass_ratio):
+        elif (not verdict["pass"] and (
+                (vo["comparable"] >= pass_min_cmp and vo["repeat_ratio"] <= pass_ratio)
+                # ZERO over-used cuts = fully fresh footage. Pass even on a thin (1-2 cut)
+                # draft — otherwise a draft that collapses to 1 distinct clip can never
+                # clear the comparable≥3 bar and the over-strict LLM churns it forever.
+                or (vo["comparable"] >= 1 and vo["repeats"] == 0))):
             verdict["pass"] = True
             verdict["rewrite_directive"] = ""
             verdict["macro_notes"] = ((verdict.get("macro_notes") or "")
                                       + f" [vhash-override:pass — footage fresh, "
-                                        f"중복률 {vo['repeat_ratio']}]")
-            log.info("reviewer vhash override → pass (fresh footage ratio=%s comparable=%d; "
-                     "LLM theme-reject demoted)", vo["repeat_ratio"], vo["comparable"])
+                                        f"중복률 {vo['repeat_ratio']} ({vo['repeats']}/{vo['comparable']})]")
+            log.info("reviewer vhash override → pass (fresh footage ratio=%s repeats=%d comparable=%d; "
+                     "LLM theme-reject demoted)", vo["repeat_ratio"], vo["repeats"], vo["comparable"])
         if progress_cb:
             extra = ""
             if vo["comparable"]:
