@@ -1,6 +1,6 @@
 # Design — #3: Cameraman → professional Editor + upstream feedback loop
 
-> Status: PARTIALLY BUILT 2026-06-13. PD decisions: separate LLM agent / RF+AV /
+> Status: BUILT & E2E-verified 2026-06-13. PD decisions: separate LLM agent / RF+AV /
 > ≤2 re-render loop / editor may reorder & drop. Companion to memory
 > `rf_onetake_editing_spec`.
 >
@@ -16,19 +16,24 @@
 > - Verified: a "savoring the meal" intent over can't-eat footage (RF21 class) is
 >   auto-flagged with a recaption suggestion, cut kept.
 >
-> **REMAINING — the ≤2 upstream re-invoke loop:**
-> Most mismatches are already resolved without an upstream round-trip:
-> - `recaption` → kept cut + the existing post-render VLM caption rewrite fixes the
->   captions (TODO: feed the editor's `what_footage_shows` into that rewrite so it
->   doesn't depend on the sometimes-wrong raw VLM — set the cut's vlm_actual_action
->   from the editor truth before _vlm_post_render_caption_rewrite).
+> **FEEDBACK LOOP — BUILT & E2E-verified (49899db, 449ad78):**
+> - `recaption` → `_apply_edit_plan` stamps `editor_footage_truth` on the cut;
+>   `_vlm_post_render_caption_rewrite` PREFERS it over the raw VLM AND embeds a hard
+>   constraint (forbid captions that invent an outcome / contradict the screen, incl.
+>   the closer). E2E: a 100%-wrong "finishes the meal" intent over the RF21 clip
+>   auto-rewrites to an honest "why isn't it shrinking… too hard" with NO false ending.
 > - `different_technique` → the editor applies it in its own EditPlan.
-> - `different_clip` → the ONLY case needing a true upstream re-propose. Integration
->   point: surface `manifests["_edit_plan"].intent_mismatch` back from the render to
->   `_render_realfootage_with_retry` (producer), treat suggestion==different_clip as a
->   retry trigger → re-propose excluding that asset_id, with the editor note injected,
->   bounded to ≤2 editor-driven re-proposes (separate from the Giri attempt counter).
->   Needs the render to RETURN/stash the edit_plan (currently it only returns the mp4).
+> - `different_clip` → render_meta carries `_edit_plan`; `_render_realfootage_direct`
+>   surfaces it on the report; `_render_realfootage_with_retry` excludes that asset_id
+>   and re-proposes with the editor note, bounded to EDITOR_MAX_LOOPS (2).
+>
+> Hardening: editor output unwraps list-wrapped JSON + normalizes intent_mismatch/
+> per_cut/dropped; _apply_edit_plan guards the captions path + never empties the
+> episode. Env: EDITOR_AGENT=1, EDITOR_AV_STRUCTURAL=0, EDITOR_MAX_LOOPS=2.
+>
+> **Possible future polish (not blocking):** age-marker on old clips ("아기 랴니" for a
+> 6-years-ago = ~5yo dog) still only WARNs; a Claim⊥Evidence verifier could double-
+> check consumption/outcome claims against first↔last frames as a belt-and-suspenders.
 
 ## Why
 The RF21 failure (card ea14a010): Writer/Director formed an intent ("느긋한 식사")
