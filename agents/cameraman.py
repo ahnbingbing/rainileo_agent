@@ -1430,6 +1430,200 @@ def _retime_cut_scenes(scenes: list, clip_dur: float, min_read: float = 2.5,
     return scenes
 
 
+def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
+                               progress_cb=None, dry_run: bool = False) -> None:
+    """PD 2026-06-13: real_footage caption GROUNDING gate (verify, don't blind-rewrite).
+
+    The single-pass writer authors captions from thin VLM tags and SKIPS the full
+    Caption-Agent rewrite (that rewrite clobbered upstream fixes). But PD caught two
+    fabrications it lets through: a caption said 'Welsh corgi / Ryani's first greeting'
+    over footage of a GOLDEN RETRIEVER with NO Ryani in frame; another narrated 'ears
+    perked, soaking up the touch' over a hand doing a V-sign on the dog's nose. So we
+    VERIFY each rendered cut against its caption and CORRECT only the cuts that
+    contradict the frame — captions that already match are left untouched.
+
+    Per cut: VLM reports which of our pets are actually visible + any other animal +
+    the real action + frame usability. A cut's captions are rewritten (grounded, same
+    timings, casual vlog tone) ONLY when they name a pet that isn't there, mis-identify
+    an animal/breed, or describe an action the frame contradicts. Env RF_GROUNDING_GATE=0
+    disables; failures are silent (keep originals)."""
+    if dry_run or os.getenv("RF_GROUNDING_GATE", "1") == "0":
+        return
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        return
+    cap_path = Path(manifests.get("captions") or "")
+    if not cap_path.exists():
+        return
+    try:
+        cap = json.loads(cap_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        log.warning("grounding gate: captions.json unreadable: %s", e)
+        return
+    tags = [k for k in cap.keys() if not k.startswith("_")
+            and isinstance(cap.get(k), dict) and cap[k].get("scenes")]
+    if not tags:
+        return
+    if progress_cb:
+        progress_cb(":detective: [1b/3] 캡션 그라운딩 게이트 (주인공 가시성·일치 검수)")
+    try:
+        from google import genai as _g
+        from google.genai import types as _gt
+        client = _g.Client(api_key=api_key, http_options=_gt.HttpOptions(
+            timeout=int(os.getenv("VLM_TIMEOUT_MS", "90000"))))
+        model = os.getenv("VLM_MODEL", "gemini-2.5-flash")
+    except Exception as e:
+        log.warning("grounding gate: VLM init failed: %s", e)
+        return
+
+    _sys = (
+        "You verify ONE caption against ONE video frame for the pet channel 'Ryani & Leo'. "
+        "Our two pets: RYANI = a small BLACK French bulldog (white chin/chest/paws, GREY "
+        "muzzle, NO tail). LEO = an ORANGE tabby cat. You get the frame + the caption shown "
+        "over it. Answer ONLY JSON: {\"ryani_visible\":bool, \"leo_visible\":bool, "
+        "\"other_animal\":\"short desc or empty (e.g. golden retriever, corgi)\", "
+        "\"frame_ok\":bool (false if blown-out/too dark/empty so the subject can't be seen), "
+        "\"caption_matches\":bool (does the caption fairly describe THIS frame? false if it "
+        "names a pet not in frame, calls a different animal/breed our pet, or claims an "
+        "action the frame contradicts), \"action\":\"≤12-word Korean of what actually "
+        "happens\"}. Judge THIS single frame, literally and strictly.")
+
+    def _frame_at(mp4: Path, t: float):
+        jpg = work_dir / f"_gg_{mp4.stem}_{t:.1f}.jpg"
+        subprocess.run(["ffmpeg", "-y", "-nostats", "-loglevel", "error", "-ss", f"{t:.2f}",
+                        "-i", str(mp4), "-frames:v", "1", "-q:v", "3", str(jpg)],
+                       capture_output=False, timeout=15)
+        return jpg if (jpg.exists() and jpg.stat().st_size > 1000) else None
+
+    def _check_scene(mp4: Path, mid: float, ko: str):
+        jpg = _frame_at(mp4, mid)
+        if not jpg:
+            return None
+        try:
+            parts = [_gt.Part.from_bytes(data=jpg.read_bytes(), mime_type="image/jpeg"),
+                     f'Caption shown over this frame: "{ko}". Verify it.']
+        except Exception:
+            return None
+        finally:
+            try:
+                jpg.unlink()
+            except Exception:
+                pass
+        for _ in range(2):
+            try:
+                resp = client.models.generate_content(
+                    model=model, contents=parts,
+                    config=_gt.GenerateContentConfig(
+                        system_instruction=_sys, response_mime_type="application/json",
+                        thinking_config=_gt.ThinkingConfig(thinking_budget=0)))
+                d = json.loads((resp.text or "{}").strip())
+                if isinstance(d, list):
+                    d = next((x for x in d if isinstance(x, dict)), None)
+                return d if isinstance(d, dict) else None
+            except Exception as e:
+                log.warning("grounding gate VLM %s@%.1f: %s", mp4.stem, mid, e)
+        return None
+
+    # 1. verify each SCENE against ITS OWN frame. Scene-level (not cut-level) is required
+    #    for one-take cuts: a 45s clip carries a 12-scene narrative, and 'corgi' / 'Ryani's
+    #    first greeting' only contradict the frame AT those scenes' moments (Ryani appears
+    #    elsewhere in the clip, so a cut-level check passes the fabrication).
+    mismatched = []  # (tag, idx, vlm, ko, reason)
+    n_scenes = 0
+    for tag in tags:
+        mp4 = anim_dir / f"{tag}.mp4"
+        if not mp4.exists():
+            continue
+        for idx, sc in enumerate(cap[tag]["scenes"]):
+            ko = (sc.get("ko") or "").strip()
+            if not ko:
+                continue
+            n_scenes += 1
+            mid = (float(sc.get("start", 0.1)) + float(sc.get("end", 1.0))) / 2.0
+            v = _check_scene(mp4, mid, ko)
+            if not v:
+                continue
+            low = ko.lower()
+            reasons = []
+            if (("랴니" in ko) or ("ryani" in low)) and not v.get("ryani_visible"):
+                reasons.append("랴니 미등장")
+            if (("레오" in ko) or ("leo" in low)) and not v.get("leo_visible"):
+                reasons.append("레오 미등장")
+            # deterministic breed-mismatch net (the VLM's caption_matches can flicker per
+            # frame — this reliably catches "웰시 코기" over a golden-retriever frame).
+            _BREEDS = {"코기": "corgi", "웰시": "corgi", "corgi": "corgi",
+                       "리트리버": "retriever", "retriever": "retriever", "골든": "golden",
+                       "푸들": "poodle", "poodle": "poodle", "말티즈": "maltese",
+                       "비숑": "bichon", "시바": "shiba", "보더콜리": "border collie",
+                       "치와와": "chihuahua", "닥스훈트": "dachshund", "포메": "pomeranian"}
+            _mentioned = {b for w, b in _BREEDS.items() if w in low}
+            _oa = (v.get("other_animal") or "").lower()
+            if _mentioned and _oa and not any(b in _oa for b in _mentioned):
+                reasons.append(f"견종 불일치(캡션:{'/'.join(_mentioned)}≠화면:{v.get('other_animal')})")
+            if v.get("frame_ok") is False:
+                reasons.append("과노출/암부로 주인공 안보임")
+            if v.get("caption_matches") is False and not reasons:
+                reasons.append(f"캡션≠화면({(v.get('other_animal') or v.get('action') or '')[:20]})")
+            if reasons:
+                mismatched.append((tag, idx, v, ko, ", ".join(reasons)))
+                log.info("grounding gate: %s[%d] MISMATCH — %s | ko=%s | vlm=%s",
+                         tag, idx, reasons, ko, {k: v.get(k) for k in
+                         ("ryani_visible", "leo_visible", "other_animal", "caption_matches")})
+    if not mismatched:
+        if progress_cb:
+            progress_cb(f":white_check_mark: 그라운딩 게이트 — {n_scenes}씬 모두 화면과 일치")
+        return
+
+    # 2. rewrite ONLY the mismatched scenes, grounded in the VLM truth (one cascade call).
+    payload = [{"id": f"{tag}#{idx}", "actual": v.get("action", ""),
+                "ryani_visible": v.get("ryani_visible"), "leo_visible": v.get("leo_visible"),
+                "other_animal": v.get("other_animal", ""), "problem": reason, "old": ko}
+               for (tag, idx, v, ko, reason) in mismatched]
+    sys2 = (
+        "너는 반려동물 채널 'Ryani & Leo'의 캡션 교정자다. 아래 각 항목은 한 자막(scene)이 실제 "
+        "화면과 어긋난 것이다(주인공 부재/오인/과노출/행동 불일치). 각 항목의 자막을 화면에 실제로 "
+        "있는 것(actual)만으로 다시 써라. 규칙: ▲화면에 없는 펫(랴니=검정 프렌치불독/레오=주황 "
+        "태비)을 주어로 쓰지 마라 — 안 보이면 그 펫 얘기를 하지 마라. ▲다른 동물을 우리 펫으로 부르지 "
+        "마라(리트리버를 '랴니'라 하지 마라). ▲견종·마킹 같은 메타 설명 금지. ▲화면에 우리 펫이 "
+        "없으면 관찰자 시점으로 담백하게(예: '낯선 친구가 지나가요'). ▲캐주얼 vlog 톤, 짧고 따뜻하게. "
+        "각 항목당 ko/en 한 줄씩. JSON만: {\"scenes\":[{\"id\":\"tag#idx\",\"ko\":\"..\",\"en\":\"..\"}]}")
+    try:
+        from agents.llm_cascade import call_text_cascade
+        import re as _re
+        txt = call_text_cascade(sys2, json.dumps(payload, ensure_ascii=False),
+                                max_tokens=1600).strip()
+        txt = _re.sub(r"^```(?:json)?\s*", "", txt)
+        txt = _re.sub(r"\s*```$", "", txt)
+        new = json.loads(txt)
+    except Exception as e:
+        log.warning("grounding gate rewrite failed (keeping originals): %s", e)
+        if progress_cb:
+            progress_cb(f":warning: 그라운딩 게이트 재작성 실패 — 원본 유지 ({len(mismatched)}씬)")
+        return
+    by_id = {s.get("id"): s for s in (new.get("scenes") or []) if s.get("id")}
+    n_fixed = 0
+    for (tag, idx, _v, _ko, _r) in mismatched:
+        ns = by_id.get(f"{tag}#{idx}")
+        if not ns or not ns.get("ko"):
+            continue
+        cap[tag]["scenes"][idx]["ko"] = ns["ko"].strip()
+        if ns.get("en"):
+            cap[tag]["scenes"][idx]["en"] = ns["en"].strip()
+        n_fixed += 1
+    if n_fixed:
+        try:
+            cap_path.write_text(json.dumps(cap, ensure_ascii=False, indent=2),
+                                encoding="utf-8")
+        except Exception as e:
+            log.warning("grounding gate: write-back failed: %s", e)
+            return
+    if progress_cb:
+        progress_cb(f":lower_left_ballpoint_pen: 그라운딩 게이트 — {n_scenes}씬 중 {n_fixed}씬 "
+                    f"화면 기준 재작성 (주인공 부재/오인 교정)")
+    log.info("grounding gate: rewrote %d/%d mismatched scenes (of %d)",
+             n_fixed, len(mismatched), n_scenes)
+
+
 def _vlm_post_render_caption_rewrite(work_dir: Path, manifests: dict,
                                         cuts: list[dict], concept_cuts: list[dict],
                                         anim_dir: Path, progress_cb=None,
@@ -3843,10 +4037,19 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
     is_singlepass = concept_author == "realfootage_singlepass"
     force_rewrite = os.environ.get("RF_FORCE_VLM_REWRITE") == "1"
     if is_singlepass and not force_rewrite:
-        log.info("real_footage single-pass: SKIP VLM caption rewrite "
-                 "(captions already grounded)")
+        # PD 2026-06-13: don't run the full Caption-Agent rewrite (it clobbers upstream
+        # single-pass fixes), but DO run the lighter GROUNDING GATE — it only corrects
+        # cuts whose captions contradict the frame (subject absent / animal mis-ID /
+        # blown-out), leaving matching captions untouched. Catches the corgi≠retriever /
+        # Ryani-not-in-frame fabrications PD flagged.
+        log.info("real_footage single-pass: grounding gate (no full rewrite)")
         if progress_cb:
-            progress_cb(":lock: [1b/3] 단일-패스 캡션 보존 — VLM 재작성 건너뜀")
+            progress_cb(":lock: [1b/3] 단일-패스 캡션 보존 + 그라운딩 게이트")
+        try:
+            _rf_caption_grounding_gate(work_dir, manifests, anim_dir,
+                                       progress_cb=progress_cb, dry_run=dry_run)
+        except Exception as ex:
+            log.warning("grounding gate skipped: %s", ex)
     else:
         cuts_local = manifests.get("cuts") or []
         concept_cuts_local = manifests.get("concept_cuts") or []
