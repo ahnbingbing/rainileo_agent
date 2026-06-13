@@ -862,6 +862,50 @@ def _branding_asset_ids(con) -> set:
         return set()
 
 
+def _rf_location_key(sc: str) -> str:
+    """PD 2026-06-13 (#3): a coarse LOCATION signature from a clip's scene_description so
+    a PAST clip can be matched to a CURRENT clip at the SAME spot (past↔present bridge).
+    Keyword search alone missed it (소파 vs 쿠션 synonyms, photo vs video). Normalize
+    seating synonyms + a dominant color so '파란 쿠션'(past) and '파란 소파'(present) group."""
+    s = (sc or "").lower()
+    if not s:
+        return ""
+    if any(k in s for k in ("카페", "cafe", "café")):
+        place = "cafe"
+    elif any(k in s for k in ("소파", "쇼파", "sofa", "쿠션", "cushion", "벤치", "bench", "방석")):
+        place = "seating"
+    elif any(k in s for k in ("침대", "bed", "이불", "베개")):
+        place = "bed"
+    elif any(k in s for k in ("창", "window", "창가", "창턱", "선반")):
+        place = "window"
+    elif any(k in s for k in ("카운터", "counter", "주방", "kitchen", "싱크")):
+        place = "kitchen"
+    elif any(k in s for k in ("옥상", "rooftop", "현관", "발코니", "베란다", "마당", "산책", "밖")):
+        place = "outdoor"
+    elif any(k in s for k in ("바닥", "마루", "floor", "러그", "rug")):
+        place = "floor"
+    else:
+        return ""
+    color = next((c for c in ("파란", "블루", "blue", "초록", "녹색", "green",
+                              "회색", "grey", "gray", "베이지", "흰", "white")
+                  if c in s), "")
+    return f"{place}:{color}" if color else place
+
+
+def _rf_location_groups(pool: list) -> dict:
+    """Group candidate assets by location_key → {key: [asset_ids]} (only keys with ≥2
+    assets = a real same-spot match exists). Injected so the writer can build a visual
+    past↔present bridge from the SAME location."""
+    groups: dict = {}
+    for v in (pool or []):
+        if not isinstance(v, dict):
+            continue
+        k = _rf_location_key(v.get("sc") or "")
+        if k and v.get("id"):
+            groups.setdefault(k, []).append(v.get("id"))
+    return {k: ids for k, ids in groups.items() if len(ids) >= 2}
+
+
 def _drop_branding(items: list, branding_ids: set) -> list:
     """Remove PD-marked channel branding assets (bumper/promo) from a candidate pool."""
     if not branding_ids:
@@ -1564,6 +1608,12 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         # PD 2026-06-13: MACRO context (recent episodes + performance + audience comments)
         # so the writer AVOIDS repeating what we just shipped, from the very first draft.
         "macro_context_recent_uploads": context.get("macro_context", ""),
+        # PD 2026-06-13 (#3): same-LOCATION groups (past↔present pairing). If a past clip
+        # and a current clip share a key (e.g. "seating:파란"), pair them for a visual
+        # "그때 그 자리 → 지금" bridge — the system surfaces the match so the writer/PD
+        # doesn't have to hunt for it.
+        "same_location_groups": _rf_location_groups(
+            (avail_videos or []) + (_photos or []) + (_arch_field or [])),
     }
     user = json.dumps(rf_context, ensure_ascii=False, default=str)
     # PD 2026-06-06: feed the showrunner directive (rolling ~1-month season plan
