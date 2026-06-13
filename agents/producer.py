@@ -2136,8 +2136,26 @@ def _render_realfootage_with_retry(concept: dict, target: dt.date,
         if progress_cb:
             progress_cb(f":arrows_counterclockwise: 기리 미통과({verdict}) — 피드백 반영 재생성")
         try:
+            # PD 2026-06-13: the Giri retry must ALSO satisfy the MACRO Reviewer — else a
+            # Giri-"safe" re-proposal drifts back to a recently-shipped theme (the nap
+            # montage Giri loves). Inject macro context so the writer avoids repetition,
+            # then Reviewer-gate the re-proposal (bounded, so freshness ⊻ quality can't
+            # loop forever).
+            from agents import reviewer_macro as _rv
+            _macro = _rv.fetch_macro_context(con)
+            context["macro_context"] = _rv.macro_context_text(_macro)
             new_concepts = _propose_realfootage_singlepass(
                 target, context, progress_cb, prior_feedback=feedback)
+            for _r in range(int(os.getenv("REVIEWER_RETRY_REWRITES", "2"))):
+                if not new_concepts:
+                    break
+                _v = _rv.run_reviewer(new_concepts, _macro, "real_footage", progress_cb)
+                if _v.get("pass"):
+                    break
+                new_concepts = _propose_realfootage_singlepass(
+                    target, context, progress_cb,
+                    prior_feedback=feedback + "\n[Reviewer 거시 — 최근 업로드와 차별화] "
+                    + (_v.get("rewrite_directive") or ""))
             if new_concepts:
                 cur_concept = new_concepts[0]
         except Exception as e:
