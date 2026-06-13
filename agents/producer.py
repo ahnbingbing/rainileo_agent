@@ -745,6 +745,75 @@ def _should_onetake(target: dt.date, context: dict) -> dict:
         return {"one_take": False, "reason": "decision error"}
 
 
+def _recently_used_rf_segments(con: sqlite3.Connection,
+                               n: int = RF_CLIP_COOLDOWN_EPISODES) -> dict:
+    """PD 2026-06-13 (#2): asset_id → list of (start, end) trim windows used by recent
+    RF episodes (uploaded + recently-rendered). A long clip can be REUSED via a
+    DIFFERENT, non-overlapping segment ("사용한 트림 이외 다른 부분은 또 쓸 수 있어"), so we
+    track SEGMENTS, not just whole asset_ids. Unknown duration → a large window
+    (conservative: treat that segment as blocking)."""
+    segs: dict = {}
+
+    def _add(p):
+        for c in (p.get("cuts") or []):
+            aid = c.get("asset_id")
+            if not aid:
+                continue
+            try:
+                st = float(c.get("trim_start") or 0)
+                d = float(c.get("duration_seconds") or c.get("trim_dur") or 0)
+            except (TypeError, ValueError):
+                st, d = 0.0, 0.0
+            segs.setdefault(aid, []).append((st, st + d if d > 0 else st + 1e6))
+
+    try:
+        _ensure_uploaded_column(con)
+        for r in con.execute(
+            "SELECT payload_json FROM cards WHERE render_style='real_footage' "
+            "AND uploaded=1 ORDER BY created_at DESC LIMIT ?", (n,)).fetchall():
+            try:
+                _add(json.loads(r[0] or "{}"))
+            except Exception:
+                pass
+        try:
+            _hrs = int(os.getenv("RF_COOLDOWN_RECENT_HOURS", "24"))
+        except Exception:
+            _hrs = 24
+        if _hrs > 0:
+            for r in con.execute(
+                "SELECT payload_json FROM cards WHERE render_style='real_footage' "
+                "AND state IN ('rendered','published','archived') "
+                "AND updated_at >= datetime('now', ?) "
+                "ORDER BY updated_at DESC LIMIT ?",
+                (f"-{_hrs} hours", max(n, 8) * 3)).fetchall():
+                try:
+                    _add(json.loads(r[0] or "{}"))
+                except Exception:
+                    pass
+    except Exception as e:
+        log.warning("segment cooldown lookup failed: %s", e)
+    return segs
+
+
+def _free_trim_start(clip_dur: float, used_segs: list, win: float,
+                     seed: int = 0) -> "float | None":
+    """Pick a [start, start+win] window inside [0, clip_dur] that does NOT overlap any
+    recently-used segment. Seeded for variety. Returns the start, or None if the clip
+    has no free window of length `win` (→ caller should skip the clip)."""
+    def _overlaps(a, b):
+        return any(a < e and s < b for (s, e) in (used_segs or []))
+    slack = max(0.0, clip_dur - win)
+    if slack <= 1.0:
+        return 0.0 if not _overlaps(0.0, min(win, clip_dur)) else None
+    steps = 12
+    cands = [round(slack * (i / (steps - 1)), 2) for i in range(steps)]
+    off = seed % len(cands)
+    for s in cands[off:] + cands[:off]:
+        if not _overlaps(s, s + win):
+            return s
+    return None
+
+
 def _rf_long_candidates(context: dict) -> list[dict]:
     """The 12s+ original clips available to RF, longest-first (id/dur/sc/date).
     PD 2026-06-12: honor the BATCH dedup (context['exclude_asset_ids'], per slot) so
@@ -753,18 +822,18 @@ def _rf_long_candidates(context: dict) -> list[dict]:
     reused another day with a DIFFERENT segment ("같은 동영상이더라도 사용하지 않은 구간은
     향후 사용해도 되잖아"); the one-take picks a varied trim_start so re-use differs."""
     _min = float(os.getenv("RF_ONETAKE_MIN_SEC", "12"))
-    _excl = set(context.get("exclude_asset_ids") or [])
-    # PD 2026-06-13: ALSO drop clips in the recent-render/upload cooldown. The cafe
-    # clip (med_2025_11_21, the LONGEST at 75s) kept being re-picked as _longs[0] in
-    # back-to-back renders even after it was used+scheduled (232456) — the one-take's
-    # long-candidate path ignored the cooldown. The "different segment another day"
-    # reuse is preserved because the cooldown is time-limited (RF_COOLDOWN_RECENT_HOURS
-    # / last-N uploaded). Set RF_ONETAKE_COOLDOWN=0 to revert.
+    _win = float(os.getenv("RF_ONETAKE_MAX_SEC", "24"))
+    _excl = set(context.get("exclude_asset_ids") or [])  # same-batch dedup = whole clip
+    # PD 2026-06-13 (#2): the cross-day cooldown is now PER-SEGMENT, not per-clip — a
+    # long clip is reusable via a DIFFERENT, non-overlapping window ("사용한 트림 이외
+    #다른 부분은 또 쓸 수 있어"). We keep such a clip and attach the free trim_start; we
+    # drop it ONLY if no window of `win` is free. RF_ONETAKE_COOLDOWN=0 disables.
+    used_segs: dict = {}
     if os.getenv("RF_ONETAKE_COOLDOWN", "1") != "0":
         try:
-            _excl |= _recently_used_rf_assets(_db())
+            used_segs = _recently_used_rf_segments(_db())
         except Exception as e:
-            log.warning("one-take cooldown lookup failed: %s", e)
+            log.warning("one-take segment cooldown lookup failed: %s", e)
     pool = (context.get("available_videos") or []) + (context.get("archive_videos") or [])
     longs = [{"id": v.get("id"), "dur": float(v.get("dur") or 0),
               "sc": (v.get("sc") or "")[:240], "date": v.get("date")}
@@ -772,11 +841,22 @@ def _rf_long_candidates(context: dict) -> list[dict]:
              if isinstance(v.get("dur"), (int, float)) and v.get("dur") >= _min
              and v.get("id") not in _excl]
     longs.sort(key=lambda v: -(v.get("dur") or 0))
-    # de-dup by id
+    # de-dup by id; attach a free (non-overlapping) trim_start, skip if fully used.
+    import hashlib as _hl
     seen, out = set(), []
     for v in longs:
-        if v["id"] and v["id"] not in seen:
-            seen.add(v["id"]); out.append(v)
+        if not v["id"] or v["id"] in seen:
+            continue
+        seen.add(v["id"])
+        segs = used_segs.get(v["id"], [])
+        win = min(v["dur"], _win)
+        seed = int(_hl.sha1(v["id"].encode()).hexdigest(), 16)
+        ts = _free_trim_start(v["dur"], segs, win, seed)
+        if segs and ts is None:
+            continue  # every window of this clip was recently used → skip
+        v["trim_start"] = ts if ts is not None else 0.0
+        v["used_segments"] = segs
+        out.append(v)
     return out
 
 
@@ -876,13 +956,19 @@ def _propose_realfootage_onetake(target: dt.date, context: dict,
     # [0,win] front segment (the 6/13 dup both showed the first 24s). Pick a VARIED
     # window: deterministic offset seeded by date+clip so a re-use shows a DIFFERENT,
     # so-far-unused part of the clip. (Story still completes within `win`.)
-    import hashlib as _hl
-    _slack = max(0.0, clip_dur - win)
-    if _slack > 1.0:
-        _seed = int(_hl.sha1(f"{target.isoformat()}|{cid}".encode()).hexdigest(), 16)
-        trim_start = round((_seed % 1000) / 1000.0 * _slack, 2)
+    # PD 2026-06-13 (#2): prefer the segment-aware trim_start computed by
+    # _rf_long_candidates (avoids recently-used windows). Fall back to a date-seeded
+    # offset for variety only if none was attached.
+    if long_clip.get("trim_start") is not None:
+        trim_start = float(long_clip["trim_start"])
     else:
-        trim_start = 0.0
+        import hashlib as _hl
+        _slack = max(0.0, clip_dur - win)
+        if _slack > 1.0:
+            _seed = int(_hl.sha1(f"{target.isoformat()}|{cid}".encode()).hexdigest(), 16)
+            trim_start = round((_seed % 1000) / 1000.0 * _slack, 2)
+        else:
+            trim_start = 0.0
     if progress_cb:
         progress_cb(f":clapper: 긴 원테이크 모드 — {cid[-12:] if cid else '?'} "
                     f"({clip_dur:.0f}s 원본 → {trim_start:.0f}~{trim_start+win:.0f}s 구간)")
