@@ -1499,7 +1499,14 @@ def _vlm_post_render_caption_rewrite(work_dir: Path, manifests: dict,
                 log.warning("VLM describe attempt %d/2 failed for %s: %s",
                             attempt + 1, tag, e)
                 actual = ""
-        if actual:
+        # PD 2026-06-13 (#3): the Editor's footage truth (when it flagged a recaption
+        # mismatch for this cut) overrides the raw VLM — the VLM mis-read the RF21 clip
+        # as "eats" when she can't. The Editor reasoned over action+caption, so trust it.
+        _etruth = cc.get("editor_footage_truth")
+        if _etruth:
+            cc["vlm_actual_action"] = _etruth + (f" (VLM: {actual})" if actual else "")
+            n_described += 1
+        elif actual:
             cc["vlm_actual_action"] = actual
             n_described += 1
         else:
@@ -1879,6 +1886,20 @@ def _run_editor(concept: dict, manifests: dict, lane: str,
         txt = re.sub(r"^```(?:json)?\s*", "", txt)
         txt = re.sub(r"\s*```$", "", txt)
         plan = json.loads(txt)
+        if isinstance(plan, list):  # LLM sometimes wraps the object in an array
+            plan = next((x for x in plan if isinstance(x, dict)), None)
+        if not isinstance(plan, dict):
+            log.warning("editor returned non-object plan — ignoring")
+            return None
+        # Normalize shapes (LLMs vary: intent_mismatch may come back as a list, etc.)
+        imm = plan.get("intent_mismatch")
+        if isinstance(imm, list):
+            imm = next((x for x in imm if isinstance(x, dict)), None)
+        plan["intent_mismatch"] = imm if isinstance(imm, dict) else None
+        plan["per_cut"] = [pc for pc in (plan.get("per_cut") or [])
+                           if isinstance(pc, dict)]
+        plan["dropped"] = [d for d in (plan.get("dropped") or [])
+                           if isinstance(d, str)]
         if progress_cb:
             mm = plan.get("intent_mismatch")
             msg = f":scissors: Editor: {plan.get('episode_technique','?')}"
@@ -1932,6 +1953,19 @@ def _apply_edit_plan(manifests: dict, plan: dict, anim_dir: "Path | None" = None
         def _tagof(c):
             return c.get("tag") or c.get("cut_tag")
 
+        # 0) recaption mismatch → stamp the Editor's footage truth on the cut so the
+        # post-render caption rewrite corrects captions with IT (not the wrong raw VLM).
+        # Done first so a later captions-file error can't skip it.
+        mm = plan.get("intent_mismatch") or {}
+        if str(mm.get("suggestion", "")).startswith("recaption"):
+            truth = mm.get("what_footage_shows") or ""
+            aid = mm.get("asset_id") or ""
+            if truth:
+                for key in ("concept_cuts", "cuts"):
+                    for c in (manifests.get(key) or []):
+                        if not aid or c.get("asset_id") == aid:
+                            c["editor_footage_truth"] = truth
+
         # 1) trim_start / trim_dur overrides on the cut lists
         if allow_structural:
             for key in ("cuts", "concept_cuts"):
@@ -1960,8 +1994,9 @@ def _apply_edit_plan(manifests: dict, plan: dict, anim_dir: "Path | None" = None
                     except Exception:
                         pass
         # 3) REORDER + tempo in the captions JSON (cut order = dict order)
-        cap_path = Path(manifests.get("captions") or "")
-        if cap_path.exists():
+        _cap = manifests.get("captions")
+        cap_path = Path(_cap) if _cap else None
+        if cap_path and cap_path.is_file():
             data = json.loads(cap_path.read_text(encoding="utf-8"))
             meta = {k: v for k, v in data.items() if k.startswith("_")}
             body = {k: v for k, v in data.items()
@@ -5803,6 +5838,7 @@ def _persist_render_meta(work_dir: Path, manifests: dict, cuts: list,
             "font_override": manifests.get("font_override") or "",
             "concept": manifests.get("concept") or {},
             "concept_cuts": concept_cuts or [],
+            "_edit_plan": manifests.get("_edit_plan"),  # #3: Editor intent↔footage verdict
         }
         (work_dir / "render_meta.json").write_text(
             json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")

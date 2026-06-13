@@ -22,10 +22,12 @@ INTENT를 가장 잘 전달하도록 FOOTAGE를 편집하는 **EditPlan**을 만
 ## ⚠️ 의도↔화면 불일치 (가장 중요)
 캡션/beat가 말하는 사건이 **화면에 실제로 없으면** (예: 캡션 "다 먹었다"인데 영상은
 "못 먹고 핥기만") → 그걸 가짜로 넘기지 말고 `intent_mismatch`에 명시한다:
+- `asset_id`: 어긋난 컷의 asset_id (어느 클립이 문제인지)
 - `what_intent_said`: 의도/캡션이 주장한 것
 - `what_footage_shows`: 화면의 진짜 내용
-- `suggestion`: 해결책 — `recaption`(화면에 맞게 캡션 재작성) / `different_clip` /
-  `different_technique`(예: 배속으로 payoff까지 포함) 중 하나 + 한 줄 이유
+- `suggestion`: 해결책 — `recaption`(화면에 맞게 캡션 재작성) / `different_clip`(이 클립
+  으로는 의도 불가, 다른 클립 필요) / `different_technique`(예: 배속으로 payoff까지 포함)
+  중 하나 + 한 줄 이유
 불일치가 없으면 `intent_mismatch`는 null.
 
 **중요 — 불일치 ≠ 드롭:** 화면 자체는 멀쩡한데 캡션/의도만 어긋난 경우(suggestion이

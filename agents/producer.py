@@ -1839,6 +1839,21 @@ def _render_realfootage_direct(concept: dict, target: dt.date,
     report = None
     if out:
         report = _giri_review_realfootage(out, concept, target, progress_cb)
+    # #3: surface the Editor's intent↔footage verdict (persisted in render_meta) so the
+    # retry wrapper can do an upstream re-propose on a `different_clip` mismatch.
+    try:
+        from agents.caption_salvage import _find_work_dir
+        wd = _find_work_dir(card["card_id"])
+        if wd:
+            ep = json.loads((wd / "render_meta.json").read_text(
+                encoding="utf-8")).get("_edit_plan")
+            if ep:
+                if isinstance(report, dict):
+                    report["_edit_plan"] = ep
+                elif report is None:
+                    report = {"_edit_plan": ep}
+    except Exception as e:
+        log.warning("edit_plan surface failed: %s", e)
     return out, report, card["card_id"]
 
 
@@ -1892,6 +1907,8 @@ def _render_realfootage_with_retry(concept: dict, target: dt.date,
     best_key = (-1, -1)  # (intro_satisfied, score)
     attempt_outs: list = []   # PD 2026-06-08: every attempt writes episode_rf_*.mp4;
                               # delete the rejected ones so retries don't flood episodes/.
+    _editor_loops = 0         # #3: bounded (≤EDITOR_MAX_LOOPS) editor-driven re-proposes
+                              # when the Editor says the CLIP can't deliver the intent.
 
     def _finish(chosen):
         for p in attempt_outs:
@@ -1960,6 +1977,33 @@ def _render_realfootage_with_retry(concept: dict, target: dt.date,
             if key > best_key:
                 best_key, best_out, best_card_id = key, out, card_id
         verdict = (report or {}).get("판정", "")
+        # #3 upstream loop: if the Editor judged the CLIP itself can't deliver the
+        # intent (different_clip), exclude that asset + re-propose with the editor's
+        # note — BEFORE accepting/salvaging this render. Bounded to EDITOR_MAX_LOOPS.
+        _mm = ((report or {}).get("_edit_plan") or {}).get("intent_mismatch") or {}
+        if (str(_mm.get("suggestion", "")).startswith("different_clip")
+                and _editor_loops < int(os.getenv("EDITOR_MAX_LOOPS", "2"))
+                and attempt < max_attempts):
+            _editor_loops += 1
+            _bad = _mm.get("asset_id") or ""
+            if _bad:
+                context.setdefault("exclude_asset_ids", [])
+                if _bad not in context["exclude_asset_ids"]:
+                    context["exclude_asset_ids"].append(_bad)
+            _enote = (f"[편집자 피드백] 이 클립({_bad})로는 의도를 담을 수 없다. 화면은 "
+                      f"실제로 「{_mm.get('what_footage_shows','')}」인데 의도는 "
+                      f"「{_mm.get('what_intent_said','')}」였다. 다른 클립으로 다시 써라.")
+            if progress_cb:
+                progress_cb(f":scissors: 편집자: 클립 부적합 → 다른 클립 재제안 "
+                            f"({_editor_loops}/{os.getenv('EDITOR_MAX_LOOPS','2')})")
+            try:
+                new_concepts = _propose_realfootage_singlepass(
+                    target, context, progress_cb, prior_feedback=_enote)
+                if new_concepts:
+                    cur_concept = new_concepts[0]
+            except Exception as e:
+                log.warning("editor re-propose failed: %s", e)
+            continue  # render the new concept on the next attempt
         if not report:
             # Review unavailable (e.g., no API key) — don't loop blindly.
             log.warning("Giri report unavailable — accepting attempt %d", attempt)
