@@ -1,7 +1,34 @@
 # Design — #3: Cameraman → professional Editor + upstream feedback loop
 
-> Status: DESIGN (not implemented). PD 2026-06-13. Companion to memory
-> `rf_onetake_editing_spec`. Build after #4/#1/#2 (all done & committed).
+> Status: PARTIALLY BUILT 2026-06-13. PD decisions: separate LLM agent / RF+AV /
+> ≤2 re-render loop / editor may reorder & drop. Companion to memory
+> `rf_onetake_editing_spec`.
+>
+> **BUILT & committed (2c2210b RF, c20aed7 AV):**
+> - `agents/prompts/editor.md` — Editor agent persona + both guides injected.
+> - `cameraman._run_editor` → EditPlan (per-cut technique/tempo/trim, reorder, drop,
+>   `intent_mismatch{what_intent_said, what_footage_shows, suggestion}`).
+> - `cameraman._apply_edit_plan(allow_structural)` — drop/reorder/trim/tempo on
+>   manifests + captions JSON; never empties the episode; mirrors _rf_face_gate.
+> - RF: editor runs PRE-trim in run_real_footage_pipeline (full authority).
+> - AV: editor runs POST-render (judges vlm_actual_action), CONSERVATIVE — tempo +
+>   mismatch only; reorder/drop only if NOT chained AND EDITOR_AV_STRUCTURAL=1.
+> - Verified: a "savoring the meal" intent over can't-eat footage (RF21 class) is
+>   auto-flagged with a recaption suggestion, cut kept.
+>
+> **REMAINING — the ≤2 upstream re-invoke loop:**
+> Most mismatches are already resolved without an upstream round-trip:
+> - `recaption` → kept cut + the existing post-render VLM caption rewrite fixes the
+>   captions (TODO: feed the editor's `what_footage_shows` into that rewrite so it
+>   doesn't depend on the sometimes-wrong raw VLM — set the cut's vlm_actual_action
+>   from the editor truth before _vlm_post_render_caption_rewrite).
+> - `different_technique` → the editor applies it in its own EditPlan.
+> - `different_clip` → the ONLY case needing a true upstream re-propose. Integration
+>   point: surface `manifests["_edit_plan"].intent_mismatch` back from the render to
+>   `_render_realfootage_with_retry` (producer), treat suggestion==different_clip as a
+>   retry trigger → re-propose excluding that asset_id, with the editor note injected,
+>   bounded to ≤2 editor-driven re-proposes (separate from the Giri attempt counter).
+>   Needs the render to RETURN/stash the edit_plan (currently it only returns the mp4).
 
 ## Why
 The RF21 failure (card ea14a010): Writer/Director formed an intent ("느긋한 식사")
