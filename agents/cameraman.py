@@ -3610,7 +3610,16 @@ def _vlm_pet_crop_filter(src_path: Path, trim_start: float = 0.0,
                 return not (wx >= fux + fuw or wx + ww <= fux
                             or wy >= fuy + fuh or wy + wh <= fuy)
             chosen = None
-            for frac in (0.96, 0.88, 0.80, 0.72, 0.64, 0.56, 0.48, 0.40, 0.34):
+            # PD 2026-06-13: floor the zoom. The loop used to shrink to 0.34 to exclude a
+            # face — a 35%-width window that lost Ryani entirely ("처음에 너무 크롭해서 랴니가
+            # 안 보임"). Stop at ~0.56: if no window that big can drop the FIDO region, return
+            # "" and let the post-render face gate handle it, rather than over-cropping the pet
+            # out of frame. (A back-of-head isn't a FIDO face so face_box returns None → no
+            # shrink at all — "사람 뒤통수는 괜찮아".)
+            _min_frac = float(os.getenv("FACE_CROP_MIN_FRAC", "0.56"))
+            _fracs = tuple(f for f in (0.96, 0.88, 0.80, 0.72, 0.64, 0.56, 0.48, 0.40, 0.34)
+                           if f >= _min_frac)
+            for frac in _fracs:
                 wh = H * frac
                 ww = wh * r
                 if ww > W:
