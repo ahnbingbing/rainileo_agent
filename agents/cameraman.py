@@ -907,8 +907,15 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
                 photo_fp = a.get("file_path") or cc.get("photo_path", "")
                 if photo_fp and not Path(photo_fp).is_absolute():
                     photo_fp = str(ROOT / photo_fp)
+                # PD 2026-06-13: a real PHOTO used as a STILL ken-burns cut has NO
+                # character drift — drift comes ONLY from Seedance photo_i2v GENERATION.
+                # For real_footage, default to ken-burns of the REAL photo so
+                # same-location photos are usable without drift. RF_PHOTO_MODE=i2v
+                # restores Seedance animation; =off bans photos (legacy RF_VIDEO_ONLY).
+                _rf_kb = (style == "real_footage"
+                          and os.getenv("RF_PHOTO_MODE", "kenburns").lower() != "i2v")
                 sources[tag] = {
-                    "source": "__photo_i2v__",
+                    "source": "__photo_kb__" if _rf_kb else "__photo_i2v__",
                     "photo_path": photo_fp,
                     "source_uuid": a.get("source_uuid") or "",  # for on-demand re-download
                     "motion_prompt": cc.get("motion_prompt", ""),
@@ -2579,6 +2586,56 @@ def _source_face_visible(photo_path, who: str) -> bool:
         return True
 
 
+def _prerender_photo_kenburns_cuts(manifests: dict, work_dir: Path,
+                                   progress_cb: ProgressCb = None,
+                                   dry_run: bool = False) -> None:
+    """PD 2026-06-13: real_footage photo cuts marked `source = "__photo_kb__"` are
+    rendered as a gentle KEN-BURNS of the REAL photo (ffmpeg zoompan, NO Seedance) —
+    so a same-location photo is usable WITHOUT the character drift that Seedance
+    photo_i2v generation causes. Outputs to work_dir/photo_i2v/<tag>.mp4 (so the later
+    trim step picks it up) and rewrites the sources entry to that mp4."""
+    if dry_run:
+        return
+    sources_path = Path(manifests["sources"])
+    sources = json.loads(sources_path.read_text(encoding="utf-8"))
+    work_anim = work_dir / "photo_i2v"
+    work_anim.mkdir(parents=True, exist_ok=True)
+    n = 0
+    for tag, entry in list(sources.items()):
+        if not isinstance(entry, dict) or entry.get("source") != "__photo_kb__":
+            continue
+        photo_path = entry.get("photo_path")
+        if (not photo_path or not Path(photo_path).exists()) and entry.get("source_uuid"):
+            photo_path = _ensure_local(photo_path, entry.get("source_uuid")) or photo_path
+        if not photo_path or not Path(photo_path).exists():
+            log.warning("photo_kb: photo not found for %s", tag)
+            continue
+        dur = float(entry.get("trim_dur") or entry.get("seedance_seconds") or 6)
+        out_mp4 = work_anim / f"{tag}.mp4"
+        frames = max(25, int(dur * 25))
+        try:
+            subprocess.run(
+                ["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-loop", "1",
+                 "-i", str(photo_path), "-t", f"{dur:.2f}",
+                 "-vf", ("scale=720:1280:force_original_aspect_ratio=increase,"
+                         "crop=720:1280,"
+                         f"zoompan=z='min(zoom+0.0006,1.10)':d={frames}:s=720x1280:fps=25,"
+                         "setsar=1"),
+                 "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", str(out_mp4)],
+                check=True, timeout=120)
+            sources[tag] = {"source": str(out_mp4), "trim_start": 0.0, "trim_dur": dur,
+                            "has_human": entry.get("has_human", 0)}
+            n += 1
+            if progress_cb:
+                progress_cb(f":frame_with_picture: 켄번즈(실사 사진) 컷 {tag} (드리프트 없음)")
+        except Exception as e:
+            log.warning("photo_kb render failed for %s: %s", tag, e)
+    if n:
+        sources_path.write_text(json.dumps(sources, ensure_ascii=False, indent=2),
+                                encoding="utf-8")
+        log.info("photo_kb: %d real-photo ken-burns cuts pre-rendered", n)
+
+
 def _prerender_photo_i2v_cuts(manifests: dict, work_dir: Path,
                                 progress_cb: ProgressCb = None,
                                 dry_run: bool = False) -> None:
@@ -3736,7 +3793,9 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
 
     # Step 0a: pre-render Seedance interp gap-fill cuts (legacy).
     _prerender_interp_fills(manifests, work_dir, progress_cb, dry_run)
-    # Step 0b: pre-render Tier 2 photo→i2v cuts (PD 2026-06-02 real_footage v2).
+    # Step 0b: pre-render Tier 2 photo cuts. PD 2026-06-13: real photos default to a
+    # ken-burns still (no drift); only RF_PHOTO_MODE=i2v uses Seedance generation.
+    _prerender_photo_kenburns_cuts(manifests, work_dir, progress_cb, dry_run)
     _prerender_photo_i2v_cuts(manifests, work_dir, progress_cb, dry_run)
     # Step 0c: pre-render Tier 3 chain-from-prev cuts (after 0a/0b resolved).
     _prerender_chain_from_prev(manifests, work_dir, progress_cb, dry_run)

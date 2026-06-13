@@ -1549,11 +1549,12 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         # ONE of these whole as a 1-2 cut one-take instead of trimming a montage.
         "long_clip_candidates": _long,
         "available_videos": avail_videos,
-        # PD 2026-06-13: RF kept choosing photo_i2v (gen) even with 446 real video
-        # clips available, then the gen segments drifted Ryani's markings ("실제
-        # 동영상 쓸 자리에 gen"). RF_VIDEO_ONLY empties the photo pool so the writer
-        # MUST ground every cut in a real video clip; photo_i2v becomes impossible.
-        "available_photos": [] if os.getenv("RF_VIDEO_ONLY", "0") == "1" else _photos[:100],
+        # PD 2026-06-13: photos ARE usable — a real photo as a ken-burns still has NO
+        # drift (drift came only from Seedance photo_i2v GENERATION, now off by default
+        # via RF_PHOTO_MODE=kenburns in cameraman). So keep photos in the pool — they're
+        # essential for same-location past↔present bridges. RF_PHOTO_MODE=off bans them.
+        "available_photos": [] if os.getenv("RF_PHOTO_MODE", "kenburns").lower() == "off"
+                            else _photos[:100],
         # PD 2026-06-07: archive (older) clips for past⇄present memory-lane /
         # character-intro episodes. Each has years_ago — if you use one, the
         # caption MUST state the time point ("○년 전", "입양 첫날", "그때는…").
