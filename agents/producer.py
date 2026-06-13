@@ -746,12 +746,13 @@ def _should_onetake(target: dt.date, context: dict) -> dict:
 
 
 def _recently_used_rf_segments(con: sqlite3.Connection,
-                               n: int = RF_CLIP_COOLDOWN_EPISODES) -> dict:
-    """PD 2026-06-13 (#2): asset_id → list of (start, end) trim windows used by recent
-    RF episodes (uploaded + recently-rendered). A long clip can be REUSED via a
-    DIFFERENT, non-overlapping segment ("사용한 트림 이외 다른 부분은 또 쓸 수 있어"), so we
-    track SEGMENTS, not just whole asset_ids. Unknown duration → a large window
-    (conservative: treat that segment as blocking)."""
+                               n: int = RF_CLIP_COOLDOWN_EPISODES,
+                               days: int = 0) -> dict:
+    """asset_id → list of (start, end) trim windows used by RF episodes. Used to pick a
+    DIFFERENT, non-overlapping window when a clip is reused AFTER its whole-clip cooldown
+    ("사용한 트림 이외 다른 부분은 또 쓸 수 있어"). `days`>0 widens the lookback to that many
+    days (the long history for window-diversity, distinct from the short whole-clip
+    cooldown). Unknown duration → a large window (conservative)."""
     segs: dict = {}
 
     def _add(p):
@@ -768,6 +769,19 @@ def _recently_used_rf_segments(con: sqlite3.Connection,
 
     try:
         _ensure_uploaded_column(con)
+        if days > 0:
+            # Long history: every RF card touched in the last `days` days, for window
+            # diversity on legitimate (post-cooldown) reuse.
+            for r in con.execute(
+                "SELECT payload_json FROM cards WHERE render_style='real_footage' "
+                "AND (updated_at >= datetime('now', ?) OR created_at >= datetime('now', ?)) "
+                "ORDER BY created_at DESC LIMIT 400",
+                (f"-{days} days", f"-{days} days")).fetchall():
+                try:
+                    _add(json.loads(r[0] or "{}"))
+                except Exception:
+                    pass
+            return segs
         for r in con.execute(
             "SELECT payload_json FROM cards WHERE render_style='real_footage' "
             "AND uploaded=1 ORDER BY created_at DESC LIMIT ?", (n,)).fetchall():
@@ -824,16 +838,19 @@ def _rf_long_candidates(context: dict) -> list[dict]:
     _min = float(os.getenv("RF_ONETAKE_MIN_SEC", "12"))
     _win = float(os.getenv("RF_ONETAKE_MAX_SEC", "24"))
     _excl = set(context.get("exclude_asset_ids") or [])  # same-batch dedup = whole clip
-    # PD 2026-06-13 (#2): the cross-day cooldown is now PER-SEGMENT, not per-clip — a
-    # long clip is reusable via a DIFFERENT, non-overlapping window ("사용한 트림 이외
-    #다른 부분은 또 쓸 수 있어"). We keep such a clip and attach the free trim_start; we
-    # drop it ONLY if no window of `win` is free. RF_ONETAKE_COOLDOWN=0 disables.
+    # PD 2026-06-13 (#2 fix): NO back-to-back same clip. A continuous single-action clip's
+    # "other window" looks IDENTICAL ("어제 영상에 자막만 바꾼 것"), so the recent cooldown
+    # excludes the WHOLE clip. Per-segment reuse applies only AFTER the clip exits cooldown
+    # ("향후 다른 구간"): a long history (RF_SEGMENT_HISTORY_DAYS) then picks an UNUSED
+    # window so the legitimate re-use isn't the same seconds. RF_ONETAKE_COOLDOWN=0 disables.
     used_segs: dict = {}
     if os.getenv("RF_ONETAKE_COOLDOWN", "1") != "0":
         try:
-            used_segs = _recently_used_rf_segments(_db())
+            _excl |= _recently_used_rf_assets(_db())  # whole-clip: no back-to-back
+            used_segs = _recently_used_rf_segments(
+                _db(), days=int(os.getenv("RF_SEGMENT_HISTORY_DAYS", "60")))
         except Exception as e:
-            log.warning("one-take segment cooldown lookup failed: %s", e)
+            log.warning("one-take cooldown lookup failed: %s", e)
     pool = (context.get("available_videos") or []) + (context.get("archive_videos") or [])
     longs = [{"id": v.get("id"), "dur": float(v.get("dur") or 0),
               "sc": (v.get("sc") or "")[:240], "date": v.get("date")}

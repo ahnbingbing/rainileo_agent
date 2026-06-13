@@ -1373,6 +1373,31 @@ def _clean_caption_text(s: str) -> str:
     return s.strip()
 
 
+# Breed / anatomy / marking / render-guardrail descriptors that must NOT leak into
+# viewer captions (PD 2026-06-13: "꼬리 없는 프렌치불독" appeared in a caption). Used to
+# (a) sanitize the ground-truth fed to the Caption Agent, and (b) WARN if one survives.
+_META_DESCRIPTOR_RE = re.compile(
+    r"꼬리\s*없는|꼬리없는|프렌치\s*불독|프렌치불도그|french\s*bulldog|"
+    r"오렌지\s*태비|오렌지\s*고양이|tabby|블레이즈|blaze|이마\s*줄|흰\s*가슴|"
+    r"흰색?\s*얼굴\s*무늬|chest\s*marking|paw\s*marking", re.IGNORECASE)
+
+
+def _strip_meta_descriptors(text: str) -> str:
+    """Remove breed/anatomy/marking descriptors from a ground-truth DESCRIPTION (safe —
+    it's internal context the Caption Agent re-writes from, not a finished caption).
+    Collapses the leftover punctuation/space so the description stays readable."""
+    if not text:
+        return text
+    t = _META_DESCRIPTOR_RE.sub("", text)
+    t = re.sub(r"[（(]\s*[)）]", "", t)          # empty parens left by a removed term
+    t = re.sub(r"[가-힣A-Za-z]+\s*=\s*[.,]?", "", t)  # dangling "랴니= ." appositive head
+    t = re.sub(r"\s{2,}", " ", t)
+    t = re.sub(r"\s*,\s*,", ",", t)
+    t = re.sub(r"\s+([.,])", r"\1", t)
+    t = re.sub(r"(^[\s,.]+)|([\s,]+$)", "", t)
+    return t.strip()
+
+
 def _retime_cut_scenes(scenes: list, clip_dur: float, min_read: float = 2.5,
                        is_wink: bool = False) -> list:
     """PD 2026-06-11: re-time a cut's caption scenes onto its ACTUAL (post-retime)
@@ -1502,15 +1527,18 @@ def _vlm_post_render_caption_rewrite(work_dir: Path, manifests: dict,
         # PD 2026-06-13 (#3): the Editor's footage truth (when it flagged a recaption
         # mismatch for this cut) overrides the raw VLM — the VLM mis-read the RF21 clip
         # as "eats" when she can't. The Editor reasoned over action+caption, so trust it.
-        _etruth = cc.get("editor_footage_truth")
+        _etruth = _strip_meta_descriptors(cc.get("editor_footage_truth") or "") or None
+        actual = _strip_meta_descriptors(actual)
         if _etruth:
             # Hard constraint embedded in the ground-truth the Caption Agent grounds on,
             # so the closer can't slip back to a false resolution (the 동물농장 축복-ending
             # pull made it write "결국 다 먹었답니다" over can't-eat footage).
             cc["vlm_actual_action"] = (
                 _etruth + (f" (VLM: {actual})" if actual else "")
-                + " [필수: 위 실제 화면과 모순되는 캡션 금지 — 화면에 없는 결과(다 먹음/"
-                  "성공/완료 등)를 지어내지 마라. 끝 컷도 실제 상태 그대로.]")
+                + " [필수: 화면에 없는 결과(다 먹음/성공/완료)를 사실로 단정하지 마라. "
+                  "단, 마지막 캡션은 밋밋한 사실로 끝내지 말고 보여준 내용과 이어지는 따뜻한 "
+                  "마무리로 — 응원('다음엔 꼭 먹자, 랴니!')이나 열린 질문('과연 먹을 수 있을까요?')"
+                  "으로 닫아라. (응원·질문은 거짓 단정이 아니므로 허용)]")
             n_described += 1
         elif actual:
             cc["vlm_actual_action"] = actual
@@ -1707,46 +1735,58 @@ def _fit_caption_reading_time(manifests: dict, in_dir: Path, progress_cb=None) -
                 clip_dur = 0.0
             if clip_dur <= 0.1:
                 continue
-            # Effective playback speed for this cut at assembly time. Honor an explicit
-            # agent tempo choice; otherwise pin to 1.0 so the reading time survives.
+            # PD 2026-06-13: caption READING TIME drives the cut — NEVER freeze. Fill the
+            # needed display time with REAL footage first (re-trim a longer window from the
+            # source clip, which usually has lots unused), and if the source is exhausted
+            # SLOW the clip down (tempo<1). A frozen frame with a motion caption ("주인
+            # 바라보며 속삭이죠" over a still) reads as a glitch — so no tpad freeze.
+            display_needed = round(
+                sum(_caption_read_time(s.get("ko") or s.get("en")) for s in scenes)
+                + tail, 2)
+            _src = {}
             try:
-                speed = float(tempos.get(tag)) if tempos.get(tag) is not None else 1.0
-            except (TypeError, ValueError):
-                speed = 1.0
-            tempos[tag] = speed  # record so assemble doesn't apply its 1.3 default
-            # Work in CUT-timeline seconds = display-seconds × speed.
-            reads = [_caption_read_time(s.get("ko") or s.get("en")) * speed
-                     for s in scenes]
-            total_read = sum(reads)
-            needed = round(total_read + tail * speed, 2)
-            # 1) Extend the real video (freeze last frame) when captions need more time.
-            #    Re-probe the result — tpad's added length can differ from requested.
-            if needed > clip_dur + 0.4:
-                pad = round(needed - clip_dur, 2)
+                _sp = manifests.get("sources")
+                if _sp:
+                    _src = (json.loads(Path(_sp).read_text(encoding="utf-8")).get(tag) or {})
+            except Exception:
+                _src = {}
+            src_path = _src.get("source")
+            t0 = float(_src.get("trim_start") or 0.0)
+            src_dur = float(_src.get("src_dur") or 0.0)
+            has_src = bool(src_path and src_dur > 0 and Path(src_path).exists())
+            avail_real = (src_dur - t0) if has_src else clip_dur
+            raw_used = min(display_needed, max(avail_real, 0.1))
+            # Re-trim a LONGER real window only if the source genuinely has more footage.
+            if has_src and raw_used > clip_dur + 0.3 and avail_real > clip_dur + 0.3:
                 tmp = mp4.with_suffix(".fit.mp4")
                 try:
                     subprocess.run(
-                        ["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-i", str(mp4),
-                         "-vf", f"tpad=stop_mode=clone:stop_duration={pad}",
-                         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", str(tmp)],
-                        check=True, timeout=180)
+                        ["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-ss", f"{t0}",
+                         "-i", str(src_path), "-t", f"{raw_used:.2f}",
+                         "-vf", "scale=720:1280:force_original_aspect_ratio=increase,"
+                         "crop=720:1280,setsar=1", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                         "-an", str(tmp)], check=True, timeout=180)
                     tmp.replace(mp4)
                     clip_dur = float(subprocess.run(
                         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
                          "-of", "default=nw=1:nk=1", str(mp4)],
-                        capture_output=True, text=True, timeout=15).stdout.strip()
-                        or clip_dur)
-                    if progress_cb:
-                        progress_cb(f":hourglass_flowing_sand: 캡션 읽을 시간 확보 — "
-                                    f"{tag} +{pad:.1f}s 연장")
+                        capture_output=True, text=True, timeout=15).stdout.strip() or clip_dur)
                 except Exception as e:
-                    log.warning("caption-fit extend failed for %s: %s", tag, e)
+                    log.warning("caption-fit re-trim failed for %s: %s", tag, e)
                     try:
                         tmp.unlink()
                     except Exception:
                         pass
-            # 2) Spread scenes gap-free, proportional to read-time, last holds to end (여운).
-            #    Everything is bounded by the ACTUAL clip_dur so no caption overruns it.
+            # Playback speed to fill display_needed with the (real) clip we now have. If the
+            # clip is shorter than needed (source exhausted), SLOW it (speed<1, ≥ min).
+            _min_speed = float(os.getenv("CAPTION_MIN_SPEED", "0.6"))
+            speed = (max(_min_speed, min(1.0, round(clip_dur / display_needed, 3)))
+                     if display_needed > 0.1 else 1.0)
+            tempos[tag] = speed  # assemble plays at this speed (slow-down fills the time)
+            # Caption timeline = RAW clip (clip_dur); after playback ×(1/speed) each scene
+            # shows for its read-time. Spread gap-free; last scene holds to end (여운).
+            reads = [_caption_read_time(s.get("ko") or s.get("en")) * speed for s in scenes]
+            total_read = sum(reads)
             usable = max(total_read, clip_dur - tail * speed)
             scale = (usable / total_read) if total_read > 0 else 1.0
             cursor = 0.1
@@ -1760,6 +1800,9 @@ def _fit_caption_reading_time(manifests: dict, in_dir: Path, progress_cb=None) -
                     s["end"] = round(min(clip_dur - 0.03, s["start"] + 0.5), 2)
             body["scenes"] = scenes
             changed = True
+            if progress_cb:
+                progress_cb(f":hourglass_flowing_sand: {tag} 읽을시간 {display_needed:.0f}s "
+                            f"→ real {clip_dur:.0f}s · speed {speed}")
         if changed:
             data["_tempo_factors"] = tempos  # pin fitted cuts' speed (default 1.0)
             cap_path.write_text(json.dumps(data, ensure_ascii=False, indent=2),
