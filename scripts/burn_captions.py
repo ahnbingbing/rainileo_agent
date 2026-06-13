@@ -344,6 +344,17 @@ def build_vf_multi(scenes: list[dict], tag: str, duration: float,
     KO_Y_FROM_TOP = 220   # symmetric to KO_Y_FROM_BOTTOM
     EN_Y_FROM_TOP = 320   # below KO when at top
 
+    # PD 2026-06-13: scenes within a cut must not overlap in time, or two captions show
+    # at once ("중간에 캡션 겹침" — a short retimed cut kept two scenes at [0.1-1.4] AND
+    # [0.9-1.4]). Truncate each scene to end no later than the next scene's start so only
+    # one caption is on screen at a time.
+    _order = sorted(range(len(scenes)), key=lambda j: float(scenes[j].get("start", 0.2)))
+    _clamp_end: dict[int, float] = {}
+    for _a, _b in zip(_order, _order[1:]):
+        _nxt_start = float(scenes[_b].get("start", 0.2))
+        if float(scenes[_a].get("end", 0.0)) > _nxt_start:
+            _clamp_end[_a] = _nxt_start
+
     filters = []
     for i, sc in enumerate(scenes):
         ko = sc.get("ko", "").strip()
@@ -352,7 +363,7 @@ def build_vf_multi(scenes: list[dict], tag: str, duration: float,
             continue
         start = float(sc.get("start", 0.2))
         end = float(sc.get("end", duration - TAIL_OFFSET_S))
-        end = min(end, duration - 0.1)
+        end = min(end, duration - 0.1, _clamp_end.get(i, float("inf")))
         pos = sc.get("position") or caption_position
 
         # PD 2026-06-02: per-scene font selection — switch to Pretendard
