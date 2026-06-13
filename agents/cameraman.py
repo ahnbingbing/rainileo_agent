@@ -146,6 +146,18 @@ def _resolve_ref(name: str) -> Path | None:
     return pair if pair.exists() else None
 
 
+# PD 2026-06-14: real casual-phone LO-FI look, baked into the prompt (not post-process).
+LOFI_REALISM_DIRECTIVE = (
+    "LO-FI REALISM — this must look like a REAL casual snapshot/clip taken on an older "
+    "iPhone by a pet owner, NOT a glossy AI/CGI render: visible fine sensor noise and film "
+    "grain, slightly soft (not razor-sharp) focus, imperfect auto-exposure with mildly "
+    "crushed shadows and gently clipped highlights, muted and slightly desaturated colors, "
+    "natural available room light only (no studio/professional lighting, no HDR, no glossy "
+    "over-smoothing, no beauty filter). A touch of real-camera imperfection — subtle handheld "
+    "feel and slight motion blur on movement. Lo-fi authentic home-video quality."
+)
+
+
 def _resolve_scene_ref(set_anchor: str | None, set_description: str,
                        fallback_out_path: Path,
                        dry_run: bool = False) -> Path | None:
@@ -163,6 +175,19 @@ def _resolve_scene_ref(set_anchor: str | None, set_description: str,
 
     Returns the resolved scene ref path or None if neither is available.
     """
+    # 0. Explicit override (PD 2026-06-14): force a specific canonical empty-room image
+    # so every cut shares the SAME room. The set_anchor → library lookup occasionally
+    # missed (set_anchor not threaded into the manifest), making each render generate a
+    # fresh GPT room → the bench/fireplace drifted cut-to-cut. SCENE_REF_OVERRIDE pins it.
+    _ovr = os.getenv("SCENE_REF_OVERRIDE", "").strip()
+    if _ovr:
+        op = Path(_ovr)
+        if not op.is_absolute():
+            op = ROOT / op
+        if op.exists() and op.stat().st_size > 10_000:
+            log.info("scene_ref OVERRIDE → %s", op.name)
+            return op
+        log.warning("SCENE_REF_OVERRIDE set but file missing: %s", op)
     # 1. Canonical library lookup
     if set_anchor:
         try:
@@ -1312,6 +1337,10 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
             theme = card.get("theme", "")
             tone = card.get("tone_primary", "warm")
             overall_style = f"Cute pet illustration, {tone} mood, {theme} theme"
+        # PD 2026-06-14: bake a REAL casual-phone LO-FI look into the generation itself
+        # (NOT a post-process) so the AV doesn't read as glossy AI. Append unless disabled.
+        if os.getenv("AV_LOFI", "1") != "0" and "LO-FI REALISM" not in overall_style:
+            overall_style = (overall_style + " " + LOFI_REALISM_DIRECTIVE).strip()
 
         regen = {
             "_base_style": overall_style,
@@ -5443,6 +5472,11 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         )
         if bg_still not in prompt:
             prompt = prompt + " " + bg_still
+
+        # PD 2026-06-14: bake the lo-fi real-phone look into the i2v video too (not just
+        # the still) so the motion clip doesn't read as glossy AI.
+        if os.getenv("AV_LOFI", "1") != "0" and "LO-FI REALISM" not in prompt:
+            prompt = prompt + " " + LOFI_REALISM_DIRECTIVE
 
         # No-text-on-packaging guardrail (PD 2026-06-01 PM: "사료에 글자는
         # 없어도 돼"). Seedance hallucinates Korean/English text and logos
