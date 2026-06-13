@@ -1895,7 +1895,7 @@ def _run_editor(concept: dict, manifests: dict, lane: str,
 
 
 def _apply_edit_plan(manifests: dict, plan: dict, anim_dir: "Path | None" = None,
-                     progress_cb=None) -> None:
+                     progress_cb=None, allow_structural: bool = True) -> None:
     """Apply an Editor EditPlan to the manifests in place: DROP / REORDER cuts, set
     per-cut tempo_factor (→ captions _tempo_factors) and trim_start/trim_dur. Mirrors
     _rf_face_gate's drop bookkeeping (cuts + concept_cuts + captions JSON). Fail-safe."""
@@ -1923,24 +1923,30 @@ def _apply_edit_plan(manifests: dict, plan: dict, anim_dir: "Path | None" = None
             dropped = set()
             if not order:
                 order = [t for t in all_tags]
+        # AV (chained) passes allow_structural=False: tempo only, no drop/reorder/trim
+        # (re-trimming or reordering a generated chain breaks continuity).
+        if not allow_structural:
+            dropped = set()
+            order = []
 
         def _tagof(c):
             return c.get("tag") or c.get("cut_tag")
 
         # 1) trim_start / trim_dur overrides on the cut lists
-        for key in ("cuts", "concept_cuts"):
-            lst = manifests.get(key)
-            if not isinstance(lst, list):
-                continue
-            for c in lst:
-                pc = by_tag.get(_tagof(c))
-                if not pc:
+        if allow_structural:
+            for key in ("cuts", "concept_cuts"):
+                lst = manifests.get(key)
+                if not isinstance(lst, list):
                     continue
-                if pc.get("trim_start") is not None:
-                    c["trim_start"] = float(pc["trim_start"])
-                if pc.get("trim_dur"):
-                    c["trim_dur"] = float(pc["trim_dur"])
-                    c["duration_seconds"] = float(pc["trim_dur"])
+                for c in lst:
+                    pc = by_tag.get(_tagof(c))
+                    if not pc:
+                        continue
+                    if pc.get("trim_start") is not None:
+                        c["trim_start"] = float(pc["trim_start"])
+                    if pc.get("trim_dur"):
+                        c["trim_dur"] = float(pc["trim_dur"])
+                        c["duration_seconds"] = float(pc["trim_dur"])
         # 2) DROP cuts (manifests + captions JSON + mp4)
         if dropped:
             for key in ("cuts", "concept_cuts"):
@@ -5689,6 +5695,23 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         )
     except Exception as ex:
         log.warning("VLM caption rewrite failed (keeping original captions): %s", ex)
+
+    # Step 4c (#3): Editor agent for AV. Runs AFTER the VLM rewrite (so it judges the
+    # ACTUAL rendered footage via vlm_actual_action). CONSERVATIVE: tempo + intent↔
+    # footage mismatch only — reorder/drop are disabled for a chained AV one-take
+    # (would break continuity); allowed only when the episode is NOT chained.
+    if not dry_run and os.getenv("EDITOR_AGENT", "1") != "0":
+        try:
+            _chained = bool(manifests.get("chain_mode") or card.get("chain_mode"))
+            _struct = (not _chained) and os.getenv("EDITOR_AV_STRUCTURAL", "0") == "1"
+            _plan = _run_editor(manifests.get("concept") or card or manifests,
+                                manifests, "ai_vtuber", progress_cb)
+            if _plan:
+                _apply_edit_plan(manifests, _plan, anim_dir, progress_cb,
+                                 allow_structural=_struct)
+                manifests["_edit_plan"] = _plan
+        except Exception as ex:
+            log.warning("AV editor pass failed (keeping render): %s", ex)
 
     # Step 5: burn captions (손글씨 기본, Director font_override 가능)
     _run(
