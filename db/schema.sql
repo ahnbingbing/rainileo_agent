@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS assets (
     duration_sec    REAL,
     width           INTEGER,
     height          INTEGER,
-    phash           TEXT,                         -- 16-hex perceptual hash (representative frame for video)
+    phash           TEXT,                         -- LEGACY: 64-hex SHA-256 content hash (exact-dup only; NULL for video)
+    vis_phash       TEXT,                         -- perceptual hash: photo=256-bit; video=multi-frame 'h1,h2,..' signature (agents/visual_hash.py)
     subjects_csv    TEXT,                         -- 'ryani', 'leo', 'leo,ryani'
     age_tag         TEXT,                         -- 'youth', 'adult', 'mixed', NULL
     location_tag    TEXT,                         -- 'living_room', 'park_path_north', etc.

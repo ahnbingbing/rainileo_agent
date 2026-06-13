@@ -66,6 +66,90 @@ def _db() -> sqlite3.Connection:
 
 
 # ──────────────────────────────────────────────────────────────────────
+# Pool diversity sampling (PD 2026-06-13)
+# ──────────────────────────────────────────────────────────────────────
+# WHY: best_videos/best_photos used `ORDER BY captured_iso DESC LIMIT N`, which
+# collapsed ~3,700 assets down to a recent-biased slice (videos: 96% 2026 / 64%
+# home; photos: top-70 by quality+recency). The 170 outdoor clips and the entire
+# 2015–2024 archive (122 clips of baby footage) never reached the Writer, so every
+# RF concept converged on "집/실내 휴식" and the Macro Reviewer churned. The fix is
+# to surface a DIVERSE slice: stratify across (location × year × activity) and
+# round-robin so every cell contributes before any cell repeats, then skip
+# vis_phash near-duplicates so visually identical clips don't both make the cut.
+def _vphash_of(r) -> str | None:
+    try:
+        v = r["vis_phash"]
+    except (IndexError, KeyError):
+        return None
+    return v or None
+
+
+def _diversity_sample(rows: list, k: int, *, loc_col: str, act_col: str,
+                      year_col: str = "captured_iso", near_dup: int | None = None) -> list:
+    """Pick ≤k rows spread across (loc × year × activity) strata.
+
+    `rows` MUST arrive in within-stratum preference order (e.g. both-pets first,
+    flattering composition, quality DESC, recency DESC) — that order is preserved
+    inside each stratum. Round-robin over strata gives breadth; vis_phash Hamming
+    ≤ near_dup skips visual repeats. Missing vis_phash → never treated as a dup
+    (best-effort; coverage grows as clips download)."""
+    if k <= 0 or len(rows) <= k:
+        return list(rows)
+    from collections import OrderedDict
+    from agents.visual_hash import hamming as _ham, NEAR_DUP as _NEAR_DUP
+    if near_dup is None:
+        near_dup = _NEAR_DUP
+    strata: "OrderedDict[tuple, list]" = OrderedDict()
+    for r in rows:
+        key = (str(r[loc_col] or "?"),
+               (str(r[year_col] or "?"))[:4],
+               str(r[act_col] or "?"))
+        strata.setdefault(key, []).append(r)
+    queues = list(strata.values())
+    picked: list = []
+    picked_hashes: list[str] = []
+
+    def _too_close(r) -> bool:
+        h = _vphash_of(r)
+        if not h:
+            return False
+        for ph in picked_hashes:
+            d = _ham(h, ph)
+            if d is not None and d <= near_dup:
+                return True
+        return False
+
+    progressed = True
+    while len(picked) < k and progressed:
+        progressed = False
+        for q in queues:
+            if len(picked) >= k:
+                break
+            while q:
+                r = q.pop(0)
+                if _too_close(r):
+                    continue  # visual near-dup of something already picked
+                picked.append(r)
+                h = _vphash_of(r)
+                if h:
+                    picked_hashes.append(h)
+                progressed = True
+                break
+    # If near-dup skipping starved us below k, backfill from leftovers (ignore dups).
+    if len(picked) < k:
+        chosen = {id(r) for r in picked}
+        for q in queues:
+            for r in q:
+                if id(r) not in chosen:
+                    picked.append(r)
+                    if len(picked) >= k:
+                        break
+            if len(picked) >= k:
+                break
+    return picked[:k]
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Context gathering (reuse patterns from writer.py)
 # ──────────────────────────────────────────────────────────────────────
 def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
@@ -119,23 +203,30 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
                 out[k] = v
         return out
 
+    # PD 2026-06-13: diversity-sample photos too (was recent/quality LIMIT 70, so the
+    # 2016 baby-Ryani/Leo archive never surfaced). Stratify across background × year ×
+    # activity; vis_phash skips visual repeats.
+    _photo_rows = con.execute(
+        """
+        SELECT asset_id, activity, subjects_csv, mood, background, scene_description, pd_notes,
+               notes, captured_iso, location_type, vis_phash
+        FROM assets
+        WHERE vlm_analyzed_at IS NOT NULL AND kind='photo'
+              AND quality_score >= 0.7 AND file_path NOT LIKE '%.heic'
+              AND (decoration_level IS NULL OR decoration_level = 'none')
+        ORDER BY has_human ASC, quality_score DESC, captured_iso DESC
+        """,
+    ).fetchall()
+    # photos have location_type populated (background is empty for photos); year spread
+    # matters most here — 600 of the quality photos are 2016 baby-era.
+    _photo_rows = _diversity_sample(_photo_rows, 70, loc_col="location_type",
+                                    act_col="activity")
     best_photos = [
         {"id": r["asset_id"], "act": r["activity"] or "", "sub": r["subjects_csv"] or "",
          "mood": r["mood"] or "", "bg": r["background"] or "",
          "sc": _ground_truth_sc(r),
          **_extra_vlm(r)}
-        for r in con.execute(
-            """
-            SELECT asset_id, activity, subjects_csv, mood, background, scene_description, pd_notes,
-                   notes
-            FROM assets
-            WHERE vlm_analyzed_at IS NOT NULL AND kind='photo'
-                  AND quality_score >= 0.7 AND file_path NOT LIKE '%.heic'
-                  AND (decoration_level IS NULL OR decoration_level = 'none')
-            ORDER BY has_human ASC, quality_score DESC, captured_iso DESC
-            LIMIT 70
-            """,
-        ).fetchall()
+        for r in _photo_rows
     ]
 
     # Group videos by date for continuity (same-day clips = one episode)
@@ -167,6 +258,32 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
         if 17 <= h < 20:
             return "저녁"      # evening
         return "밤"            # late night / early morning
+    # PD 2026-06-13: ensure the perceptual-hash column exists, then DIVERSITY-SAMPLE
+    # (not recent-bias LIMIT) so the Writer sees outdoor/cafe/archive footage, not just
+    # the last month of home-rest clips. SQL fetches ALL quality clips in preference
+    # order (both-pets, flattering framing, quality, recency); _diversity_sample picks
+    # 100 spread across location × year × activity + skips vis_phash near-dups.
+    try:
+        from agents.visual_hash import ensure_column as _vphash_ensure_column
+        _vphash_ensure_column(con)
+    except Exception as _e:
+        log.warning("vis_phash ensure_column skipped: %s", _e)
+    _video_rows = con.execute(
+        """
+        SELECT asset_id, activity, subjects_csv, mood, scene_description, pd_notes,
+               duration_sec, captured_iso, location_type, notes, has_human, lighting,
+               composition, focus_subject, vis_phash
+        FROM assets
+        WHERE vlm_analyzed_at IS NOT NULL AND kind='video' AND quality_score >= 0.7
+        ORDER BY
+          CASE WHEN subjects_csv LIKE '%ryani%' AND subjects_csv LIKE '%leo%' THEN 0 ELSE 1 END,
+          CASE WHEN lower(coalesce(composition,'')) IN ('overhead','wide','far') THEN 1 ELSE 0 END,
+          quality_score DESC,
+          captured_iso DESC
+        """,
+    ).fetchall()
+    _video_rows = _diversity_sample(_video_rows, 100, loc_col="location_type",
+                                    act_col="activity")
     best_videos = [
         {"id": r["asset_id"], "act": r["activity"] or "", "sub": r["subjects_csv"] or "",
          "mood": r["mood"] or "", "sc": _ground_truth_sc(r),
@@ -188,20 +305,7 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
          # ones. comp=medium/close-up + focus=a pet + looking_at=camera = flattering.
          "comp": r["composition"] or "", "focus": r["focus_subject"] or "",
          **_extra_vlm(r)}
-        for r in con.execute(
-            """
-            SELECT asset_id, activity, subjects_csv, mood, scene_description, pd_notes,
-                   duration_sec, captured_iso, location_type, notes, has_human, lighting,
-                   composition, focus_subject
-            FROM assets
-            WHERE vlm_analyzed_at IS NOT NULL AND kind='video' AND quality_score >= 0.7
-            ORDER BY
-              CASE WHEN subjects_csv LIKE '%ryani%' AND subjects_csv LIKE '%leo%' THEN 0 ELSE 1 END,
-              CASE WHEN lower(coalesce(composition,'')) IN ('overhead','wide','far') THEN 1 ELSE 0 END,
-              captured_iso DESC
-            LIMIT 100
-            """,
-        ).fetchall()
+        for r in _video_rows
     ]
 
     # Show date clusters so LLM can pick same-day clips
@@ -1333,6 +1437,83 @@ def _propose_realfootage_intraclip(target: dt.date, context: dict, long_clip: di
     return [concept]
 
 
+def _recent_la_usage(con, days: int = 7):
+    """PD 2026-06-13 (writer-side): how heavily each (location_type, activity) and each
+    location has been used by recent real_footage uploads. Returns
+    (freq Counter[(loc,act)], overused set[(loc,act)], overused_loc set[loc]). Drives
+    BOTH the pool reorder (under-used clips lead) and the writer's avoid-list, so the
+    Writer steers away from over-shot setups from the FIRST draft instead of being
+    rejected after. Thresholds mirror reviewer_macro (0.15 pair / 0.40 location)."""
+    from collections import Counter
+    ids: list[str] = []
+    try:
+        rows = con.execute(
+            "SELECT payload_json FROM cards WHERE created_at >= datetime('now', ?) "
+            "AND render_style='real_footage' ORDER BY created_at DESC LIMIT 40",
+            (f"-{days} days",)).fetchall()
+        for r in rows:
+            try:
+                pl = json.loads((r[0] if not isinstance(r, sqlite3.Row) else r["payload_json"]) or "{}")
+            except Exception:
+                continue
+            ids += [c.get("asset_id") for c in (pl.get("cuts") or []) if c.get("asset_id")]
+    except Exception as e:
+        log.warning("recent_la_usage card fetch failed: %s", e)
+        return Counter(), set(), set()
+    if not ids:
+        return Counter(), set(), set()
+    try:
+        q = con.execute(
+            f"SELECT location_type, activity FROM assets WHERE asset_id IN "
+            f"({','.join('?' for _ in ids)})", ids).fetchall()
+    except Exception as e:
+        log.warning("recent_la_usage asset fetch failed: %s", e)
+        return Counter(), set(), set()
+    la = [(r[0], r[1]) for r in q if r[0] and r[1]]
+    freq = Counter(la)
+    tot = sum(freq.values()) or 1
+    overused = {k for k, n in freq.items() if n / tot >= 0.15}
+    locf = Counter(loc for loc, _ in la)
+    overused_loc = {loc for loc, n in locf.items() if n / tot >= 0.40}
+    return freq, overused, overused_loc
+
+
+def _lead_with_underused(rows: list, freq, overused_loc) -> list:
+    """Stable-sort a dict pool (each has 'loc'/'act') so UNDER-represented clips lead:
+    over-used locations sink, then higher (loc,act) frequency sinks. Ties keep the
+    incoming (diversity-sampled) order. The Writer anchors on whatever is at the top,
+    so leading with fresh footage is the cheapest way to make it actually use it."""
+    def _key(v):
+        loc, act = v.get("loc"), v.get("act")
+        # un-groundable location (NULL/unknown/other) is not a useful lead — sink it.
+        no_loc = 1 if (not loc or loc in ("unknown", "other")) else 0
+        over = 1 if loc in overused_loc else 0
+        return (no_loc, over, freq.get((loc, act), 0))
+    return sorted(rows, key=_key)
+
+
+def _cap_overused_locations(rows: list, overused_loc, cap_frac: float = 0.34,
+                            floor: int = 10) -> list:
+    """Scarcity, not just ordering: cap over-used-location clips to ≤ cap_frac of the
+    pool the Writer sees, so it CANNOT fill an episode with home/outdoor even though it
+    keeps trying to. Reordering alone failed — the diverse sample is still ~44% home,
+    so the Writer (which likes cozy home-rest) just picks from the plentiful tail. With
+    a hard cap it runs out of home clips and must use the fresh ones. The over-used set
+    refreshes daily, so the forced location rotates (cafe→mom→outdoor…) = variety ACROSS
+    episodes. `rows` must be fresh-first (post _lead_with_underused). Keeps ≥ floor."""
+    if not overused_loc:
+        return rows
+    fresh = [v for v in rows if v.get("loc") not in overused_loc]
+    over = [v for v in rows if v.get("loc") in overused_loc]
+    if not fresh:
+        return rows  # nothing fresh to lean on — don't starve the Writer
+    allowed = int(len(fresh) * cap_frac / max(1e-6, 1.0 - cap_frac))
+    kept = fresh + over[:max(0, allowed)]
+    if len(kept) < floor:  # safety: add over-used back until we reach the floor
+        kept += over[max(0, allowed):max(0, allowed) + (floor - len(kept))]
+    return kept
+
+
 def _collapse_rf_same_clip_segments(c: dict, progress_cb: ProgressCb = None) -> int:
     """PD 2026-06-12: real_footage cuts must each be a DISTINCT clip. If the writer
     reused the SAME asset_id across cuts (slicing one clip into segments) those
@@ -1580,6 +1761,35 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     # pool — a "label not rule" miss. So PRE-COMPUTE the long candidates and inject
     # them explicitly + sorted (longest first) so they can't be missed; the prompt
     # treats a non-empty list as a near-mandate to build a 1-2 cut one-take.
+    # PD 2026-06-13 (writer-side): the diverse pool (A) only helps if the Writer USES
+    # it — and the Writer anchors on whatever leads the list, which was the biggest
+    # (home/resting) stratum. REORDER so UNDER-represented footage leads, and hand the
+    # Writer an explicit avoid-list of over-shot (location, activity) setups. Together
+    # these stop the "집-휴식으로 회귀" churn at the source instead of via reviewer reject.
+    try:
+        _la_freq, _la_over, _loc_over = _recent_la_usage(_db())
+        avail_videos = _lead_with_underused(avail_videos, _la_freq, _loc_over)
+        _photos = _lead_with_underused(_photos, _la_freq, _loc_over)
+        # Hard scarcity cap so the Writer can't fill with over-used locations (reorder
+        # alone wasn't enough — it kept picking home). Only when there's a real fresh
+        # pool to fall back on; the floor keeps ≥6 usable.
+        _cap = float(os.getenv("RF_OVERUSED_LOC_CAP", "0.34"))
+        _before_cap = len(avail_videos)
+        avail_videos = _cap_overused_locations(avail_videos, _loc_over, cap_frac=_cap)
+        _avoid_overused = {
+            "over_used_locations": sorted(_loc_over),
+            "over_used_location_activity": sorted(f"{l}/{a}" for (l, a) in _la_over),
+            "note": ("최근 real_footage 업로드가 위 장소/활동에 과도하게 쏠려 있다. 이번 컷은 "
+                     "가능한 다른 장소(예: 야외/카페/옛 영상)·다른 활동을 우선 골라라. "
+                     "풀은 이미 신선한 것부터 정렬돼 있으니 위쪽 후보를 우선 검토하라."),
+        }
+        if progress_cb and (_loc_over or _la_over):
+            _capmsg = (f", 풀 {_before_cap}→{len(avail_videos)} 캡"
+                       if len(avail_videos) < _before_cap else "")
+            progress_cb(f":compass: 과대표집 회피 — 장소 {sorted(_loc_over)} 신선 우선{_capmsg}")
+    except Exception as e:
+        log.warning("writer-side underused reorder failed: %s", e)
+        _avoid_overused = {}
     _LONG_MIN = float(os.getenv("RF_ONETAKE_MIN_SEC", "12"))
     _long = sorted(
         ({"id": v.get("id"), "dur": v.get("dur"),
@@ -1608,6 +1818,9 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         # PD 2026-06-13: MACRO context (recent episodes + performance + audience comments)
         # so the writer AVOIDS repeating what we just shipped, from the very first draft.
         "macro_context_recent_uploads": context.get("macro_context", ""),
+        # PD 2026-06-13 (writer-side): over-shot setups to AVOID + pool is pre-sorted
+        # fresh-first. The Writer should pick from the top / away from these.
+        "avoid_overused_setups": _avoid_overused,
         # PD 2026-06-13 (#3): same-LOCATION groups (past↔present pairing). If a past clip
         # and a current clip share a key (e.g. "seating:파란"), pair them for a visual
         # "그때 그 자리 → 지금" bridge — the system surfaces the match so the writer/PD
@@ -1660,6 +1873,10 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
              "Follow the 5-step order. Every caption must be grounded in the "
              "clip's actual sc. Flowing narrative, not dry list. Output ONLY "
              "the JSON array.")
+    if _avoid_overused.get("over_used_locations") or _avoid_overused.get("over_used_location_activity"):
+        user += ("\n\n⚠️ 신선도: available_videos는 신선한(덜 쓴) 클립부터 정렬돼 있다. "
+                 "avoid_overused_setups의 장소/활동은 최근 과도하게 반복됐으니 컷의 과반을 "
+                 "그쪽으로 채우지 마라 — 야외/카페/옛 영상 등 다른 장소·활동을 우선 골라라.")
     from agents.llm_cascade import call_text_cascade
     text = call_text_cascade(system, user, max_tokens=12000).strip()  # PD 2026-06-09: avoid truncation
     concepts = _robust_json_parse(text)
