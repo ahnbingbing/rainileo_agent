@@ -5804,7 +5804,20 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         # and use that as the i2v first_frame. Cascades bg/character
         # continuity through the cut chain. Cut 1 still uses regen still
         # or asset_id-based first_frame (set above).
-        if cc.get("chain_from_prev") and i > 0:
+        # PD 2026-06-13: make chaining the DEFAULT for single-location ai_vtuber
+        # concepts — each cut was a FRESH regen, so the background drifted (the bench
+        # cushions / pillows / drawers shifted across the last cuts). Seeding each cut
+        # from the previous cut's last frame keeps the background pixel-continuous
+        # (Seedance 2.0 has no native scene-chaining; this is the workaround). Only
+        # within a locked single scene (multi-location keeps fresh regen to relocate);
+        # disable with AV_CHAIN_CUTS=0. Tradeoff: continuity vs slow drift over a long
+        # chain — acceptable for a 5-6 cut single-room episode.
+        _av_chain_on = (
+            (card.get("render_style") or "").lower() == "ai_vtuber"
+            and os.getenv("AV_CHAIN_CUTS", "1") != "0"
+            and not _concept_is_multi_location(payload)
+        )
+        if (cc.get("chain_from_prev") or _av_chain_on) and i > 0:
             prev_tag = cuts[i - 1].get("tag")
             prev_mp4 = anim_dir / f"{prev_tag}.mp4"
             if prev_mp4.exists():
