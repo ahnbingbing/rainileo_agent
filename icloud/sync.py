@@ -221,12 +221,18 @@ def _osxphotos_cli() -> str | None:
 
 
 def bulk_export_to(album_name: str, dest_dir: Path, dry_run: bool = False,
-                   since: "dt.date | None" = None) -> bool:
+                   since: "dt.date | None" = None,
+                   uuids: "list[str] | None" = None) -> bool:
     """PD 2026-06-07 (Option A): export the album to `dest_dir` with each file
     named by the photo UUID ({uuid}.<ext>), downloading iCloud-only originals
     via PhotoKit. We then INGEST FROM THESE EXPORTED FILES (our own copies) —
     not from Photos' volatile local path (which Optimize-Mac-Storage keeps
     evicting). Once copied into data/assets, an asset never disappears again.
+
+    PD 2026-06-13: when `uuids` is given, export EXACTLY those items (via
+    --uuid-from-file) instead of the whole album — the caller diffs the album
+    against already-ingested source_uuids and passes only the NEW ones, so a
+    routine sync never re-pulls the archive and no manual date scope is needed.
     Returns True if the export ran."""
     cli = _osxphotos_cli()
     if not cli:
@@ -234,7 +240,9 @@ def bulk_export_to(album_name: str, dest_dir: Path, dry_run: bool = False,
     method = os.getenv("ICLOUD_EXPORT_METHOD", "--use-photokit")
     if dry_run:
         log.info("[dry-run] would run: osxphotos export %s --album %r %s "
-                 "--download-missing --filename {uuid}", dest_dir, album_name, method)
+                 "--download-missing --filename {uuid} (uuids=%s)",
+                 dest_dir, album_name, method,
+                 "all" if not uuids else f"{len(uuids)} new")
         return False
     dest_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
@@ -248,11 +256,18 @@ def bulk_export_to(album_name: str, dest_dir: Path, dry_run: bool = False,
         "--filename", "{uuid}",   # name by UUID so we can map exported→PhotoInfo
         "--retry", "2",
     ]
-    # PD 2026-06-12: WITHOUT this, --download-missing re-downloads EVERY pruned
+    # PD 2026-06-13: scope to an explicit NEW-uuid list (preferred — no date to
+    # remember). Written to a file so a large list never blows the arg limit.
+    uuid_file: Path | None = None
+    if uuids:
+        uuid_file = dest_dir / ".new_uuids.txt"
+        uuid_file.write_text("\n".join(uuids) + "\n")
+        cmd += ["--uuid-from-file", str(uuid_file)]
+    # PD 2026-06-12: WITHOUT scoping, --download-missing re-downloads EVERY pruned
     # original in the album (7306 items under the efficient-storage model). Scope the
     # export to items ADDED to the library on/after `since` so a routine sync only
     # pulls NEW content, not the whole archive.
-    if since:
+    elif since:
         cmd += ["--added-after", since.isoformat()]
     log.info("Option A export (download-missing → %s, filename={uuid}):", dest_dir)
     log.info("  %s", " ".join(cmd))
@@ -446,15 +461,70 @@ def sync_album(
     # from Photos' volatile local path. This makes downloads stick: once copied
     # into data/assets they never disappear (Optimize Mac Storage can't evict
     # our own copies). `export_dir` is consumed by _process_one below.
+    # DB connection opened early so the download step can diff the album against
+    # already-ingested source_uuids (PD 2026-06-13: download NEW items only).
+    con = sqlite3.connect(DB_PATH)
+    ensure_source_uuid_column(con)
+
     export_dir: Path | None = None
     if download_missing:
-        missing_count = sum(1 for p in photos if not p.path)
-        log.info("missing locally: %d / %d album items", missing_count, len(photos))
-        export_dir = ROOT / "data" / "tmp" / "icloud_export"
-        shutil.rmtree(export_dir, ignore_errors=True)
-        if not dry_run:
-            bulk_export_to(album_name, export_dir, dry_run=dry_run,
-                           since=(added_since or since))
+        # PD 2026-06-13: don't make the human remember a date scope. Auto-detect
+        # what's genuinely NEW since the last sync and download only that, so a
+        # routine sync stays small — an unscoped full-album pull (~7306 items →
+        # 37G) once filled the disk to 100% (ENOSPC). See memory
+        # `icloud_export_disk_bomb`.
+        #
+        # "New" is NOT merely "not in DB" — the album holds years of history
+        # (~8000 items were never ingested), and treating all of those as new
+        # would re-create the disk bomb every run. Instead derive a self-advancing
+        # watermark = the newest date_added among items WE'VE ALREADY INGESTED;
+        # anything added AFTER that and not yet ingested is a genuine new addition.
+        ingested = {
+            row[0] for row in con.execute(
+                "SELECT source_uuid FROM assets "
+                "WHERE source_uuid IS NOT NULL AND source_uuid != ''")
+        }
+
+        def _date_added(p):
+            da = getattr(p, "date_added", None)
+            return da.date() if da else None
+
+        ingested_dates = [d for p in photos if p.uuid in ingested
+                          and (d := _date_added(p)) is not None]
+        # explicit scope (--since/--added-since) overrides the auto watermark;
+        # else use newest-ingested date_added; else (empty DB) None = bootstrap.
+        watermark = (added_since or since
+                     or (max(ingested_dates) if ingested_dates else None))
+        if watermark is not None:
+            new_photos = [p for p in photos
+                          if p.uuid not in ingested
+                          and (_date_added(p) or dt.date.min) >= watermark]
+        else:
+            new_photos = [p for p in photos if p.uuid not in ingested]
+        log.info("album=%d, ingested=%d, watermark(date_added)>=%s, NEW to download=%d",
+                 len(photos), len(ingested), watermark, len(new_photos))
+        if not new_photos:
+            log.info("nothing new in the album — skipping download")
+        else:
+            # Safety net: a very large NEW set means either the first-ever
+            # bootstrap or a wiped/empty DB. Don't silently pull the archive and
+            # fill the disk — require an explicit opt-in (or a date scope).
+            full_threshold = int(os.getenv("ICLOUD_NEW_FULL_THRESHOLD", "400"))
+            if (len(new_photos) > full_threshold
+                    and (added_since or since) is None
+                    and os.getenv("ICLOUD_ALLOW_FULL_EXPORT") != "1"):
+                raise SystemExit(
+                    f"{len(new_photos)} new items (likely first bootstrap / empty "
+                    f"DB) — refusing to bulk-download (disk-fill risk). Scope with "
+                    f"--added-since YYYY-MM-DD, or set ICLOUD_ALLOW_FULL_EXPORT=1 "
+                    f"to download them all."
+                )
+            export_dir = ROOT / "data" / "tmp" / "icloud_export"
+            shutil.rmtree(export_dir, ignore_errors=True)
+            if not dry_run:
+                bulk_export_to(album_name, export_dir, dry_run=dry_run,
+                               since=(added_since or since),
+                               uuids=[p.uuid for p in new_photos])
 
     # PD 2026-06-12: when the user ADDS OLD videos (years-old capture dates), filter by
     # date_added — NOT capture date — so they actually register. (--since filters by
@@ -475,8 +545,6 @@ def sync_album(
     PHOTOS_DIR.mkdir(parents=True, exist_ok=True)
     CLIPS_DIR.mkdir(parents=True, exist_ok=True)
 
-    con = sqlite3.connect(DB_PATH)
-    ensure_source_uuid_column(con)
     summary = {
         "considered": len(photos),
         "skipped_existing": 0,

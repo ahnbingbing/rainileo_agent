@@ -50,6 +50,11 @@ CAMERAMAN_VALIDATOR_PROMPT = PROMPTS_DIR / "cameraman_validator.md"
 
 CHARACTER_SHEETS = PROMPTS_DIR / "character_sheets.md"
 SORA_LESSONS = ROOT / "notes" / "sora2_motion_lessons.md"
+# PD 2026-06-13: editing/clip-selection JUDGMENT guide — agent decides format/tempo/
+# trim/length from the original creative intent (not hardcoded). See editing_direction.md.
+EDITING_DIRECTION = PROMPTS_DIR / "editing_direction.md"
+# Companion PALETTE of diverse editing techniques to choose from (anti-default-to-one).
+EDITING_TECHNIQUES = PROMPTS_DIR / "editing_techniques.md"
 PROVEN_MOTION_PROMPTS = ROOT / "notes" / "proven_motion_prompts.json"
 
 WRITER_MODEL = os.getenv("WRITER_MODEL", _models.ANTHROPIC_TEXT)
@@ -333,7 +338,24 @@ def _build_writer_user_prompt(target_date: dt.date, context: dict,
     # anchoring the AV writer back to "카페 첫 방문" despite a snack-time directive.
     _ctx_blob = json.dumps(context, ensure_ascii=False) if isinstance(context, dict) else str(context)
     _pd_directive_active = "[PD 지정 컨셉" in _ctx_blob or "PD 지정" in _ctx_blob
-    if few_shots:
+    # PD 2026-06-12: a "few-shot note" alone did NOT stop the AV writer drifting to
+    # an exemplar's premise — recent high-Giri food/gag concepts re-anchored a
+    # '빛나는 소라' 세계관 훅 directive into "사료 폭풍" (a feeding gag). The exemplar
+    # CONCEPT TEXT is the anchor, not the note. So when a PD-designated concept is
+    # active, drop the exemplars entirely (channel tone already lives in the system
+    # prompt). Reversible via PD_DIRECTIVE_DROPS_FEWSHOTS=0.
+    _drop_fewshots = _pd_directive_active and os.getenv("PD_DIRECTIVE_DROPS_FEWSHOTS", "1") != "0"
+    if _drop_fewshots:
+        body["few_shot_note"] = (
+            "⚠️ A PD-DESIGNATED concept is active (context.arc_directive, marked "
+            "'[PD 지정 컨셉 — 최우선]'). The PD directive ALONE decides WHAT this episode is "
+            "about — subject, location, premise, beats. No few-shot exemplars are "
+            "provided ON PURPOSE: recent high-score concepts (food/cafe/gag episodes) "
+            "would anchor you back to their premise, which is a hard failure here. "
+            "Build the concept from the PD directive only; for caption voice use the "
+            "channel's general tone (TV동물농장 추측형·속마음 / 세나개), not any specific past episode."
+        )
+    elif few_shots:
         body["few_shot_exemplars"] = [
             {
                 "from_date": fs["date"],
@@ -343,22 +365,11 @@ def _build_writer_user_prompt(target_date: dt.date, context: dict,
             }
             for fs in few_shots
         ]
-        if _pd_directive_active:
-            body["few_shot_note"] = (
-                "⚠️ A PD-DESIGNATED concept is active (see context.arc_directive, "
-                "marked '[PD 지정 컨셉 — 최우선]'). The PD directive ALONE decides WHAT this "
-                "episode is about — its subject, location, premise, and beats. These "
-                "few-shot exemplars are ONLY a reference for CAPTION TONE and rhythm. Do "
-                "NOT borrow their location or premise (e.g. if an exemplar is a '카페 첫 "
-                "방문' episode, do NOT make this a cafe episode — follow the PD directive's "
-                "setting instead). Copying the exemplar's concept is a hard failure."
-            )
-        else:
-            body["few_shot_note"] = (
-                "These past concepts scored ≥8 in Giri review. Use them as quality "
-                "anchors for caption tone, story arc, and beat structure. Do NOT "
-                "copy them — they are exemplars, not templates."
-            )
+        body["few_shot_note"] = (
+            "These past concepts scored ≥8 in Giri review. Use them as quality "
+            "anchors for caption tone, story arc, and beat structure. Do NOT "
+            "copy them — they are exemplars, not templates."
+        )
 
     if style_filter:
         instruction = (
@@ -433,6 +444,14 @@ def run_writer(target_date: dt.date, context: dict, *,
             is_realfootage = False
     else:
         story_system = WRITER_STORY_PROMPT.read_text(encoding="utf-8")
+    # PD 2026-06-13: give the Writer the editing/selection JUDGMENT guide too, so the
+    # story's intent already considers format/tempo/caption-timing (agent decides).
+    try:
+        story_system += "\n\n---\n\n## 편집·클립선택 판단 가이드\n\n" \
+            + EDITING_DIRECTION.read_text(encoding="utf-8") \
+            + "\n\n---\n\n" + EDITING_TECHNIQUES.read_text(encoding="utf-8")
+    except Exception as e:
+        log.warning("editing guides unreadable (writer): %s", e)
     critique_system = WRITER_CRITIQUE_PROMPT.read_text(encoding="utf-8")
     revise_system = WRITER_REVISE_PROMPT.read_text(encoding="utf-8")
 
@@ -566,24 +585,30 @@ def run_director(story_concepts: list[dict], context: dict,
     """Run the 1-pass Director: add cinematography to each cut."""
     director_system_base = DIRECTOR_SHOTS_PROMPT.read_text(encoding="utf-8")
 
-    # Load reference materials into system prompt (caching opportunity)
-    refs = []
-    try:
-        refs.append("## CHARACTER SHEETS\n\n" + CHARACTER_SHEETS.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        pass
-    try:
-        refs.append("## VEO/SORA MOTION LESSONS\n\n" + SORA_LESSONS.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        pass
-    try:
-        refs.append(
-            "## PROVEN MOTION PROMPTS\n\n```json\n"
-            + PROVEN_MOTION_PROMPTS.read_text(encoding="utf-8")
-            + "\n```"
-        )
-    except FileNotFoundError:
-        pass
+    # PD 2026-06-12: the Director system was ~91KB (director_shots 50KB + these refs
+    # ~41KB) + 20K output tokens → OpenAI/Gemini TIME OUT on the request (only the slow
+    # Anthropic fallback finished, so every concept pass crawled). CAP each injected
+    # REFERENCE so the prompt stays lean — the core rules live in director_shots.md.
+    # Env DIRECTOR_REF_MAXCHARS (per ref).
+    _refcap = int(os.getenv("DIRECTOR_REF_MAXCHARS", "5000"))
+
+    def _ref(title: str, path, fmt_json: bool = False):
+        try:
+            t = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return None
+        if len(t) > _refcap:
+            t = t[:_refcap] + "\n…(이하 생략 — 핵심만)"
+        return (f"## {title}\n\n```json\n{t}\n```" if fmt_json
+                else f"## {title}\n\n{t}")
+
+    refs = [r for r in (
+        _ref("EDITING & CLIP-SELECTION JUDGMENT", EDITING_DIRECTION),
+        _ref("EDITING TECHNIQUE PALETTE", EDITING_TECHNIQUES),
+        _ref("CHARACTER SHEETS", CHARACTER_SHEETS),
+        _ref("VEO/SORA MOTION LESSONS", SORA_LESSONS),
+        _ref("PROVEN MOTION PROMPTS", PROVEN_MOTION_PROMPTS, fmt_json=True),
+    ) if r]
 
     director_system = director_system_base + "\n\n---\n\n" + "\n\n---\n\n".join(refs)
 
@@ -600,7 +625,8 @@ def run_director(story_concepts: list[dict], context: dict,
         context.get("character_objects", []),
     )
     out_text = _call_anthropic(
-        director_system, user, model=DIRECTOR_MODEL, max_tokens=20000
+        director_system, user, model=DIRECTOR_MODEL,
+        max_tokens=int(os.getenv("DIRECTOR_MAX_TOKENS", "9000"))
     )
     try:
         out = _parse_json_loose(out_text)
@@ -2065,6 +2091,18 @@ def _split_shot_markers_into_cuts(c: dict) -> None:
     if len(cuts) != 1:
         return
     cut = cuts[0]
+    # PD 2026-06-12: this splitter clones the SINGLE source cut into N cuts via
+    # `**cut.items()`, which copies its `asset_id` to every cut. For ai_vtuber
+    # that's correct (N chain cuts from one regen). For REAL_FOOTAGE it means one
+    # real clip is re-trimmed N times → the SAME footage repeats with different
+    # captions ("동일 구간 무한 반복" — the cafe-loop bug). RF cuts must each be a
+    # DISTINCT clip, which only comes from a multi-cut concept (len(cuts)!=1, left
+    # untouched above). So for real_footage we do NOT split: the single clip stays
+    # ONE cut and plays once, with its multiple captions kept as time-spaced scenes
+    # over the clip's real duration. (A 1-clip RF concept = a short single-clip
+    # episode; if it needs more beats the writer must supply more clips.)
+    if (c.get("render_style") or "").lower() == "real_footage":
+        return
     captions = cut.get("captions") or []
     if len(captions) < 2:
         return  # no script beats to split on

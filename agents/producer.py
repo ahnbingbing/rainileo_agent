@@ -554,6 +554,25 @@ def propose_concepts(target: dt.date, context: dict, style_filter: str | None = 
 
 
 REALFOOTAGE_SINGLEPASS_PROMPT = ROOT / "agents" / "prompts" / "realfootage_concept.md"
+# PD 2026-06-13: editing/clip-selection JUDGMENT guide (one-take is occasional, tempo
+# /trim/length serve the Writer-Director's original intent, captions match the EDITED
+# screen, caption reading-time drives cut length). Injected into agent system prompts so
+# the AGENTS decide interactively — NOT hardcoded into producer branches.
+EDITING_DIRECTION_PROMPT = ROOT / "agents" / "prompts" / "editing_direction.md"
+# Companion PALETTE: the menu of diverse editing techniques the agents choose from
+# (one-take / rapid-montage / speed-ramp / day-compilation vlog / twist / slow-mo / …)
+# so they don't default to one mode. editing_direction = judgment; techniques = options.
+EDITING_TECHNIQUES_PROMPT = ROOT / "agents" / "prompts" / "editing_techniques.md"
+
+
+def _editing_direction_block() -> str:
+    out = ""
+    for p in (EDITING_DIRECTION_PROMPT, EDITING_TECHNIQUES_PROMPT):
+        try:
+            out += "\n\n---\n" + p.read_text(encoding="utf-8")
+        except Exception as e:  # never block proposal on a missing guide
+            log.warning("editing guide unreadable (%s): %s", p.name, e)
+    return out
 
 # PD 2026-06-06: a clip used in a real_footage episode is on COOLDOWN for the
 # next N episodes — don't reuse the same footage back-to-back.
@@ -599,6 +618,35 @@ def _recently_used_rf_assets(con: sqlite3.Connection,
                     used.add(aid)
     except Exception as e:
         log.warning("cooldown lookup failed: %s", e)
+    # PD 2026-06-12: ALSO cool down clips used in RECENTLY RENDERED cards (last
+    # RF_COOLDOWN_RECENT_HOURS hours), regardless of upload — a day of미게시 test
+    # renders kept re-picking the SAME cafe clip ("아침부터 계속"). The uploaded-only
+    # cooldown missed those. RF_COOLDOWN_RECENT_HOURS=0 reverts to 2026-06-06
+    # uploaded-only behavior.
+    try:
+        _hrs = int(os.getenv("RF_COOLDOWN_RECENT_HOURS", "24"))
+    except Exception:
+        _hrs = 24
+    if _hrs > 0:
+        try:
+            rows2 = con.execute(
+                "SELECT payload_json FROM cards WHERE render_style='real_footage' "
+                "AND state IN ('rendered','published','archived') "
+                "AND updated_at >= datetime('now', ?) "
+                "ORDER BY updated_at DESC LIMIT ?",
+                (f"-{_hrs} hours", max(n, 8) * 3),
+            ).fetchall()
+            for r in rows2:
+                try:
+                    p = json.loads(r[0] or "{}")
+                except Exception:
+                    continue
+                for c in (p.get("cuts") or []):
+                    aid = c.get("asset_id")
+                    if aid:
+                        used.add(aid)
+        except Exception as e:
+            log.warning("recent-render cooldown lookup failed: %s", e)
     return used
 
 
@@ -663,6 +711,17 @@ def _rf_long_candidates(context: dict) -> list[dict]:
     향후 사용해도 되잖아"); the one-take picks a varied trim_start so re-use differs."""
     _min = float(os.getenv("RF_ONETAKE_MIN_SEC", "12"))
     _excl = set(context.get("exclude_asset_ids") or [])
+    # PD 2026-06-13: ALSO drop clips in the recent-render/upload cooldown. The cafe
+    # clip (med_2025_11_21, the LONGEST at 75s) kept being re-picked as _longs[0] in
+    # back-to-back renders even after it was used+scheduled (232456) — the one-take's
+    # long-candidate path ignored the cooldown. The "different segment another day"
+    # reuse is preserved because the cooldown is time-limited (RF_COOLDOWN_RECENT_HOURS
+    # / last-N uploaded). Set RF_ONETAKE_COOLDOWN=0 to revert.
+    if os.getenv("RF_ONETAKE_COOLDOWN", "1") != "0":
+        try:
+            _excl |= _recently_used_rf_assets(_db())
+        except Exception as e:
+            log.warning("one-take cooldown lookup failed: %s", e)
     pool = (context.get("available_videos") or []) + (context.get("archive_videos") or [])
     longs = [{"id": v.get("id"), "dur": float(v.get("dur") or 0),
               "sc": (v.get("sc") or "")[:240], "date": v.get("date")}
@@ -815,7 +874,8 @@ def _propose_realfootage_onetake(target: dt.date, context: dict,
         + f"distribute exactly {n_caps} captions evenly across the {win:.1f}s timeline "
         "(first starts ~0.2s, ≥2.5s read each, gap-free). Return ONLY JSON: "
         "{\"title\":\"\",\"oneliner\":\"\",\"captions\":[{\"start\":0.2,\"end\":3.0,"
-        "\"ko\":\"\",\"en\":\"\"}]}.")
+        "\"ko\":\"\",\"en\":\"\"}]}."
+        + _editing_direction_block())
     user = (f"clip_id: {cid}\nclip_duration_used: {win:.1f}s\n"
             f"촬영 시점: {_time_phrase or '최근'}\n{_ground}\n"
             + (f"\n[수정 피드백] {prior_feedback}\n" if prior_feedback else "")
@@ -1033,6 +1093,115 @@ def _propose_realfootage_intraclip(target: dt.date, context: dict, long_clip: di
     return [concept]
 
 
+def _collapse_rf_same_clip_segments(c: dict, progress_cb: ProgressCb = None) -> int:
+    """PD 2026-06-12: real_footage cuts must each be a DISTINCT clip. If the writer
+    reused the SAME asset_id across cuts (slicing one clip into segments) those
+    re-trim the same footage → "동일 구간 반복" (the cafe-loop). Merge same-asset cuts
+    into ONE cut that plays the clip from its earliest trim_start for the COMBINED
+    duration, captions re-spaced as time-scenes — the clip plays ONCE instead of
+    restarting per cut. Returns how many cuts were collapsed."""
+    cuts = c.get("cuts") or []
+    if len(cuts) < 2:
+        return 0
+    by_aid: dict = {}
+    order: list = []
+    for cut in cuts:
+        aid = cut.get("asset_id")
+        if not aid:
+            order.append(("_x", cut)); continue
+        if aid not in by_aid:
+            by_aid[aid] = []
+            order.append((aid, None))
+        by_aid[aid].append(cut)
+    if all(len(v) <= 1 for v in by_aid.values()):
+        return 0  # already all-distinct
+    new_cuts: list = []
+    collapsed = 0
+    done: set = set()
+    for aid, lone in order:
+        if aid == "_x":
+            new_cuts.append(lone); continue
+        if aid in done:
+            continue
+        done.add(aid)
+        grp = by_aid[aid]
+        if len(grp) == 1:
+            new_cuts.append(grp[0]); continue
+        collapsed += len(grp) - 1
+        base = dict(grp[0])
+        starts = [float(g.get("trim_start") or 0) for g in grp]
+        total = round(sum(float(g.get("duration_seconds") or g.get("trim_dur") or 5)
+                          for g in grp), 1)
+        base["trim_start"] = min(starts)
+        base["duration_seconds"] = total
+        base.pop("trim_dur", None)
+        caps: list = []
+        for g in grp:
+            caps.extend(g.get("captions") or [])
+        if caps:
+            seg = total / len(caps)
+            for i, cap in enumerate(caps):
+                cap["start"] = round(i * seg + 0.2, 1)
+                cap["end"] = round((i + 1) * seg - 0.1, 1)
+        base["captions"] = caps
+        new_cuts.append(base)
+    if collapsed:
+        c["cuts"] = new_cuts
+        log.info("RF distinct-clip: collapsed %d same-clip segment cut(s) → %d cut(s)",
+                 collapsed, len(new_cuts))
+        if progress_cb:
+            progress_cb(f":scissors: 같은 클립 segment {collapsed}개 합침 → "
+                        f"{len(new_cuts)}개 distinct 컷 (반복 제거)")
+    return collapsed
+
+
+_RF_LOC_CAPTION_HINTS = {
+    "outdoor": ["산책", "산책길", "산책로", "공원", "들판", "풀밭", "흙길", "오솔길", "그늘 아래"],
+    "cafe": ["카페", "진열장", "디저트", "카운터", "테라스"],
+    "home": ["거실", "소파", "주방", "식탁", "집 안", "방 안", "마루", "베란다"],
+}
+
+
+def _rf_loc_category(loc: str) -> str:
+    loc = (loc or "").lower()
+    if any(k in loc for k in ("outdoor", "park", "street", "walk", "garden", "야외")):
+        return "outdoor"
+    if "cafe" in loc or "카페" in loc:
+        return "cafe"
+    if any(k in loc for k in ("home", "living", "kitchen", "bedroom", "집", "거실")):
+        return "home"
+    return ""
+
+
+def _rf_location_contradictions(concept: dict, con) -> list[str]:
+    """PD 2026-06-12: use each clip's location_type to catch captions that
+    CONTRADICT the clip (a cafe/home clip captioned as a "산책/그늘" outdoor walk —
+    "말도 안 되는 내용"). NOT a location-coherence check: diverse locations are fine;
+    only a caption whose implied place conflicts with the clip's actual place is
+    flagged. Returns human-readable contradiction lines for the re-write feedback."""
+    out: list[str] = []
+    for i, cut in enumerate(concept.get("cuts") or []):
+        aid = cut.get("asset_id")
+        if not aid:
+            continue
+        try:
+            r = con.execute("SELECT location_type FROM assets WHERE asset_id=?",
+                            (aid,)).fetchone()
+        except Exception:
+            r = None
+        loc_cat = _rf_loc_category(r[0] if r else "")
+        if not loc_cat:
+            continue
+        caps = cut.get("captions") or []
+        text = " ".join((c.get("ko") or "") for c in caps if isinstance(c, dict)) \
+            or (cut.get("action") or "")
+        implied = [k for k, ws in _RF_LOC_CAPTION_HINTS.items() if any(w in text for w in ws)]
+        if implied and loc_cat not in implied:
+            out.append(f"cut{i+1}: 캡션이 '{'/'.join(implied)}'를 말하는데 클립은 실제 "
+                       f"'{loc_cat}' — 캡션을 이 클립의 위치/내용에 맞춰 다시 써라")
+    return out
+
+
 def _propose_realfootage_singlepass(target: dt.date, context: dict,
                                      progress_cb: ProgressCb = None,
                                      prior_feedback: str = "") -> list[dict]:
@@ -1058,11 +1227,21 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
             # nothing (e.g. intra-clip found <2 segments) fall back to the other, then
             # to the normal montage writer below.
             import hashlib as _hl
+            # PD 2026-06-12: intra-clip montage slices ONE clip into several
+            # segment-cuts (all same asset_id) — on a near-static clip (e.g. a cafe
+            # table shot) that reads as "동일 구간 무한 반복". PD: "반복으로 동영상을 짜르는게
+            # 문제". DISABLE it by default; only one-take (ONE continuous segment, not
+            # repeated) remains as the occasional single-clip option. Re-enable with
+            # RF_INTRACLIP=1.
+            _intra_on = os.getenv("RF_INTRACLIP", "0") == "1"
             _prefer_intra = (int(_hl.sha1(f"intra|{target.isoformat()}".encode())
                                  .hexdigest(), 16) % 2 == 0)
-            _order = ([_propose_realfootage_intraclip, _propose_realfootage_onetake]
-                      if _prefer_intra else
-                      [_propose_realfootage_onetake, _propose_realfootage_intraclip])
+            if not _intra_on:
+                _order = [_propose_realfootage_onetake]
+            elif _prefer_intra:
+                _order = [_propose_realfootage_intraclip, _propose_realfootage_onetake]
+            else:
+                _order = [_propose_realfootage_onetake, _propose_realfootage_intraclip]
             for _fn in _order:
                 try:
                     res = _fn(target, context, _longs[0], progress_cb, prior_feedback)
@@ -1075,7 +1254,7 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         if prior_feedback:
             msg += " — 기리 피드백 반영 재작성"
         progress_cb(msg)
-    system = REALFOOTAGE_SINGLEPASS_PROMPT.read_text(encoding="utf-8")
+    system = REALFOOTAGE_SINGLEPASS_PROMPT.read_text(encoding="utf-8") + _editing_direction_block()
     # Feed both videos (Tier 1) and photos (Tier 2). PD 2026-06-06: photos are
     # NOT dropped anymore — every photo cut is animated via Seedance photo_i2v
     # so the writer can use a photo for the payoff/closer and still get motion.
@@ -1165,7 +1344,11 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         # ONE of these whole as a 1-2 cut one-take instead of trimming a montage.
         "long_clip_candidates": _long,
         "available_videos": avail_videos,
-        "available_photos": _photos[:100],
+        # PD 2026-06-13: RF kept choosing photo_i2v (gen) even with 446 real video
+        # clips available, then the gen segments drifted Ryani's markings ("실제
+        # 동영상 쓸 자리에 gen"). RF_VIDEO_ONLY empties the photo pool so the writer
+        # MUST ground every cut in a real video clip; photo_i2v becomes impossible.
+        "available_photos": [] if os.getenv("RF_VIDEO_ONLY", "0") == "1" else _photos[:100],
         # PD 2026-06-07: archive (older) clips for past⇄present memory-lane /
         # character-intro episodes. Each has years_ago — if you use one, the
         # caption MUST state the time point ("○년 전", "입양 첫날", "그때는…").
@@ -1229,9 +1412,41 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     for c in concepts:
         c["render_style"] = "real_footage"
         c["author"] = "realfootage_singlepass"
+        # PD 2026-06-12: ROOT FIX for the cafe-loop. The writer sometimes takes ONE
+        # clip and slices it into N "segment" cuts (different trim_start of the SAME
+        # asset_id) — on a near-static clip that reads as "동일 구간 무한 반복". RF cuts
+        # must each be a DISTINCT clip; same-clip segment cuts are collapsed into a
+        # SINGLE continuous-playthrough cut (captions re-spaced), so the clip plays
+        # once instead of restarting per cut. PD: "반복으로 동영상을 짜르는게 문제".
+        _collapse_rf_same_clip_segments(c, progress_cb)
         # PD 2026-06-08: do NOT force finale=video. A photo_i2v finale / Ryani
         # zoom is fine WHEN the quality (marking accuracy) is good — the quality
         # gate decides, not a blanket rule. (Earlier blanket auto-swap removed.)
+    # PD 2026-06-12: deterministic location-CONTRADICTION gate. Use each clip's
+    # location_type to catch captions that contradict the clip (a cafe/home clip
+    # captioned as a "산책/그늘" outdoor walk — episode 193447). This is NOT a
+    # coherence check — diverse locations are fine; only a caption whose implied
+    # place conflicts with the clip's actual place is flagged. On contradiction,
+    # re-write ONCE with the specifics as feedback ("[위치검증]" sentinel bounds it).
+    if "[위치검증]" not in prior_feedback:
+        try:
+            _con_chk = _db()
+            _contras: list = []
+            for c in concepts:
+                _contras += _rf_location_contradictions(c, _con_chk)
+            _con_chk.close()
+        except Exception as e:
+            log.warning("RF location-contradiction check failed: %s", e)
+            _contras = []
+        if _contras:
+            if progress_cb:
+                progress_cb(f":mag: 위치검증 — 캡션이 클립 위치와 모순 {len(_contras)}건 → 재작성")
+            _fb = ("[위치검증] 아래 컷의 캡션이 클립의 실제 위치/내용과 모순된다. 각 캡션을 "
+                   "그 클립이 실제 보여주는 위치·내용에 맞춰 다시 써라(장소가 바뀌면 전환을 "
+                   "캡션에 명시):\n" + "\n".join(_contras)
+                   + (("\n\n[이전 피드백]\n" + prior_feedback) if prior_feedback else ""))
+            return _propose_realfootage_singlepass(target, context, progress_cb,
+                                                   prior_feedback=_fb)
     # PD 2026-06-06: persist the stage artifact so we can trace WHERE a
     # problem (e.g. subject/object reversal) was introduced.
     try:
@@ -1719,6 +1934,20 @@ def _giri_review_realfootage(video: Path, concept: dict, target: dt.date,
                 if progress_cb:
                     progress_cb(":detective: 얼굴 노출 검사 중 (has_human 컷 있음)...")
                 face, _n = video_has_face(video)
+                # PD 2026-06-12: the dense scan short-circuits on ONE frame and has
+                # false-positived (called legs/lower-body a face) — that forced a
+                # clean 업로드 episode (164341, Giri 9/10, "최소수정안 없음") into a worse
+                # re-render. When the Giri LLM ITSELF concluded upload-clean (no
+                # human-face problem), require a STRICTER confirmation (≥2 frames)
+                # before invoking the HARD face rule.
+                if face:
+                    _giri_clean = (str(report.get("최종_결정", "")).strip() == "업로드"
+                                   and "얼굴" not in str(report.get("가장_큰_문제", "")))
+                    if _giri_clean:
+                        face, _n = video_has_face(video, min_hits=2)
+                        if not face and progress_cb:
+                            progress_cb(":mag: 얼굴 1프레임 의심됐으나 정밀확인(≥2프레임) 미검출 "
+                                        "+ Giri 업로드판정 — 오탐 처리(업로드 유지)")
                 if face:
                     report["판정"] = "수정 필요"
                     report["_face_violation"] = True

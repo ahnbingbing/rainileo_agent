@@ -108,6 +108,32 @@ def publish_at_for(target: dt.date, hhmm: str) -> str:
     return when.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _pinned_episode_for(target: dt.date, lane: str, hhmm: str) -> dict | None:
+    """PD 2026-06-12: a pre-rendered episode PINNED to this (date, lane, slot) —
+    e.g. PD promoted a great test render to a future slot via
+    `scripts/pin_episode.py`. A pin is a `cards` row with state='rendered',
+    matching date + render_style(lane), an on-disk output_video_path, NOT yet
+    uploaded, whose youtube_publish_at equals this slot's publish time. When one
+    exists, launch SKIPS propose+render and just schedules that file. Returns
+    {"output": Path, "title": str} or None."""
+    try:
+        from agents.producer import _db
+        con = _db()
+        pa = publish_at_for(target, hhmm)
+        row = con.execute(
+            "SELECT output_video_path, theme FROM cards WHERE date=? "
+            "AND render_style=? AND youtube_publish_at=? AND uploaded=0 "
+            "AND state='rendered' AND output_video_path IS NOT NULL "
+            "ORDER BY updated_at DESC LIMIT 1",
+            (target.isoformat(), lane, pa)).fetchone()
+        con.close()
+        if row and row[0] and Path(row[0]).exists():
+            return {"output": Path(row[0]), "title": row[1] or ""}
+    except Exception as e:
+        log.warning("pin lookup failed (%s %s %s): %s", target, lane, hhmm, e)
+    return None
+
+
 def _propose_n_for_lane(target: dt.date, context: dict, lane: str, n: int,
                         progress_cb=None) -> list[dict]:
     """Get `n` distinct concepts for one lane. propose_concepts returns 1-2 per
@@ -202,8 +228,9 @@ def launch_pipeline(target: dt.date, *,
                 r = slack_client.chat_postMessage(
                     channel=slack_channel,
                     text=(f":clapper: *{hhmm} {lane_lbl}* — {target.isoformat()} "
-                          f"제작 시작 (이 쓰레드에 진행상황·결과영상. 취소하려면 "
-                          f"이 쓰레드에 `veto` 라고 답글)"))
+                          f"제작 시작 (이 쓰레드에 진행상황·결과영상."
+                          + (" 취소하려면 이 쓰레드에 `veto` 라고 답글)" if do_upload
+                             else " ⚠️ 검수용 — 자동 공개 안 함, PD 확인 후 예약)")))
                 slot_ts = r.get("ts")
             except Exception as e:
                 log.warning("slot thread open failed (%s %s): %s", hhmm, lane, e)
@@ -225,7 +252,9 @@ def launch_pipeline(target: dt.date, *,
                     slack_client.files_upload_v2(
                         channel=slack_channel, thread_ts=slot_ts, file=str(p),
                         title=Path(p).name,
-                        initial_comment=":movie_camera: 결과 — 취소하려면 이 쓰레드에 `veto` 라고 답글")
+                        initial_comment=(":movie_camera: 결과 — 취소하려면 이 쓰레드에 `veto` 라고 답글"
+                                         if do_upload else
+                                         ":movie_camera: 결과 (검수용 — 자동 공개 안 함, PD 확인 후 예약)"))
                     return
                 except Exception as e:
                     log.warning("slot video upload failed: %s", e)
@@ -239,10 +268,20 @@ def launch_pipeline(target: dt.date, *,
         # skips blocked concepts). Render-fail retry (×AV_MAX_RETRIES=3) is separate
         # and lives INSIDE produce_and_render. RF keeps 1 propose (it has its own Giri
         # retry loop). Pass batch_used_assets so each slot avoids the others' clips.
+        # PD 2026-06-12: a pre-rendered episode pinned to THIS slot? If so, skip
+        # propose+render entirely and just publish that file at this slot's time.
+        pin = _pinned_episode_for(target, lane, hhmm) if not dry_run else None
         max_repropose = int(os.getenv("AV_BLOCK_REPROPOSE", "5")) if lane == "ai_vtuber" else 1
         concept = None
         outs: list = []
+        if pin:
+            sp(f":pushpin: {hhmm} {lane_lbl} — 예약된 렌더 사용(재렌더 생략): "
+               f"{Path(pin['output']).name}")
+            concept = {"title": pin.get("title") or "예약 에피소드", "cuts": []}
+            outs = [pin["output"]]
         for _att in range(1, max_repropose + 1):
+            if pin:
+                break
             suffix = f" (재제안 {_att}/{max_repropose})" if _att > 1 else ""
             sp(f":bulb: {hhmm} {lane_lbl} 컨셉 생성 중...{suffix}")
             ctx = dict(context)

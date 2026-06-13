@@ -38,10 +38,17 @@ PHOTOS_CHANNEL = os.getenv("SLACK_PHOTOS_CHANNEL", "C0B5TEX2LQZ")
 EPISODE_CHANNEL = os.getenv("SLACK_EPISODE_CHANNEL", "C0B6Q1TDYCQ")
 BACKGROUND_CHANNEL = os.getenv("SLACK_BACKGROUND_CHANNEL", "C0B5TGGB9J9")
 REFERENCES_CHANNEL = os.getenv("SLACK_REFERENCES_CHANNEL", "C0B60EC81NX")
+# PD 2026-06-12: live agent channel — PD chats here and a headless Claude Code
+# (`claude -p`) runs against the repo with full tools and replies (full perms).
+BOARD_CHANNEL = os.getenv("SLACK_BOARD_CHANNEL")
+BOARD_PD_USER = os.getenv("SLACK_PD_USER_ID", "U0B166M9C9F")
 
 # Global stop flag — set by "중지/stop" command, checked by all background work
 import threading
 _stop_flag = threading.Event()
+# Serialize board agent runs (one claude session at a time) + persist session id.
+_board_lock = threading.Lock()
+_BOARD_SESSION_FILE = ROOT / "data" / "board_session.txt"
 
 app = App(
     token=os.environ["SLACK_BOT_TOKEN"],

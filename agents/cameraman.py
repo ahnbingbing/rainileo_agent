@@ -1272,6 +1272,11 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
 
     # ── Regen prompts (ai_vtuber / cartoon_sticker — concept-driven) ──
     if style in ("ai_vtuber", "cartoon_sticker"):  # cartoon_sticker legacy → same as ai_vtuber
+        # PD 2026-06-13: eye-dot text REMOVED (canon: NO white dot above the eyes —
+        # the old text here was hallucinating eyebrow dots into every regen) and the
+        # floor-crumb behavior trait REMOVED from the always-injected preserve (it
+        # made the image model render Ryani nose-down floor-sniffing in EVERY cut
+        # with no scene direction; the trait is cafe-context-only per canon).
         preserve = (
             "The pet's breed, fur color, markings, AND SEX must be preserved "
             "exactly. "
@@ -1279,16 +1284,17 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
             "channel's 랴니엄마). Smooth feminine underbelly, NO male "
             "genitalia of any kind. Petite/refined feminine build, NOT "
             "muscular male. THIN Boston Terrier-style white blaze (a NARROW "
-            "line, NOT a thick wide splash) from nose to forehead, white "
-            "dot above each eye, silver-grey aged muzzle, white chin, "
+            "line, NOT a thick wide splash) from nose to forehead, NO white "
+            "dot or spot above or on the eyes (the area above the eyes stays "
+            "solid black), silver-grey aged muzzle, white chin, "
             "white chest patch. Only black/white/grey — no brown. "
             "ABSOLUTELY NO TAIL (French Bulldog — her rear is bare and "
             "tailless; never render any tail). "
             "Leo is MALE (he/him, 8mo young male orange tabby — channel's "
             "아들 레오). "
-            "Behavior trait: when food drops to the floor, RYANI is the "
-            "crumb specialist who picks it up — Leo does not eat off the "
-            "floor."
+            "BOTH pets bare-furred: NO collar, NO harness, NO clothing, NO "
+            "accessories. The pets take ONLY the pose/action stated in the "
+            "scene direction — do NOT default to nose-down floor-sniffing."
         )
 
         # Get regen direction from concept (priority) or generate generic
@@ -1317,7 +1323,19 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
             if mode in ("ref", "interp"):
                 continue
             subjects = item.get("asset", {}).get("subjects_csv", "pet")
-            per_cut_prompt = cc.get("regen_prompt", "")
+            # PD 2026-06-13 (무더위 사고 근본원인): regen_prompt가 비면 스타일+캐릭터
+            # canon만 남아 이미지 모델이 장소를 임의로(실내 마룻바닥) 채운다. Director의
+            # 컷별 장면 지시(action/scene/beat)를 폴백 체인으로 반드시 주입 — 컷의
+            # 장소·포즈·액션이 regen에 도달해야 멀티장소 여정이 산다.
+            per_cut_prompt = (cc.get("regen_prompt")
+                              or cc.get("scene")
+                              or cc.get("action")
+                              or item.get("action")
+                              or "")
+            if not per_cut_prompt:
+                log.warning("regen_prompts: cut %s has NO scene direction "
+                            "(regen_prompt/scene/action all empty) — image model "
+                            "will invent the location", tag)
             full_prompt = f"{overall_style}. {per_cut_prompt}. " \
                           f"Featuring {subjects}. {preserve}"
             regen[tag] = full_prompt
@@ -1367,10 +1385,11 @@ def _retime_cut_scenes(scenes: list, clip_dur: float, min_read: float = 2.5,
     scenes = [s for s in (scenes or []) if (s.get("ko") or s.get("en"))]
     if not scenes or is_wink:
         return scenes
-    span = max(float(clip_dur or 0) or (len(scenes) * min_read), min_read)
-    max_n = max(1, int(span / min_read))
-    if len(scenes) > max_n:
-        scenes = scenes[:max_n]
+    # PD 2026-06-13 (#4): do NOT drop captions to fit a short clip — the burn-time
+    # _fit_caption_reading_time extends the cut so every caption gets read-time. Keep
+    # all scenes; span just needs to hold them at >= min_read each.
+    span = max(float(clip_dur or 0) or (len(scenes) * min_read),
+               len(scenes) * min_read, min_read)
     n = len(scenes)
     for j, s in enumerate(scenes):
         s["start"] = round(0.1 if j == 0 else j * span / n, 2)
@@ -1616,11 +1635,135 @@ def _hold_final_caption(manifests: dict, in_dir: Path) -> None:
         log.warning("hold final caption failed: %s", e)
 
 
+def _caption_read_time(text: str) -> float:
+    """PD 2026-06-13 (#4): seconds a caption needs ON SCREEN to be READ, scaled by
+    length. A long Korean line needs more than the flat 2.5s floor. Tunable via
+    CAPTION_READ_BASE_SEC / CAPTION_READ_PER_CHAR / CAPTION_MIN_SEC / CAPTION_READ_MAX_SEC."""
+    t = (text or "").replace("\n", " ").strip()
+    base = float(os.getenv("CAPTION_READ_BASE_SEC", "0.9"))
+    per = float(os.getenv("CAPTION_READ_PER_CHAR", "0.13"))
+    floor = float(os.getenv("CAPTION_MIN_SEC", "2.5"))
+    cap = float(os.getenv("CAPTION_READ_MAX_SEC", "7.0"))
+    return max(floor, min(cap, base + per * len(t)))
+
+
+def _fit_caption_reading_time(manifests: dict, in_dir: Path, progress_cb=None) -> None:
+    """PD 2026-06-13 (#4): caption READING TIME drives cut length — 캡션이 길면 영상도
+    길어져야 한다. For each cut, if the footage isn't long enough to read every caption
+    (length-scaled) plus a final 여운 tail, EXTEND the cut by holding its last frame
+    (no motion distortion); then spread the scenes gap-free (each ≥ its read-time) so
+    the last caption lingers to the end (여운). Generalizes _hold_final_caption, which
+    only stretched the JSON and never the video (a clip ending at its last caption had
+    zero 여운). Fail-safe; disable with CAPTION_FIT_EXTEND=0."""
+    # Scope: only real_footage (real clips, vlog reading-pace, no blanket speed-up).
+    # AV/sticker/t2v keep their existing pacing (1.3× default) — pinning tempo there
+    # would change their intended rhythm. Non-RF → old behavior, zero regression.
+    if (manifests.get("style") or "").lower() != "real_footage" \
+            or os.getenv("CAPTION_FIT_EXTEND", "1") == "0":
+        _hold_final_caption(manifests, in_dir)
+        return
+    try:
+        cap_path = Path(manifests.get("captions") or "")
+        if not cap_path.exists():
+            return
+        data = json.loads(cap_path.read_text(encoding="utf-8"))
+        tail = float(os.getenv("CAPTION_TAIL_SEC", "0.8"))
+        # assemble_episode speeds each cut by _tempo_factors[tag] (else its 1.3
+        # default), which would SHRINK the reading time we fit here. Captions are
+        # burned PRE-speed, so we fit in cut-timeline = display × speed, and pin the
+        # cut's tempo so the fit survives assembly. No explicit agent choice → 1.0.
+        tempos = data.get("_tempo_factors")
+        tempos = tempos if isinstance(tempos, dict) else {}
+        changed = False
+        for tag, body in data.items():
+            if tag.startswith("_") or not isinstance(body, dict):
+                continue
+            scenes = [s for s in (body.get("scenes") or [])
+                      if isinstance(s, dict) and (s.get("ko") or s.get("en"))]
+            if not scenes:
+                continue
+            mp4 = Path(in_dir) / f"{tag}.mp4"
+            if not mp4.exists():
+                continue
+            try:
+                clip_dur = float(subprocess.run(
+                    ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                     "-of", "default=nw=1:nk=1", str(mp4)],
+                    capture_output=True, text=True, timeout=15).stdout.strip() or 0)
+            except Exception:
+                clip_dur = 0.0
+            if clip_dur <= 0.1:
+                continue
+            # Effective playback speed for this cut at assembly time. Honor an explicit
+            # agent tempo choice; otherwise pin to 1.0 so the reading time survives.
+            try:
+                speed = float(tempos.get(tag)) if tempos.get(tag) is not None else 1.0
+            except (TypeError, ValueError):
+                speed = 1.0
+            tempos[tag] = speed  # record so assemble doesn't apply its 1.3 default
+            # Work in CUT-timeline seconds = display-seconds × speed.
+            reads = [_caption_read_time(s.get("ko") or s.get("en")) * speed
+                     for s in scenes]
+            total_read = sum(reads)
+            needed = round(total_read + tail * speed, 2)
+            # 1) Extend the real video (freeze last frame) when captions need more time.
+            #    Re-probe the result — tpad's added length can differ from requested.
+            if needed > clip_dur + 0.4:
+                pad = round(needed - clip_dur, 2)
+                tmp = mp4.with_suffix(".fit.mp4")
+                try:
+                    subprocess.run(
+                        ["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-i", str(mp4),
+                         "-vf", f"tpad=stop_mode=clone:stop_duration={pad}",
+                         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", str(tmp)],
+                        check=True, timeout=180)
+                    tmp.replace(mp4)
+                    clip_dur = float(subprocess.run(
+                        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                         "-of", "default=nw=1:nk=1", str(mp4)],
+                        capture_output=True, text=True, timeout=15).stdout.strip()
+                        or clip_dur)
+                    if progress_cb:
+                        progress_cb(f":hourglass_flowing_sand: 캡션 읽을 시간 확보 — "
+                                    f"{tag} +{pad:.1f}s 연장")
+                except Exception as e:
+                    log.warning("caption-fit extend failed for %s: %s", tag, e)
+                    try:
+                        tmp.unlink()
+                    except Exception:
+                        pass
+            # 2) Spread scenes gap-free, proportional to read-time, last holds to end (여운).
+            #    Everything is bounded by the ACTUAL clip_dur so no caption overruns it.
+            usable = max(total_read, clip_dur - tail * speed)
+            scale = (usable / total_read) if total_read > 0 else 1.0
+            cursor = 0.1
+            n = len(scenes)
+            for j, s in enumerate(scenes):
+                s["start"] = round(min(cursor, max(clip_dur - 0.5, 0.1)), 2)
+                cursor += reads[j] * scale
+                s["end"] = round(min(clip_dur - 0.03,
+                                     cursor if j < n - 1 else clip_dur - 0.03), 2)
+                if s["end"] <= s["start"]:
+                    s["end"] = round(min(clip_dur - 0.03, s["start"] + 0.5), 2)
+            body["scenes"] = scenes
+            changed = True
+        if changed:
+            data["_tempo_factors"] = tempos  # pin fitted cuts' speed (default 1.0)
+            cap_path.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                                encoding="utf-8")
+    except Exception as e:
+        log.warning("fit caption reading time failed: %s", e)
+        try:
+            _hold_final_caption(manifests, in_dir)
+        except Exception:
+            pass
+
+
 def _burn_captions_cmd(manifests: dict, in_dir: Path, out_dir: Path) -> list[str]:
     """Build burn_captions.py command with optional font override from Director.
-    Also holds the final caption to the last clip's end (여운) — done here so all
+    Also fits caption reading-time → cut length + 여운 (#4) — done here so all
     burn call sites get it for free."""
-    _hold_final_caption(manifests, in_dir)
+    _fit_caption_reading_time(manifests, in_dir)
     cmd = [
         "python3", "scripts/burn_captions.py",
         "--manifest", manifests["captions"],
@@ -1897,7 +2040,8 @@ def _append_character_canon(prompt: str) -> str:
             "Ryani is a SPAYED FEMALE 11-year-old senior French Bulldog "
             "(she/her). Markings CONSISTENT: THIN Boston Terrier-style white "
             "blaze (a narrow line, NOT a wide splash) from nose to forehead, "
-            "white dot above each eye, silver-grey aged muzzle, white chin, "
+            "NO white dot above the eyes (eye area stays solid black), "
+            "silver-grey aged muzzle, white chin, "
             "large white chest patch, bat ears, ABSOLUTELY NO TAIL, petite "
             "refined feminine body (NOT muscular), only black/white/grey — no "
             "brown. Keep her EXACTLY as in the source photo."
@@ -2082,6 +2226,56 @@ def _cut_face_ok(mp4_path: Path, n_frames: int = 4) -> bool:
         return True
 
 
+def _source_face_visible(photo_path, who: str) -> bool:
+    """PD 2026-06-12: BEFORE animating a photo_i2v cut, check whether the named
+    pet's FACE is clearly visible in the SOURCE still. If Ryani is prone /
+    face-away / head buried, Seedance i2v INVENTS a wrong face the moment the
+    motion lifts her head (PD: "랴니가 엎드려서 첫 씬에서 얼굴 안 보일 때도 랴니 얼굴
+    결국 만들거면, 생성할 때 정면 샷을 꼭 써야지"). When the face is NOT visible the caller
+    switches to ref mode with a frontal Ryani reference instead of trusting the
+    source. Returns True = face clearly visible (i2v from source is safe),
+    False = hidden (use frontal ref). Fail-OPEN (True) on no API / non-photo /
+    error — never block a render."""
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key or who not in ("ryani", "leo", "both"):
+        return True
+    p = Path(photo_path)
+    mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+            ".webp": "image/webp"}.get(p.suffix.lower())
+    if not p.exists() or not mime:  # skip heic / unknown — fail open
+        return True
+    # We only need to guard RYANI's face (Leo's cat face drifts less and PD's
+    # complaint is specifically Ryani). If the cut is leo-only, nothing to check.
+    target = ("the small black French Bulldog (Ryani — white muzzle blaze)"
+              if who in ("ryani", "both") else None)
+    if not target:
+        return True
+    try:
+        from google import genai as _g
+        from google.genai import types as _gt
+        client = _g.Client(api_key=api_key, http_options=_gt.HttpOptions(
+            timeout=int(os.getenv("VLM_TIMEOUT_MS", "90000"))))
+        prompt = (
+            f"In this source photo, is the FACE of {target} clearly visible and "
+            "roughly frontal or 3/4 (both the eyes and the muzzle showing) — i.e. "
+            "NOT lying face-down, NOT turned fully away, NOT with the head hidden / "
+            "buried / cropped out? Judge the FACE only. Return ONLY JSON "
+            '{"face_visible": true|false}.'
+        )
+        parts = [_gt.Part.from_bytes(data=p.read_bytes(), mime_type=mime), prompt]
+        resp = client.models.generate_content(
+            model=os.getenv("VLM_MODEL", "gemini-2.5-flash"), contents=parts,
+            config=_gt.GenerateContentConfig(response_mime_type="application/json"))
+        t = re.sub(r"^```(?:json)?\s*|\s*```$", "", (resp.text or "").strip())
+        data = json.loads(t)
+        if isinstance(data, list):
+            data = data[0] if data and isinstance(data[0], dict) else {}
+        return bool(data.get("face_visible", True)) if isinstance(data, dict) else True
+    except Exception as e:
+        log.warning("source face check failed for %s: %s", photo_path, e)
+        return True
+
+
 def _prerender_photo_i2v_cuts(manifests: dict, work_dir: Path,
                                 progress_cb: ProgressCb = None,
                                 dry_run: bool = False) -> None:
@@ -2113,6 +2307,32 @@ def _prerender_photo_i2v_cuts(manifests: dict, work_dir: Path,
             log.warning("photo_i2v: photo not found for %s", tag)
             continue
         out_mp4 = work_anim / f"{tag}.mp4"
+        # Who is in this cut? (used by the frontal-ref guard below AND the
+        # per-cut marking gate further down — compute once.)
+        who = ""
+        for ccx in (manifests.get("concept_cuts") or []):
+            if (ccx.get("tag") or ccx.get("cut_tag")) == tag:
+                who = (ccx.get("who") or "").lower(); break
+        # PD 2026-06-12: if Ryani is in this cut but her face is HIDDEN in the
+        # source still (prone / face-away), animating it i2v makes Seedance invent
+        # a wrong face when the motion lifts her head. Switch to ref mode with the
+        # frontal Ryani reference (ryani_solo.png) instead of trusting the source.
+        # BytePlus can't mix first_frame + reference_image, so ref mode drops the
+        # source scene — an accepted trade for a correct face. Gate: PHOTO_I2V_FRONTAL_REF.
+        frontal_refs: list = []
+        if (os.getenv("PHOTO_I2V_FRONTAL_REF", "1") != "0" and not dry_run
+                and who in ("ryani", "both")
+                and not _source_face_visible(photo_path, "ryani")):
+            _rr = _resolve_ref("ryani_solo")
+            if _rr:
+                frontal_refs = [_rr]
+                if who == "both":
+                    _lr = _resolve_ref("leo_solo")
+                    if _lr:
+                        frontal_refs.append(_lr)
+                if progress_cb:
+                    progress_cb(f":bust_in_silhouette: {tag} — 소스에 랴니 얼굴 안 보임, "
+                                "정면 레퍼런스(ref 모드)로 생성")
         # PD 2026-06-06: the PET (character) must visibly move, not just a
         # camera zoom — same way ai_vtuber drives Seedance: a character-action
         # prompt with the camera held still. BUT keep it NATURAL, not dramatic:
@@ -2155,15 +2375,28 @@ def _prerender_photo_i2v_cuts(manifests: dict, work_dir: Path,
             # uses) so the animated photo doesn't drift into a different-looking
             # pet ("랴니가 완전 다른 캐릭터").
             prompt = _append_character_canon(prompt)
-            cmd = [
-                "python3", "scripts/animate_seedance_i2v.py",
-                "--mode", "i2v",
-                "--image", str(photo_path),
-                "--prompt", prompt,
-                "--seconds", seconds,
-                "--model", photo_model,
-                "--output", str(out_mp4),
-            ]
+            if frontal_refs:
+                # ref mode: frontal character reference(s), NO source first_frame.
+                cmd = [
+                    "python3", "scripts/animate_seedance_i2v.py",
+                    "--mode", "ref",
+                    "--prompt", prompt,
+                    "--seconds", seconds,
+                    "--model", photo_model,
+                    "--output", str(out_mp4),
+                ]
+                for _rp in frontal_refs:
+                    cmd.extend(["--ref-image", str(_rp)])
+            else:
+                cmd = [
+                    "python3", "scripts/animate_seedance_i2v.py",
+                    "--mode", "i2v",
+                    "--image", str(photo_path),
+                    "--prompt", prompt,
+                    "--seconds", seconds,
+                    "--model", photo_model,
+                    "--output", str(out_mp4),
+                ]
             _run(cmd,
                  f":frame_with_picture: [0/3] Photo→i2v {tag} (char-motion 시도 {attempt+1})",
                  progress_cb, dry_run)
@@ -2199,10 +2432,6 @@ def _prerender_photo_i2v_cuts(manifests: dict, work_dir: Path,
         # output. If Ryani's blaze drifted (frontal + wrong), DISCARD and swap in a
         # real video clip — no Seedance distortion. (rf side of the per-cut gate.)
         if not dry_run:
-            who = ""
-            for ccx in (manifests.get("concept_cuts") or []):
-                if (ccx.get("tag") or ccx.get("cut_tag")) == tag:
-                    who = (ccx.get("who") or "").lower(); break
             marking_bad = (who in ("ryani", "leo", "both")
                            and not _cut_character_ok(out_mp4, who))
             # PD 2026-06-10: ALSO swap when the face itself is AI-corrupted (orb /
@@ -2712,8 +2941,17 @@ def _vlm_pet_crop_filter(src_path: Path, trim_start: float = 0.0,
                 y0 = min(float(f["y"]) for f in seen_frac)
                 x1 = max(float(f["x"]) + float(f["w"]) for f in seen_frac)
                 y1 = max(float(f["y"]) + float(f["h"]) for f in seen_frac)
-                face_union = {"x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0}
-                human = face_union  # slide the window away from the whole face span
+                # PD 2026-06-13: the crop only has to hide the FIDO-recognizable
+                # region (EYES + NOSE), NOT the whole head. "코 아래만 보이는 건 OK."
+                # Shrink the avoid-target to the TOP band of the face box (eyes+nose
+                # ≈ upper 60%) so the crop excludes ONLY that — keeping a WIDE framing
+                # instead of zooming into the pet to remove the entire face (ep 234320
+                # turned into an extreme fur close-up). The lower face (mouth/chin,
+                # below the nose) is allowed to stay in frame.
+                _avoid_top = float(os.getenv("FACE_AVOID_TOP_FRAC", "0.6"))
+                face_union = {"x": x0, "y": y0,
+                              "w": x1 - x0, "h": (y1 - y0) * _avoid_top}
+                human = face_union  # slide the window away from the eyes+nose band
         except Exception:
             pass
         # ★ ROTATION FIX (PD 2026-06-06): use the EXTRACTED FRAME's dims
@@ -3246,6 +3484,7 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
         _prune_missing_cuts(manifests, anim_dir, progress_cb)
 
     # Step 1c: burn captions on trimmed clips.
+    manifests["style"] = "real_footage"  # enables caption reading-time fit (#4)
     captioned_dir = ROOT / "data" / "output" / "animated_captioned"
     _run(
         _burn_captions_cmd(manifests, anim_dir, captioned_dir),
@@ -3344,8 +3583,12 @@ def run_cartoon_sticker_pipeline(manifests: dict, card: dict, work_dir: Path,
         }
         for item in cuts:
             subjects = item.get("asset", {}).get("subjects_csv", "pet")
+            # PD 2026-06-13: include the cut's own scene direction (action) so the
+            # image model doesn't invent the location (same fix as ai_vtuber path).
+            _scene = item.get("action") or ""
             regen[item["tag"]] = (
-                f"{cartoon_style}, featuring {subjects} in a {theme} scene. {preserve}"
+                f"{cartoon_style}, featuring {subjects} in a {theme} scene. "
+                f"{_scene}. {preserve}"
             )
         regen_path = work_dir / "regen_prompts.json"
         regen_path.write_text(json.dumps(regen, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -3365,12 +3608,33 @@ def run_cartoon_sticker_pipeline(manifests: dict, card: dict, work_dir: Path,
         progress_cb(":art: [2/6] AI 캐릭터 생성 시작...")
     if not dry_run:
         from scripts.generate_character_scene import generate_batch
+        # PD 2026-06-12: build a concept-grounded character ref (Ryani+Leo in THIS
+        # scene) and pin every cut's regen to it so the scene doesn't drift.
+        concept_ref = None
+        if os.getenv("AV_CONCEPT_REF", "1") != "0":
+            concept_ref = _build_concept_char_ref(payload, regen_dir, progress_cb)
+        # PD 2026-06-13: SCENE LOCK pins every cut to the concept-ref's FIRST location,
+        # which COLLAPSED a multi-location journey (무더위: 분수광장→거실 선풍기→욕실
+        # 세면대 all rendered at the fountain). Detect multi-location concepts and lock
+        # only the CHARACTERS, letting each cut keep its own background. Env override:
+        # AV_SCENE_LOCK = 1 (force lock) / 0 (force unlock) / auto (default).
+        _lock_env = os.getenv("AV_SCENE_LOCK", "auto").lower()
+        if _lock_env in ("1", "on", "true"):
+            _lock_scene = True
+        elif _lock_env in ("0", "off", "false"):
+            _lock_scene = False
+        else:
+            _lock_scene = not _concept_is_multi_location(payload)
+        if not _lock_scene and progress_cb:
+            progress_cb(":world_map: 멀티장소 컨셉 감지 — SCENE LOCK 해제(캐릭터만 고정, 컷별 배경 허용)")
         failures = generate_batch(
             Path(manifests["regen_prompts"]),
             input_dir if input_dir.exists() else None,
             regen_dir,
             api_key=os.environ.get("OPENAI_API_KEY", ""),
             progress_cb=progress_cb,
+            reference_override=concept_ref,
+            lock_scene=_lock_scene,
         )
         if failures:
             total = len([k for k in json.loads(Path(manifests["regen_prompts"]).read_text()).keys() if not k.startswith("_")])
@@ -3464,7 +3728,7 @@ def _review_script_before_render(veo_prompts: dict, manifests: dict,
                 ryani_desc = (
                     " (Ryani: old black French Bulldog, age 11. "
                     "White markings on black face: thin Boston Terrier-style white blaze (NARROW line, not the typical wide splash) from nose to forehead, "
-                    "white dot above left eye, white dot above right eye. Silver-grey aged muzzle. "
+                    "NO white dot above the eyes (eye area stays solid black). Silver-grey aged muzzle. "
                     "White chin. White chest patch. Bat ears. No tail. Only black, white, grey.)"
                 )
                 if isinstance(vp, dict):
@@ -4263,6 +4527,72 @@ def _sanitize_motion_prompt(prompt: str) -> str:
     return p
 
 
+_LOCATION_BUCKETS = {
+    "outdoor": ("plaza", "fountain", "beach", "park", "street", "outdoor", "garden",
+                "sidewalk", "rooftop", "분수", "광장", "야외", "공원", "해변", "거리", "옥상"),
+    "living":  ("living room", "livingroom", "sofa", "couch", "거실", "소파"),
+    "bath":    ("bathroom", "sink", "bathtub", "basin", "washbasin", "toilet", "shower",
+                "욕실", "세면대", "화장실", "욕조"),
+    "kitchen": ("kitchen", "counter", "주방", "부엌"),
+    "bedroom": ("bedroom", "bed ", "침실", "침대"),
+    "cafe":    ("cafe", "café", "카페"),
+}
+
+
+def _concept_is_multi_location(payload: dict) -> bool:
+    """PD 2026-06-13: True when the episode's cuts span 2+ distinct location buckets
+    (e.g. 무더위: 분수광장 + 거실 + 욕실 세면대). Such concepts must NOT scene-lock to
+    the first location — each cut keeps its own background. Scans per-cut action/beat
+    text (where the writer/director states 'now inside a living room', etc.)."""
+    buckets: set[str] = set()
+    cuts = payload.get("cuts") or []
+    for c in cuts:
+        if not isinstance(c, dict):
+            continue
+        text = " ".join(str(c.get(k, "")) for k in
+                        ("action", "beat", "scene", "location", "set", "background",
+                         "set_description", "regen_prompt")).lower()
+        for bucket, kws in _LOCATION_BUCKETS.items():
+            if any(kw in text for kw in kws):
+                buckets.add(bucket)
+    return len(buckets) >= 2
+
+
+def _build_concept_char_ref(payload: dict, regen_dir: Path,
+                            progress_cb: ProgressCb = None) -> Path | None:
+    """PD 2026-06-12: generate a CONCEPT-GROUNDED character reference — Ryani+Leo
+    already placed in THIS episode's scene (payload.set_description) — built fresh
+    from the official markings ref. Pinning EVERY cut's regen to it stops the scene
+    drifting (beach→indoor mid-episode, ep 204306: the static indoor official ref +
+    per-cut style-anchor chain let cuts 2-4 fall back indoors). Returns the ref path,
+    or None to fall back to the old chain. Gate: AV_CONCEPT_REF."""
+    set_desc = (payload.get("set_description") or "").strip()
+    if len(set_desc) < 30:
+        return None
+    try:
+        from scripts.generate_character_scene import generate_scene, _get_reference_image
+        official = _get_reference_image("both", "S4")
+        prompt = (
+            "A casual photorealistic snapshot. Ryani (a small black French Bulldog — "
+            "thin white muzzle blaze, white chest patch, white toes, NO tail, spayed "
+            "female) AND Leo (an orange tabby cat — white chin tuft, yellow-green eyes) "
+            "TOGETHER in this exact scene, both FULL BODY clearly visible, natural pose. "
+            "Keep their EXACT markings from the reference image. "
+            f"SCENE: {set_desc[:450]}"
+        )
+        data = generate_scene(prompt, reference_image=official)
+        regen_dir.mkdir(parents=True, exist_ok=True)
+        out = regen_dir / "_concept_char_ref.png"
+        out.write_bytes(data)
+        if progress_cb:
+            progress_cb(f":beach_with_umbrella: 컨셉 레퍼런스 생성 — 랴니·레오를 이 씬에 배치 "
+                        f"({len(data)//1024} KB), 모든 컷 ref로 고정")
+        return out
+    except Exception as e:
+        log.warning("concept char ref gen failed (fallback to chain): %s", e)
+        return None
+
+
 def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                       progress_cb: ProgressCb = None,
                       dry_run: bool = False) -> Path:
@@ -4300,12 +4630,33 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         progress_cb(":art: [2/6] AI 캐릭터 생성 시작...")
     if not dry_run:
         from scripts.generate_character_scene import generate_batch
+        # PD 2026-06-12: build a concept-grounded character ref (Ryani+Leo in THIS
+        # scene) and pin every cut's regen to it so the scene doesn't drift.
+        concept_ref = None
+        if os.getenv("AV_CONCEPT_REF", "1") != "0":
+            concept_ref = _build_concept_char_ref(payload, regen_dir, progress_cb)
+        # PD 2026-06-13: SCENE LOCK pins every cut to the concept-ref's FIRST location,
+        # which COLLAPSED a multi-location journey (무더위: 분수광장→거실 선풍기→욕실
+        # 세면대 all rendered at the fountain). Detect multi-location concepts and lock
+        # only the CHARACTERS, letting each cut keep its own background. Env override:
+        # AV_SCENE_LOCK = 1 (force lock) / 0 (force unlock) / auto (default).
+        _lock_env = os.getenv("AV_SCENE_LOCK", "auto").lower()
+        if _lock_env in ("1", "on", "true"):
+            _lock_scene = True
+        elif _lock_env in ("0", "off", "false"):
+            _lock_scene = False
+        else:
+            _lock_scene = not _concept_is_multi_location(payload)
+        if not _lock_scene and progress_cb:
+            progress_cb(":world_map: 멀티장소 컨셉 감지 — SCENE LOCK 해제(캐릭터만 고정, 컷별 배경 허용)")
         failures = generate_batch(
             Path(manifests["regen_prompts"]),
             input_dir if input_dir.exists() else None,
             regen_dir,
             api_key=os.environ.get("OPENAI_API_KEY", ""),
             progress_cb=progress_cb,
+            reference_override=concept_ref,
+            lock_scene=_lock_scene,
         )
         if failures:
             total = len([k for k in json.loads(Path(manifests["regen_prompts"]).read_text()).keys() if not k.startswith("_")])
@@ -4424,6 +4775,16 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                 )
         except Exception:
             pass
+        # PD 2026-06-13: a FANTASY ai_vtuber scene (beach 판타지 등) is NOT a real
+        # outing — it doesn't need the outdoor-etiquette harness, and forcing one
+        # CONFLICTS with the harness-free base ref → the model invents inconsistent
+        # harnesses mid-episode. So skip the harness injection for ai_vtuber by
+        # default (the clean base has none). real_footage (real walks/cafe) keeps it.
+        # A separate harness-version base + AV_FORCE_HARNESS=1 covers AV daily concepts.
+        _rstyle = (card.get("render_style") or "").lower()
+        if requires_harness and _rstyle == "ai_vtuber" \
+                and os.getenv("AV_FORCE_HARNESS", "0") != "1":
+            requires_harness = False
         if requires_harness:
             harness = (
                 "Ryani wears a soft dark-grey nylon chest harness (no straps "
@@ -4543,8 +4904,9 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                 "with NO visible genitalia at all (she is spayed). "
                 "Ryani's markings (CONSISTENT EVERY CUT): THIN Boston "
                 "Terrier-style white blaze (a narrow line, NOT the typical "
-                "wide splash) from nose to forehead, white dot above each "
-                "eye, silver-grey aged muzzle, white chin, large white "
+                "wide splash) from nose to forehead, NO white dot above "
+                "the eyes (eye area stays solid black), "
+                "silver-grey aged muzzle, white chin, large white "
                 "chest patch, bat ears, ABSOLUTELY NO TAIL, stocky compact "
                 "feminine body (petite, refined, NOT muscular barrel-chested "
                 "male), only black/white/grey — no brown."

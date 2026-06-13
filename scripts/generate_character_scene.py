@@ -123,12 +123,21 @@ def _get_reference_image(subjects: str = "both", segment: str = "S4") -> Path | 
     Priority: official character reference (hanbok) > photo reference > segment-specific.
     The official reference ensures consistent character design across all episodes.
     """
-    # Official character references (confirmed by PD — photorealistic style)
-    # Two references: hanbok + cafe. Alternate for variety while keeping consistency.
+    # PD 2026-06-13: CLEAN base ref first — the old official refs have a hanbok /
+    # cafe styling that bled accessories (beret, bow tie) into the regen. A plain
+    # white-background both-sitting photo (no clothing) fixes that. `base_both.png`
+    # = PD's hand-tuned version (preferred if present); `base_both_clean.png` = the
+    # OpenAI-generated clean fallback.
     refs = [
-        ROOT / "assets" / "character_ref" / "official_ryani_leo.png",       # hanbok
-        ROOT / "assets" / "character_ref" / "official_ryani_leo_cafe.png",  # cafe
+        ROOT / "assets" / "character_ref" / "base_both.png",          # PD's clean base
+        ROOT / "assets" / "character_ref" / "base_both_clean.png",    # OpenAI clean base
+        ROOT / "assets" / "character_ref" / "official_ryani_leo.png",       # hanbok (legacy)
+        ROOT / "assets" / "character_ref" / "official_ryani_leo_cafe.png",  # cafe (legacy)
     ]
+    # Prefer the first CLEAN base that exists (no alternation — consistency).
+    for _r in refs:
+        if _r.exists():
+            return _r
     # Pick based on subject or just use first available
     existing = [r for r in refs if r.exists()]
     if existing:
@@ -226,8 +235,17 @@ def _generate_scene_gemini(prompt: str, reference_image: Path) -> bytes:
 
 def generate_batch(prompts_file: Path, in_dir: Path | None, out_dir: Path,
                    api_key: str, dry_run: bool = False, n: int = 1,
-                   progress_cb: callable = None) -> int:
-    """Batch generate from a prompts manifest (same format as regen_vtuber_style.py)."""
+                   progress_cb: callable = None,
+                   reference_override: Path | None = None,
+                   lock_scene: bool = True) -> int:
+    """Batch generate from a prompts manifest (same format as regen_vtuber_style.py).
+
+    PD 2026-06-12: `reference_override` — a CONCEPT-GROUNDED character reference
+    (Ryani+Leo already placed in THIS episode's scene, generated fresh from the
+    writer's concept). When set, EVERY cut uses it as the reference instead of the
+    static official (indoor/studio) ref + the per-cut style-anchor CHAIN. The chain
+    let the scene drift (beach → indoor mid-episode, ep 204306); a fixed
+    scene-matched reference holds the scene across all cuts."""
     prompts = json.loads(prompts_file.read_text(encoding="utf-8"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -284,25 +302,66 @@ def generate_batch(prompts_file: Path, in_dir: Path | None, out_dir: Path,
                 bg_note = f"\nBACKGROUND REFERENCE: Use the actual room/space from this description: {bg_info['desc']}"
                 break
 
+        # PD 2026-06-12: when a concept-grounded reference is supplied, FORCE every
+        # cut to keep that reference's exact setting + heads-up posture — the per-cut
+        # prompt alone let cuts drift indoors and invent floor-eating (ep 6c2a048a:
+        # beach concept, but cut2 rendered an indoor floor with Ryani nose-down).
+        ref_lock_note = ""
+        if reference_override and Path(reference_override).exists():
+            if lock_scene:
+                ref_lock_note = (
+                    "⚠️ SCENE LOCK — the REFERENCE IMAGE defines the EXACT setting for this "
+                    "whole episode. KEEP the same environment as the reference: same "
+                    "location (e.g. if the reference is a BEACH, stay on that beach — do "
+                    "NOT move indoors, do NOT invent a room/floor/furniture), same "
+                    "background elements, same lighting. ONLY change the pets' pose/action "
+                    "to match the scene direction below. POSE LOCK — keep Ryani and Leo in "
+                    "the same upright, HEADS-UP posture as the reference unless the scene "
+                    "direction EXPLICITLY says otherwise; do NOT add a nose-to-the-ground "
+                    "sniffing/eating pose that isn't in the scene direction."
+                )
+            else:
+                # PD 2026-06-13: MULTI-LOCATION journey (e.g. 무더위: 분수광장→거실 선풍기→
+                # 욕실 세면대). Locking the scene forced every cut to the FIRST location
+                # (분수), collapsing the journey. Lock only the CHARACTERS; let each cut's
+                # own scene direction set the location/background + pose.
+                ref_lock_note = (
+                    "⚠️ CHARACTER LOCK — use the REFERENCE IMAGE ONLY to fix the two pets' "
+                    "identity: the SAME Ryani (markings, breed, colors, no tail) and the SAME "
+                    "Leo (orange tabby markings, eyes) exactly as in the reference. This "
+                    "episode deliberately MOVES BETWEEN DIFFERENT LOCATIONS — render THIS cut "
+                    "in the location/background described in its own scene direction below "
+                    "(NOT the reference's location). Change background, lighting AND the pets' "
+                    "pose/action to fully match this cut's scene direction. Keep ONLY the "
+                    "pets' appearance constant across cuts; everything else follows the per-cut "
+                    "direction."
+                )
         prompt = build_character_prompt(
             scene_prompt=per_cut,
             subjects="both",
             overall_style=full_style,
-            extra_rules=f"{preserve}\n{style_note}\n{bg_note}".strip(),
+            extra_rules=f"{preserve}\n{style_note}\n{bg_note}\n{ref_lock_note}".strip(),
         )
 
-        # Reference image: use style_anchor (previous cut) if available, else character ref
-        ref_image = style_anchor  # previous cut = style anchor
-        if ref_image is None:
-            # First cut: use official character reference
-            if in_dir:
-                for ext in (".jpg", ".jpeg", ".png"):
-                    candidate = in_dir / f"{tag}{ext}"
-                    if candidate.exists():
-                        ref_image = candidate
-                        break
+        # PD 2026-06-12: a concept-grounded reference (Ryani+Leo already in THIS
+        # episode's scene) holds the scene for EVERY cut — no style-anchor chain,
+        # which let the scene drift (beach→indoor). Falls back to the old chain when
+        # no override is supplied.
+        if reference_override and Path(reference_override).exists():
+            ref_image = reference_override
+        else:
+            # Reference image: use style_anchor (previous cut) if available, else character ref
+            ref_image = style_anchor  # previous cut = style anchor
             if ref_image is None:
-                ref_image = _get_reference_image("both", "S4")
+                # First cut: use official character reference
+                if in_dir:
+                    for ext in (".jpg", ".jpeg", ".png"):
+                        candidate = in_dir / f"{tag}{ext}"
+                        if candidate.exists():
+                            ref_image = candidate
+                            break
+                if ref_image is None:
+                    ref_image = _get_reference_image("both", "S4")
 
         out_path = out_dir / f"{tag}.png"
         if progress_cb:

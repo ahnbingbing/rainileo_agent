@@ -261,6 +261,7 @@ def salvage(card_id: str, report: dict, *, progress_cb=None,
         "captions": str(cap_path),
         "bgm": meta.get("bgm") or str(cm.DEFAULT_BGM),
         "font_override": meta.get("font_override") or "",
+        "style": lane,  # enables real_footage caption reading-time fit (#4)
     }
     captioned_dir = (wd / "animated_captioned") if lane != "real_footage" \
         else (ROOT / "data" / "output" / "animated_captioned")
