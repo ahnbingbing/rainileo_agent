@@ -1504,7 +1504,13 @@ def _vlm_post_render_caption_rewrite(work_dir: Path, manifests: dict,
         # as "eats" when she can't. The Editor reasoned over action+caption, so trust it.
         _etruth = cc.get("editor_footage_truth")
         if _etruth:
-            cc["vlm_actual_action"] = _etruth + (f" (VLM: {actual})" if actual else "")
+            # Hard constraint embedded in the ground-truth the Caption Agent grounds on,
+            # so the closer can't slip back to a false resolution (the 동물농장 축복-ending
+            # pull made it write "결국 다 먹었답니다" over can't-eat footage).
+            cc["vlm_actual_action"] = (
+                _etruth + (f" (VLM: {actual})" if actual else "")
+                + " [필수: 위 실제 화면과 모순되는 캡션 금지 — 화면에 없는 결과(다 먹음/"
+                  "성공/완료 등)를 지어내지 마라. 끝 컷도 실제 상태 그대로.]")
             n_described += 1
         elif actual:
             cc["vlm_actual_action"] = actual
