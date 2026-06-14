@@ -31,52 +31,104 @@ DB_PATH = Path(os.getenv("DB_PATH", str(ROOT / "data" / "agent.db"))).resolve()
 _CACHE: dict = {}  # keyed by (date, days) so a launch run fetches once
 
 
-def _youtube_recent_public(con, days: int, max_n: int = 50) -> list[dict] | None:
-    """The channel's videos that are actually LIVE (public) on YouTube within the last
-    `days` — pulled from the YouTube API (source of truth for what the audience has
-    seen). Returns [{video_id, title, description, published_at}], or None if the API
-    is unavailable (caller falls back to the local uploaded+public cards)."""
+_PUB_CACHE_DDL = """
+CREATE TABLE IF NOT EXISTS youtube_published_videos (
+    video_id      TEXT PRIMARY KEY,
+    title         TEXT,
+    description   TEXT,
+    published_at  TEXT,
+    privacy_status TEXT,
+    synced_at     TEXT
+)"""
+
+
+def _ensure_pub_cache(con) -> None:
+    con.execute(_PUB_CACHE_DDL)
+    con.commit()
+
+
+def _fetch_published_from_api(max_n: int = 50) -> list[dict] | None:
+    """Pull the channel's PUBLIC uploads from the YouTube API (source of truth for
+    what the audience has actually seen). Returns dicts, or None if the API is
+    unavailable so the caller keeps the existing cache."""
     try:
         from youtube.oauth import get_youtube
         yt = get_youtube()
         ch = yt.channels().list(part="contentDetails", mine=True).execute()
-        uploads = (ch["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"])
+        uploads = ch["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
         pl = yt.playlistItems().list(
             part="contentDetails", playlistId=uploads, maxResults=max_n).execute()
         vid_ids = [it["contentDetails"]["videoId"] for it in pl.get("items", [])]
         if not vid_ids:
             return []
-        cutoff = con.execute(
-            "SELECT strftime('%Y-%m-%dT%H:%M:%SZ','now', ?)", (f"-{days} days",)
-        ).fetchone()[0]
         out: list[dict] = []
-        # videos.list caps at 50 ids/call — we requested ≤50.
         vids = yt.videos().list(part="status,snippet", id=",".join(vid_ids)).execute()
         for v in vids.get("items", []):
             if v.get("status", {}).get("privacyStatus") != "public":
-                continue  # drafts + scheduled-private don't count — audience hasn't seen them
+                continue  # drafts + scheduled-private excluded — audience hasn't seen them
             sn = v.get("snippet", {})
-            pub = sn.get("publishedAt", "") or ""
-            if pub and pub < cutoff:
-                continue
             out.append({"video_id": v.get("id"), "title": sn.get("title", ""),
                         "description": (sn.get("description") or "")[:200],
-                        "published_at": pub})
+                        "published_at": sn.get("publishedAt", "") or "",
+                        "privacy_status": "public"})
         return out
     except Exception as e:
         log.info("YouTube freshness source unavailable: %s", e)
         return None
 
 
+def sync_published_cache(con, *, ttl_hours: int = 6, force: bool = False) -> int | None:
+    """Refresh the local `youtube_published_videos` cache from the API. Skips the
+    network call if the cache was synced within `ttl_hours` (unless force). Returns
+    the public-video count, or None if the API was unavailable (cache left intact).
+    Called lazily by the reviewer and can be scheduled (cron / post-upload) so reviews
+    read the DB instead of hitting the API every time."""
+    _ensure_pub_cache(con)
+    if not force:
+        last = con.execute(
+            "SELECT max(synced_at) FROM youtube_published_videos").fetchone()[0]
+        if last:
+            fresh = con.execute(
+                "SELECT (strftime('%s','now') - strftime('%s', ?)) < ?",
+                (last, ttl_hours * 3600)).fetchone()[0]
+            if fresh:
+                return None  # cache still warm — no API call
+    vids = _fetch_published_from_api()
+    if vids is None:
+        return None  # API down — keep whatever is cached
+    now = con.execute("SELECT strftime('%Y-%m-%dT%H:%M:%SZ','now')").fetchone()[0]
+    for v in vids:
+        con.execute(
+            "INSERT INTO youtube_published_videos"
+            "(video_id,title,description,published_at,privacy_status,synced_at) "
+            "VALUES(?,?,?,?,?,?) ON CONFLICT(video_id) DO UPDATE SET "
+            "title=excluded.title, description=excluded.description, "
+            "published_at=excluded.published_at, privacy_status=excluded.privacy_status, "
+            "synced_at=excluded.synced_at",
+            (v["video_id"], v["title"], v["description"], v["published_at"],
+             v["privacy_status"], now))
+    # Drop rows no longer public (vetoed / deleted / privated since last sync).
+    ids = [v["video_id"] for v in vids]
+    if ids:
+        con.execute(
+            f"DELETE FROM youtube_published_videos WHERE video_id NOT IN "
+            f"({','.join('?' * len(ids))})", ids)
+    else:
+        con.execute("DELETE FROM youtube_published_videos")
+    con.commit()
+    return len(vids)
+
+
 def _recent_episodes(con, days: int) -> list[dict]:
     """Recent episodes for freshness / overlap judgement.
 
     Freshness is judged ONLY against what the audience has actually seen — videos
-    that are LIVE (public) on YouTube — never local drafts or scheduled-private
-    renders. A draft counted as "already done" would reject a concept no viewer has
-    seen (this rejected a PD-requested 곶감꼭지 because same-day unreleased renders
-    existed). Primary source is the YouTube API; we enrich each live video with its
-    card's title/oneliner/asset_ids by youtube_video_id. If the API is down, fall
+    LIVE (public) on YouTube — never local drafts or scheduled-private renders. A
+    draft counted as "already done" would reject a concept no viewer has seen (it
+    rejected a PD-requested 곶감꼭지 because same-day unreleased renders existed).
+    Reads the `youtube_published_videos` cache (refreshed lazily via TTL, or by a
+    scheduled sync) and enriches each live video with its card's title/oneliner/
+    asset_ids by youtube_video_id. If the cache is empty (API never reachable), falls
     back to local cards that are genuinely uploaded AND already public."""
     def _from_card(pj: str, theme: str) -> dict:
         try:
@@ -92,26 +144,32 @@ def _recent_episodes(con, days: int) -> list[dict]:
                               if c.get("asset_id")]}
 
     out: list[dict] = []
-    use_yt = os.getenv("REVIEWER_FRESHNESS_YOUTUBE", "1") != "0"
-    live = _youtube_recent_public(con, days) if use_yt else None
-    if live is not None:
-        for v in live:
-            row = con.execute(
-                "SELECT render_style, theme, payload_json, youtube_publish_at "
-                "FROM cards WHERE youtube_video_id=? LIMIT 1", (v["video_id"],)
-            ).fetchone()
-            if row:
-                style, theme, pj, pub = row
+    if os.getenv("REVIEWER_FRESHNESS_YOUTUBE", "1") != "0":
+        try:
+            sync_published_cache(con)  # lazy TTL refresh — no API call when warm
+        except Exception as e:
+            log.info("published cache sync skipped: %s", e)
+    _ensure_pub_cache(con)
+    cutoff = con.execute(
+        "SELECT strftime('%Y-%m-%dT%H:%M:%SZ','now', ?)", (f"-{days} days",)).fetchone()[0]
+    rows = con.execute(
+        "SELECT video_id, title, description, published_at FROM youtube_published_videos "
+        "WHERE published_at >= ? ORDER BY published_at DESC LIMIT 60", (cutoff,)).fetchall()
+    if rows:
+        for vid, ytitle, ydesc, pub in rows:
+            card = con.execute(
+                "SELECT render_style, theme, payload_json FROM cards "
+                "WHERE youtube_video_id=? LIMIT 1", (vid,)).fetchone()
+            if card:
+                style, theme, pj = card
                 e = _from_card(pj, theme)
             else:  # uploaded outside our DB — use the YouTube metadata directly
-                style, pub = "", v.get("published_at", "")
-                e = {"title": v.get("title", ""),
-                     "oneliner": v.get("description", "")[:80], "asset_ids": []}
-            out.append({"date": (pub or v.get("published_at", ""))[:10],
-                        "lane": style or "", **e, "uploaded": True})
+                style = ""
+                e = {"title": ytitle or "", "oneliner": (ydesc or "")[:80], "asset_ids": []}
+            out.append({"date": (pub or "")[:10], "lane": style or "", **e, "uploaded": True})
         return out
 
-    # Fallback: local cards that are uploaded AND already public (not drafts/scheduled).
+    # Fallback (cache empty / API never reachable): local cards uploaded AND public.
     try:
         rows = con.execute(
             "SELECT created_at, render_style, theme, payload_json FROM cards "
