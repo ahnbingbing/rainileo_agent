@@ -31,32 +31,98 @@ DB_PATH = Path(os.getenv("DB_PATH", str(ROOT / "data" / "agent.db"))).resolve()
 _CACHE: dict = {}  # keyed by (date, days) so a launch run fetches once
 
 
+def _youtube_recent_public(con, days: int, max_n: int = 50) -> list[dict] | None:
+    """The channel's videos that are actually LIVE (public) on YouTube within the last
+    `days` — pulled from the YouTube API (source of truth for what the audience has
+    seen). Returns [{video_id, title, description, published_at}], or None if the API
+    is unavailable (caller falls back to the local uploaded+public cards)."""
+    try:
+        from youtube.oauth import get_youtube
+        yt = get_youtube()
+        ch = yt.channels().list(part="contentDetails", mine=True).execute()
+        uploads = (ch["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"])
+        pl = yt.playlistItems().list(
+            part="contentDetails", playlistId=uploads, maxResults=max_n).execute()
+        vid_ids = [it["contentDetails"]["videoId"] for it in pl.get("items", [])]
+        if not vid_ids:
+            return []
+        cutoff = con.execute(
+            "SELECT strftime('%Y-%m-%dT%H:%M:%SZ','now', ?)", (f"-{days} days",)
+        ).fetchone()[0]
+        out: list[dict] = []
+        # videos.list caps at 50 ids/call — we requested ≤50.
+        vids = yt.videos().list(part="status,snippet", id=",".join(vid_ids)).execute()
+        for v in vids.get("items", []):
+            if v.get("status", {}).get("privacyStatus") != "public":
+                continue  # drafts + scheduled-private don't count — audience hasn't seen them
+            sn = v.get("snippet", {})
+            pub = sn.get("publishedAt", "") or ""
+            if pub and pub < cutoff:
+                continue
+            out.append({"video_id": v.get("id"), "title": sn.get("title", ""),
+                        "description": (sn.get("description") or "")[:200],
+                        "published_at": pub})
+        return out
+    except Exception as e:
+        log.info("YouTube freshness source unavailable: %s", e)
+        return None
+
+
 def _recent_episodes(con, days: int) -> list[dict]:
-    """Title/theme/asset_ids of RF+AV episodes touched in the last `days` days — for
-    freshness / overlap judgement."""
+    """Recent episodes for freshness / overlap judgement.
+
+    Freshness is judged ONLY against what the audience has actually seen — videos
+    that are LIVE (public) on YouTube — never local drafts or scheduled-private
+    renders. A draft counted as "already done" would reject a concept no viewer has
+    seen (this rejected a PD-requested 곶감꼭지 because same-day unreleased renders
+    existed). Primary source is the YouTube API; we enrich each live video with its
+    card's title/oneliner/asset_ids by youtube_video_id. If the API is down, fall
+    back to local cards that are genuinely uploaded AND already public."""
+    def _from_card(pj: str, theme: str) -> dict:
+        try:
+            pl = json.loads(pj or "{}")
+        except Exception:
+            pl = {}
+        title = pl.get("title") or theme or ""
+        if isinstance(title, dict):
+            title = title.get("ko") or ""
+        return {"title": title,
+                "oneliner": (pl.get("narrative_oneliner") or "")[:80],
+                "asset_ids": [c.get("asset_id") for c in (pl.get("cuts") or [])
+                              if c.get("asset_id")]}
+
     out: list[dict] = []
+    use_yt = os.getenv("REVIEWER_FRESHNESS_YOUTUBE", "1") != "0"
+    live = _youtube_recent_public(con, days) if use_yt else None
+    if live is not None:
+        for v in live:
+            row = con.execute(
+                "SELECT render_style, theme, payload_json, youtube_publish_at "
+                "FROM cards WHERE youtube_video_id=? LIMIT 1", (v["video_id"],)
+            ).fetchone()
+            if row:
+                style, theme, pj, pub = row
+                e = _from_card(pj, theme)
+            else:  # uploaded outside our DB — use the YouTube metadata directly
+                style, pub = "", v.get("published_at", "")
+                e = {"title": v.get("title", ""),
+                     "oneliner": v.get("description", "")[:80], "asset_ids": []}
+            out.append({"date": (pub or v.get("published_at", ""))[:10],
+                        "lane": style or "", **e, "uploaded": True})
+        return out
+
+    # Fallback: local cards that are uploaded AND already public (not drafts/scheduled).
     try:
         rows = con.execute(
-            "SELECT created_at, render_style, theme, payload_json, uploaded "
-            "FROM cards WHERE created_at >= datetime('now', ?) "
-            "ORDER BY created_at DESC LIMIT 60", (f"-{days} days",)).fetchall()
-        for created, style, theme, pj, uploaded in rows:
-            try:
-                pl = json.loads(pj or "{}")
-            except Exception:
-                pl = {}
-            title = pl.get("title") or theme or ""
-            if isinstance(title, dict):
-                title = title.get("ko") or ""
-            aids = [c.get("asset_id") for c in (pl.get("cuts") or []) if c.get("asset_id")]
-            out.append({
-                "date": (created or "")[:10],
-                "lane": style or "",
-                "title": title,
-                "oneliner": (pl.get("narrative_oneliner") or "")[:80],
-                "asset_ids": aids,
-                "uploaded": bool(uploaded),
-            })
+            "SELECT created_at, render_style, theme, payload_json FROM cards "
+            "WHERE uploaded=1 AND youtube_video_id IS NOT NULL "
+            "AND youtube_publish_at IS NOT NULL "
+            "AND youtube_publish_at <= strftime('%Y-%m-%dT%H:%M:%SZ','now') "
+            "AND youtube_publish_at >= strftime('%Y-%m-%dT%H:%M:%SZ','now', ?) "
+            "ORDER BY youtube_publish_at DESC LIMIT 60", (f"-{days} days",)).fetchall()
+        for created, style, theme, pj in rows:
+            out.append({"date": (created or "")[:10], "lane": style or "",
+                        **_from_card(pj, theme), "uploaded": True})
     except Exception as e:
         log.warning("recent episodes fetch failed: %s", e)
     return out
