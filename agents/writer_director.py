@@ -1197,26 +1197,34 @@ def _split_merged_ko_en(c: dict) -> None:
 
 
 def _enforce_wink_empty_captions(c: dict) -> None:
-    """The LAST wink_ending cut (always the final cut of the episode) carries
-    the canonical channel sign-off "오늘도 햅삐 ♥ / Happy as ever ♥". Any
-    OTHER cut with function=wink_ending (mid-episode wink callbacks, etc.)
-    stays empty. PD 2026-06-02: "마지막 윙크에만 이걸 적용해야해"."""
+    """Exactly ONE closing wink. The wink is the channel sign-off — a single
+    zoom-in close-up with the happy caption "오늘도 햅삐 ♥ / Happy as ever ♥".
+
+    PD 2026-06-14: the episode sometimes showed TWO wink animations (a Writer-
+    emitted wink + the auto-appended one, or a mid-episode wink callback). The
+    old rule only EMPTIED the extra winks' captions, but an empty-caption wink
+    still RENDERS a second wink animation → visible double-wink bug. Now we
+    DROP every wink_ending cut except the final one, force that survivor to be
+    the LAST cut, and give it the happy sign-off caption held through the
+    push-in. (Earlier rule: PD 2026-06-02 "마지막 윙크에만 이걸 적용해야해".)"""
     canonical = {
-        "start": 4.5, "end": 5.0,  # LAST 0.5 SECONDS of the body (PD rule)
+        "start": 4.5, "end": 6.8,  # held through the close-up wink landing
         "ko": "오늘도 햅삐 ♥",
         "en": "Happy as ever ♥",
     }
     cuts = c.get("cuts") or []
     if not cuts:
         return
-    last_idx = len(cuts) - 1
-    for i, cut in enumerate(cuts):
-        if cut.get("function") != "wink_ending":
-            continue
-        if i == last_idx:
-            cut["captions"] = [canonical]
-        else:
-            cut["captions"] = []
+    winks = [cut for cut in cuts if cut.get("function") == "wink_ending"]
+    if not winks:
+        return
+    non_winks = [cut for cut in cuts if cut.get("function") != "wink_ending"]
+    closer = winks[-1]               # keep only the final wink as the closer
+    closer["captions"] = [canonical]
+    if len(winks) > 1:
+        log.info("wink dedupe: %d wink cuts → 1 closing wink (no double-wink)",
+                 len(winks))
+    c["cuts"] = non_winks + [closer]
 
 
 def _rewrite_duplicate_captions(concept: dict, progress_cb=None) -> None:
@@ -2276,6 +2284,10 @@ def _consolidate_short_to_one_take(c: dict) -> None:
 
     # Wink ending auto-append (PD 2026-06-01 PM): each short episode ends
     # with a story-driven wink. Subject = whoever the punchline lands on.
+    # PD 2026-06-14: never double-wink — if the Writer already ended on a wink,
+    # drop it before appending so exactly one closing wink survives. (The sweep
+    # _enforce_wink_empty_captions also dedupes, but guard at the source too.)
+    cuts = [cc for cc in cuts if cc.get("function") != "wink_ending"]
     wink_subject = _pick_wink_subject(c)
     wink_cut = _build_wink_cut(wink_subject, cuts[-1])
     cuts.append(wink_cut)
