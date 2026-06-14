@@ -58,24 +58,37 @@ If the needed room has no good reference image in the library, say so via a `kno
 
 For `render_style = real_footage`: default cuts to `"real"`. Use `"interp"` only for gap-fill bridges.
 
-**Episode format awareness**: Writer set `episode_format = "short"` or `"mid"`.
+**Episode format awareness.** `episode_format` (`short`/`mid`) sets the video LENGTH,
+not the story size. Both carry the Writer's full causal arc + kick across MULTIPLE
+chained cuts (cut 1 = ref mode; cut 2+ = `chain_from_prev` i2v, so each cut continues
+from the previous cut's last frame). The Writer fixes the cut count and per-cut beats;
+you assign cinematography per cut. Do not collapse a short to a single cut.
 
-- `short` (**1 cut total, ONE-TAKE — PD 2026-06-01 pivot**):
-  - **Output `cuts` array length = 1.** That single cut represents the entire short episode body.
-  - **One camera POV, one background, no cut transitions.** Seedance API will be called ONCE for this whole episode body.
-  - `duration_seconds`: 5 (fast model) up to 8 (standard/pro). Default 5.
-  - `tempo_factor = 1.0`.
-  - Write `motion_prompt` using Seedance multi-shot syntax for internal action progression:
-    ```
-    Shot 1: <opening beat — e.g. Leo grooms by scratcher, Ryani enters from right>
-    Shot 2: <development — Ryani drops into play bow, barks>
-    Shot 3: <punchline — Leo tips belly-up unimpressed>
-    ```
-    Each "Shot N:" is a beat WITHIN the same camera. NEVER changes camera/POV between shots.
-  - First sentence of `motion_prompt`: `"Camera POV-A, pet eye-level, locked static framing — no panning, no zoom, no camera movement throughout."`
-  - Captions: Writer puts multiple `{start,end,ko,en}` entries in `captions[]` aligned with the Shot N timestamps. Cameraman burns them as timed overlays on the single video.
+- **`short`** (~25-30s): keep the Writer's cut count — it follows the story's beats (up
+  to ~8 video cuts; readability floor ~2.5s per captioned video cut). Set each cut's
+  `duration_seconds` to fit its action (2.5-6s — quick beats short, the kick/closer
+  longer for 여운). `tempo_factor` = 1.0 on any cut carrying a burned caption.
+- **`mid`** (~50-60s): the SAME arc with longer per-cut holds + face-to-face cross-cuts.
+  Vary `duration_seconds` (3-4s action cross-cuts, 6-8s emotional/caption beats); tempo
+  up to 1.3 on pure-action cuts, back to 1.0 on captioned cuts. Bridge bg changes between
+  scenes with caption beats ("며칠 후" / "잠시 뒤").
 
-- `mid` (6-10 cuts, ~1min): cross-cut between Ryani/Leo faces for tension. Vary `duration_seconds` per cut — short fast cross-cuts (3-4s) during action, longer hold (6-8s) on emotional/caption-heavy beats. Don't make all cuts 5s. Tempo_factor up to 1.3 OK on pure action cuts but back to 1.0 on any cut with KO+EN burned caption. Each `mid` cut can be its own one-take internally; cuts are connected by "며칠 후" / "잠시 뒤" narrative bridges in captions when bg changes between scenes.
+**Camera default vs. still cuts.** On a live pet-MOTION i2v cut the motion comes from the
+pets, so the camera holds — first sentence of `motion_prompt` = `"Camera POV-A, pet
+eye-level, locked static framing — no panning, no zoom, no camera movement throughout."`
+Two exceptions that DO move the camera: (a) the closer/wink beat = slow `push_in`; (b) any
+STILL-IMAGE cut (a held photo or a photo_sequence montage frame) MUST use ken-burns —
+`camera_move` = `zoom_in_slow` / `zoom_out_slow` / `pan` — or else a short duration; a long
+frozen still is a dead frame. Apply the static-framing sentence ONLY to live-motion cuts.
+
+Within a cut, write `motion_prompt` as Seedance multi-shot beats that stay in the SAME
+camera/POV:
+```
+Shot 1: <opening beat>
+Shot 2: <development>
+Shot 3: <punchline>
+```
+Captions: timed `{start,end,ko,en}` entries aligned to those beats; the Cameraman burns them.
 
 The rest of this prompt covers the cinematography vocabulary, marking strings, motion patterns, and output schema.
 
