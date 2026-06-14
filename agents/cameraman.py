@@ -1339,7 +1339,7 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
             overall_style = f"Cute pet illustration, {tone} mood, {theme} theme"
         # PD 2026-06-14: bake a REAL casual-phone LO-FI look into the generation itself
         # (NOT a post-process) so the AV doesn't read as glossy AI. Append unless disabled.
-        if os.getenv("AV_LOFI", "1") != "0" and "LO-FI REALISM" not in overall_style:
+        if os.getenv("AV_LOFI", "1") != "0" and "LO-FI RESOLUTION" not in overall_style:
             overall_style = (overall_style + " " + LOFI_REALISM_DIRECTIVE).strip()
 
         regen = {
@@ -5475,8 +5475,16 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
 
         # PD 2026-06-14: bake the lo-fi real-phone look into the i2v video too (not just
         # the still) so the motion clip doesn't read as glossy AI.
-        if os.getenv("AV_LOFI", "1") != "0" and "LO-FI REALISM" not in prompt:
+        if os.getenv("AV_LOFI", "1") != "0" and "LO-FI RESOLUTION" not in prompt:
             prompt = prompt + " " + LOFI_REALISM_DIRECTIVE
+        # PD 2026-06-14: motion must ALWAYS be plentiful — lively, dynamic characters. Only
+        # genuine rest/sleep beats are calm. Push the i2v toward active, energetic movement.
+        if os.getenv("AV_MOTION_EMPHASIS", "1") != "0" and "MOTION:" not in prompt:
+            prompt = prompt + (
+                " MOTION: the pets move with LIVELY, ENERGETIC, dynamic real motion — clearly "
+                "active and full of life the whole time (believable continuous movement, never "
+                "stiff, frozen, or barely-moving). Maximize natural movement for the action; "
+                "ONLY an explicit rest/sleep beat should be calm.")
 
         # No-text-on-packaging guardrail (PD 2026-06-01 PM: "사료에 글자는
         # 없어도 돼"). Seedance hallucinates Korean/English text and logos
