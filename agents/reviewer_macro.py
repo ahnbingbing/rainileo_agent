@@ -492,3 +492,26 @@ def run_reviewer(drafts: list, ctx: dict, lane: str, progress_cb=None) -> dict:
     except Exception as e:
         log.warning("reviewer failed (%s) → pass", e)
         return {"pass": True, "rewrite_directive": "", "macro_notes": ""}
+
+
+# ── CLI: refresh the YouTube published-videos cache (for cron / manual) ──────────
+def main(argv: list[str] | None = None) -> int:
+    import argparse, logging as _lg
+    ap = argparse.ArgumentParser(description="reviewer macro — YouTube freshness cache")
+    ap.add_argument("--sync-cache", action="store_true",
+                    help="force-refresh youtube_published_videos from the YouTube API")
+    a = ap.parse_args(argv)
+    _lg.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"),
+                    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    con = sqlite3.connect(str(DB_PATH))
+    if a.sync_cache:
+        n = sync_published_cache(con, force=True)
+        print(f"published cache synced: {n} public videos" if n is not None
+              else "published cache: API unavailable, kept existing")
+        return 0
+    ap.print_help()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
