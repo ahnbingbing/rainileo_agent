@@ -511,6 +511,25 @@ def sync_album(
             new_photos = [p for p in photos
                           if p.uuid not in ingested
                           and (_date_added(p) or dt.date.min) >= watermark]
+        # PD 2026-06-14: CHUNKED full backfill. The whole ~8000-item old backlog must be
+        # ingested+VLM-tagged (it's why the Writer pool skews recent), but downloading it
+        # all at once is the disk bomb. ICLOUD_BACKFILL_BATCH_BYTES caps THIS run's download
+        # to ~N bytes worth of un-ingested items (oldest date_added first → rebalance old
+        # years). A driver loop (scripts/icloud_full_sync_chunked.sh) re-runs until empty:
+        # each run downloads ≤N bytes → ingest → VLM → prune originals → next batch.
+        _batch_bytes = int(os.getenv("ICLOUD_BACKFILL_BATCH_BYTES", "0"))
+        if _backfill and _batch_bytes > 0 and new_photos:
+            new_photos.sort(key=lambda p: (_date_added(p) or dt.date.min))
+            picked, acc = [], 0
+            for p in new_photos:
+                sz = int(getattr(p, "original_filesize", 0) or 0)
+                if picked and acc + sz > _batch_bytes:
+                    break
+                picked.append(p)
+                acc += sz
+            log.info("BACKFILL batch: picked %d items (~%.2f GB) of %d un-ingested "
+                     "(oldest-first)", len(picked), acc / 1e9, len(new_photos))
+            new_photos = picked
         log.info("album=%d, ingested=%d, watermark(date_added)>=%s, NEW to download=%d",
                  len(photos), len(ingested), watermark, len(new_photos))
         if not new_photos:
