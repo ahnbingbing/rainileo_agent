@@ -11,6 +11,24 @@
 > deliver the mp4 via SendUserFile (don't wait to be asked). PD has been
 > repeatedly frustrated by leaked tool-call text — this is a hard failure.
 
+> **✍️ PROMPT-AUTHORING RULE:** Before writing or editing ANY agent prompt /
+> instruction `.md` (agents/prompts/*.md, director_shots.md, character_sheets.md,
+> CLAUDE.md sections, review specs), invoke the **`prompt-authoring`** skill and
+> follow it. Synthesize PD feedback into developed, principle-first guidance
+> (principle→why→how→one example); INTEGRATE into the existing structure and
+> SUPERSEDE contradictions — never append dated verbatim quotes or band-aid rule
+> blocks. Git holds provenance; the prompt states current truth. This applies to
+> auto-memory `.md` too (synthesize, don't transcribe).
+
+> **🔀 CHANGE-IMPACT RULE:** After deciding on ANY change to story/render behavior,
+> a prompt rule, a schema field, or a pipeline stage, invoke the
+> **`pipeline-change-impact`** skill BEFORE calling it done. Trace the change's
+> ripple across the whole AV + RF pipeline (Writer→Director→Cameraman→Validator→
+> burn→assemble→Giri, both lanes), update every consumer that reads/enforces/renders
+> it, supersede any stage still asserting the old contract, verify end-to-end, and
+> report the blast radius. A change is done when both lanes agree — not when one file
+> is edited.
+
 ---
 
 ## The channel
