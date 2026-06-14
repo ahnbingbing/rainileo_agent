@@ -75,7 +75,7 @@ A JSON array, one object per cut, in the same cut order:
 ### NO REPETITION (NON-NEGOTIABLE — PD 2026-06-02)
 1. **Each cut's caption(s) must be DISTINCT from every other cut.** No phrase, opening word, or structure repeats. If cut 2 starts "랴니는...", cut 3 doesn't start "랴니는...".
 2. **No padding repeats within a cut.** "오늘도 시작됐어요. 오늘도 어김없이." → pick ONE.
-3. **Different lexical fingerprint per cut.** Use the 5 registers (의성어/위트/미스터리/thoughts/reaction) ACROSS cuts — if cut 1 = 의성어, cut 2 ≠ 의성어. Don't repeat a register back-to-back.
+3. **Different lexical fingerprint per cut.** Draw from the six registers (의성어/위트/미스터리/펫-속마음/reaction/펫에게-말걸기) ACROSS cuts — if cut 1 = 의성어, cut 2 ≠ 의성어. Don't repeat a register back-to-back (a quiet one-take leaning on 말걸기 is the noted exception — vary the line, not the register).
 4. Quick check before output: scan your own captions[] arrays — any duplicate word in adjacent cuts? Rewrite.
 
 ### Action-caption alignment (PD 2026-06-02: "왜 동영상이랑 안맞아?")
@@ -90,12 +90,18 @@ A character who is **present/visible the whole time** must NOT be narrated as ne
 - If a character is continuously present, narrate what they DO or THINK ("뒤에서 지켜보던 레오", "레오는 아까부터 노리고 있었죠"), not that they appear.
 - Check the prior cut's subjects: if the character was already in frame, an "appears" caption is a CONTINUITY LIE — rewrite it.
 
-### Tone diversity (within a 5-cut episode, use ALL FIVE registers)
+### Tone diversity — vary the register across cuts (six to draw from)
+One register per cut, different cut to cut. If every caption is the same tone the viewer
+disengages. Mix from these six. A **quiet one-take** (Leo alone watching TV, Ryani snoring
+in her sleep — little on-screen action) may lean on register 6 throughout, as long as each
+line is different; there the narrator's affectionate chatter IS what carries the episode.
+
 1. **의성어/의태어** — "아그작 — 아그작", "발라당!", "쪼르륵", "샤샤샥" — instant sound/sight hook. **CRITICAL (PD 2026-06-02): only use sound-onomatopoeia when the pet ACTUALLY makes that sound in the cut.** Use "왕왕!" only when `vlm_actual_action` explicitly says 짖음/바크/왕왕/woof. Use "야옹/냐옹/미야옹" only when VLM says 야옹/메우. Do NOT speculate from a play-bow pose alone — the pose doesn't imply barking. Visible-motion onomatopoeia (발라당, 쪼르륵 for visible water, 샤샤샥 for visible scurry) follow the same rule: only when VLM observed the motion.
 2. **위트있는 한 줄 평** — "이쯤 되면 11년차 베테랑이에요", "본격 먹방 모드 ON"
 3. **미스터리/전환** — "그런데 그 소리, 누군가 듣고 있었어요", "오해는 여기서 시작됐죠"
-4. **캐릭터 thoughts (괄호 또는 「캐릭터: 」 prefix)** — "(랴니의 사료 회수 작전 개시)", "레오: 이게 뭔 뜻이야?", "랴니: 또 안 통하네"
+4. **캐릭터 thoughts — 펫의 속마음, 1인칭** (괄호 또는 「캐릭터: 」 prefix) — "(랴니의 사료 회수 작전 개시)", "레오: 이게 뭔 뜻이야?", "랴니: 또 안 통하네"
 5. **짧은 reaction + 여운** — "...레오야, 정말 몰랐어?", "...뒤늦게 알아챘죠", "...그냥 항복이다!"
+6. **나레이터가 펫에게 말 걸기 — 사람이 화면 속 펫에게 거는 2인칭 대화** — "TV가 그렇게 재밌어, 레오?", "레오야, 나 좀 봐봐", "그만 자, 이 잠꾸러기야". (register 4가 펫의 *속마음*(1인칭)이라면, 이건 사람이 펫에게 *건네는 말*(2인칭)이다.) 동작이 적은 조용한 장면에 정서를 입히는 데 특히 강하다 — 매 컷 다른 말로 말을 걸어 한 사람과 한 펫의 대화처럼 흐르게 한다.
 
 **Bad**: every caption is "<pet>가 <verb>해요" descriptive ("랴니가 플레이바우 해요" / "레오가 봐요" / "레오가 누워요"). That's monotone — viewer disengages.
 
