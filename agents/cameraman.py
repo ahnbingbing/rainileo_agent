@@ -148,13 +148,11 @@ def _resolve_ref(name: str) -> Path | None:
 
 # PD 2026-06-14: real casual-phone LO-FI look, baked into the prompt (not post-process).
 LOFI_REALISM_DIRECTIVE = (
-    "LO-FI REALISM — this must look like a REAL casual snapshot/clip taken on an older "
-    "iPhone by a pet owner, NOT a glossy AI/CGI render: visible fine sensor noise and film "
-    "grain, slightly soft (not razor-sharp) focus, imperfect auto-exposure with mildly "
-    "crushed shadows and gently clipped highlights, muted and slightly desaturated colors, "
-    "natural available room light only (no studio/professional lighting, no HDR, no glossy "
-    "over-smoothing, no beauty filter). A touch of real-camera imperfection — subtle handheld "
-    "feel and slight motion blur on movement. Lo-fi authentic home-video quality."
+    "LO-FI REALISM (subtle) — render this like a real casual iPhone clip a pet owner shot, "
+    "not a glossy studio/AI image: natural available room light, true-to-life slightly muted "
+    "colors, a hint of real-camera softness and very fine grain. Keep the pets and props "
+    "SHARP and clearly readable — do NOT add heavy noise, do NOT blur, do NOT crush shadows "
+    "or wash out detail. Authentic everyday-phone look, still clean and in focus."
 )
 
 
