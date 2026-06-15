@@ -20,3 +20,4 @@ youtube/client_secret.json
 .env.bak
 *.lock
 assets/**/*.bak
+osxphotos_crash.log
