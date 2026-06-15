@@ -50,11 +50,18 @@ to whatever you choose, so pick the candidate that best sets up the shot.
 Judge with the audience lens FIRST (would a scroller stop and watch?), then the
 floors below. Among candidates that clear the floors, pick the most appealing.
 
-FLOORS (a candidate failing any of these is disqualified unless ALL fail):
+FLOORS (a candidate failing any of these is disqualified — never pick it):
+0. SINGLE-SUBJECT (HARD, check FIRST): the frame must contain EXACTLY the intended
+   subject(s) and NO extra animal ANYWHERE — no second cat or dog, including small,
+   blurry, or background ones sitting on furniture / a bench / the floor / a piano /
+   a scratcher. Scan the whole frame, foreground AND background. If you see more than
+   one animal (when one is intended), that candidate is AUTOMATICALLY DISQUALIFIED —
+   it can NEVER be the winner, no matter how good the main subject looks. This is the
+   #1 reason past picks were wrong: a hallucinated extra pet hid in the background.
 1. Character fidelity — markings/age/eyes/breed must match canon. Ryani: petite
-   black Frenchie, NO tail, thin blaze + white chin/chest/toes. Leo: orange tabby,
-   ~8mo lean young-adult, yellow-green eyes (NOT gold/amber), nose scar. No
-   anthropomorphic clothing.
+   black Frenchie, NO tail, thin blaze + white chin/chest/toes (markings THIN, never
+   thick/heavy). Leo: orange tabby, ~8mo lean young-adult, yellow-green eyes (NOT
+   gold/amber), nose scar. No anthropomorphic clothing.
 2. Scene-lock — frame must read as the cut's stated location, not a teleport.
 3. Intent match — the pose/framing must enable the cut's motion (e.g. a cut whose
    action is "sits up amazed" needs a still where the pose can spring into that).
@@ -63,9 +70,9 @@ FLOORS (a candidate failing any of these is disqualified unless ALL fail):
 Return STRICT JSON, no prose. In every string field use ONLY plain ASCII —
 no double-quotes, apostrophes, or smart quotes inside the text (they break the
 JSON). Keep each verdict under 8 words.
-{"winner": <0-based index>,
+{"winner": <0-based index of a candidate with extra_animal=false>,
  "reason": "<one line: why this beats the rest>",
- "candidates": [{"index": <i>, "score": <1-10>, "verdict": "<short>"}, ...]}"""
+ "candidates": [{"index": <i>, "score": <1-10>, "extra_animal": <true|false>, "verdict": "<short>"}, ...]}"""
 
 
 def _canon_for(subjects: str) -> str:
@@ -165,6 +172,17 @@ def pick_best_still(
             win = int(data.get("winner", 0))
             reason = data.get("reason", "")
             cands_out = data.get("candidates", [])
+            # Hard single-subject guard: never let a frame with a hallucinated
+            # extra animal win, even if the model picked it anyway.
+            flagged = {c.get("index") for c in cands_out
+                       if isinstance(c, dict) and c.get("extra_animal")}
+            if win in flagged:
+                clean = [c for c in cands_out
+                         if isinstance(c, dict) and not c.get("extra_animal")]
+                if clean:
+                    best = max(clean, key=lambda c: c.get("score", 0))
+                    win = int(best.get("index", win))
+                    reason = f"(switched off extra-animal frame) {best.get('verdict','')}"
         except Exception:
             # Model broke JSON (usually an unescaped quote in a verdict string).
             # Salvage the decision: the winner index is all we strictly need.

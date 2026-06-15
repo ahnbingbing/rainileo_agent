@@ -1,0 +1,82 @@
+{
+  "_episode_id": "first_swim",
+  "_caption_position": "bottom",
+  "cut1_intro": {
+    "scenes": [
+      {
+        "start": 0.3,
+        "end": 2.5,
+        "ko": "오늘, 큰 결심을 했어요",
+        "en": "Today, a big decision"
+      },
+      {
+        "start": 2.5,
+        "end": 4.7,
+        "ko": "처음으로 물 앞에 선 랴니",
+        "en": "Ryani faces the water for the first time"
+      }
+    ]
+  },
+  "cut2_build": {
+    "scenes": [
+      {
+        "start": 0.3,
+        "end": 2.5,
+        "ko": "앞발 살짝… 앗, 차가워!",
+        "en": "One paw in… brr, cold!"
+      },
+      {
+        "start": 2.5,
+        "end": 4.7,
+        "ko": "그래도 다시 도전",
+        "en": "But she tries again"
+      }
+    ]
+  },
+  "cut3_plunge": {
+    "scenes": [
+      {
+        "start": 0.3,
+        "end": 4.7,
+        "ko": "에라 모르겠다, 풍덩!",
+        "en": "Here goes — splash!"
+      }
+    ]
+  },
+  "cut4_swim": {
+    "scenes": [
+      {
+        "start": 0.3,
+        "end": 2.5,
+        "ko": "어? 나 수영하잖아?",
+        "en": "Wait… I'm swimming!"
+      },
+      {
+        "start": 2.5,
+        "end": 4.7,
+        "ko": "첨벙첨벙, 점점 신나요",
+        "en": "Splash splash — loving it"
+      }
+    ]
+  },
+  "cut5_climb": {
+    "scenes": [
+      {
+        "start": 0.3,
+        "end": 4.7,
+        "ko": "끙— 올라가기 성공!",
+        "en": "Heave — made it out!"
+      }
+    ]
+  },
+  "cut6_wink": {
+    "scenes": [
+      {
+        "start": 0.3,
+        "end": 4.7,
+        "ko": "또 할래요 ♥",
+        "en": "Let's do it again ♥"
+      }
+    ]
+  }
+}
