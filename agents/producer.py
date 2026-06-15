@@ -1773,6 +1773,7 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     _arch = _drop_branding(context.get("archive_videos", []), _branding)
     _seen = {v.get("id") for v in avail_videos if v.get("id")}
     avail_videos = avail_videos + [v for v in _arch if v.get("id") and v.get("id") not in _seen]
+    cooldown: set[str] = set()
     try:
         _con = _db()
         cooldown = _recently_used_rf_assets(_con)
@@ -1818,14 +1819,24 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     # RF 08:00 clips because they re-entered as photo / raw-archive candidates that
     # the video-only filter above never touched (재탕 누수). Apply _excl to every
     # pool the writer can pick from, but never starve it (keep ≥6).
-    if _excl:
+    # PD 2026-06-16: the recent-episode cooldown (whole-clip) must cover EVERY pool the
+    # Writer can pick from — not just available_videos. It was applied to avail_videos
+    # alone, so a cooled clip that ALSO lives in the archive/photo pool re-entered through
+    # archive_videos, and the next episode reused water_peppy's exact 2018 water clip
+    # (near-dup, caught only by the reviewer). Mirror the _excl treatment for cooldown:
+    # exclude both from photos AND archive_videos. (Same leak class as the 6/12 _excl fix
+    # — _excl got extended to every pool then, cooldown did not.)
+    _pool_excl = set(_excl) | set(cooldown)
+    if _pool_excl:
         _pk = [p for p in _photos
-               if p.get("id") not in _excl and p.get("asset_id") not in _excl]
-        if len(_pk) >= 6:
+               if p.get("id") not in _pool_excl and p.get("asset_id") not in _pool_excl]
+        # keep ≥6 vs the BATCH-dedup floor only; cooled photos may shrink below that
+        # (they're supplementary) but never empty the pool entirely.
+        if len(_pk) >= 6 or (_pk and not _excl):
             _photos = _pk
     _arch_field = [v for v in context.get("archive_videos", [])
-                   if not _excl or (v.get("id") not in _excl
-                                    and v.get("asset_id") not in _excl)]
+                   if not _pool_excl or (v.get("id") not in _pool_excl
+                                    and v.get("asset_id") not in _pool_excl)]
     # PD 2026-06-11: RF default = long-original ONE-TAKE. The writer kept ignoring
     # the prompt rule and montaging 6-9s trims even when 38s/75s clips sat in the
     # pool — a "label not rule" miss. So PRE-COMPUTE the long candidates and inject
