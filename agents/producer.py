@@ -640,6 +640,34 @@ def propose_concepts(target: dt.date, context: dict, style_filter: str | None = 
                 _db(), today=target.isoformat(), render_style="ai_vtuber")
         except Exception as e:
             log.warning("arc directive (av) failed: %s", e)
+        # PD 2026-06-14: brainstorm storylines and let the reviewer (YouTube-audience lens)
+        # pick the winner BEFORE the expensive render — the reviewer gates the IDEA, not the
+        # finished $40-50 video. The winning storyline seeds the Writer. CONCEPT_BRAINSTORM=0
+        # to disable.
+        if os.getenv("CONCEPT_BRAINSTORM", "1") != "0":
+            try:
+                from agents import concept_brainstorm as _cb
+                _brief = (context.get("arc_directive") or "").strip() \
+                    or "충주 할머니집 거실, 레오·랴니의 짧은 상상 모험 (현실→상상→현실)"
+                _n = int(os.getenv("CONCEPT_BRAINSTORM_N", "5"))
+                _res = _cb.best("ai_vtuber", _brief, _n)
+                _win = _res.get("winner")
+                if _win:
+                    if progress_cb:
+                        _rk = " | ".join(f"{c.get('audience_score')}:{c.get('title')}"
+                                         for c in _res.get("ranking", [])[:_n])
+                        progress_cb(f":brain: 컨셉 {_n}개 브레인스토밍 → 시청자 랭킹: {_rk}")
+                        progress_cb(f":trophy: 승자({_win.get('audience_score')}/10): {_win.get('title')}")
+                    _beats = _win.get("beats") or []
+                    _beat_txt = " / ".join(str(b) for b in _beats) if isinstance(_beats, list) else str(_beats)
+                    context["arc_directive"] = (
+                        (context.get("arc_directive") or "")
+                        + f"\n\n## ★리뷰어가 시청자 관점으로 선택한 스토리라인 (이걸로 전개):\n"
+                        + f"제목: {_win.get('title')}\n로그라인: {_win.get('logline')}\n"
+                        + f"상상 훅: {_win.get('imagination_hook')}\n비트: {_beat_txt}\n"
+                        + "위 스토리라인을 충실히 컷으로 전개하라.")
+            except Exception as e:
+                log.warning("concept brainstorm gate failed (skipping): %s", e)
         try:
             from agents.writer_director import propose_concepts_v2
             concepts = propose_concepts_v2(
@@ -950,6 +978,40 @@ def _free_trim_start(clip_dur: float, used_segs: list, win: float,
         if not _overlaps(s, s + win):
             return s
     return None
+
+
+def _rf_segment_reuse_overlaps(concept: dict, used_segs: dict,
+                               min_overlap: float = 1.0) -> list:
+    """Flag cuts whose (asset_id, trim window) overlaps a recently-used segment of the
+    SAME clip by >= `min_overlap` seconds → "동일 구간 반복" across episodes. The one-take
+    path already avoids this via `_free_trim_start`; this brings the SAME segment-level
+    freshness to the normal singlepass path (which previously only had whole-clip
+    cooldown — once that expired, any/overlapping trim of a reused clip was allowed).
+    Returns human-readable lines for the re-write feedback; empty = clean."""
+    out: list = []
+    for c in (concept.get("cuts") or []):
+        aid = c.get("asset_id")
+        wins = used_segs.get(aid)
+        if not aid or not wins:
+            continue
+        try:
+            st = float(c.get("trim_start") or 0)
+            d = float(c.get("duration_seconds") or c.get("trim_dur") or 0)
+        except (TypeError, ValueError):
+            continue
+        if d <= 0:
+            continue
+        en = st + d
+        for (s, e) in wins:
+            ov = min(en, e) - max(st, s)
+            if ov >= min_overlap:
+                tag = c.get("tag") or c.get("beat") or "cut"
+                out.append(
+                    f"- {tag}: 클립 {aid}의 {st:.1f}–{en:.1f}s 구간이 최근 사용 구간 "
+                    f"{s:.1f}–{e:.1f}s 와 {ov:.1f}s 겹친다 → 겹치지 않는 다른 trim_start로 "
+                    f"바꾸거나 다른 클립을 써라(동일 구간 반복 금지).")
+                break
+    return out
 
 
 # PD 2026-06-13 (options 2+3): the channel BUMPER itself (assets/branding/intro_bumper.mp4
@@ -1796,6 +1858,21 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     except Exception as e:
         log.warning("writer-side underused reorder failed: %s", e)
         _avoid_overused = {}
+    # PD 2026-06-14: bring SEGMENT-level freshness to the normal singlepass path. The
+    # one-take path already picks a non-overlapping trim (_free_trim_start); singlepass
+    # had ONLY whole-clip cooldown, so once that expired a reused clip could come back
+    # with the same/overlapping trim ("동일 구간 반복"). Surface the recently-used windows
+    # to the Writer (pick a different trim) and gate on it post-write below.
+    try:
+        _used_segs = _recently_used_rf_segments(
+            _db(), days=int(os.getenv("RF_SEGMENT_HISTORY_DAYS", "60")))
+    except Exception as e:
+        log.warning("RF segment history lookup failed: %s", e)
+        _used_segs = {}
+    _pool_ids = {v.get("id") for v in (avail_videos + _arch_field) if v.get("id")}
+    _reuse_segs = {aid: [[round(s, 1), round(e, 1)] for (s, e) in wins]
+                   for aid, wins in _used_segs.items()
+                   if aid in _pool_ids and wins}
     _LONG_MIN = float(os.getenv("RF_ONETAKE_MIN_SEC", "12"))
     _long = sorted(
         ({"id": v.get("id"), "dur": v.get("dur"),
@@ -1833,6 +1910,10 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         # doesn't have to hunt for it.
         "same_location_groups": _rf_location_groups(
             (avail_videos or []) + (_photos or []) + (_arch_field or [])),
+        # PD 2026-06-14: asset_id → [[start,end], ...] trim windows already used by
+        # recent RF episodes. If you reuse one of these clips, pick a NON-overlapping
+        # trim_start; overlapping reuse is rejected post-write (동일 구간 반복 방지).
+        "recently_used_segments": _reuse_segs,
     }
     user = json.dumps(rf_context, ensure_ascii=False, default=str)
     # PD 2026-06-06: feed the showrunner directive (rolling ~1-month season plan
@@ -1855,6 +1936,19 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
                      "knowledge_questions에 적어라(추측 금지).")
     except Exception as e:
         log.warning("character facts injection (rf) failed: %s", e)
+    # PD 2026-06-15: inject the PD-taste digest so CLIP/CUT SELECTION reflects PD's
+    # accumulated choices (PD: "선택은 PD 과거 선택을 학습해서"). This is what stops the
+    # 풀먹방→낮잠사진 drift at the selection point — the writer must pick clips PD's way.
+    try:
+        from agents import pd_taste as _pt
+        _taste = _pt.taste_digest(_db(), lane="real_footage",
+                                  kinds=(_pt.K_CLIP, _pt.K_CUT, _pt.K_CAPTION, _pt.K_TONE))
+        if _taste:
+            user += ("\n\n" + _taste +
+                     "\n위 PD 취향을 클립/컷 선택과 캡션에 그대로 반영하라 — 특히 지정 컨셉을 "
+                     "관련 실제 영상으로 채우고(다른 활동 사진으로 패딩 금지), 영상이 부족하면 컨셉을 바꿔라.")
+    except Exception as e:
+        log.warning("pd_taste injection (rf) failed: %s", e)
     try:
         from agents import arc as _arc
         _series = _arc.series_so_far(_db(), n=10)
@@ -1883,6 +1977,10 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         user += ("\n\n⚠️ 신선도: available_videos는 신선한(덜 쓴) 클립부터 정렬돼 있다. "
                  "avoid_overused_setups의 장소/활동은 최근 과도하게 반복됐으니 컷의 과반을 "
                  "그쪽으로 채우지 마라 — 야외/카페/옛 영상 등 다른 장소·활동을 우선 골라라.")
+    if _reuse_segs:
+        user += ("\n\n⚠️ 구간 재사용: recently_used_segments는 최근 에피소드가 이미 쓴 "
+                 "(클립별) 구간이다. 같은 클립을 다시 쓰려면 그 구간과 겹치지 않는 다른 "
+                 "trim_start를 골라라 — 겹치는 구간 재사용은 거부된다(동일 구간 반복 방지).")
     from agents.llm_cascade import call_text_cascade
     text = call_text_cascade(system, user, max_tokens=12000).strip()  # PD 2026-06-09: avoid truncation
     concepts = _robust_json_parse(text)
@@ -1926,6 +2024,29 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
             _fb = ("[위치검증] 아래 컷의 캡션이 클립의 실제 위치/내용과 모순된다. 각 캡션을 "
                    "그 클립이 실제 보여주는 위치·내용에 맞춰 다시 써라(장소가 바뀌면 전환을 "
                    "캡션에 명시):\n" + "\n".join(_contras)
+                   + (("\n\n[이전 피드백]\n" + prior_feedback) if prior_feedback else ""))
+            return _propose_realfootage_singlepass(target, context, progress_cb,
+                                                   prior_feedback=_fb)
+    # PD 2026-06-14: SEGMENT-reuse gate (singlepass parity with the one-take path).
+    # If a cut reuses a clip on a window that overlaps a recently-used segment of the
+    # SAME clip → "동일 구간 반복"; re-write ONCE with the specifics ("[구간중복]" sentinel
+    # bounds the retry). Toggle via RF_SEGMENT_GATE_NORMAL=0.
+    if (os.getenv("RF_SEGMENT_GATE_NORMAL", "1") == "1"
+            and "[구간중복]" not in prior_feedback and _used_segs):
+        try:
+            _overlaps2: list = []
+            for c in concepts:
+                _overlaps2 += _rf_segment_reuse_overlaps(c, _used_segs)
+        except Exception as e:
+            log.warning("RF segment-reuse check failed: %s", e)
+            _overlaps2 = []
+        if _overlaps2:
+            if progress_cb:
+                progress_cb(f":mag: 구간중복 — 같은 클립의 이미 쓴 구간 재사용 "
+                            f"{len(_overlaps2)}건 → 재작성")
+            _fb = ("[구간중복] 아래 컷이 최근 에피소드에서 이미 쓴 클립 구간과 겹친다. 같은 "
+                   "클립을 쓰려면 겹치지 않는 다른 trim_start로 바꾸거나 다른 클립으로 교체하라:\n"
+                   + "\n".join(_overlaps2)
                    + (("\n\n[이전 피드백]\n" + prior_feedback) if prior_feedback else ""))
             return _propose_realfootage_singlepass(target, context, progress_cb,
                                                    prior_feedback=_fb)

@@ -320,6 +320,9 @@ def _do_veto(vid: str, delete: bool = False) -> str:
             # 'vetoed' — PD 2026-06-09 bug: the old 'vetoed' value silently failed
             # the UPDATE so uploaded stayed 1). uploaded=0 is the load-bearing flag
             # (arc/cooldown only count uploaded=1).
+            _row = con.execute(
+                "SELECT render_style, theme FROM cards WHERE youtube_video_id=?",
+                (vid,)).fetchone()
             con.execute(
                 "UPDATE cards SET uploaded=0, state='archived', "
                 "updated_at=datetime('now') WHERE youtube_video_id=?", (vid,))
@@ -327,6 +330,17 @@ def _do_veto(vid: str, delete: bool = False) -> str:
                 con.execute("UPDATE launch_threads SET vetoed=1 WHERE video_id=?", (vid,))
             except Exception:
                 pass
+            # PD 2026-06-15: a veto is the strongest selection signal — record it so the
+            # selectors (concept ranker / clip gate) learn what PD rejects. [[pd_taste]]
+            try:
+                from agents import pd_taste as _pt
+                _lane = (_row[0] if _row else None) or "both"
+                _title = (_row[1] if _row else "") or vid
+                _pt.log_selection(con, lane=_lane, kind=_pt.K_CONCEPT, decision=_pt.VETO,
+                                  subject=vid, rejected=_title,
+                                  reason=f"PD veto: '{_title}' — 이런 회차는 내림(다음 선택에서 유사 회피).")
+            except Exception as _e:
+                log.warning("pd_taste veto log failed: %s", _e)
     except Exception as e:
         log.warning("veto db update failed for %s: %s", vid, e)
     return f":white_check_mark: veto 완료 — `{vid}` {action} (쿨다운/아크 회수됨)"

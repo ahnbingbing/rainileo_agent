@@ -914,6 +914,29 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
 
     # ── Sources manifest ──
     sources = {}
+    # PD 2026-06-15: real_footage is VIDEO-FIRST. A photo mixed into an episode that
+    # ALSO has real video is at most a ~0.5s caption-less FLASH accent — never a multi-
+    # second ken-burns story cut (that reads static/생성형 and pads the concept off-target,
+    # the 풀먹방→낮잠사진 drift). So when the episode has ≥1 real video cut, every photo cut
+    # is hard-clamped to PHOTO_FLASH_SEC and its captions are blanked. A genuinely all-photo
+    # episode (old-photo memory-lane with no video) is left alone — photos there ARE the story.
+    _photo_flash_tags: set = set()
+    PHOTO_FLASH_SEC = float(os.getenv("RF_PHOTO_FLASH_SEC", "0.5"))
+
+    def _is_photo_cut(idx, it):
+        _cc = concept_cuts[idx] if idx < len(concept_cuts) else {}
+        _h = (_cc.get("source_hint") or "").strip().lower()
+        return _h == "photo_i2v" or (it.get("asset") or {}).get("kind") == "photo"
+
+    _rf_has_video = (style == "real_footage"
+                     and any(not _is_photo_cut(i, it) for i, it in enumerate(cuts)))
+    # PD 2026-06-15: a photo is never the closer. Drop trailing photo cut(s) so a
+    # video-containing RF episode ENDS on real video — not an abrupt 0.5s photo flash.
+    # (The writer still occasionally appends a sticky nap-photo finale; this removes it.)
+    if _rf_has_video:
+        while len(cuts) > 1 and _is_photo_cut(len(cuts) - 1, cuts[-1]):
+            cuts.pop()
+            concept_cuts = concept_cuts[:len(cuts)]
     if style == "real_footage":
         # PD 2026-06-02: real_footage v2 supports 3 source tiers per cut.
         # Tier 1 (clip) = direct video trim. Tier 2 (photo_i2v) = animate
@@ -939,14 +962,25 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
                 # restores Seedance animation; =off bans photos (legacy RF_VIDEO_ONLY).
                 _rf_kb = (style == "real_footage"
                           and os.getenv("RF_PHOTO_MODE", "kenburns").lower() != "i2v")
+                # PD 2026-06-15: in a video-containing RF episode, a photo is only a
+                # ~0.5s flash accent — clamp its duration and blank its captions below.
+                _flash = _rf_has_video
+                if _flash:
+                    _photo_flash_tags.add(tag)
+                _pdur = (PHOTO_FLASH_SEC if _flash
+                         else float(cc.get("duration_seconds") or 5))
+                # A 0.5s flash needs no Seedance animation — force static ken-burns
+                # (no generation cost, no drift); only a full-length photo cut (all-photo
+                # memory-lane) may use Seedance i2v when RF_PHOTO_MODE=i2v.
+                _src = "__photo_kb__" if (_flash or _rf_kb) else "__photo_i2v__"
                 sources[tag] = {
-                    "source": "__photo_kb__" if _rf_kb else "__photo_i2v__",
+                    "source": _src,
                     "photo_path": photo_fp,
                     "source_uuid": a.get("source_uuid") or "",  # for on-demand re-download
                     "motion_prompt": cc.get("motion_prompt", ""),
-                    "seedance_seconds": int(cc.get("duration_seconds") or 5),
+                    "seedance_seconds": 1 if _flash else int(cc.get("duration_seconds") or 5),
                     "trim_start": 0.0,
-                    "trim_dur": float(cc.get("duration_seconds") or 5),
+                    "trim_dur": _pdur,
                 }
                 continue
             if hint == "chain_from_prev" or a.get("kind") == "chain_fill":
@@ -1278,6 +1312,11 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
                 s["start"] = round(0.1 if j == 0 else j * span / n, 2)
                 s["end"] = round((j + 1) * span / n if j < n - 1 else max(span - 0.05, s["start"] + 1.0), 2)
 
+        # PD 2026-06-15: a ~0.5s photo flash accent carries NO caption (can't be read
+        # that fast, and it's a visual punctuation, not a story beat). Blank it.
+        if item["tag"] in _photo_flash_tags:
+            captions[item["tag"]] = {"scenes": []}
+            continue
         # Always use scenes format (works for both real_footage and ai_vtuber)
         captions[item["tag"]] = {"scenes": scenes} if scenes else {
             "scenes": [{"start": 0.2, "end": 4.0, "ko": fallback_title or "...", "en": ""}]
@@ -1350,6 +1389,38 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
             "_mood_atmosphere": regen_dir.get("mood_atmosphere", ""),
         }
 
+        # PD 2026-06-14: SCENE LOCK for i2v regen stills. An i2v cut's still is
+        # GPT text-to-image from (style + action + subjects) — it does NOT use the
+        # scene_ref image (scene_ref pins only `ref`-mode cuts). So when the cut's
+        # action has no location word the model INVENTS a room: the 주방 redo put
+        # cut3 in a 복도 and the wink cut in a 침실 even though the episode is locked
+        # to one kitchen. When the episode is pinned to ONE set (SCENE_REF_OVERRIDE
+        # or an explicit concept scene_lock), prepend the canonical set description
+        # to EVERY i2v cut so the room is identical in every cut.
+        _scene_lock_desc = ""
+        if os.getenv("SCENE_REF_OVERRIDE", "").strip() or (concept or {}).get("scene_lock"):
+            _scene_lock_desc = ((concept or {}).get("set_description") or "").strip()
+            _sa = (concept or {}).get("set_anchor")
+            if len(_scene_lock_desc) < 30 and _sa:
+                try:
+                    _lib = json.loads((ROOT / "data" / "set_library.json").read_text(encoding="utf-8"))
+                    _e = _lib.get(_sa, {})
+                    _pb = _e.get("persistent_background") or {}
+                    def _as_text(v):
+                        if isinstance(v, list):
+                            return "; ".join(str(x) for x in v)
+                        return str(v) if v else ""
+                    _bits = [_as_text(_pb.get("summary")), _as_text(_pb.get("floor_type")),
+                             _as_text(_e.get("notable_details"))]
+                    _scene_lock_desc = ". ".join(b for b in _bits if b)[:600]
+                except Exception as e:
+                    log.warning("scene-lock desc build failed: %s", e)
+        _scene_lock_prefix = (
+            f"SET — THE SAME ROOM IN EVERY CUT, never change or relocate the room: "
+            f"{_scene_lock_desc}. " if _scene_lock_desc else "")
+        if _scene_lock_prefix:
+            log.info("scene lock active for i2v regen stills (%d chars)", len(_scene_lock_desc))
+
         for i, item in enumerate(cuts):
             tag = item["tag"]
             cc = concept_cuts[i] if i < len(concept_cuts) else {}
@@ -1372,7 +1443,7 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
                 log.warning("regen_prompts: cut %s has NO scene direction "
                             "(regen_prompt/scene/action all empty) — image model "
                             "will invent the location", tag)
-            full_prompt = f"{overall_style}. {per_cut_prompt}. " \
+            full_prompt = f"{overall_style}. {_scene_lock_prefix}{per_cut_prompt}. " \
                           f"Featuring {subjects}. {preserve}"
             regen[tag] = full_prompt
 
@@ -1627,10 +1698,19 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
     sys2 = (
         "너는 반려동물 채널 'Ryani & Leo'의 캡션 교정자다. 아래 각 항목은 한 자막(scene)이 실제 "
         "화면과 어긋난 것이다(주인공 부재/오인/과노출/행동 불일치). 각 항목의 자막을 화면에 실제로 "
-        "있는 것(actual)만으로 다시 써라. 규칙: ▲화면에 없는 펫(랴니=검정 프렌치불독/레오=주황 "
-        "태비)을 주어로 쓰지 마라 — 안 보이면 그 펫 얘기를 하지 마라. ▲다른 동물을 우리 펫으로 부르지 "
-        "마라(리트리버를 '랴니'라 하지 마라). ▲견종·마킹 같은 메타 설명 금지. ▲화면에 우리 펫이 "
-        "없으면 관찰자 시점으로 담백하게(예: '낯선 친구가 지나가요'). ▲캐주얼 vlog 톤, 짧고 따뜻하게. "
+        "있는 것(actual)만으로 다시 써라. 규칙: "
+        "▲★우리 펫은 반드시 '이름'으로 부른다 — 화면의 주황 태비 고양이 = 무조건 '레오', 검정 "
+        "프렌치불독 = 무조건 '랴니'. '주황색 고양이'·'고양이'·'강아지'·'주황 태비' 같은 일반 명칭으로 "
+        "우리 펫을 절대 부르지 마라(VLM 묘사를 그대로 베끼지 말고 이름으로 바꿔라). "
+        "▲화면에 없는 펫을 주어로 쓰지 마라 — 안 보이면 그 펫 얘기를 하지 마라. "
+        "▲다른 동물을 우리 펫으로 부르지 마라(리트리버를 '랴니'라 하지 마라). "
+        "▲견종·마킹 같은 메타 설명 금지. "
+        "▲★과거(예전/아기 때) 클립이면 시점을 캡션에 명시하라 — actual에 '아기'·어린 모습·옛 정황이 "
+        "보이면 '○개월 전', '아기 땐', '그때는' 같이 시점을 드러내(현재 클립과 헷갈리지 않게). "
+        "▲'낯선 친구'·익명 관찰자 톤은 other_animal에 **진짜 다른 동물**(리트리버 등)이 있을 때만. "
+        "other_animal이 비어있는데 우리 펫이 안 보인다고 판정됐으면 — 우리 펫(레오/랴니)을 "
+        "'낯선 친구'라 부르지 마라. 그 컷의 동작·정황 위주로 담백히 쓰거나 보이는 펫 이름으로 써라. "
+        "▲캐주얼 vlog 톤, 짧고 따뜻하게, 매 줄 다른 표현(반복 금지). "
         "각 항목당 ko/en 한 줄씩. JSON만: {\"scenes\":[{\"id\":\"tag#idx\",\"ko\":\"..\",\"en\":\"..\"}]}")
     try:
         from agents.llm_cascade import call_text_cascade
@@ -1667,6 +1747,104 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
                     f"화면 기준 재작성 (주인공 부재/오인 교정)")
     log.info("grounding gate: rewrote %d/%d mismatched scenes (of %d)",
              n_fixed, len(mismatched), n_scenes)
+
+
+def _rf_caption_punchup(work_dir: Path, manifests: dict, anim_dir: Path,
+                        progress_cb: ProgressCb = None, dry_run: bool = False) -> None:
+    """PD 2026-06-15 ROOT FIX for '단순 묘사체': the RF single-pass writer authors captions
+    in a grounding-first pass and skips AV's Caption-Agent/Polisher, so captions stay flat
+    & descriptive ("산책은 바닥부터 꼼꼼히") no matter how many 'add wit' rules the writer
+    prompt carries. This is the missing wit stage: take each already-grounded caption and
+    sharpen it into 말맛/voice — WITHOUT changing the grounded facts (same who/what/where/
+    when), WITHOUT inventing relationships/firsts, USING real named entities (태풍=랴니 남친
+    노란개 등). Runs AFTER the grounding gate so facts are settled; punch-up only rewords."""
+    if os.getenv("RF_CAPTION_PUNCHUP", "1") == "0":
+        return
+    cap_path = Path(manifests.get("captions") or (work_dir / "captions.json"))
+    try:
+        cap = json.loads(cap_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        log.warning("punchup: captions.json unreadable: %s", e)
+        return
+    # ground-truth per cut tag (scene_description) for safety
+    sc_by_tag: dict = {}
+    try:
+        con = _db()
+        for item in (manifests.get("cuts") or []):
+            tag = item.get("tag"); aid = item.get("asset_id")
+            if tag and aid:
+                r = con.execute("SELECT substr(scene_description,1,140) FROM assets WHERE asset_id=?",
+                                (aid,)).fetchone()
+                if r and r[0]:
+                    sc_by_tag[tag] = r[0]
+    except Exception:
+        pass
+    items = []
+    for tag, entry in cap.items():
+        if tag.startswith("_"):
+            continue
+        for idx, s in enumerate(entry.get("scenes") or []):
+            if (s.get("ko") or "").strip():
+                items.append({"id": f"{tag}#{idx}", "ko": s.get("ko", ""),
+                              "en": s.get("en", ""), "screen": sc_by_tag.get(tag, "")})
+    if not items:
+        return
+    try:
+        from agents import canon as _canon
+        facts = _canon.CHARACTER_FACTS
+    except Exception:
+        facts = ""
+    sys = (
+        "너는 'Ryani & Leo' 펫 숏츠의 캡션 말맛 전문가다. 아래 자막들은 이미 화면과 사실이 맞게 "
+        "쓰여 있다(grounded). 네 일은 **사실은 그대로 두고 '말맛'만 끌어올리는 것** — 단순 묘사체를 "
+        "캐릭터 속마음·위트·반전·잔잔한 정서 한 끗으로 바꿔라. 시청자가 '읽는 맛'이 있어야 한다.\n"
+        "★ 위트는 한 스푼이지 한 그릇이 아니다 — 회상·잔잔이 베이스, 위트는 컷마다 *다른 결*로 "
+        "가끔. 너는 전체 자막을 한꺼번에 보므로 **같은 장치가 겹치지 않게 분배**하라. 특히 반복 "
+        "페르소나 라벨('인생 N년', 'N년차 ~', '~ 모드 ON', '체크리스트 N번', '베테랑 프로토콜')을 "
+        "한 영상에서 두 번 이상 쓰지 마라 — 펫이 사람 이력서처럼 늙고 상투어가 된다. 연륜/베테랑 "
+        "표현은 *한 번만* 매력적이며 랴니에게만(레오는 8개월이라 금지). EN 줄도 KO보다 더 영리해지려 "
+        "과장 번역하지 마라('veteran protocol engaged' 류 금지).\n"
+        "규칙: ▲who/what/where/when(시점)·등장체는 절대 바꾸지 마라(사실 고정). ▲화면/사실에 없는 "
+        "관계·사건·'첫/처음/새 친구'를 새로 지어내지 마라. ▲펫은 이름(레오/랴니), 노란 친구 개는 "
+        "'태풍'. ▲여러 과거 클립이 한 흐름인 메모리레인이면 시점 앵커는 **처음·끝에만**(첫 줄 'N년 "
+        "전/아기 땐', 마지막 줄 '지금도/오늘도'), 가운데 컷은 행동 그대로 — 매 컷 'N년/N년차' 반복 "
+        "금지. ▲마지막 줄은 **첫 줄 정서를 되받는 북엔드 payoff**면 가장 강하다. ▲KO 한 줄+EN 한 "
+        "줄, 괄호/이모지 남발/대본주석 금지.\n"
+        "묘사체→말맛 예(장치를 *섞어서*, 라벨 반복 금지): '발을 핥아요'→'식후 양치는 꼼꼼히', "
+        "'랴니가 본다'→'그 눈빛, 말이 필요 없죠', '물소리도 놓칠 수 없죠'→'폭포 앞에선 누구나 잠깐 "
+        "멈추죠'.\n"
+        "참고 캐릭터 사실:\n" + facts[:1200] + "\n"
+        "각 항목 id별로 더 맛깔난 ko/en. JSON만: {\"scenes\":[{\"id\":..,\"ko\":..,\"en\":..}]}")
+    user = json.dumps([{"id": i["id"], "ko": i["ko"], "screen": i["screen"]} for i in items],
+                      ensure_ascii=False)
+    try:
+        from agents.llm_cascade import call_text_cascade
+        import re as _re
+        txt = call_text_cascade(sys, user, max_tokens=2000).strip()
+        txt = _re.sub(r"^```(?:json)?\s*", "", txt); txt = _re.sub(r"\s*```$", "", txt)
+        new = {s.get("id"): s for s in json.loads(txt).get("scenes", []) if s.get("id")}
+    except Exception as e:
+        log.warning("punchup failed (keeping grounded captions): %s", e)
+        return
+    n = 0
+    for tag, entry in cap.items():
+        if tag.startswith("_"):
+            continue
+        for idx, s in enumerate(entry.get("scenes") or []):
+            ns = new.get(f"{tag}#{idx}")
+            if ns and (ns.get("ko") or "").strip():
+                s["ko"] = ns["ko"].strip()
+                if ns.get("en"):
+                    s["en"] = ns["en"].strip()
+                n += 1
+    if n and not dry_run:
+        try:
+            cap_path.write_text(json.dumps(cap, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as e:
+            log.warning("punchup write-back failed: %s", e); return
+    if progress_cb:
+        progress_cb(f":sparkles: 캡션 말맛 punch-up — {n}개 자막 위트 강화 (사실 유지)")
+    log.info("rf caption punch-up: sharpened %d captions", n)
 
 
 def _vlm_post_render_caption_rewrite(work_dir: Path, manifests: dict,
@@ -3209,13 +3387,20 @@ def _prerender_chain_from_prev(manifests: dict, work_dir: Path,
     )
 
 
-def _ensure_local(file_path: str, source_uuid: str | None) -> str | None:
+def _ensure_local(file_path: str, source_uuid: str | None, *, force: bool = False) -> str | None:
     """PD 2026-06-07 efficient model: a clip's original may have been pruned to
     save space. If the file is missing but we have its Photos UUID, re-download
     it on demand to the same path. Returns a valid local path or None."""
     try:
         if file_path and Path(file_path).exists():
             return file_path
+        # PD 2026-06-15: downloads happen ONLY in the controlled upfront prefetch
+        # (force=True), never mid-render. RENDER_NO_ICLOUD_FETCH=1 makes mid-render
+        # _ensure_local calls fail fast (caller drops the cut) instead of triggering a
+        # serialized per-photo osxphotos loop that hung the batch 8h (av 0/2). The prefetch
+        # passes force=True so iCloud-only photos ARE downloaded first (PD: 받아서 쓰면 됨).
+        if not force and os.getenv("RENDER_NO_ICLOUD_FETCH", "0") == "1":
+            return None
         if not source_uuid:
             return file_path  # nothing we can do — let caller handle missing
         from icloud.sync import download_asset_by_uuid
@@ -4104,6 +4289,13 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
                                        progress_cb=progress_cb, dry_run=dry_run)
         except Exception as ex:
             log.warning("grounding gate skipped: %s", ex)
+        # PD 2026-06-15: the missing wit stage — sharpen the grounded captions into 말맛
+        # (RF singlepass otherwise skips AV's Caption-Agent/Polisher → flat 묘사체).
+        try:
+            _rf_caption_punchup(work_dir, manifests, anim_dir,
+                                progress_cb=progress_cb, dry_run=dry_run)
+        except Exception as ex:
+            log.warning("caption punch-up skipped: %s", ex)
     else:
         cuts_local = manifests.get("cuts") or []
         concept_cuts_local = manifests.get("concept_cuts") or []
@@ -6285,15 +6477,35 @@ def _prestage_concept_assets(concept: dict | None, card: dict | None,
             need.append((aid, fp, uuid))
     if not need:
         return
+    # PD 2026-06-15: download iCloud-only originals UPFRONT (force past the render-time
+    # guard), but BOUNDED — a per-photo timeout + a total budget so a slow/stuck osxphotos
+    # export can never hang the batch (the 8h av-0/2 failure). Whatever doesn't arrive in
+    # budget is left for the per-cut gate to swap/drop; the render itself never downloads.
+    import concurrent.futures as _cf, time as _t
+    per_to = float(os.getenv("PREFETCH_PHOTO_TIMEOUT", "90"))
+    budget = float(os.getenv("PREFETCH_BUDGET", "600"))
     if progress_cb:
-        progress_cb(f":arrow_down: 렌더 전 자산 사전 다운로드 {len(need)}개 (직렬)")
+        progress_cb(f":arrow_down: 렌더 전 자산 사전 다운로드 {len(need)}개 (사진당 {int(per_to)}s, 예산 {int(budget)}s)")
     ok = 0
-    for aid, fp, uuid in need:
-        rec = _ensure_local(fp, uuid)
-        if rec and Path(rec).exists():
-            ok += 1
-        elif progress_cb:
-            progress_cb(f":warning: 사전 다운로드 실패 {str(aid)[:24]} — 렌더 중 교체/드롭")
+    t0 = _t.monotonic()
+    with _cf.ThreadPoolExecutor(max_workers=1) as _ex:  # osxphotos lock serializes anyway
+        for aid, fp, uuid in need:
+            if _t.monotonic() - t0 > budget:
+                if progress_cb:
+                    progress_cb(f":hourglass: 사전 다운로드 예산 초과 — 나머지 {len(need)-ok}개는 렌더 중 드롭")
+                break
+            try:
+                rec = _ex.submit(_ensure_local, fp, uuid, force=True).result(timeout=per_to)
+            except _cf.TimeoutError:
+                rec = None
+                if progress_cb:
+                    progress_cb(f":warning: 사전 다운로드 타임아웃 {str(aid)[:24]} — 드롭")
+            except Exception:
+                rec = None
+            if rec and Path(rec).exists():
+                ok += 1
+            elif progress_cb:
+                progress_cb(f":warning: 사전 다운로드 실패 {str(aid)[:24]} — 렌더 중 교체/드롭")
     if progress_cb:
         progress_cb(f":white_check_mark: 사전 다운로드 {ok}/{len(need)} 완료")
 

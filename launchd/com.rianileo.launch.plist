@@ -40,6 +40,7 @@
       <key>ARC_ENABLED</key><string>1</string>
       <key>YOUTUBE_AUTO_UPLOAD</key><string>1</string>
       <key>CHAIN_TRANSITION</key><string>crossfade</string>
+      <key>RENDER_NO_ICLOUD_FETCH</key><string>1</string>
       <key>AV_CUT_OUTPUT_SECONDS</key><string>4</string>
       <key>AV_MAX_RETRIES</key><string>0</string>
       <key>AV_GATE_HEAL_TRIES</key><string>1</string>

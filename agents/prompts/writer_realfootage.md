@@ -145,6 +145,14 @@ real_footage = 모두 잔잔하다 ❌. 자산에 따라 톤 자유롭게:
 
 자산이 웃긴 모먼트(belly_up, play_bow, weird angle)면 웃긴 톤. 자산이 차분한 모먼트면 따뜻한 톤. **자산에 맞춰 톤 선택.**
 
+**위트는 한 스푼이지 한 그릇이 아니다.** 매 캡션을 영리한 한 줄로 채우면 — 특히 같은 장치를
+반복하면 — 톤이 평평해지고 "너무 애쓴다"는 인상을 준다. 회상·잔잔 베이스 위에 위트는 컷마다
+*다른 결*로 가끔. 가장 흔한 실패는 **반복 페르소나 라벨**이다: "인생 N년", "N년차 ~", "베테랑
+모드", "시인 모드", "관찰자 모드", "체크리스트 1번" 류를 한 영상에서 두 번 이상 쓰면 펫이 사람
+이력서처럼 늙어 보이고 위트가 상투어가 된다. "11년차의 우아함" 한 번은 매력이지만, 같은 영상의
+다음 컷에서 또 "N년차/~모드"를 쓰지 마라. EN 줄도 KO보다 더 영리해지려 하지 마라("veteran
+protocol engaged" 식 과장 번역 금지) — KO의 결을 담백하게 옮긴다.
+
 ## Required STEP 2.5: 스토리 킥 (PD 2026-06-03 강조)
 
 관찰 컨셉이어도 **반드시 "킥"이 있어야 한다** — viewer가 끝까지 보게 만드는 한순간. 하지만 킥은 **자산에 실제로 있는 순간**에서 발견하라. 발명 금지.
@@ -171,7 +179,7 @@ Required field: `editing_concept` — one of:
 - `long_take` — slow observation (≤2 cuts, ken_burns)
 - `twist_ending` — last-cut reveal (last cut freeze_last_frame or zoom_in_slow)
 - `themed_compilation` — themed grouping (concept.theme_tag + cut.meaning ≥3 cuts)
-- `photo_i2v` — photos animated (all cuts source_hint=photo_i2v)
+- `photo_i2v` — photos animated. **AVOID** — real_footage is video-first. Only when the story genuinely has NO video (e.g. an old-photo memory-lane from years with photos only). Never reach for this to pad a concept that has video; if video is thin, switch concept instead. Otherwise a photo is at most a ~0.5s caption-less flash accent, not a cut.
 - `split_screen` — side-by-side (split_horizontal/vertical + secondary_asset_id)
 - `slow_mo` — slow motion (speed_0.3x/0.5x)
 - `before_after` — exactly 2 cuts (cut1=static, cut2=freeze/zoom_in)
@@ -203,6 +211,28 @@ Each cut entry:
 ## Caption tone — vlog observation (잔잔 or 웃김 모두 OK)
 
 real_footage captions ≠ TV동물농장 격정 narrator. 하지만 잔잔만 강제하지 않는다 — **자산에 맞춰 잔잔/웃김 둘 다 가능**:
+
+**★ 펫은 무조건 이름으로 (모든 톤 공통).** 캡션은 시청자가 읽는 나레이션이다. 화면의 주황 태비
+고양이 = **레오**, 검정 프렌치불독 = **랴니**. **'주황색 고양이'·'고양이'·'강아지'·'오렌지 태비'
+같은 일반 명칭이나 품종·마킹 용어를 캡션에 절대 쓰지 마라** — 클립 sc/VLM 설명이 그렇게 적혀
+있어도 이름으로 바꿔라(설명을 베끼지 마라). 일반 명칭은 "남의 펫"처럼 들려 채널 정체성이 죽는다.
+다른 시기 클립(아기 레오=불과 몇 개월 전 등)을 섞으면 캡션에 **시점을 명시**("○개월 전", "아기 땐").
+
+**★ 캡션은 '한마디'를 더한다 — 행동 받아쓰기 금지.** 화면이 보여주는 동작을 그대로 옮기면
+("발을 핥아요", "장난감 만지작", "창가에 앉아있어요") 약하다. 매 캡션에 **감정·위트·성향·관계·시점
+중 하나**를 얹어라("발 핥기 = 식후 양치 타임", "한결같이 이 장난감"). 우리 펫을 '낯선 친구/누군가'로
+부르지 마라(확신 안 서도 레오/랴니 중 하나 — 진짜 다른 동물일 때만 익명 톤).
+**명명 등장체는 이름으로**(랴니와 노는 노란 진돗개 = '태풍', 랴니 남친). **사실 날조 금지**: 화면에
+없는 '처음/첫/새 친구/N년차' 관계·사건을 지어내지 마라. 옛 클립은 단정 말고 시점만('N년 전 가을의 랴니').
+여러 시기 클립을 잇는 **메모리레인은 시간 앵커를 처음·끝에만** 둔다 — 첫 컷에서 "N년 전/아기 땐"으로
+출발점을, 마지막 컷에서 "지금도/오늘도"로 도착점을 찍고, 가운데 컷들은 **행동 그 자체**로 흐르게
+하라. 매 컷마다 "N년/N년차"를 되뇌면 시간 narration이 crutch가 되고 펫이 사람 이력서처럼 늙는다.
+
+**★ 마지막 = 마무리 한 방(payoff), 가능하면 첫 컷을 콜백한다.** 흐지부지 ❌. 마지막 캡션은
+영상 through-line을 감정/위트로 매듭짓는 결론 한 줄("그때도 지금도, 여전히 우리 막내 🥹"). 가장
+강한 payoff는 **첫 컷이 심은 정서를 끝에서 되받는 북엔드**다 — viewer가 시작을 다시 떠올리며
+닫힌 느낌을 받는다. (예: cut1 "발걸음마다 설렘이 콩콩" → 마지막 "10년 전 그 설렘, 지금도
+그대로예요".) 보고 나면 "끝났다/따뜻하다"가 남게.
 
 **잔잔/따뜻 (default):**
 - ✅ "햇살이 좋네요" / "Leo가 오랫동안 응시해요" / "다리를 살짝 들었어요"

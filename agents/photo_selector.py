@@ -443,6 +443,11 @@ def search_mixed_assets(subjects: list[str], date_window: tuple[str, str] | None
         + "ORDER BY captured_iso DESC LIMIT ?",
         sub_params + date_params + space_params + [photo_limit],
     ).fetchall()
+    # PD 2026-06-15: iCloud-only candidates ARE usable — we just must DOWNLOAD them
+    # UPFRONT (cameraman._prefetch_concept_assets, before render), not one-by-one mid-render
+    # (that serialized osxphotos loop hung the batch 8h → av 0/2). So we do NOT exclude
+    # them here; the render-time guard (RENDER_NO_ICLOUD_FETCH) only stops *render-time*
+    # downloads, while prefetch makes them local first.
     return {
         "videos": [dict(r) for r in video_rows],
         "photos": [dict(r) for r in photo_rows],
