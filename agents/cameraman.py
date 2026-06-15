@@ -125,7 +125,11 @@ REF_LIBRARY = {
     # Director can name them; _resolve_ref() falls back to "pair" cleanly.
     "ryani_solo":       "assets/character_ref/ryani_solo.png",
     "ryani_young":      "assets/character_ref/ryani_young.png",  # PD 2026-06-11: 어린 랴니(2015, 회색 주둥이 없음) — 과거/회상 컷용
-    "leo_solo":         "assets/character_ref/leo_solo.png",
+    # PD 2026-06-15: leo_solo.png was an AI ILLUSTRATION → made every AV Leo still
+    # look cartoony (ref drives output STYLE). Repointed to a REAL photo crop.
+    # ryani_solo / ryani_young are already real photos. See memory av_ref_must_be_real_photo.
+    "leo_solo":         "assets/character_ref/leo_real.png",
+    "leo_ai_OLD":       "assets/character_ref/leo_solo.png",  # retained, do not use for AV
     "ryani_playbow":    "assets/character_ref/ryani_playbow.png",
     "leo_pounce":       "assets/character_ref/leo_pounce.png",
     "leo_question_tail":"assets/character_ref/leo_question_tail.png",
