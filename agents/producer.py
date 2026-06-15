@@ -765,28 +765,30 @@ def _recently_used_rf_assets(con: sqlite3.Connection,
             except Exception:
                 continue
             for c in (p.get("cuts") or []):
-                aid = c.get("asset_id")
+                aid = c.get("asset_id") or (c.get("asset") or {}).get("asset_id")
                 if aid:
                     used.add(aid)
     except Exception as e:
         log.warning("cooldown lookup failed: %s", e)
-    # PD 2026-06-12: ALSO cool down clips used in RECENTLY RENDERED cards (last
-    # RF_COOLDOWN_RECENT_HOURS hours), regardless of upload — a day of미게시 test
-    # renders kept re-picking the SAME cafe clip ("아침부터 계속"). The uploaded-only
-    # cooldown missed those. RF_COOLDOWN_RECENT_HOURS=0 reverts to 2026-06-06
-    # uploaded-only behavior.
+    # PD 2026-06-12: ALSO cool down clips used in RECENTLY PRODUCED cards regardless
+    # of upload — a day of 미게시 test renders kept re-picking the SAME clip.
+    # PD 2026-06-15: the 24h `updated_at` window was FRAGILE — a card rendered today
+    # but whose updated_at was stamped yesterday (stale) fell off the window edge, so
+    # two "랴니 산책" episodes shared clips (the 220044≈072626 dup). FIX: drop the time
+    # window (count-based instead) and include 'draft' state (rendered-but-unpinned
+    # cards like un-pinned dups). Cool the clips of the last K produced RF cards by
+    # created_at — deterministic, no timestamp edge. RF_COOLDOWN_RECENT_CARDS=0 reverts.
     try:
-        _hrs = int(os.getenv("RF_COOLDOWN_RECENT_HOURS", "24"))
+        _k = int(os.getenv("RF_COOLDOWN_RECENT_CARDS", str(max(n, 8) * 3)))
     except Exception:
-        _hrs = 24
-    if _hrs > 0:
+        _k = max(n, 8) * 3
+    if _k > 0:
         try:
             rows2 = con.execute(
                 "SELECT payload_json FROM cards WHERE render_style='real_footage' "
-                "AND state IN ('rendered','published','archived') "
-                "AND updated_at >= datetime('now', ?) "
-                "ORDER BY updated_at DESC LIMIT ?",
-                (f"-{_hrs} hours", max(n, 8) * 3),
+                "AND state IN ('rendered','published','archived','draft') "
+                "ORDER BY created_at DESC LIMIT ?",
+                (_k,),
             ).fetchall()
             for r in rows2:
                 try:
@@ -794,7 +796,7 @@ def _recently_used_rf_assets(con: sqlite3.Connection,
                 except Exception:
                     continue
                 for c in (p.get("cuts") or []):
-                    aid = c.get("asset_id")
+                    aid = c.get("asset_id") or (c.get("asset") or {}).get("asset_id")
                     if aid:
                         used.add(aid)
         except Exception as e:
