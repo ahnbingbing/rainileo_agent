@@ -51,13 +51,15 @@ Judge with the audience lens FIRST (would a scroller stop and watch?), then the
 floors below. Among candidates that clear the floors, pick the most appealing.
 
 FLOORS (a candidate failing any of these is disqualified — never pick it):
-0. SINGLE-SUBJECT (HARD, check FIRST): the frame must contain EXACTLY the intended
-   subject(s) and NO extra animal ANYWHERE — no second cat or dog, including small,
-   blurry, or background ones sitting on furniture / a bench / the floor / a piano /
-   a scratcher. Scan the whole frame, foreground AND background. If you see more than
-   one animal (when one is intended), that candidate is AUTOMATICALLY DISQUALIFIED —
-   it can NEVER be the winner, no matter how good the main subject looks. This is the
-   #1 reason past picks were wrong: a hallucinated extra pet hid in the background.
+0. NO DUPLICATE SUBJECT (HARD, check FIRST): the SAME animal must not appear twice.
+   Scan the whole frame, foreground AND background. If the subject (e.g. the orange
+   cat) appears in front AND a second identical copy of that same animal is hiding in
+   the background — on a bench / piano / the floor / a scratcher — that is a
+   hallucinated CLONE and the candidate is AUTOMATICALLY DISQUALIFIED; it can NEVER be
+   the winner, however good the main subject looks. IMPORTANT: a DIFFERENT companion
+   pet is NOT a defect — the channel has two pets (an orange cat + a black no-tail
+   Frenchie), and a scene may legitimately include both. Forbid only a DUPLICATE of
+   the SAME animal, not a genuinely different second pet.
 1. Character fidelity — markings/age/eyes/breed must match canon. Ryani: petite
    black Frenchie, NO tail, thin blaze + white chin/chest/toes (markings THIN, never
    thick/heavy). Leo: orange tabby, ~8mo lean young-adult, yellow-green eyes (NOT
@@ -70,9 +72,9 @@ FLOORS (a candidate failing any of these is disqualified — never pick it):
 Return STRICT JSON, no prose. In every string field use ONLY plain ASCII —
 no double-quotes, apostrophes, or smart quotes inside the text (they break the
 JSON). Keep each verdict under 8 words.
-{"winner": <0-based index of a candidate with extra_animal=false>,
+{"winner": <0-based index of a candidate with duplicate_subject=false>,
  "reason": "<one line: why this beats the rest>",
- "candidates": [{"index": <i>, "score": <1-10>, "extra_animal": <true|false>, "verdict": "<short>"}, ...]}"""
+ "candidates": [{"index": <i>, "score": <1-10>, "duplicate_subject": <true|false>, "verdict": "<short>"}, ...]}"""
 
 
 def _canon_for(subjects: str) -> str:
@@ -172,13 +174,13 @@ def pick_best_still(
             win = int(data.get("winner", 0))
             reason = data.get("reason", "")
             cands_out = data.get("candidates", [])
-            # Hard single-subject guard: never let a frame with a hallucinated
-            # extra animal win, even if the model picked it anyway.
+            # Hard no-duplicate guard: never let a frame with a cloned subject
+            # (same animal twice) win, even if the model picked it anyway.
             flagged = {c.get("index") for c in cands_out
-                       if isinstance(c, dict) and c.get("extra_animal")}
+                       if isinstance(c, dict) and c.get("duplicate_subject")}
             if win in flagged:
                 clean = [c for c in cands_out
-                         if isinstance(c, dict) and not c.get("extra_animal")]
+                         if isinstance(c, dict) and not c.get("duplicate_subject")]
                 if clean:
                     best = max(clean, key=lambda c: c.get("score", 0))
                     win = int(best.get("index", win))
