@@ -3923,6 +3923,11 @@ def _panscan_fill_filter(dur: float, is_landscape: bool, pan: bool = True,
       0 → (in_w-W) over `dur` (pan=True; t never exceeds dur so no clamp needed),
       else centered.
     - portrait/square: scale to fill WIDTH (height ≥ H), center-crop the height."""
+    # PD 2026-06-15: scale with force_original_aspect_ratio=increase so the frame is
+    # ALWAYS ≥ WxH before cropping — a plain `scale=-2:H` / `scale=W:-2` could leave the
+    # other dim < target on odd/small sources, so `crop=720:1280` failed ("too big or
+    # non positive size"), crashing the whole RF render. increase guarantees crop fits.
+    scale = f"scale={W}:{H}:force_original_aspect_ratio=increase"
     if is_landscape:
         if pan and dur and dur > 0.1:
             # CENTERED partial sweep across the middle `frac` of the available width,
@@ -3933,8 +3938,8 @@ def _panscan_fill_filter(dur: float, is_landscape: bool, pan: bool = True,
             x = f"(in_w-{W})*({a:.3f}+{frac:.3f}*t/{dur:.2f})"
         else:
             x = f"(in_w-{W})/2"
-        return f"scale=-2:{H},crop={W}:{H}:{x}:0"
-    return f"scale={W}:-2,crop={W}:{H}:0:(in_h-{H})/2"
+        return f"{scale},crop={W}:{H}:{x}:(in_h-{H})/2"
+    return f"{scale},crop={W}:{H}:(in_w-{W})/2:(in_h-{H})/2"
 
 
 def _build_crop_filter(crop_out: str, zoom: float = 1.3) -> str:
