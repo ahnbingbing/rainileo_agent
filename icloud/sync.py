@@ -357,6 +357,56 @@ def download_asset_by_uuid(uuid: str, dest_dir: Path) -> str | None:
     return str(cand[0]) if cand else None
 
 
+def download_assets_by_uuids(uuids: "list[str]", dest_dir: Path,
+                             timeout: float = 300.0) -> "dict[str, str]":
+    """Bulk on-demand fetch: download MANY originals by Photos UUID in a SINGLE
+    osxphotos export (one library scan for the whole set, not one per photo).
+
+    PD 2026-06-16: the prefetch used to call download_asset_by_uuid once PER
+    photo, and EACH call makes osxphotos re-scan the entire Photos library
+    (~20s on the 400k-item DB) before downloading. Seven photos = seven scans;
+    under launch contention every scan + download blew the 90s/photo budget and
+    the AV slot got 0/7 → 0 cuts → skipped. One --uuid-from-file export scans
+    once and exports all of them in seconds. Returns {uuid: local_path} for the
+    ones that arrived (missing keys = caller drops/swaps that cut).
+    """
+    cli = _osxphotos_cli()
+    uuids = [u for u in (uuids or []) if u]
+    if not cli or not uuids:
+        return {}
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    method = os.getenv("ICLOUD_EXPORT_METHOD", "--use-photokit")
+    uuid_file = dest_dir / ".prefetch_uuids.txt"
+    uuid_file.write_text("\n".join(uuids) + "\n")
+    cmd = [cli, "export", str(dest_dir), "--uuid-from-file", str(uuid_file),
+           "--download-missing", "--update", method, "--skip-edited",
+           "--skip-bursts", "--filename", "{uuid}", "--retry", "2"]
+    # Same cross-process lock as the single-UUID path — only one osxphotos export
+    # touches the Photos library at a time across concurrent launch slots.
+    import fcntl as _fcntl
+    import tempfile as _tempfile
+    _lockpath = Path(_tempfile.gettempdir()) / "rianileo_osxphotos.lock"
+    try:
+        with open(_lockpath, "w") as _lk:
+            _fcntl.flock(_lk, _fcntl.LOCK_EX)
+            try:
+                subprocess.run(cmd, check=False, stdin=subprocess.DEVNULL,
+                               timeout=timeout)
+            finally:
+                _fcntl.flock(_lk, _fcntl.LOCK_UN)
+    except Exception as e:
+        log.warning("download_assets_by_uuids failed (%d uuids): %s", len(uuids), e)
+        # fall through — pick up whatever did land before the timeout
+    out: "dict[str, str]" = {}
+    for u in uuids:
+        matches = sorted(Path(dest_dir).glob(f"{u}.*"))
+        plain = [m for m in matches if " (" not in m.name and m.name != ".prefetch_uuids.txt"]
+        cand = [m for m in (plain or matches) if not m.name.endswith(".txt")]
+        if cand:
+            out[u] = str(cand[0])
+    return out
+
+
 def backfill_uuids(album_name: str) -> int:
     """One-time: fill source_uuid for already-ingested assets (legacy rows had
     none) so they become re-downloadable for the efficient model + cooldown."""

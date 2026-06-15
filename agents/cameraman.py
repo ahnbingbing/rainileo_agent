@@ -6493,35 +6493,36 @@ def _prestage_concept_assets(concept: dict | None, card: dict | None,
             need.append((aid, fp, uuid))
     if not need:
         return
-    # PD 2026-06-15: download iCloud-only originals UPFRONT (force past the render-time
-    # guard), but BOUNDED — a per-photo timeout + a total budget so a slow/stuck osxphotos
-    # export can never hang the batch (the 8h av-0/2 failure). Whatever doesn't arrive in
-    # budget is left for the per-cut gate to swap/drop; the render itself never downloads.
-    import concurrent.futures as _cf, time as _t
-    per_to = float(os.getenv("PREFETCH_PHOTO_TIMEOUT", "90"))
+    # PD 2026-06-16: download iCloud-only originals UPFRONT in ONE bulk osxphotos
+    # export (a single --uuid-from-file call = one library scan for the whole set),
+    # then place each {uuid}.ext at its expected file_path. The old per-photo loop
+    # made osxphotos re-scan the 400k-item Photos DB once PER photo (~20s each); 7
+    # photos = 7 scans, and under launch contention every scan+download blew the
+    # 90s/photo budget → AV got 0/7 → 0 cuts → slot skipped (the 6/17 AV-전멸).
+    # One scan + bulk export does the same 7 photos in seconds. Whatever still
+    # doesn't arrive is left for the per-cut gate to swap/drop; render never downloads.
     budget = float(os.getenv("PREFETCH_BUDGET", "600"))
     if progress_cb:
-        progress_cb(f":arrow_down: 렌더 전 자산 사전 다운로드 {len(need)}개 (사진당 {int(per_to)}s, 예산 {int(budget)}s)")
+        progress_cb(f":arrow_down: 렌더 전 자산 사전 다운로드 {len(need)}개 (일괄 1회, 예산 {int(budget)}s)")
+    from icloud.sync import download_assets_by_uuids
+    staging = ROOT / "data" / "tmp" / "prefetch_staging"
+    got = download_assets_by_uuids([uuid for _aid, _fp, uuid in need], staging,
+                                   timeout=budget)
     ok = 0
-    t0 = _t.monotonic()
-    with _cf.ThreadPoolExecutor(max_workers=1) as _ex:  # osxphotos lock serializes anyway
-        for aid, fp, uuid in need:
-            if _t.monotonic() - t0 > budget:
-                if progress_cb:
-                    progress_cb(f":hourglass: 사전 다운로드 예산 초과 — 나머지 {len(need)-ok}개는 렌더 중 드롭")
-                break
+    for aid, fp, uuid in need:
+        src = got.get(uuid)
+        if src and Path(src).exists():
             try:
-                rec = _ex.submit(_ensure_local, fp, uuid, force=True).result(timeout=per_to)
-            except _cf.TimeoutError:
-                rec = None
-                if progress_cb:
-                    progress_cb(f":warning: 사전 다운로드 타임아웃 {str(aid)[:24]} — 드롭")
-            except Exception:
-                rec = None
-            if rec and Path(rec).exists():
+                Path(fp).parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(src, fp)
                 ok += 1
-            elif progress_cb:
-                progress_cb(f":warning: 사전 다운로드 실패 {str(aid)[:24]} — 렌더 중 교체/드롭")
+                continue
+            except Exception:
+                if Path(src).exists():  # move failed but bytes exist — still usable
+                    ok += 1
+                    continue
+        if progress_cb:
+            progress_cb(f":warning: 사전 다운로드 실패 {str(aid)[:24]} — 렌더 중 교체/드롭")
     if progress_cb:
         progress_cb(f":white_check_mark: 사전 다운로드 {ok}/{len(need)} 완료")
 
