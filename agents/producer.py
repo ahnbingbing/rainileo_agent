@@ -648,7 +648,8 @@ def propose_concepts(target: dt.date, context: dict, style_filter: str | None = 
             try:
                 from agents import concept_brainstorm as _cb
                 _brief = (context.get("arc_directive") or "").strip() \
-                    or "충주 할머니집 거실, 레오·랴니의 짧은 상상 모험 (현실→상상→현실)"
+                    or ("레오·랴니의 짧은 숏츠 — 참신한 상상/반사실/일상 과장 중 하나로. "
+                        "장소·구조·계절은 이야기에 맞게 자유롭게(거실 현실→상상→현실은 한 옵션일 뿐).")
                 _n = int(os.getenv("CONCEPT_BRAINSTORM_N", "5"))
                 _res = _cb.best("ai_vtuber", _brief, _n)
                 _win = _res.get("winner")
@@ -692,6 +693,29 @@ def propose_concepts(target: dt.date, context: dict, style_filter: str | None = 
     concepts: list = []
     for _attempt in range(max_rw + 1):
         concepts = _one_pass()
+        # PD 2026-06-16: enforce the single-wink rule on BOTH generation paths.
+        # The legacy fallback doesn't pass through writer_director's caption
+        # finalize, so a Director/legacy wink embedded in a story beat + the
+        # auto-appended closer would double-wink. _enforce_wink_empty_captions is
+        # idempotent, so re-applying it here (after the writer_director path may
+        # already have) is safe.
+        try:
+            from agents.writer_director import (
+                _enforce_wink_empty_captions as _wink1,
+                _looks_like_wink as _lw, _pick_wink_subject as _pws,
+                _build_wink_cut as _bwc)
+            for _c in (concepts or []):
+                _wink1(_c)  # ≤1 wink: dedupe + strip embedded (safe no-op for RF)
+                _cuts = _c.get("cuts") or []
+                # …and ≥1 wink, but ONLY for ai_vtuber: the legacy fallback doesn't
+                # append a closing wink, so add the canonical closer if none
+                # survived. real_footage is REAL clips and must NEVER get an
+                # AI-generated wink-ending appended.
+                _lane = (_c.get("render_style") or _c.get("style") or style_filter or "")
+                if _lane != "real_footage" and _cuts and not any(_lw(cu) for cu in _cuts):
+                    _c["cuts"] = _cuts + [_bwc(_pws(_c), _cuts[-1])]
+        except Exception as _e:
+            log.warning("wink normalize (producer) failed: %s", _e)
         if not concepts:
             break
         verdict = _rv.run_reviewer(concepts, _macro, style_filter or "both", progress_cb)
@@ -778,6 +802,13 @@ def _recently_used_rf_assets(con: sqlite3.Connection,
     # window (count-based instead) and include 'draft' state (rendered-but-unpinned
     # cards like un-pinned dups). Cool the clips of the last K produced RF cards by
     # created_at — deterministic, no timestamp edge. RF_COOLDOWN_RECENT_CARDS=0 reverts.
+    # PD 2026-06-16: the state filter was an ALLOWLIST that silently OMITTED 'approved'
+    # — yet 'approved' is where every review-passed-but-not-uploaded RF draft sits (36
+    # of them). So the same cafe clips (med_2025_11_21_113536/113742) used by two
+    # 'approved' cafe drafts re-appeared in a fresh candidate ("이전거랑 똑같아"). Switch
+    # to a DENYLIST: count EVERY produced RF card except explicitly-dead states, so a
+    # new intermediate state can never silently fall through the cooldown again
+    # (the same "label not rule" failure mode the channel keeps hitting).
     try:
         _k = int(os.getenv("RF_COOLDOWN_RECENT_CARDS", str(max(n, 8) * 3)))
     except Exception:
@@ -786,7 +817,7 @@ def _recently_used_rf_assets(con: sqlite3.Connection,
         try:
             rows2 = con.execute(
                 "SELECT payload_json FROM cards WHERE render_style='real_footage' "
-                "AND state IN ('rendered','published','archived','draft') "
+                "AND state NOT IN ('discarded','vetoed','failed','rejected') "
                 "ORDER BY created_at DESC LIMIT ?",
                 (_k,),
             ).fetchall()
