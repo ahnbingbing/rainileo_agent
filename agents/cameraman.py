@@ -932,22 +932,28 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
         _h = (_cc.get("source_hint") or "").strip().lower()
         return _h == "photo_i2v" or (it.get("asset") or {}).get("kind") == "photo"
 
-    _rf_has_video = (style == "real_footage"
-                     and any(not _is_photo_cut(i, it) for i, it in enumerate(cuts)))
-    # PD 2026-06-15: a photo is never the closer. Drop trailing photo cut(s) so a
-    # video-containing RF episode ENDS on real video — not an abrupt 0.5s photo flash.
-    # (The writer still occasionally appends a sticky nap-photo finale; this removes it.)
-    if _rf_has_video:
+    _n_photo = sum(1 for i, it in enumerate(cuts) if _is_photo_cut(i, it))
+    _n_video = len(cuts) - _n_photo
+    _rf_has_video = (style == "real_footage" and _n_video >= 1)
+    # PD 2026-06-17: distinguish a PHOTO-MONTAGE memory-lane (the photos ARE the story — a
+    # then↔now montage like "9년 전과 오늘", each captioned + time-labeled) from a VIDEO-FIRST
+    # episode where a photo is a stray accent. The flash treatment below (drop lone / 0.5s
+    # clamp / blank caption) is for ACCENTS ONLY. A photo-MAJORITY episode is a montage → keep
+    # every photo as a FULL captioned beat (PD: "사진은 길게 보여주던지 빼던지" — here: long).
+    # REGRESSION FIXED: applying the lone-flash drop to a photo-montage gutted a 6-cut
+    # "9년 전과 오늘" memory-lane (1 video + 5 old photos) down to 1 video cut.
+    _video_first = (style == "real_footage" and _n_video > _n_photo)
+    # In a VIDEO-FIRST episode a photo is never the closer — drop trailing photo(s) so it
+    # ends on real video. (A photo-montage may legitimately end on the present "오늘" photo.)
+    if _video_first:
         while len(cuts) > 1 and _is_photo_cut(len(cuts) - 1, cuts[-1]):
             cuts.pop()
             concept_cuts = concept_cuts[:len(cuts)]
-    # PD 2026-06-16: a LONE photo shown as a 0.5s flash is jarring ("또 짧은 씬… 아놔 ㅠㅠ").
-    # A photo flash is allowed ONLY as a GROUP of ≥2 photos from a SIMILAR TIME (same shoot
-    # session/date), played in quick succession LIKE A VIDEO ("이미지는 유사한 시각에 찍힌 걸
-    # 모아서 동영상처럼 보여줄 때만"). So drop any photo cut with no same-session photo sibling
-    # — a single flash. (A genuinely all-photo memory-lane has no video → _rf_has_video False,
-    # left untouched.) Supersedes the "0~1 flash per episode is OK" rule.
-    if _rf_has_video:
+    # PD 2026-06-16: a LONE photo flashed for 0.5s is jarring ("또 짧은 씬… 아놔 ㅠㅠ"). In a
+    # VIDEO-FIRST episode a photo flash is allowed ONLY as a same-session GROUP of ≥2 (a
+    # video-like burst); a lone photo is dropped ("이미지는 유사한 시각에 찍힌 걸 모아서 동영상처럼
+    # 보여줄 때만"). Photo-majority montages are kept whole (handled by _video_first gate).
+    if _video_first:
         def _photo_session(it):
             aid = (it.get("asset") or {}).get("asset_id") or ""
             m = re.match(r"med_(\d{4}_\d{2}_\d{2})", aid)
@@ -994,9 +1000,10 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
                 # restores Seedance animation; =off bans photos (legacy RF_VIDEO_ONLY).
                 _rf_kb = (style == "real_footage"
                           and os.getenv("RF_PHOTO_MODE", "kenburns").lower() != "i2v")
-                # PD 2026-06-15: in a video-containing RF episode, a photo is only a
-                # ~0.5s flash accent — clamp its duration and blank its captions below.
-                _flash = _rf_has_video
+                # PD 2026-06-15/17: in a VIDEO-FIRST RF episode a photo is only a ~0.5s flash
+                # accent — clamp its duration and blank its captions below. In a photo-MAJORITY
+                # montage (memory-lane) the photo is a FULL captioned story beat, NOT a flash.
+                _flash = _video_first
                 if _flash:
                     _photo_flash_tags.add(tag)
                 _pdur = (PHOTO_FLASH_SEC if _flash
