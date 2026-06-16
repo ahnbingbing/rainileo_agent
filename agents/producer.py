@@ -2137,14 +2137,13 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
                      "단 자산에 실제 있는 것만 — 디렉티브가 자산과 안 맞으면 자산 우선.")
     except Exception as e:
         log.warning("arc directive injection failed: %s", e)
-    # PD 2026-06-16: RF kept producing the SAME concept every day ("랴니 차분 + 레오 호기심,
-    # 각자의 방식" eventless coexistence) — because RF, unlike ai_vtuber, had NO concept-
-    # ideation stage: it went straight to the Writer, which collapsed to its safe default
-    # template regardless of which clips were swapped in. Give RF the same brainstorm AV
-    # gets: N footage-grounded, audience-ranked, PD-taste-aware storylines → seed the Writer
-    # with a DISTINCT winner. Cached in context so the gate-rewrite recursion reuses the same
-    # seed (no re-brainstorm per retry). CONCEPT_BRAINSTORM=0 disables.
-    if (os.getenv("CONCEPT_BRAINSTORM", "1") != "0"
+    # PD 2026-06-16: RF concept-brainstorm was added to break the "각자의 방식" sameness, but
+    # PD 2026-06-17 found it pushed the Writer into forced/dramatized concepts ("매복의 달인",
+    # "침묵의 엄마") that don't fit the clips → captions fabricate, RF "산으로 갔다". PD's call:
+    # turn the RF brainstorm OFF and go back to the writer-direct path (the "예전" good RF),
+    # keeping the validated gates (subject-prominence, temporal, cooldown, photo-majority).
+    # OFF by default now; RF_CONCEPT_BRAINSTORM=1 re-enables for experimentation.
+    if (os.getenv("RF_CONCEPT_BRAINSTORM", "0") == "1"
             and not context.get("rf_storyline_seed")):
         try:
             from agents import concept_brainstorm as _cb
