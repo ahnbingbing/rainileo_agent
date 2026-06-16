@@ -4081,6 +4081,18 @@ def _prune_missing_cuts(manifests: dict, anim_dir: Path,
     remaining = [t for t in caps if not t.startswith("_")]
     if not remaining:
         raise RuntimeError(f"all cuts missing animated mp4 ({dropped}) — cannot render")
+    # PD 2026-06-17: do NOT ship a GUTTED episode. A 6-cut memory-lane ("9년 전과 오늘",
+    # 2016~2023 랴니) rendered as a single sparse cut because 5 old iCloud clips didn't
+    # download in time and were silently dropped — PD saw a flat "한 컷 롱테이크". An
+    # episode that loses most of its cuts is broken; fail the slot (junk 금지) so it stays
+    # empty / self-heals, instead of shipping the remnant. Keep ≥ half the cuts (min 2).
+    _orig = len(remaining) + len(dropped)
+    _floor = max(2, (_orig + 1) // 2)
+    if len(remaining) < _floor:
+        raise RuntimeError(
+            f"gutted render: only {len(remaining)}/{_orig} cuts survived "
+            f"(dropped {len(dropped)} for missing source) — failing slot, won't ship a "
+            f"sparse remnant of a multi-cut concept ({dropped})")
     cap_path.write_text(json.dumps(caps, ensure_ascii=False, indent=2), encoding="utf-8")
     # also prune cuts/concept_cuts lists so downstream is consistent
     for key in ("cuts", "concept_cuts"):
