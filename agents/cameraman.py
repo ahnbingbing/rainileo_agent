@@ -1616,9 +1616,12 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
         "\"other_animal\":\"short desc or empty (e.g. golden retriever, corgi)\", "
         "\"frame_ok\":bool (false if blown-out/too dark/empty so the subject can't be seen), "
         "\"caption_matches\":bool (does the caption fairly describe THIS frame? false if it "
-        "names a pet not in frame, calls a different animal/breed our pet, or claims an "
-        "action the frame contradicts), \"action\":\"≤12-word Korean of what actually "
-        "happens\"}. Judge THIS single frame, literally and strictly.")
+        "names a pet not in frame, calls a different animal/breed our pet, claims an "
+        "action the frame contradicts, OR claims a PLACE/SETTING the frame contradicts — "
+        "e.g. caption says indoors/'집 안'/'거실'/'카페' but the frame is clearly OUTDOORS "
+        "(road, field, rooftop, park), or says an outdoor '산책길' but the frame is clearly "
+        "INDOORS), \"action\":\"≤12-word Korean of what actually happens\"}. Judge THIS "
+        "single frame, literally and strictly.")
 
     def _frame_at(mp4: Path, t: float):
         jpg = work_dir / f"_gg_{mp4.stem}_{t:.1f}.jpg"
