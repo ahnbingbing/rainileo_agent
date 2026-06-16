@@ -1803,6 +1803,33 @@ def _rf_temporal_coherence(concept: dict, target_year: int) -> list[str]:
         out.append(
             f"여러 시기({min(years)}~{max(years)}년) 클립이 섞였는데 시점 표시가 전혀 없다 — "
             f"'같은 날'인 척 금지(갑툭튀). 첫·끝 컷에 시점 앵커('○년 전'·'지금도')를 넣어라.")
+    # C) PD 2026-06-16: a clip MONTHS older than the rest, inside a present-framed
+    #    episode, whose OWN caption doesn't say when → a baby/past clip masquerading as
+    #    today ("아기 레오 나왔을 때는 아기레오라고 해줘야지"). Leo is 8mo, so his 2025 baby
+    #    clips are only ~6 months back — the year-span gate (B) misses them. Work in
+    #    MONTHS from the asset_id and flag the specific cut.
+    def _midx(aid):
+        m = re.match(r"med_(\d{4})_(\d{2})", aid or "")
+        return int(m.group(1)) * 12 + int(m.group(2)) if m else None
+    midx = [_midx(c.get("asset_id")) for c in cuts]
+    valid = [m for m in midx if m]
+    if len(valid) >= 2:
+        newest = max(valid)
+        recent_ct = sum(1 for m in valid if newest - m <= 3)
+        # only when the episode is MAJORITY-present (a "today" episode with a stray old
+        # clip) — a real past↔present memory-lane (mostly old, anchored) is left alone.
+        if recent_ct >= max(2, (len(valid) + 1) // 2):
+            for i, c in enumerate(cuts):
+                m = midx[i]
+                if not m or newest - m < 6:
+                    continue
+                cap = " ".join((s.get("ko") or "")
+                               for s in (c.get("captions") or []) if isinstance(s, dict))
+                if not any(t in cap for t in _RF_TIME_ANCHOR_TOKENS):
+                    out.append(
+                        f"cut{i+1}: {_rf_clip_year(c.get('asset_id'))}년 클립(현재 회차에 섞인 "
+                        f"과거/아기 시절)인데 그 컷 캡션에 시점 표시가 없다 — '아기 레오'·'○개월 "
+                        f"전'·'그때'처럼 이 컷에서 시점을 밝혀라.")
     return out
 
 
