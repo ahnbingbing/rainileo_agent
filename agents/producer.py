@@ -1724,6 +1724,59 @@ def _rf_location_contradictions(concept: dict, con) -> list[str]:
     return out
 
 
+# PD 2026-06-16: present-age framing tokens (Ryani is 11) — wrong when slapped on a
+# montage that is mostly ARCHIVAL footage ("11년차의 리듬" over 2016~2021 clips).
+_RF_PRESENT_AGE_TOKENS = ("11년차", "11년 차", "11년째", "11살", "열한 살", "열한살",
+                          "11년 동안", "11년을", "11년의")
+# A caption/title carries a TIME ANCHOR when it names a past point or an explicit year.
+# Presence of an anchor = the time shift is acknowledged (STEP 1.4 satisfied).
+_RF_TIME_ANCHOR_TOKENS = ("년 전", "개월 전", "그때", "그 시절", "아기", "어릴", "어린",
+                          "옛날", "처음", "첫날", "갓 왔", "막 왔", "그 시절",
+                          "2016", "2017", "2018", "2019", "2020", "2021", "2022",
+                          "2023", "2024", "2025")
+
+
+def _rf_clip_year(aid: str) -> "int | None":
+    """Year a clip was filmed, parsed from its asset_id (med_YYYY_MM_DD_…)."""
+    m = re.match(r"med_(\d{4})_\d{2}_\d{2}", aid or "")
+    return int(m.group(1)) if m else None
+
+
+def _rf_temporal_coherence(concept: dict, target_year: int) -> list[str]:
+    """PD 2026-06-16: deterministic TEMPORAL-coherence gate (mirrors the location
+    gate). The NON-NEGOTIABLE STEP 1.4 rule — when an episode mixes clips from
+    different time periods, every period must be time-anchored and you must NOT
+    frame an archival montage as the present — kept being IGNORED (a 2016~2021 clip
+    jumble titled "11년차의 리듬"; PD: "과거잖아, 11년이 뭐야 … 시점이 뒤죽박죽"). Catch it
+    post-write and force a rewrite. Two high-signal violations:
+      A) PRESENT-AGE framing on a mostly-archival montage ("11년차/11살" + ≥2 past cuts).
+      B) A multi-period jump (year span ≥2) with NO time anchor anywhere in the script.
+    Clip year comes from asset_id (the date is encoded), so it works even when the
+    Writer drops years_ago from the cut payload."""
+    cuts = concept.get("cuts") or []
+    years = [y for y in (_rf_clip_year(c.get("asset_id")) for c in cuts) if y]
+    if len(years) < 2:
+        return []
+    archival = [y for y in years if target_year - y >= 1]
+    text = (concept.get("title") or "") + " " + " ".join(
+        (cap.get("ko") or "")
+        for c in cuts for cap in (c.get("captions") or []) if isinstance(cap, dict))
+    out: list[str] = []
+    if len(archival) >= 2:
+        hit = next((t for t in _RF_PRESENT_AGE_TOKENS if t in text), None)
+        if hit:
+            out.append(
+                f"제목/캡션이 현재 나이 프레이밍('{hit}')을 쓰는데 클립 다수가 과거"
+                f"({min(years)}~{max(years)}년)다 — 과거 몽타주를 현재 나이로 부르지 마라. "
+                f"제목·캡션을 실제 촬영 시점('○년 전 [계절]의 랴니')으로 바꿔라.")
+    if (max(years) - min(years) >= 2
+            and not any(t in text for t in _RF_TIME_ANCHOR_TOKENS)):
+        out.append(
+            f"여러 시기({min(years)}~{max(years)}년) 클립이 섞였는데 시점 표시가 전혀 없다 — "
+            f"'같은 날'인 척 금지(갑툭튀). 첫·끝 컷에 시점 앵커('○년 전'·'지금도')를 넣어라.")
+    return out
+
+
 def _propose_realfootage_singlepass(target: dt.date, context: dict,
                                      progress_cb: ProgressCb = None,
                                      prior_feedback: str = "") -> list[dict]:
@@ -2068,6 +2121,29 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
             _fb = ("[위치검증] 아래 컷의 캡션이 클립의 실제 위치/내용과 모순된다. 각 캡션을 "
                    "그 클립이 실제 보여주는 위치·내용에 맞춰 다시 써라(장소가 바뀌면 전환을 "
                    "캡션에 명시):\n" + "\n".join(_contras)
+                   + (("\n\n[이전 피드백]\n" + prior_feedback) if prior_feedback else ""))
+            return _propose_realfootage_singlepass(target, context, progress_cb,
+                                                   prior_feedback=_fb)
+    # PD 2026-06-16: deterministic TEMPORAL-coherence gate. The NON-NEGOTIABLE STEP 1.4
+    # rule (mixed-period clips MUST be time-anchored; never frame an archival montage as
+    # the present) kept being ignored — a 2016~2021 jumble titled "11년차". Catch it and
+    # re-write ONCE ("[시점검증]" sentinel bounds the retry). RF_TEMPORAL_GATE=0 reverts.
+    if (os.getenv("RF_TEMPORAL_GATE", "1") == "1"
+            and "[시점검증]" not in prior_feedback):
+        try:
+            _tcon: list = []
+            for c in concepts:
+                _tcon += _rf_temporal_coherence(c, target.year)
+        except Exception as e:
+            log.warning("RF temporal-coherence check failed: %s", e)
+            _tcon = []
+        if _tcon:
+            if progress_cb:
+                progress_cb(f":mag: 시점검증 — 시점/나이 프레이밍 모순 {len(_tcon)}건 → 재작성")
+            _fb = ("[시점검증] 아래 문제를 고쳐 다시 써라. 과거(다른 해) 클립을 쓰면 그 컷의 "
+                   "시점을 실제 촬영 시기로 명시하고, 전체를 현재 나이('11년차' 등)로 부르지 "
+                   "마라. 시점이 뒤섞이면 첫·끝 컷에 시점 앵커를 넣어 '같은 날'인 척하지 마라:\n"
+                   + "\n".join(_tcon)
                    + (("\n\n[이전 피드백]\n" + prior_feedback) if prior_feedback else ""))
             return _propose_realfootage_singlepass(target, context, progress_cb,
                                                    prior_feedback=_fb)
