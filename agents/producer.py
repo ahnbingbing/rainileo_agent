@@ -1742,6 +1742,35 @@ def _rf_clip_year(aid: str) -> "int | None":
     return int(m.group(1)) if m else None
 
 
+def _rf_session_key(aid: str) -> "str | None":
+    """Shoot-SESSION key = the capture DATE (YYYY_MM_DD) from the asset_id.
+    PD 2026-06-16: cooldown was exact-asset_id, so two clips from the SAME outing
+    (med_2019_05_25_115132 vs …_115456 — same day, same waterside, ~3 min apart)
+    both passed and the episode looked like a re-run of one already scheduled
+    (water_peppy). Clips from the same day are almost always the same session for
+    this footage; cooling the whole session kills the 'different id, same video' dup."""
+    m = re.match(r"med_(\d{4}_\d{2}_\d{2})", aid or "")
+    return m.group(1) if m else None
+
+
+def _rf_cooldown_sessions(cooldown: "set[str]") -> "set[str]":
+    """The shoot-session keys (capture dates) of every recently-used clip — so the
+    whole session, not just the exact clip, is cooled."""
+    return {k for k in (_rf_session_key(a) for a in cooldown) if k}
+
+
+def _rf_is_cooled(v: dict, cooldown: "set[str]", sessions: "set[str]") -> bool:
+    """Cooled if the clip's exact asset_id is in cooldown OR it shares a shoot
+    session (same-day outing) with a recently-used clip."""
+    vid = v.get("id") or v.get("asset_id")
+    if not vid:
+        return False
+    if vid in cooldown:
+        return True
+    sk = _rf_session_key(vid)
+    return bool(sk and sk in sessions)
+
+
 def _rf_temporal_coherence(concept: dict, target_year: int) -> list[str]:
     """PD 2026-06-16: deterministic TEMPORAL-coherence gate (mirrors the location
     gate). The NON-NEGOTIABLE STEP 1.4 rule — when an episode mixes clips from
@@ -1858,11 +1887,13 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     _seen = {v.get("id") for v in avail_videos if v.get("id")}
     avail_videos = avail_videos + [v for v in _arch if v.get("id") and v.get("id") not in _seen]
     cooldown: set[str] = set()
+    _cool_sessions: set[str] = set()
     try:
         _con = _db()
         cooldown = _recently_used_rf_assets(_con)
+        _cool_sessions = _rf_cooldown_sessions(cooldown)
         before = len(avail_videos)
-        filtered = [v for v in avail_videos if v.get("id") not in cooldown]
+        filtered = [v for v in avail_videos if not _rf_is_cooled(v, cooldown, _cool_sessions)]
         # Safety: don't starve the writer. If the cooldown leaves too few clips
         # for a full episode, relax it (still prefer fresh, but allow reuse).
         if len(filtered) >= 6:
@@ -1910,17 +1941,20 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     # (near-dup, caught only by the reviewer). Mirror the _excl treatment for cooldown:
     # exclude both from photos AND archive_videos. (Same leak class as the 6/12 _excl fix
     # — _excl got extended to every pool then, cooldown did not.)
-    _pool_excl = set(_excl) | set(cooldown)
-    if _pool_excl:
-        _pk = [p for p in _photos
-               if p.get("id") not in _pool_excl and p.get("asset_id") not in _pool_excl]
+    # PD 2026-06-16: cooldown is SESSION-aware (same-day outing), so apply it via
+    # _rf_is_cooled to every pool; _excl (batch-dedup) stays exact-id.
+    def _pool_excluded(v):
+        if v.get("id") in _excl or v.get("asset_id") in _excl:
+            return True
+        return _rf_is_cooled(v, cooldown, _cool_sessions)
+    if _excl or cooldown:
+        _pk = [p for p in _photos if not _pool_excluded(p)]
         # keep ≥6 vs the BATCH-dedup floor only; cooled photos may shrink below that
         # (they're supplementary) but never empty the pool entirely.
         if len(_pk) >= 6 or (_pk and not _excl):
             _photos = _pk
     _arch_field = [v for v in context.get("archive_videos", [])
-                   if not _pool_excl or (v.get("id") not in _pool_excl
-                                    and v.get("asset_id") not in _pool_excl)]
+                   if not _pool_excluded(v)]
     # PD 2026-06-11: RF default = long-original ONE-TAKE. The writer kept ignoring
     # the prompt rule and montaging 6-9s trims even when 38s/75s clips sat in the
     # pool — a "label not rule" miss. So PRE-COMPUTE the long candidates and inject
