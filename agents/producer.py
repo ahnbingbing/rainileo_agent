@@ -1760,15 +1760,17 @@ def _rf_cooldown_sessions(cooldown: "set[str]") -> "set[str]":
 
 
 def _rf_is_cooled(v: dict, cooldown: "set[str]", sessions: "set[str]") -> bool:
-    """Cooled if the clip's exact asset_id is in cooldown OR it shares a shoot
-    session (same-day outing) with a recently-used clip."""
+    """Cooled if the clip's EXACT asset_id was recently used.
+
+    PD 2026-06-17: the session-level cooldown (cool the whole shoot DAY when any one
+    clip is used) was TOO COARSE — it locked out an entire coherent outing. A cafe
+    VISIT has many DIFFERENT moments (explore / nap / lying together), not near-dups;
+    cooling the day made the pipeline unable to find/group good same-day footage ("이걸
+    왜 못찾는거야"). Back to exact-asset_id cooldown; near-DUPLICATE same-session clips
+    (the water_peppy 115132≈115456 case) are caught by the reviewer footage-overlap
+    (vis_phash), not by blanket session exclusion. `sessions` kept for signature compat."""
     vid = v.get("id") or v.get("asset_id")
-    if not vid:
-        return False
-    if vid in cooldown:
-        return True
-    sk = _rf_session_key(vid)
-    return bool(sk and sk in sessions)
+    return bool(vid) and vid in cooldown
 
 
 def _rf_temporal_coherence(concept: dict, target_year: int) -> list[str]:
