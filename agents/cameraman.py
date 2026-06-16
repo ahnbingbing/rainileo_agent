@@ -941,6 +941,34 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
         while len(cuts) > 1 and _is_photo_cut(len(cuts) - 1, cuts[-1]):
             cuts.pop()
             concept_cuts = concept_cuts[:len(cuts)]
+    # PD 2026-06-16: a LONE photo shown as a 0.5s flash is jarring ("또 짧은 씬… 아놔 ㅠㅠ").
+    # A photo flash is allowed ONLY as a GROUP of ≥2 photos from a SIMILAR TIME (same shoot
+    # session/date), played in quick succession LIKE A VIDEO ("이미지는 유사한 시각에 찍힌 걸
+    # 모아서 동영상처럼 보여줄 때만"). So drop any photo cut with no same-session photo sibling
+    # — a single flash. (A genuinely all-photo memory-lane has no video → _rf_has_video False,
+    # left untouched.) Supersedes the "0~1 flash per episode is OK" rule.
+    if _rf_has_video:
+        def _photo_session(it):
+            aid = (it.get("asset") or {}).get("asset_id") or ""
+            m = re.match(r"med_(\d{4}_\d{2}_\d{2})", aid)
+            return m.group(1) if m else None
+        _photo_idxs = [i for i, it in enumerate(cuts) if _is_photo_cut(i, it)]
+        _sess_ct: dict = {}
+        for i in _photo_idxs:
+            _sess_ct[_photo_session(cuts[i])] = _sess_ct.get(_photo_session(cuts[i]), 0) + 1
+        _drop = {i for i in _photo_idxs
+                 if not _photo_session(cuts[i]) or _sess_ct.get(_photo_session(cuts[i]), 0) < 2}
+        if _drop:
+            _keep = [i for i in range(len(cuts)) if i not in _drop]
+            cuts = [cuts[i] for i in _keep]
+            concept_cuts = [concept_cuts[i] for i in _keep if i < len(concept_cuts)]
+            if progress_cb:
+                progress_cb(f":scissors: 단일 사진 플래시 {len(_drop)}컷 드롭 "
+                            f"(사진은 같은-시각 ≥2장 묶음일 때만 시퀀스 허용)")
+        # re-drop any now-trailing photo so the episode still ends on real video
+        while len(cuts) > 1 and _is_photo_cut(len(cuts) - 1, cuts[-1]):
+            cuts.pop()
+            concept_cuts = concept_cuts[:len(cuts)]
     if style == "real_footage":
         # PD 2026-06-02: real_footage v2 supports 3 source tiers per cut.
         # Tier 1 (clip) = direct video trim. Tier 2 (photo_i2v) = animate
@@ -1887,10 +1915,15 @@ def _vlm_post_render_caption_rewrite(work_dir: Path, manifests: dict,
     # Seedance cuts were already billed). NEW google.genai SDK with http timeout.
     _vlm_sys = (
         "You watch a 5-second YouTube Short cut for the 'Ryani & Leo' channel and "
-        "describe in 1-2 short Korean sentences what ACTUALLY happens. Be specific "
-        "about subject positions, movements, AND any explicit sounds (짖다/왕왕/야옹/"
-        "냐옹). If a pet doesn't bark or meow, do NOT mention it. Ground-truth "
-        "observer only — no speculation.")
+        "describe in 1-2 short Korean sentences what ACTUALLY happens. "
+        # PD 2026-06-16: identity is fixed by SPECIES — the VLM was naming the cat
+        # '랴니' and the dog '레오' (swapped), which shipped wrong captions. Anchor it.
+        "레오 = the ORANGE TABBY CAT (고양이). 랴니 = the BLACK FRENCH BULLDOG with NO "
+        "tail (강아지). The cat is ALWAYS 레오, the dog is ALWAYS 랴니 — never call the "
+        "cat 랴니 or the dog 레오; identify each pet by its species. "
+        "Be specific about subject positions, movements, AND any explicit sounds "
+        "(짖다/왕왕/야옹/냐옹). If a pet doesn't bark or meow, do NOT mention it. "
+        "Ground-truth observer only — no speculation.")
     try:
         from google import genai as _g
         from google.genai import types as _gt
