@@ -237,7 +237,9 @@ def generate_batch(prompts_file: Path, in_dir: Path | None, out_dir: Path,
                    api_key: str, dry_run: bool = False, n: int = 1,
                    progress_cb: callable = None,
                    reference_override: Path | None = None,
-                   lock_scene: bool = True) -> int:
+                   lock_scene: bool = True,
+                   concept: dict | None = None,
+                   cuts_by_tag: dict | None = None) -> int:
     """Batch generate from a prompts manifest (same format as regen_vtuber_style.py).
 
     PD 2026-06-12: `reference_override` — a CONCEPT-GROUNDED character reference
@@ -386,54 +388,75 @@ def generate_batch(prompts_file: Path, in_dir: Path | None, out_dir: Path,
                 style_anchor = out_path
             continue
 
-        best_bytes = None
-        for attempt in range(max(n, 3)):  # at least 3 attempts for safety rejections
-            try:
-                # On retry after safety rejection, simplify the prompt
-                retry_prompt = prompt
-                if attempt > 0:
-                    retry_prompt = prompt + "\nKeep the scene simple and wholesome. Family-friendly content only."
-                img_bytes = generate_scene(retry_prompt, reference_image=ref_image,
-                                           subjects="both", segment="S4")
-                best_bytes = img_bytes
-                break
-            except Exception as e:
-                err_str = str(e)
-                log.warning("Attempt %d failed for %s: %s", attempt + 1, tag, err_str[:200])
-                if "safety" in err_str.lower() or "rejected" in err_str.lower():
-                    # Safety rejection — wait longer and retry with simplified prompt
-                    time.sleep(5)
-                else:
-                    time.sleep(2)
+        def _gen_one() -> bytes | None:
+            """One still with safety-rejection retries. None if all attempts fail."""
+            for attempt in range(3):
+                try:
+                    rp = prompt if attempt == 0 else (
+                        prompt + "\nKeep the scene simple and wholesome. Family-friendly content only.")
+                    return generate_scene(rp, reference_image=ref_image,
+                                          subjects="both", segment="S4")
+                except Exception as e:
+                    es = str(e)
+                    log.warning("gen attempt %d failed for %s: %s", attempt + 1, tag, es[:200])
+                    time.sleep(5 if ("safety" in es.lower() or "rejected" in es.lower()) else 2)
+            return None
 
-        if best_bytes:
-            out_path.write_bytes(best_bytes)
-            # Crop to exact 9:16 (1080x1920) — GPT outputs 2:3 (1024x1536)
+        def _crop916(p: Path) -> None:
+            # GPT outputs 2:3 (1024x1536) → crop to exact 9:16 (1080x1920).
             try:
                 from PIL import Image as _Img
-                img = _Img.open(out_path)
-                w, h = img.size
-                target_ratio = 9 / 16  # 0.5625
-                current_ratio = w / h
-                if abs(current_ratio - target_ratio) > 0.01:
-                    # Crop width to match 9:16
-                    new_w = int(h * target_ratio)
-                    left = (w - new_w) // 2
-                    img = img.crop((left, 0, left + new_w, h))
-                    img = img.resize((1080, 1920), _Img.LANCZOS)
-                    img.save(out_path, format="PNG")
+                img = _Img.open(p); w, h = img.size
+                if abs(w / h - 9 / 16) > 0.01:
+                    new_w = int(h * 9 / 16); left = (w - new_w) // 2
+                    img = img.crop((left, 0, left + new_w, h)).resize((1080, 1920), _Img.LANCZOS)
+                    img.save(p, format="PNG")
             except Exception:
                 pass
+
+        # PD 2026-06-17: best-of-N stills per cut + VLM/Giri selection (the PD-expected
+        # "컷당 5장 만들어 select"). Was 1 still/cut → marking/prop/background drift
+        # shipped unselected. REGEN_BEST_OF=1 restores the single-still path (cost).
+        best_of = max(1, int(os.getenv("REGEN_BEST_OF", "5")))
+        cands = []
+        for k in range(best_of):
+            b = _gen_one()
+            if not b:
+                continue
+            cp = out_dir / f"{tag}_cand{k+1}.png"
+            cp.write_bytes(b); _crop916(cp)
+            cands.append(cp)
+
+        if cands:
+            if len(cands) == 1:
+                winner = cands[0]
+            else:
+                try:
+                    from agents import still_select
+                    pick = still_select.pick_best_still(
+                        cands, cut=(cuts_by_tag or {}).get(tag), concept=concept, lane="ai_vtuber")
+                    winner = Path(pick["winner_path"])
+                    print(f"    best-of-{len(cands)} → #{pick['winner']}: {(pick.get('reason') or '')[:60]}")
+                    if progress_cb:
+                        progress_cb(f":mag: {tag} best-of-{len(cands)} → #{pick['winner']} 선택")
+                except Exception as e:
+                    log.warning("still_select failed for %s: %s — using first candidate", tag, e)
+                    winner = cands[0]
+            import shutil as _shutil
+            _shutil.copy(winner, out_path)
+            for cp in cands:  # keep only the winner
+                if cp != winner and cp.exists():
+                    try: cp.unlink()
+                    except Exception: pass
             size_kb = out_path.stat().st_size / 1024
             print(f"    ok ({size_kb:.0f} KB) [9:16]")
             if progress_cb:
                 progress_cb(f":white_check_mark: {tag} 완료 ({size_kb:.0f} KB)")
-            # Set first successful cut as style anchor for remaining cuts
             if style_anchor is None:
                 style_anchor = out_path
                 print(f"    → style anchor set: {out_path.name}")
         else:
-            print(f"    FAILED")
+            print("    FAILED")
             failures += 1
             if progress_cb:
                 progress_cb(f":x: {tag} 실패")
