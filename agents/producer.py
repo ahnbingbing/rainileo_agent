@@ -2046,11 +2046,12 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
                      "관련 실제 영상으로 채우고(다른 활동 사진으로 패딩 금지), 영상이 부족하면 컨셉을 바꿔라.")
     except Exception as e:
         log.warning("pd_taste injection (rf) failed: %s", e)
+    _dir = ""
     try:
         from agents import arc as _arc
         _series = _arc.series_so_far(_db(), n=10)
         _dir = _arc.next_directive(_db(), today=target.isoformat(),
-                                   render_style="real_footage")
+                                   render_style="real_footage") or ""
         if _series or _dir:
             user += "\n\n" + _series
             if _dir:
@@ -2060,6 +2061,41 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
                      "단 자산에 실제 있는 것만 — 디렉티브가 자산과 안 맞으면 자산 우선.")
     except Exception as e:
         log.warning("arc directive injection failed: %s", e)
+    # PD 2026-06-16: RF kept producing the SAME concept every day ("랴니 차분 + 레오 호기심,
+    # 각자의 방식" eventless coexistence) — because RF, unlike ai_vtuber, had NO concept-
+    # ideation stage: it went straight to the Writer, which collapsed to its safe default
+    # template regardless of which clips were swapped in. Give RF the same brainstorm AV
+    # gets: N footage-grounded, audience-ranked, PD-taste-aware storylines → seed the Writer
+    # with a DISTINCT winner. Cached in context so the gate-rewrite recursion reuses the same
+    # seed (no re-brainstorm per retry). CONCEPT_BRAINSTORM=0 disables.
+    if (os.getenv("CONCEPT_BRAINSTORM", "1") != "0"
+            and not context.get("rf_storyline_seed")):
+        try:
+            from agents import concept_brainstorm as _cb
+            _brief = (_dir or "").strip() or (
+                "레오·랴니의 실제 보유 클립으로 만드는 짧은 일상/메모리레인 숏츠 — "
+                "사건/주제가 뚜렷한 회차로(장소만 바꾼 '각자의 방식' 공존 관찰 금지).")
+            _n = int(os.getenv("CONCEPT_BRAINSTORM_N", "5"))
+            _res = _cb.best("real_footage", _brief, _n, context=context)
+            _win = _res.get("winner")
+            if _win:
+                if progress_cb:
+                    _rk = " | ".join(f"{c.get('audience_score')}:{c.get('title')}"
+                                     for c in _res.get("ranking", [])[:_n])
+                    progress_cb(f":brain: RF 컨셉 {_n}개 브레인스토밍 → 시청자 랭킹: {_rk}")
+                    progress_cb(f":trophy: RF 승자({_win.get('audience_score')}/10): {_win.get('title')}")
+                _beats = _win.get("beats") or []
+                _beat_txt = " / ".join(str(b) for b in _beats) if isinstance(_beats, list) else str(_beats)
+                context["rf_storyline_seed"] = (
+                    "\n\n## ★리뷰어가 시청자 관점으로 고른 이번 회차 스토리라인 (이 앵글로 전개):\n"
+                    f"제목: {_win.get('title')}\n로그라인: {_win.get('logline')}\n"
+                    f"비트: {_beat_txt}\n"
+                    "위 앵글을 실제 클립으로 충실히 전개하라. 단 자산에 실제 있는 것만 — "
+                    "스토리라인이 보유 클립과 안 맞으면 클립 우선으로 가장 가까운 사건을 잡아라.")
+        except Exception as e:
+            log.warning("RF concept brainstorm failed (skipping): %s", e)
+    if context.get("rf_storyline_seed"):
+        user += context["rf_storyline_seed"]
     if prior_feedback:
         user += (
             "\n\n## ⚠️ 이전 시도가 기리(Giri) 검수를 통과하지 못했다. 아래 지적을 "
