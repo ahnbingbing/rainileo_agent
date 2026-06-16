@@ -1830,6 +1830,21 @@ def _rf_temporal_coherence(concept: dict, target_year: int) -> list[str]:
                         f"cut{i+1}: {_rf_clip_year(c.get('asset_id'))}년 클립(현재 회차에 섞인 "
                         f"과거/아기 시절)인데 그 컷 캡션에 시점 표시가 없다 — '아기 레오'·'○개월 "
                         f"전'·'그때'처럼 이 컷에서 시점을 밝혀라.")
+    # D) PD 2026-06-17: a multi-PERIOD episode (year span ≥2) framed as ONE unfolding
+    #    EVENT ("그날 저녁의 귀가", "문이 열리자", "만남 1초 전", "이제 곧 집") is fabricated
+    #    continuity — different-time clips stitched as a single moment. PD (repeated):
+    #    시점을 교차하려면 '하루 안 브이로그'(같은 날 클립) 또는 '그때는 이랬는데 지금은 이렇다'
+    #    비교여야지 한 사건인 척 금지. Flag when year span ≥2 AND single-event continuity
+    #    phrases appear. (Same-day multi-location transitions use span<2, so no conflict.)
+    if max(years) - min(years) >= 2:
+        _ev = next((p for p in ("문이 열리자", "문 앞", "1초 전", "만남", "이제 곧",
+                                "곧이어", "그날 저녁", "그날 밤", "그날 아침", "방금")
+                    if p in text), None)
+        if _ev:
+            out.append(
+                f"여러 해({min(years)}~{max(years)}년) 클립을 '{_ev}'처럼 한 사건이 이어지는 "
+                f"것으로 엮었다 — 시기가 다른 클립을 한 순간인 척 금지. 같은 날 클립만으로 '하루 "
+                f"브이로그'를 쓰거나, '그때는 이랬는데 지금은 이렇다' 비교 구조로 다시 써라.")
     return out
 
 
