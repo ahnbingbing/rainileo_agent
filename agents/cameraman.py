@@ -1394,9 +1394,9 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
             "channel's 랴니엄마). Smooth feminine underbelly, NO male "
             "genitalia of any kind. Petite/refined feminine build, NOT "
             "muscular male. THIN Boston Terrier-style white blaze (a NARROW "
-            "line, NOT a thick wide splash) from nose to forehead, NO white "
-            "dot or spot above or on the eyes (the area above the eyes stays "
-            "solid black), silver-grey aged muzzle, white chin, "
+            "line, NOT a thick wide splash, never thick/wide) from nose to forehead, "
+            "a faint subtle eyebrow-like white mark above each eye (NOT a bold round dot), "
+            "silver-grey aged muzzle, white chin, "
             "white chest patch. Only black/white/grey — no brown. "
             "ABSOLUTELY NO TAIL (French Bulldog — her rear is bare and "
             "tailless; never render any tail). "
@@ -1621,7 +1621,9 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
         "muzzle, NO tail). LEO = an ORANGE tabby cat. You get the frame + the caption shown "
         "over it. Answer ONLY JSON: {\"ryani_visible\":bool, \"leo_visible\":bool, "
         "\"other_animal\":\"short desc or empty (e.g. golden retriever, corgi)\", "
-        "\"frame_ok\":bool (false if blown-out/too dark/empty so the subject can't be seen), "
+        "\"frame_ok\":bool (IMAGE QUALITY only — false ONLY if the picture itself is too "
+        "dark, blown-out, or blurry to judge what's in it; a CLEAR frame that simply has no "
+        "pet in it — a person, hand, water, or scenery — is frame_ok=TRUE, NOT false), "
         "\"caption_matches\":bool (does the caption fairly describe THIS frame? false if it "
         "names a pet not in frame, calls a different animal/breed our pet, claims an "
         "action the frame contradicts, OR claims a PLACE/SETTING the frame contradicts — "
@@ -1671,6 +1673,7 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
     #    first greeting' only contradict the frame AT those scenes' moments (Ryani appears
     #    elsewhere in the clip, so a cut-level check passes the fabrication).
     mismatched = []  # (tag, idx, vlm, ko, reason)
+    pet_absent_tags = []  # cuts where NO frame shows our pet (human/scenery only)
     n_scenes = 0
     _BREEDS = {"코기": "corgi", "웰시": "corgi", "corgi": "corgi",
                "리트리버": "retriever", "retriever": "retriever", "골든": "golden",
@@ -1696,6 +1699,18 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
         # off that exact frame). No extra VLM calls — reuses the per-scene results.
         cut_oa = " ".join((vv.get("other_animal") or "") for _, _, vv in scene_vs
                           if vv).lower()
+        # PD 2026-06-17: SUBJECT-PROMINENCE — our pet must be the frame's actual subject.
+        # A clip can pass the "pet is IN the clip" selection check (subjects_csv=ryani) yet
+        # be human-dominant in the frames (e.g. baby-Ryani's first water = mom wading with a
+        # stick; the rendered frames show the person, not the dog). Reuse the per-scene VLM
+        # visibility (no extra calls): if EVERY viewable scene of this cut shows NEITHER pet
+        # AND there's no real other-animal (so it's just a human/scenery), the cut isn't our
+        # content — flag it to DROP (PD: "펫 없이 캡션도 없는 동영상 자꾸 왜 넣어").
+        _valid = [vv for _, _, vv in scene_vs if vv]
+        _viewable = [vv for vv in _valid if vv.get("frame_ok") is not False]
+        _pet_seen = any(vv.get("ryani_visible") or vv.get("leo_visible") for vv in _valid)
+        if _viewable and not _pet_seen and not cut_oa.strip():
+            pet_absent_tags.append(tag)
         # Pass 2: evaluate each scene (using its own frame + the cut-level animal).
         for idx, ko, v in scene_vs:
             low = ko.lower()
@@ -1727,6 +1742,34 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
                 log.info("grounding gate: %s[%d] MISMATCH — %s | ko=%s | vlm=%s",
                          tag, idx, reasons, ko, {k: v.get(k) for k in
                          ("ryani_visible", "leo_visible", "other_animal", "caption_matches")})
+    # 1b. DROP pet-absent cuts (human/scenery only — our pet is not the visible subject).
+    if pet_absent_tags and os.getenv("RF_PET_VISIBILITY_GATE", "1") == "1":
+        keep = [t for t in cap if t.startswith("_") or t not in pet_absent_tags]
+        _remaining = [t for t in keep if not t.startswith("_")]
+        _orig = len(_remaining) + len(pet_absent_tags)
+        if len(_remaining) < max(2, (_orig + 1) // 2):
+            # dropping these would gut the episode → fail the slot (junk 금지), don't ship a
+            # remnant (launch self-heal retries; the concept may need different clips).
+            raise RuntimeError(
+                f"pet-absent cuts would gut the episode: {pet_absent_tags} leave only "
+                f"{len(_remaining)}/{_orig} cuts with our pet visible — failing slot")
+        cap = {t: cap[t] for t in keep}
+        for key in ("cuts", "concept_cuts"):
+            lst = manifests.get(key)
+            if isinstance(lst, list):
+                manifests[key] = [c for c in lst
+                                  if (c.get("tag") or c.get("cut_tag")) not in pet_absent_tags]
+        mismatched = [m for m in mismatched if m[0] not in set(pet_absent_tags)]
+        try:
+            cap_path.write_text(json.dumps(cap, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as e:
+            log.warning("grounding gate: pet-absent drop write-back failed: %s", e)
+        log.warning("grounding gate: dropped %d pet-absent cut(s): %s",
+                    len(pet_absent_tags), pet_absent_tags)
+        if progress_cb:
+            progress_cb(f":scissors: 주인공-부재 컷 {len(pet_absent_tags)}개 드롭 "
+                        f"(펫이 화면에 안 보이는 사람/풍경 컷): {', '.join(pet_absent_tags)}")
+
     if not mismatched:
         if progress_cb:
             progress_cb(f":white_check_mark: 그라운딩 게이트 — {n_scenes}씬 모두 화면과 일치")
@@ -2820,8 +2863,8 @@ def _append_character_canon(prompt: str) -> str:
         ryani_canon = (
             "Ryani is a SPAYED FEMALE 11-year-old senior French Bulldog "
             "(she/her). Markings CONSISTENT: THIN Boston Terrier-style white "
-            "blaze (a narrow line, NOT a wide splash) from nose to forehead, "
-            "NO white dot above the eyes (eye area stays solid black), "
+            "blaze (a THIN narrow line, NOT a wide splash, never thick/wide) from nose to forehead, "
+            "a faint subtle eyebrow-like white mark above each eye (NOT a bold round dot), "
             "silver-grey aged muzzle, white chin, "
             "large white chest patch, bat ears, ABSOLUTELY NO TAIL, petite "
             "refined feminine body (NOT muscular), only black/white/grey — no "
@@ -4632,7 +4675,7 @@ def _review_script_before_render(veo_prompts: dict, manifests: dict,
                 ryani_desc = (
                     " (Ryani: old black French Bulldog, age 11. "
                     "White markings on black face: thin Boston Terrier-style white blaze (NARROW line, not the typical wide splash) from nose to forehead, "
-                    "NO white dot above the eyes (eye area stays solid black). Silver-grey aged muzzle. "
+                    "a faint subtle eyebrow-like white mark above each eye (NOT a bold round dot). Silver-grey aged muzzle. "
                     "White chin. White chest patch. Bat ears. No tail. Only black, white, grey.)"
                 )
                 if isinstance(vp, dict):
@@ -5821,8 +5864,8 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                 "with NO visible genitalia at all (she is spayed). "
                 "Ryani's markings (CONSISTENT EVERY CUT): THIN Boston "
                 "Terrier-style white blaze (a narrow line, NOT the typical "
-                "wide splash) from nose to forehead, NO white dot above "
-                "the eyes (eye area stays solid black), "
+                "wide splash) from nose to forehead, a faint subtle eyebrow-like "
+                "white mark above each eye (NOT a bold round dot), "
                 "silver-grey aged muzzle, white chin, large white "
                 "chest patch, bat ears, ABSOLUTELY NO TAIL, stocky compact "
                 "feminine body (petite, refined, NOT muscular barrel-chested "
