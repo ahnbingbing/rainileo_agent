@@ -70,6 +70,12 @@ CHANNEL_ROUTES = {
         "env": "SLACK_PHOTOS_CHANNEL",
         "handler": "ingest_media",
     },
+    # Grandparents (할머니·할아버지 at 충주) share Ryani/Leo footage here — same raw
+    # media → assets ingest as #photos, so their clips/photos enter the Writer pool.
+    "grandmompapa": {
+        "env": "SLACK_GRANDMOMPAPA_CHANNEL",
+        "handler": "ingest_media",
+    },
 }
 
 
