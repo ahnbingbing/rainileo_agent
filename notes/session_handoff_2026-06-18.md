@@ -56,7 +56,11 @@
    슬롯 실패(junk 대신 빈슬롯). 다음 진짜 레버.
 3. **He-gv 잔여 publishAt** — PD Studio 확인.
 4. **Slack 이미지 EXIF 스트립** — 영상은 촬영일 OK, 사진은 업로드시각 폴백될 수 있음.
-5. **GCS 마이그레이션** — 설계만(docs/gcs-migration.md), 미구현. 급하지 않음.
+5. **GCS 마이그레이션** — 설계만(docs/gcs-migration.md), 미구현. **긴급도 낮음(근거):** 디스크
+   2026-06-18 현재 48Gi 여유/25% 사용, `data/`=8.9G(photos 1.8 / clips 2.4 / episodes 2.4 /
+   output 3.7 / db 0.03). 원래 동기였던 ~20G 압박은 6/16 정리(episodes→iCloud 아카이브)로 해소됨.
+   남는 가치 = 저장·연산 GCP co-location/future-proof(저장은 이미 iCloud 온디맨드 재다운로드 모델).
+   → "언젠가는 필요, 지금 급하진 않음." 하려면 Phase 1(`agents/storage.py` + google-cloud-storage)부터.
 6. **18:00 슬롯 더블/Latin square** — 이번엔 수동으로 해소했지만 배치 스케줄러가 가끔 같은 슬롯에
    둘을 잡는 원인은 미규명.
 
