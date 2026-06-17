@@ -36,6 +36,7 @@ import json
 import logging
 import os
 import sqlite3
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -169,6 +170,51 @@ def download_file(client, file_obj: dict, target_dir: Path,
         return None
 
 
+def _ffprobe_bin() -> str:
+    import shutil
+    return shutil.which("ffprobe") or "/opt/homebrew/bin/ffprobe"
+
+
+def extract_captured_at(path: Path) -> "datetime | None":
+    """Real capture timestamp from a media file's own metadata — so a Slack-shared
+    clip/photo (which has no Photos.app date) still clusters by its TRUE shoot date
+    (outings / memory-lane), not its Slack upload day. Video → ffprobe
+    format_tags=creation_time; image → EXIF DateTimeOriginal (HEIC via pillow_heif).
+    Returns a tz-aware UTC datetime, or None when the file carries no capture date."""
+    ext = path.suffix.lower()
+    try:
+        if ext in (".mov", ".mp4", ".m4v", ".avi", ".webm", ".mkv"):
+            out = subprocess.run(
+                [_ffprobe_bin(), "-v", "error", "-show_entries",
+                 "format_tags=creation_time", "-of", "default=nw=1:nk=1", str(path)],
+                capture_output=True, text=True, timeout=30).stdout.strip()
+            if out:
+                s = out.replace("Z", "+00:00")
+                dt = datetime.fromisoformat(s)
+                return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+            return None
+        # image
+        from PIL import Image
+        try:
+            from pillow_heif import register_heif_opener
+            register_heif_opener()
+        except Exception:
+            pass
+        exif = Image.open(path).getexif()
+        raw = None
+        try:
+            raw = exif.get_ifd(0x8769).get(36867)  # ExifIFD → DateTimeOriginal
+        except Exception:
+            pass
+        raw = raw or exif.get(306)                  # DateTime (fallback)
+        if raw:
+            return datetime.strptime(str(raw).strip(), "%Y:%m:%d %H:%M:%S").replace(
+                tzinfo=timezone.utc)
+    except Exception as e:
+        log.debug("capture-date extract failed (%s): %s", path.name, e)
+    return None
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Channel handlers
 # ────────────────────────────────────────────────────────────────────────────
@@ -246,34 +292,43 @@ def ingest_media(con: sqlite3.Connection, client, msg: dict,
     if not media:
         return "skip:no_media"
     inserted = 0
+    upload_dt = datetime.fromtimestamp(float(ts or 0), tz=timezone.utc)
     for f in media:
         mime = f.get("mimetype") or ""
         kind = "photo" if mime.startswith("image/") else "video"
-        # Asset ID is content-stable: hash of slack file id + ts
-        asset_id = f"slack_{f.get('id', 'x')}"
+        # Content-stable dedup key = hash of the Slack file id (matches the proven
+        # med_<date>_slack_<hash> scheme so the same file never double-ingests, even
+        # though the final asset_id also encodes the capture date resolved below).
+        fhash = hashlib.sha1((f.get("id", "x") or "x").encode()).hexdigest()[:8]
         existing = con.execute(
-            "SELECT asset_id FROM assets WHERE asset_id=?", (asset_id,),
+            "SELECT asset_id FROM assets WHERE asset_id LIKE ?", (f"%_slack_{fhash}",),
         ).fetchone()
         if existing:
             continue
-        # Year-bucket by upload date (Slack ts → year)
-        year = datetime.fromtimestamp(float(ts), tz=timezone.utc).strftime("%Y")
-        target_dir = (PHOTOS_DIR if kind == "photo" else CLIPS_DIR) / year
         if dry_run:
             inserted += 1
             continue
-        local = download_file(client, f, target_dir, prefix=f"slack_{year}")
+        # Download first — the real capture date lives in the FILE's metadata, not in
+        # Slack (which only knows the upload time). Bucket on disk by upload year for now.
+        local = download_file(client, f, target_dir=(PHOTOS_DIR if kind == "photo"
+                              else CLIPS_DIR) / upload_dt.strftime("%Y"),
+                              prefix=f"slack_{upload_dt.strftime('%Y')}")
         if not local:
             continue
-        # Use file path relative for portability
+        # PD 2026-06-17: stamp the TRUE capture date so Slack-shared (esp. grandparent)
+        # footage clusters by when it was SHOT, not uploaded — else it lands with no date
+        # and is invisible to date-based outings / memory-lane. Fall back to the Slack
+        # upload time only when the file carries no capture metadata.
+        captured = extract_captured_at(local) or upload_dt
+        asset_id = f"med_{captured.strftime('%Y_%m_%d_%H%M%S')}_slack_{fhash}"
         try:
             rel = local.relative_to(ROOT)
         except ValueError:
             rel = local
         con.execute(
-            "INSERT INTO assets (asset_id, source, kind, file_path, ingested_iso) "
-            "VALUES (?, 'slack', ?, ?, datetime('now'))",
-            (asset_id, kind, str(rel)),
+            "INSERT INTO assets (asset_id, source, kind, file_path, captured_iso, "
+            "ingested_iso) VALUES (?, 'slack', ?, ?, ?, datetime('now'))",
+            (asset_id, kind, str(rel), captured.isoformat()),
         )
         inserted += 1
     if not dry_run:
@@ -320,6 +375,32 @@ def sync_channel(con: sqlite3.Connection, client, name: str,
     return stats
 
 
+def backfill_captured_dates(con: sqlite3.Connection, dry_run: bool = False) -> dict:
+    """Fill captured_iso on Slack-ingested assets that lack it, from each file's OWN
+    capture metadata (EXIF / ffprobe). Earlier #photos ingests stored no capture date,
+    so the footage was invisible to date-based outings / memory-lane. Only captured_iso
+    is set — asset_ids stay as-is (other rows reference them)."""
+    rows = con.execute(
+        "SELECT asset_id, file_path FROM assets WHERE source='slack' "
+        "AND (captured_iso IS NULL OR captured_iso='')").fetchall()
+    found = 0
+    for r in rows:
+        fp = r["file_path"]
+        p = Path(fp) if os.path.isabs(fp) else (ROOT / fp)
+        if not p.exists():
+            continue
+        cap = extract_captured_at(p)
+        if not cap:
+            continue
+        if not dry_run:
+            con.execute("UPDATE assets SET captured_iso=? WHERE asset_id=?",
+                        (cap.isoformat(), r["asset_id"]))
+        found += 1
+    if not dry_run:
+        con.commit()
+    return {"candidates": len(rows), "backfilled": found}
+
+
 def main() -> int:
     logging.basicConfig(
         level=os.getenv("LOG_LEVEL", "INFO"),
@@ -332,8 +413,17 @@ def main() -> int:
     p.add_argument("--since", help="override last_ts (ISO date or unix ts)")
     p.add_argument("--bootstrap", action="store_true",
                    help="ingest from beginning (sets oldest=0)")
+    p.add_argument("--backfill-dates", action="store_true",
+                   help="fill captured_iso on Slack assets missing it (from file "
+                        "metadata) and exit — no channel sync")
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
+
+    if args.backfill_dates:
+        con = _db()
+        res = backfill_captured_dates(con, dry_run=args.dry_run)
+        print(f"backfill captured_iso: {res}")
+        return 0
 
     since = None
     if args.bootstrap:
