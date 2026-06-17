@@ -180,7 +180,7 @@ def apply_fixes(fixes: list[dict], concept: dict,
             marking_fix = (
                 " (Ryani: old black French Bulldog, age 11. "
                 "White markings on black face: thin Boston Terrier-style white blaze (NARROW line, not the typical wide splash) from nose to forehead, "
-                "white dot above left eye, white dot above right eye. Silver-grey aged muzzle. "
+                "a faint subtle eyebrow-like white mark above each eye (small/thin, NOT a bold round dot). The center blaze stays a THIN pencil-width line, never thick/wide. Silver-grey aged muzzle. "
                 "White chin. White chest patch. Bat ears. No tail. Only black, white, grey.)"
             )
             if updated.get("generation_mode") == "text_to_video":

@@ -1,7 +1,41 @@
-# HANDOFF — 런칭 라이브 + 품질/인프라 (2026-06-07 갱신)
+# HANDOFF — 런칭 라이브 + 품질/인프라 (2026-06-17 갱신)
 
 > 새 shell은 CLAUDE.md 다음으로 이걸 읽어라. 브랜치: **approach-d-grounded-singlepass** (미머지).
-> **상태: 런칭 자동화 ON** — 매일 00:00 4편 제작→다음날 예약공개. 첫 배치 6/8 00:00→6/9 공개.
+> **상태: 런칭 자동화 ON** — launchd `com.rianileo.launch`가 매일 **03:00 KST**(2026-06-17 변경, 기존 1시) 다음날 4편 제작→예약공개.
+
+## 2026-06-17 세션 — 품질/인프라 대수술 (⚠️ 미커밋)
+
+> 핵심: "캐릭터 마킹 단일소스 정합 + 스틸 best-of-5 + 일시오류 retry + arc/Director max_tokens 버그".
+
+### 렌더 품질
+- **best-of-5 스틸 선택을 메인 렌더에 연결** (그동안 빠져 있던 PD 기대 동작). `generate_character_scene.generate_batch`가 컷당 `REGEN_BEST_OF`(기본 5)장 생성→`still_select.pick_best_still`로 마킹·소품·배경 판정해 베스트 선택. cameraman 양 AV 경로가 concept/cut 전달. `=1`이면 기존 단일. → 라이브에서 "ball matches specified blue"로 공 색까지 골라냄 확인.
+- **캐릭터 마킹 = canon 단일소스 정합화.** canon은 베이스였지만 director_shots/character_sheets/producer_propose(legacy)/retry_loop/cameraman 디스크립터에 하드코딩 복사본이 있어 드리프트 → 전부 일치시킴:
+  - 이마줄(blaze): "THIN 연필선, 절대 두꺼워지지/넓어지지 않음 — 두꺼우면 결함"(Giri 루브릭도 플래그). ← PD 핵심 불만.
+  - 눈 위: "옅은 눈썹같은 흰 마킹 **있음**(또렷한 점 아님)" — 옛 "눈 점 없음(6-12)"은 PD가 6-17 정정.
+  - 꼬리: 랴니 꼬리 없음 → "꼬리 흔들기 금지, 기쁨=엉덩이 실룩". character_sheets play-bow가 "tail wagging" 가르치던 게 근본 원인(수정).
+- **소품 외형 고정**: director_shots "Story-prop appearance lock"(색+재질+모양 동일+네거티브 가드; 파란 고무공→빨간 털공 방지).
+- **VLM 캡션 이름 스왑 가드**: cameraman `_vlm_post_render_caption_rewrite` + caption_agent.md에 종-앵커(고양이=레오/강아지=랴니).
+
+### 안정성 / 참신성 / dedup
+- **launch 일시오류 retry**: transient(timeout/504/unavailable/overloaded)면 `LAUNCH_TRANSIENT_RETRIES`(기본 2)회 재시도, 영구오류는 비용폭증 방지로 안 함.
+- **Director max_tokens 9000→16000**: 컷 프롬프트가 잘려 writer_director→legacy 추락하던 원인 수정.
+- **arc 시즌 플랜 max_tokens 1500→4000**: 9일간 리프레시 불가(낡은 "빛나는 소라 여름 퀘스트" 고정→물/소라 편향)였던 버그 수정. stale 플랜 비움(`arc_plan_backup` 백업).
+- **참신성**: 브레인스토밍 상상축 메뉴+시즌 옵션화, 랭킹 참신성 가중치, `_season_context` 강제 해제.
+- **dedup**: `MACRO_REVIEW_DAYS`(기본 21, 기존 7) + 모티프 dedup 양 레인(`REVIEWER_MOTIF_DEDUP`) — footage 달라도 같은 테마 fail(카페 재탕 차단).
+- **윙크 단일화**: embedded 윙크 strip + legacy도 윙크 1회 보장. **salvage 게이팅**: 컨텐츠 드리프트는 캡션-salvage 거부.
+
+### 운영
+- launch 스케줄 1시→**3시**(plist+레포). 6/17 카페 RF 중복 3개 archived.
+- **6/17 18:00 예약**: AV "펑! 하네스가 사라진 순간"(youtu.be/P9huQKtlMrs, 비공개→자동공개).
+- v4 "경비견과 대사냥꾼"(Giri 8/10) workroom 업로드(검수용).
+
+### 새 env: `REGEN_BEST_OF`(5) · `LAUNCH_TRANSIENT_RETRIES`(2) · `MACRO_REVIEW_DAYS`(21) · `REVIEWER_MOTIF_DEDUP`(1) · `DIRECTOR_MAX_TOKENS`(16000)
+
+### 미해결
+- canon 완전 DRY(하드코딩→canon 참조, .md 런타임 주입). 지금은 동기화+grep-all 규칙까지.
+- 마킹 드리프트: best-of-5로 개선되나 Seedance 한계라 best-effort 잔존(PD veto가 최종망).
+- denouement(소파평화) 컷을 Writer가 자꾸 떨굼. 단조로움: 디렉티브 과잉지정 피할 것.
+- GCS 마이그레이션 `docs/gcs-migration.md`(미구현). 메모리: av-render-fidelity-rules / best-of-n-still-selection / present-review-content-inline.
 
 ## ⛔ 출력 규칙
 도구 호출 코드를 답변 텍스트에 쓰지 마라. 매 턴 도구가 실제 실행됐는지(결과 반환) 확인. 말로만 "실행합니다" 금지 — 이게 과거 3일 날린 원흉.

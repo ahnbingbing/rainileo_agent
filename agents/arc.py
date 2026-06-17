@@ -213,8 +213,8 @@ def _plan_stale(updated_at: str | None, today: str) -> bool:
 
 def _season_context(con: sqlite3.Connection, today: str) -> dict:
     """Season + upcoming holidays/milestones + live trends for the planner.
-    PD 2026-06-06: the season plan must reflect 계절/공휴일/트렌드 — seasonal
-    fruit/food/place, summer = Ryani swimming, holiday tie-ins, etc."""
+    Season is offered as OPTIONAL flavor, not a forced driver — leaning on it
+    every episode bred repetitive clichés (every summer = 물놀이/수영)."""
     import datetime as dt
     out: dict = {}
     try:
@@ -224,10 +224,12 @@ def _season_context(con: sqlite3.Connection, today: str) -> dict:
                   else "여름" if m in (6, 7, 8) else "가을")
         out["season"] = f"{season} ({m}월)"
         out["season_hint"] = (
-            "계절에 맞는 과일/음식/장소/활동을 적극 엮어라. 예) 여름=수박·물놀이·"
-            "랴니 수영·그늘·아이스팩, 가을=단풍·고구마·산책, 겨울=눈·군고구마·"
-            "이불·난로, 봄=벚꽃·소풍·새싹. (단 자산에 있을 법한 것 위주, 무리한 "
-            "촬영 강요 금지 — ai_vtuber는 상상 가능, real_footage는 실제 클립 필요.)"
+            "계절은 '선택적 양념'이지 엔진이 아니다. 이번 이야기를 실제로 더 강하게 만들 "
+            "때만 계절 소재(과일/음식/장소/활동)를 엮어라 — 매 회 계절에 기대면 '여름=물놀이/"
+            "수영' 같은 반복 클리셰가 되고 시청자가 질린다. 계절보다 참신한 앵글(메모리레인, "
+            "반사실 상상, 사소한 일상의 과장, 장르 패러디)을 먼저 고려하고, 계절은 그중 "
+            "자연스러울 때만 양념으로 쓴다. 자산에 있을 법한 것 위주, 무리한 촬영 강요 금지 "
+            "— ai_vtuber는 상상 가능, real_footage는 실제 클립 필요."
         )
         # Upcoming milestones within ~5 weeks (month/day recurrence table).
         ups = []
@@ -329,9 +331,11 @@ def _refresh_plan(con: sqlite3.Connection, today: str) -> str:
         "시리즈로 아우른다(둘이 같은 세계관/스토리를 공유). 규칙:\n"
         "- 캐릭터 소개→관계→성장→떡밥 회수처럼 큰 호를 그려라. 단 날짜별로 "
         "  못박지 말고 '주차/단계' 단위의 느슨한 흐름으로 (유연하게 바뀔 수 있음).\n"
-        "- ★ 계절/공휴일/트렌드를 반드시 반영하라 (아래 season_context). 계절 "
-        "  과일·음식·장소·활동(여름=수박·물놀이·수영 등; 랴니는 수영을 잘하니 여름 "
-        "  물놀이의 주인공감), 다가오는 기념일/공휴일 타이인, 트렌드를 시즌 비트에 녹여라.\n"
+        "- 계절/공휴일/트렌드는 '선택적 양념'이다(아래 season_context). 이번 단계 "
+        "  이야기를 실제로 더 좋게 만들 때만 엮어라 — 매 회 계절에 기대면 '여름이니 "
+        "  물놀이/수영' 식 반복 클리셰가 된다. 참신한 앵글(메모리레인·반사실·일상 "
+        "  과장·장르 패러디)을 먼저 고려하고, 계절·공휴일 타이인은 자연스러울 때만 "
+        "  비트에 녹여라.\n"
         "- ★★ 캐릭터의 성격·능력·공포는 아래 CHARACTER_FACTS에 적힌 것만 써라. "
         "  없는 트레잇(없는 공포/능력)을 지어내지 마라. (예: '랴니 물 공포 극복'은 거짓 — "
         "  랴니는 수영을 잘한다.)\n"
@@ -360,7 +364,11 @@ def _refresh_plan(con: sqlite3.Connection, today: str) -> str:
                        "series_so_far": prior, "existing_plan": existing_plan},
                       ensure_ascii=False)
     from agents.llm_cascade import call_text_cascade
-    txt = _strip_fence(call_text_cascade(system, user, max_tokens=1500).strip())
+    # PD 2026-06-16: 1500 truncated the multi-phase plan JSON mid-string →
+    # json.loads always failed → the plan could NEVER refresh and the pipeline
+    # ran on a permanently-stale (summer/water-biased) plan. 4000 fits a full
+    # ~4-week plan with beats.
+    txt = _strip_fence(call_text_cascade(system, user, max_tokens=4000).strip())
     json.loads(txt)  # validate
     con.execute("INSERT INTO arc_plan (plan_json) VALUES (?)", (txt,))
     con.commit()

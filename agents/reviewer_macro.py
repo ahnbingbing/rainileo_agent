@@ -20,12 +20,65 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sqlite3
 import datetime as dt
 from pathlib import Path
 
 log = logging.getLogger("agents.reviewer_macro")
 ROOT = Path(__file__).resolve().parent.parent
+
+# PD 2026-06-16: motif-level dedup for ai_vtuber. The footage-overlap (vhash)
+# check is blind for AV (generated cuts have no real-clip (location,activity)
+# tags → comparable=0), so AV dedup relied entirely on the LLM's text opinion —
+# which inconsistently caught "바닷가" but passed a "분수→모래성/바다" re-run. This
+# adds a deterministic guard: if the candidate's title/logline shares ≥N salient
+# motif tokens with a recently-PUBLISHED episode, flag it as a theme repeat.
+_MOTIF_STOP = {
+    "랴니", "레오", "랴니의", "레오의", "ryani", "leo", "vs", "the", "and", "with",
+    "오늘", "오늘도", "우리", "아기", "첫", "도전", "도전기", "이야기", "시간", "그리고",
+    "함께", "되는", "하는", "이번", "에피소드", "shorts", "short",
+    # generic time/place/activity words — too common to signal a theme repeat
+    # (a second 산책 episode is fine; a second 카페-도둑-레오 episode is not).
+    "산책", "공원", "여름", "겨울", "봄", "가을", "하루", "아침", "저녁", "오후",
+    "집", "거실", "주방", "마음", "각자", "동행", "리듬", "순간", "방식", "기다림",
+}
+_MOTIF_MIN_SHARED = 2  # ≥ this many shared salient tokens = a theme repeat
+
+
+def _motif_tokens(text: str) -> set:
+    """Salient motif tokens from a title/logline: Hangul runs ≥2 chars and
+    English words ≥4 chars, minus channel-constant stopwords (랴니/레오/…)."""
+    if not text:
+        return set()
+    toks = re.findall(r"[가-힣]{2,}|[A-Za-z]{4,}", text.lower())
+    return {t for t in toks if t not in _MOTIF_STOP}
+
+
+def motif_overlap(drafts: list, ctx: dict) -> dict:
+    """Best theme-overlap between any candidate draft and any recently-published
+    episode. Returns {shared:set, episode:str} for the strongest match (≥
+    _MOTIF_MIN_SHARED shared tokens), else {shared:set(), episode:''}."""
+    recent = (ctx or {}).get("recent_episodes") or []
+    if not recent or not drafts:
+        return {"shared": set(), "episode": ""}
+    ep_tokens = []
+    for ep in recent:
+        toks = _motif_tokens(str(ep.get("title", ""))) | _motif_tokens(str(ep.get("oneliner", "")))
+        if toks:
+            ep_tokens.append((ep.get("title", ""), toks))
+    best = {"shared": set(), "episode": ""}
+    for c in drafts:
+        t = c.get("title")
+        t = t.get("ko") if isinstance(t, dict) else (t or "")
+        cand = _motif_tokens(t) | _motif_tokens(c.get("narrative_oneliner", ""))
+        for cut in (c.get("cuts") or [])[:6]:
+            cand |= _motif_tokens(cut.get("beat") or "")
+        for ep_title, toks in ep_tokens:
+            shared = cand & toks
+            if len(shared) > len(best["shared"]):
+                best = {"shared": shared, "episode": ep_title}
+    return best
 DB_PATH = Path(os.getenv("DB_PATH", str(ROOT / "data" / "agent.db"))).resolve()
 
 _CACHE: dict = {}  # keyed by (date, days) so a launch run fetches once
@@ -233,9 +286,16 @@ def _comments(con, max_videos: int = 6, per_video: int = 8) -> list[str]:
     return out[:40]
 
 
-def fetch_macro_context(con, days: int = 7) -> dict:
+def fetch_macro_context(con, days: int | None = None) -> dict:
     """Fetch (once, cached) the macro context: recent episodes + performance +
-    audience comments. Cold-start safe (empty pieces)."""
+    audience comments. Cold-start safe (empty pieces).
+
+    PD 2026-06-16: the dedup window was a hard 7 days, so a theme already used
+    >1 week ago slipped back in (a 'fountain'/'beach' episode re-proposed). Now
+    env-tunable via MACRO_REVIEW_DAYS (default 21) so the freshness check looks
+    back far enough to catch re-runs."""
+    if days is None:
+        days = int(os.getenv("MACRO_REVIEW_DAYS", "21"))
     key = (dt.date.today().isoformat() if False else "_run", days)  # no Date.now in tests
     if key in _CACHE:
         return _CACHE[key]
@@ -478,6 +538,25 @@ def run_reviewer(drafts: list, ctx: dict, lane: str, progress_cb=None) -> dict:
                                         f"중복률 {vo['repeat_ratio']} ({vo['repeats']}/{vo['comparable']})]")
             log.info("reviewer vhash override → pass (fresh footage ratio=%s repeats=%d comparable=%d; "
                      "LLM theme-reject demoted)", vo["repeat_ratio"], vo["repeats"], vo["comparable"])
+        # PD 2026-06-16: motif-level dedup in BOTH lanes. The footage-overlap check
+        # is clip-level, so the SAME concept with slightly different clips passes —
+        # that's how "카페-도둑-레오-기다리는-랴니" shipped repeatedly (and 분수→모래성
+        # for AV where vhash is blind entirely). Theme repeat is an INDEPENDENT fail:
+        # even with fresh footage, reusing a recently-PUBLISHED episode's salient
+        # motifs demotes to fail so the rewrite loop diversifies.
+        if verdict["pass"] and os.getenv("REVIEWER_MOTIF_DEDUP", "1") != "0":
+            mo = motif_overlap(drafts, ctx)
+            if len(mo["shared"]) >= _MOTIF_MIN_SHARED:
+                verdict["pass"] = False
+                shared = ", ".join(sorted(mo["shared"]))
+                md = (f"테마 재탕: 이 컨셉이 최근 공개 '{mo['episode']}'와 모티프 "
+                      f"[{shared}]를 공유한다. 다른 소재/장소/계절로 차별화하라.")
+                verdict["rewrite_directive"] = (
+                    (verdict["rewrite_directive"] + " " if verdict["rewrite_directive"]
+                     else "") + md)
+                verdict["macro_notes"] = (verdict.get("macro_notes") or "") + " [motif-override:fail]"
+                log.info("reviewer motif override → fail (shared=%s ep=%s)",
+                         shared, mo["episode"])
         if progress_cb:
             extra = ""
             if vo["comparable"]:

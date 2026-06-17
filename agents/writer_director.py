@@ -632,7 +632,11 @@ def run_director(story_concepts: list[dict], context: dict,
     )
     out_text = _call_anthropic(
         director_system, user, model=DIRECTOR_MODEL,
-        max_tokens=int(os.getenv("DIRECTOR_MAX_TOKENS", "9000"))
+        # PD 2026-06-16: 9000 truncated the per-cut cinematography (rich regen/
+        # motion prompts ×6 cuts) → Director raised "output truncated" → the whole
+        # writer_director path fell back to legacy (no tags/set_anchor/wink). The
+        # Writer passes already use 16000; match it so the Director can finish.
+        max_tokens=int(os.getenv("DIRECTOR_MAX_TOKENS", "16000"))
     )
     try:
         out = _parse_json_loose(out_text)
@@ -1196,6 +1200,43 @@ def _split_merged_ko_en(c: dict) -> None:
                     log.info("ko/en split: '%s' / '%s'", cap["ko"], cap["en"])
 
 
+# A cut "winks" if it's the tagged closer OR a wink is written into its
+# tag/beat/action/motion. \bwink avoids matching "twinkle"; 윙크/찡긋 cover KO.
+_WINK_RE = re.compile(r"(?:\bwink|윙크|찡긋)", re.IGNORECASE)
+
+
+def _looks_like_wink(cut: dict) -> bool:
+    if cut.get("function") == "wink_ending":
+        return True
+    blob = " ".join(str(cut.get(k, "")) for k in
+                    ("tag", "beat", "action", "description",
+                     "motion_prompt", "veo_prompt"))
+    return bool(_WINK_RE.search(blob))
+
+
+def _strip_wink_language(cut: dict) -> None:
+    """Remove wink sentences from a NON-closer cut so it keeps its story content
+    but no longer ANIMATES a wink. Only strips when something survives (never
+    blanks a prompt). Also drops wink-only captions like '...찡긋 ♥'."""
+    for k in ("motion_prompt", "veo_prompt", "action", "description"):
+        txt = cut.get(k)
+        if not txt:
+            continue
+        # Split on sentence/clause boundaries (EN .!? — and em/en dashes that the
+        # Director uses to attach the wink beat), drop fragments mentioning a wink.
+        frags = re.split(r"(?<=[.!?])\s+|\s*[—–]\s*", txt)
+        kept = [f for f in frags if f and not _WINK_RE.search(f)]
+        if kept and len(kept) != len(frags):
+            cut[k] = " ".join(kept).strip()
+    caps = cut.get("captions")
+    if isinstance(caps, list):
+        pruned = [cap for cap in caps
+                  if not _WINK_RE.search(str(cap.get("ko", "")) + " "
+                                         + str(cap.get("en", "")))]
+        if pruned:  # never leave a cut with zero captions
+            cut["captions"] = pruned
+
+
 def _enforce_wink_empty_captions(c: dict) -> None:
     """Exactly ONE closing wink. The wink is the channel sign-off — a single
     zoom-in close-up with the happy caption "오늘도 햅삐 ♥ / Happy as ever ♥".
@@ -1203,10 +1244,15 @@ def _enforce_wink_empty_captions(c: dict) -> None:
     PD 2026-06-14: the episode sometimes showed TWO wink animations (a Writer-
     emitted wink + the auto-appended one, or a mid-episode wink callback). The
     old rule only EMPTIED the extra winks' captions, but an empty-caption wink
-    still RENDERS a second wink animation → visible double-wink bug. Now we
-    DROP every wink_ending cut except the final one, force that survivor to be
-    the LAST cut, and give it the happy sign-off caption held through the
-    push-in. (Earlier rule: PD 2026-06-02 "마지막 윙크에만 이걸 적용해야해".)"""
+    still RENDERS a second wink animation → visible double-wink bug.
+
+    PD 2026-06-16: the dedupe keyed ONLY on function=="wink_ending", so a wink
+    the Director wrote into a story beat (e.g. a 'resolution_wink' cut whose
+    function is a description string) slipped through and the episode still
+    double-winked (the resolution wink + the auto-appended closer). Now we catch
+    EMBEDDED winks too: the last wink-like cut becomes the single canonical
+    closer; every other wink-like cut keeps its content but has its wink STRIPPED
+    (not dropped — we don't lose the resolution beat)."""
     canonical = {
         "start": 4.5, "end": 6.8,  # held through the close-up wink landing
         "ko": "오늘도 햅삐 ♥",
@@ -1215,16 +1261,40 @@ def _enforce_wink_empty_captions(c: dict) -> None:
     cuts = c.get("cuts") or []
     if not cuts:
         return
-    winks = [cut for cut in cuts if cut.get("function") == "wink_ending"]
-    if not winks:
+    wink_idxs = [i for i, cut in enumerate(cuts) if _looks_like_wink(cut)]
+    if not wink_idxs:
         return
-    non_winks = [cut for cut in cuts if cut.get("function") != "wink_ending"]
-    closer = winks[-1]               # keep only the final wink as the closer
-    closer["captions"] = [canonical]
-    if len(winks) > 1:
-        log.info("wink dedupe: %d wink cuts → 1 closing wink (no double-wink)",
-                 len(winks))
-    c["cuts"] = non_winks + [closer]
+    closer_idx = wink_idxs[-1]       # auto-appended cut_wink_ending is always last
+    # Strip embedded winks from every OTHER wink-like cut (preserve their story).
+    for i in wink_idxs[:-1]:
+        _strip_wink_language(cuts[i])
+    closer = cuts[closer_idx]
+    closer["function"] = "wink_ending"
+    closer["captions"] = [dict(canonical)]
+    # Drop any stray function-tagged wink_ending cuts that aren't the closer,
+    # then force the closer to be the very last cut.
+    new_cuts = [cut for i, cut in enumerate(cuts)
+                if i == closer_idx or cut.get("function") != "wink_ending"]
+    if new_cuts and new_cuts[-1] is not closer:
+        new_cuts = [cut for cut in new_cuts if cut is not closer] + [closer]
+    c["cuts"] = new_cuts
+    # PD 2026-06-17: Seedance spontaneously winks/blinks pets even when NO cut asked
+    # for it → a stray wink right before the closing wink (PD kept seeing a double
+    # wink with clean concepts). Pin every NON-closer cut to eyes-open so the only
+    # wink in the episode is the ending.
+    _NOWINK = (" Both pets keep their eyes OPEN and natural the whole cut — NO "
+               "winking, NO one-eye close / blink-wink (the single closing wink "
+               "belongs ONLY to the final cut).")
+    for cut in new_cuts:
+        if cut is closer:
+            continue
+        for _k in ("motion_prompt", "veo_prompt"):
+            _v = cut.get(_k)
+            if _v and "NO winking" not in _v:
+                cut[_k] = _v + _NOWINK
+    if len(wink_idxs) > 1:
+        log.info("wink dedupe: %d wink-like cuts → 1 closer (stripped %d embedded)",
+                 len(wink_idxs), len(wink_idxs) - 1)
 
 
 def _rewrite_duplicate_captions(concept: dict, progress_cb=None) -> None:
@@ -2510,7 +2580,7 @@ def _build_wink_cut(subject: str, prev_cut: dict) -> dict:
             "(she/her, channel's 랴니엄마). SPAYED FEMALE — smooth feminine "
             "underbelly, NO male genitalia of any kind. THIN Boston "
             "Terrier-style white blaze (a NARROW line, NOT a wide splash) "
-            "from nose to forehead, NO white dot/spot above or on the eyes, "
+            "from nose to forehead, a faint subtle eyebrow-like white mark above each eye (NOT a bold round dot), "
             "silver-grey aged muzzle, white chin, large white chest patch, bat ears, "
             "ABSOLUTELY NO TAIL (her rear is bare and tailless), petite "
             "refined feminine body (NOT muscular male), only black/white/"

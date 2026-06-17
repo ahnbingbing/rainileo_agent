@@ -217,6 +217,14 @@ Then prepend the **same** anchor language into every cut's set_description / mot
 
 Same rule for **scratcher, rug (if exists), TV stand, plant pots, etc.** — declare each piece ONCE per prompt with its position, then describe character positions RELATIVE to it. 절대 "Ryani의 sofa", "Leo의 sofa"처럼 캐릭터별로 동일 가구를 따로 묘사하지 마라.
 
+### Story-prop appearance lock — a recurring prop looks IDENTICAL every cut (NON-NEGOTIABLE)
+A story prop that appears in more than one cut (ball, toy, stick, treat, box…) MUST be described with the **exact same full spec — color + material + shape + size — in every cut that shows it.** Seedance re-invents an under-specified prop per cut: a "공" pinned only as "blue ball" in cut 2 came back as a **red furry ball** mid-episode (color AND material both drifted). The prop is part of the story's through-line; if it morphs, the gag breaks.
+
+- Define the prop ONCE in full and **copy that phrase verbatim** into each cut's motion_prompt — never paraphrase it ("ball" here, "toy" there, "그 공" elsewhere).
+- Always include a **negative guard** against the likely drift (other colors, fur/texture).
+- ✅ `"a small smooth BLUE RUBBER ball — matte royal-blue, hand-sized, smooth hard surface (NOT furry, NOT a yarn/fuzzy ball, NOT red or any other color)"` — same string in cut2, cut3, cut4.
+- ❌ `"blue ball"` in one cut, `"the ball"` in the next → Seedance recolors/retextures it freely.
+
 ### Fixture HEIGHT lock — the sink stays mounted at counter height (NON-NEGOTIABLE)
 PD 2026-06-08 (욕실 세면대 바닥 사건). **랴니는 실제로 발 씻을 때 세면대 안에 네 발로 들어가 선다 — 세면대가 커서 들어간다. 이 자세 자체는 맞다.** The ONLY failure was that Seedance rendered the sink sitting **on the floor**. Like the elevated-surface jump rule above, Seedance defaults a fixture to floor level unless its height is explicitly locked. So when a pet stands INSIDE the sink, you MUST nail the sink's mount height in the prompt every time, or it gets grounded.
 
@@ -286,10 +294,10 @@ Rules:
 - Use the [[character_knowledge]] block (auto-injected from VLM photo/video analysis) to describe the human's clothing, body type, hair tone, etc. — never invent stereotype features (e.g. "Korean grandmother in hanbok with hair bun" if the actual reference shows a casual modern outfit).
 
 ### Character marking — Ryani (랴니, 11yo French Bulldog) — REQUIRED for every Ryani-visible cut
-thin Boston Terrier-style white blaze (NARROW line, not the typical wide splash) from nose to forehead, white dot above left eye, white dot above right eye. Silver-grey aged muzzle. White chin. Large white chest patch. Bat ears. **No tail.** Only black/white/grey — no brown.
+thin Boston Terrier-style white blaze (NARROW line, not the typical wide splash) from nose to forehead, a faint subtle eyebrow-like white mark above each eye (small and thin, NOT a bold round dot). The center forehead blaze stays a THIN pencil-width line — never a thick/wide stripe. Silver-grey aged muzzle. White chin. Large white chest patch. Bat ears. **No tail.** Only black/white/grey — no brown.
 
 Standard string (paste verbatim when Ryani in frame, except possibly cut 1 where full description goes first):
-> "An old black French Bulldog (Ryani, age 11). White markings on her black face: a thin Boston Terrier-style white blaze (NARROW line, not the typical wide splash) from nose to forehead, white dot above left eye, white dot above right eye. Silver-grey aged muzzle. White chin. Large white chest patch. Bat ears. No tail. Stocky compact body. Only black, white, grey — no brown."
+> "An old black French Bulldog (Ryani, age 11). White markings on her black face: a thin Boston Terrier-style white blaze (NARROW line, not the typical wide splash) from nose to forehead, a faint subtle eyebrow-like white mark above each eye (small and thin, NOT a bold round dot). The center forehead blaze stays a THIN pencil-width line — never a thick/wide stripe. Silver-grey aged muzzle. White chin. Large white chest patch. Bat ears. No tail. Stocky compact body. Only black, white, grey — no brown."
 
 ### Character marking — Leo (레오, ~8mo orange tabby)
 > "An orange tabby cat (Leo, ~8 months old, young adult, pale yellow-green / chartreuse eyes, white chin tuft, lean and agile body, paler cream-orange cheeks and belly). Tail often raised in question mark shape."

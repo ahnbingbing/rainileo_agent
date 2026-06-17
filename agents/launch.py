@@ -331,12 +331,31 @@ def launch_pipeline(target: dt.date, *,
                         batch_used_assets.add(_c["asset_id"])
             except Exception:
                 pass
-            try:
-                outs = produce_and_render([concept], target, progress_cb=sp)
-            except Exception as e:
-                log.exception("launch render failed (%s %s): %s", hhmm, lane, e)
-                sp(f":x: {hhmm} {lane_lbl} 렌더 실패: {str(e)[:140]}")
-                outs = []
+            # PD 2026-06-17: TRANSIENT-error retry. A slot used to empty on ANY render
+            # exception — incl. transient LLM/provider blips (timeout/504/unavailable)
+            # that just need a re-try. Retry ONLY on transient signatures (NOT on real
+            # failures — re-rendering those re-spends Seedance, the cost-runaway). Env
+            # LAUNCH_TRANSIENT_RETRIES (default 2). SEEDANCE_MAX_CALLS still caps spend.
+            import time as _time
+            _tr = max(0, int(os.getenv("LAUNCH_TRANSIENT_RETRIES", "2")))
+            _TRANSIENT = ("timeout", "timed out", "deadline_exceeded", "temporarily unavailable",
+                          "unavailable", "connection", "econnreset", "reset by peer",
+                          "rate limit", "429", "502", "503", "504", "overloaded")
+            outs = []
+            for _r in range(_tr + 1):
+                try:
+                    outs = produce_and_render([concept], target, progress_cb=sp)
+                    break
+                except Exception as e:
+                    es = str(e)
+                    if any(s in es.lower() for s in _TRANSIENT) and _r < _tr:
+                        sp(f":repeat: {hhmm} {lane_lbl} 일시 오류 — 재시도 {_r+1}/{_tr}: {es[:100]}")
+                        _time.sleep(min(30, 5 * (_r + 1)))
+                        continue
+                    log.exception("launch render failed (%s %s): %s", hhmm, lane, e)
+                    sp(f":x: {hhmm} {lane_lbl} 렌더 실패: {es[:140]}")
+                    outs = []
+                    break
             break  # rendered (block-reproposes already 'continue'd above)
         if concept is None:
             sp(f":warning: {hhmm} {lane_lbl}: 컨셉 없음 — 슬롯 비움")

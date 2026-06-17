@@ -87,7 +87,7 @@ Pick the segment matching the story's time setting:
   - **흰 턱** — 주둥이 은회색에서 턱의 흰색으로 자연스럽게 이어짐.
   - **색상 원칙**: 랴니 얼굴은 **검정 + 흰색 + 회색** 3색만 존재. 갈색/탄색은 없음. 조명에 따라 따뜻하게 보일 뿐.
   - **Veo 프롬프트 표준 문구 (vF2 — 58회 테스트 최적)**: 
-    "White markings on her black face: a thin Boston Terrier-style white blaze (NARROW line, not the typical wide splash) from nose to forehead, white dot above left eye, white dot above right eye. Silver-grey aged muzzle. White chin. Large white chest patch. Bat ears. No tail. Only black, white, grey — no brown."
+    "White markings on her black face: a thin Boston Terrier-style white blaze (NARROW line, not the typical wide splash) from nose to forehead, a faint subtle eyebrow-like white mark above each eye (small and thin, NOT a bold round dot). The center forehead blaze stays a THIN pencil-width line — never a thick/wide stripe. Silver-grey aged muzzle. White chin. Large white chest patch. Bat ears. No tail. Only black, white, grey — no brown."
   - **사진 퀄리티 부스터** (프롬프트 앞에 추가): "Professional pet portrait photograph. 85mm, f/1.8, warm natural light."
 - **BODY WHITE MARKINGS** (must ALWAYS be visible):
   - **Large white chest patch** — broad and prominent, extends from under chin down the chest. Very visible from front view.
@@ -171,8 +171,8 @@ Pick the segment matching the story's time setting:
 
 **강아지 놀자 포즈 (Play Bow)** — `dog_play_bow_01~03.jpg`
 - 앞다리를 쭉 앞으로 뻗어 바닥에 붙이고, 엉덩이를 높이 든 자세
-- 입을 벌리고 흥분한 표정, 꼬리 흔듦
-- veo_prompt 예: "performs a play bow with front paws stretched forward flat on the floor, hind quarters raised, mouth open in excitement, tail wagging"
+- 입을 벌리고 흥분한 표정. **랴니는 꼬리가 없다 — 기쁨/흥분은 '꼬리 흔들기'가 아니라 꼬리 없는 엉덩이(전체)를 좌우로 실룩이는 위글로 표현한다.** 절대 꼬리 흔드는 묘사를 쓰지 마라(채널 유일 강아지 = 랴니 = 꼬리 없음).
+- veo_prompt 예: "performs a play bow with front paws stretched forward flat on the floor, hind quarters raised, mouth open in excitement, her tailless rear wiggling side to side (NO tail)"
 - **Veo safety 주의**: "rear end raised high in the air" 대신 → "hind quarters raised in play bow stance"
 
 **고양이 사냥 자세 (Pounce Crouch)** — `cat_pounce_crouch_01~03.jpg`

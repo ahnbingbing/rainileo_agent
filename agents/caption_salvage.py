@@ -43,6 +43,14 @@ _STRUCTURAL = [
     "melt", "왜곡", "distort", "orb", "breed", "품종", "꼬리", "tail", "드리프트",
     "drift", "인간 얼굴", "사람 얼굴", "정지 화면", "프레임 누락", "렌더", "깨진",
     "duplicat", "중복 가구", "merged", "합쳐",
+    # PD 2026-06-16: a CONTENT/CONCEPT drift — the clip rendered the WRONG thing
+    # vs the concept (wrong place/set, wrong subject, a character doing something
+    # off-brand, e.g. the cat in water) — must NOT be salvaged. Rewriting the
+    # caption to match a wrong video just LAUNDERS a failed render. These signal
+    # "re-render or empty the slot", not "rewrite text".
+    "컨셉", "concept", "장소", "배경", "세트", "set", "scene", "씬",
+    "오인", "주인공", "부재", "엉뚱", "다른 장면", "다른 장소", "wrong",
+    "물에", "물속", "물놀이", "캐릭터 사실", "사실 위반",
 ]
 # Words that mean the defect IS caption-shaped (fixable by rewriting text).
 _CAPTION_SHAPED = [
@@ -277,6 +285,12 @@ def salvage(card_id: str, report: dict, *, progress_cb=None,
     out = ROOT / "data" / "output" / "episodes" / f"episode_{prefix}_{ts}_salvaged.mp4"
     asm = ["python3", "scripts/assemble_episode.py",
            "--captions", str(cap_path),
+           # PD 2026-06-17: MUST read the cuts we just burned into THIS salvage's
+           # captioned_dir. Without --in-dir, assemble_episode defaults to the SHARED
+           # data/output/animated_captioned junk-drawer (cuts from many episodes incl.
+           # RF) → it assembled stale/wrong cuts (a leftover cut crept into the front,
+           # the re-captioned cut never made it in).
+           "--in-dir", str(captioned_dir),
            "--intro-bumper", str(cm.INTRO_BUMPER),
            "--outro-bumper", str(cm.OUTRO_BUMPER),
            "--music", manifests["bgm"],

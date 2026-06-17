@@ -4424,7 +4424,11 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
 
     # Step 1c: burn captions on trimmed clips.
     manifests["style"] = "real_footage"  # enables caption reading-time fit (#4)
-    captioned_dir = ROOT / "data" / "output" / "animated_captioned"
+    # PD 2026-06-17: per-EPISODE captioned dir, NOT the shared data/output/
+    # animated_captioned junk-drawer (cuts from every episode pile up there →
+    # concurrent renders collide + a stale/other-episode cut can slip into the
+    # assembly). Assemble reads from here via --in-dir below.
+    captioned_dir = work_dir / "animated_captioned"
     _run(
         _burn_captions_cmd(manifests, anim_dir, captioned_dir),
         ":speech_balloon: [1c/3] Burning captions (post-VLM)",
@@ -4455,6 +4459,7 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
     _run(
         ["python3", "scripts/assemble_episode.py",
          "--captions", manifests["captions"],
+         "--in-dir", str(captioned_dir),
          "--intro-bumper", str(INTRO_BUMPER),
          "--outro-bumper", str(OUTRO_BUMPER),
          "--music", manifests.get("bgm", str(DEFAULT_BGM)),
@@ -4622,8 +4627,10 @@ def run_cartoon_sticker_pipeline(manifests: dict, card: dict, work_dir: Path,
         progress_cb(":loud_sound: [4/6] Bumpers exist — skip")
 
     # Step 5: burn captions (손글씨 기본, Director font_override 가능)
+    # PD 2026-06-17: per-EPISODE captioned dir (not the shared junk-drawer).
+    captioned_dir = work_dir / "animated_captioned"
     _run(
-        _burn_captions_cmd(manifests, anim_dir, ROOT / "data" / "output" / "animated_captioned"),
+        _burn_captions_cmd(manifests, anim_dir, captioned_dir),
         ":speech_balloon: [5/6] Burning captions",
         progress_cb, dry_run,
     )
@@ -4633,6 +4640,7 @@ def run_cartoon_sticker_pipeline(manifests: dict, card: dict, work_dir: Path,
     _run(
         ["python3", "scripts/assemble_episode.py",
          "--captions", manifests["captions"],
+         "--in-dir", str(captioned_dir),
          "--intro-bumper", str(INTRO_BUMPER),
          "--outro-bumper", str(OUTRO_BUMPER),
          "--music", manifests.get("bgm", str(DEFAULT_BGM)),
@@ -6457,8 +6465,10 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
             log.warning("AV editor pass failed (keeping render): %s", ex)
 
     # Step 5: burn captions (손글씨 기본, Director font_override 가능)
+    # PD 2026-06-17: per-EPISODE captioned dir (not the shared junk-drawer).
+    captioned_dir = work_dir / "animated_captioned"
     _run(
-        _burn_captions_cmd(manifests, anim_dir, ROOT / "data" / "output" / "animated_captioned"),
+        _burn_captions_cmd(manifests, anim_dir, captioned_dir),
         ":speech_balloon: [5/6] Burning captions",
         progress_cb, dry_run,
     )
@@ -6468,6 +6478,7 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
     asm_cmd = [
         "python3", "scripts/assemble_episode.py",
         "--captions", manifests["captions"],
+        "--in-dir", str(captioned_dir),
         "--intro-bumper", str(INTRO_BUMPER),
         "--outro-bumper", str(OUTRO_BUMPER),
         "--music", manifests.get("bgm", str(DEFAULT_BGM)),
