@@ -1134,18 +1134,33 @@ def _rf_event_clusters(pool: list, min_clips: int = 2, max_outings: int = 12) ->
         acts = sorted({c.get("act") for c in clips if c.get("act")})
         ya = next((c.get("years_ago") for c in clips
                    if c.get("years_ago") is not None), None)
+        # PD 2026-06-17: rank by EVENT-WORTHINESS, not clip count. Richness ≠ a story.
+        # A 3-clip cafe OUTING (arrive→explore→settle) is a better single event than a
+        # 13-clip home day of each-pet-doing-its-own-thing (that drifts back to the
+        # '각자의 방식' eventless coexistence PD vetoed). A real outing = a trip OUT
+        # (cafe/park/outdoor/mom's, the `outing` flag or non-home loc); activity variety
+        # within the day signals an arc (탐방+나란히+낮잠) vs a static blob (rest+rest).
+        is_outing = any(c.get("outing") for c in clips) or (loc not in ("home", "unknown", ""))
+        event_score = ((2 if is_outing else 0)
+                       + min(len(acts), 3)
+                       + (1 if len(clips) >= 4 else 0))
         outings.append({
             "date": date,
             "location": loc,
             "years_ago": ya,
             "n_clips": len(clips),
+            "is_outing": is_outing,
             "activities": acts,
             "clip_ids": [c.get("id") for c in clips],
             "scenes": [(c.get("sc") or "")[:110] for c in clips],
+            "_score": event_score,
         })
-    # Richest events first (more clips = more story), newest as tiebreak. Diversity is
-    # BETWEEN outings (the list spans days/years); the Writer picks ONE and stays inside it.
-    outings.sort(key=lambda o: (o.get("n_clips") or 0, o.get("date") or ""), reverse=True)
+    # Most event-worthy first (real trips + activity arc), then richer, then newer.
+    # Diversity is BETWEEN outings; the Writer picks ONE and stays inside it.
+    outings.sort(key=lambda o: (o.get("_score") or 0, o.get("n_clips") or 0,
+                                o.get("date") or ""), reverse=True)
+    for o in outings:
+        o.pop("_score", None)
     return outings[:max_outings]
 
 
@@ -1617,16 +1632,23 @@ def _recent_la_usage(con, days: int = 7):
     return freq, overused, overused_loc
 
 
-def _lead_with_underused(rows: list, freq, overused_loc) -> list:
+def _lead_with_underused(rows: list, freq, overused_loc,
+                         protect_ids: "set | None" = None) -> list:
     """Stable-sort a dict pool (each has 'loc'/'act') so UNDER-represented clips lead:
     over-used locations sink, then higher (loc,act) frequency sinks. Ties keep the
     incoming (diversity-sampled) order. The Writer anchors on whatever is at the top,
-    so leading with fresh footage is the cheapest way to make it actually use it."""
+    so leading with fresh footage is the cheapest way to make it actually use it.
+
+    PD 2026-06-17 (outing-unit freshness): `protect_ids` = clips that form a RICH unused
+    OUTING (same day+place, already past cooldown = never shipped as an event). They are
+    fresh AS AN EVENT even if their location is over-represented in aggregate — the
+    repetition unit is the event, not the location — so they are NOT sunk for that."""
+    protect_ids = protect_ids or set()
     def _key(v):
         loc, act = v.get("loc"), v.get("act")
         # un-groundable location (NULL/unknown/other) is not a useful lead — sink it.
         no_loc = 1 if (not loc or loc in ("unknown", "other")) else 0
-        over = 1 if loc in overused_loc else 0
+        over = 0 if v.get("id") in protect_ids else (1 if loc in overused_loc else 0)
         # PD 2026-06-13: prefer FACE-SAFE clips within each freshness tier. The cap pushes
         # toward fresh locations, but cafe is human-heavy (12/16 have a bystander) and its
         # face-crop kept failing the no-human HARD RULE → render blocked. mom (8/9) and
@@ -1638,18 +1660,24 @@ def _lead_with_underused(rows: list, freq, overused_loc) -> list:
 
 
 def _cap_overused_locations(rows: list, overused_loc, cap_frac: float = 0.34,
-                            floor: int = 10) -> list:
+                            floor: int = 10, protect_ids: "set | None" = None) -> list:
     """Scarcity, not just ordering: cap over-used-location clips to ≤ cap_frac of the
     pool the Writer sees, so it CANNOT fill an episode with home/outdoor even though it
     keeps trying to. Reordering alone failed — the diverse sample is still ~44% home,
     so the Writer (which likes cozy home-rest) just picks from the plentiful tail. With
     a hard cap it runs out of home clips and must use the fresh ones. The over-used set
     refreshes daily, so the forced location rotates (cafe→mom→outdoor…) = variety ACROSS
-    episodes. `rows` must be fresh-first (post _lead_with_underused). Keeps ≥ floor."""
+    episodes. `rows` must be fresh-first (post _lead_with_underused). Keeps ≥ floor.
+
+    PD 2026-06-17 (outing-unit freshness): `protect_ids` clips (a rich unused outing) count
+    as fresh — never cap a coherent never-shipped event down to unusable just because its
+    location is over-represented. Variety is "a different OUTING each episode", not a banned
+    location, so a never-shipped 11-clip home day must survive intact and pickable."""
     if not overused_loc:
         return rows
-    fresh = [v for v in rows if v.get("loc") not in overused_loc]
-    over = [v for v in rows if v.get("loc") in overused_loc]
+    protect_ids = protect_ids or set()
+    fresh = [v for v in rows if v.get("loc") not in overused_loc or v.get("id") in protect_ids]
+    over = [v for v in rows if v.get("loc") in overused_loc and v.get("id") not in protect_ids]
     if not fresh:
         return rows  # nothing fresh to lean on — don't starve the Writer
     allowed = int(len(fresh) * cap_frac / max(1e-6, 1.0 - cap_frac))
@@ -2055,20 +2083,34 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     # these stop the "집-휴식으로 회귀" churn at the source instead of via reviewer reject.
     try:
         _la_freq, _la_over, _loc_over = _recent_la_usage(_db())
-        avail_videos = _lead_with_underused(avail_videos, _la_freq, _loc_over)
+        # PD 2026-06-17 (outing-unit freshness): protect clips that form a RICH coherent
+        # outing (same day+place, already past cooldown = never shipped as an event) from the
+        # over-used-location demotion/cap. Variety comes from picking a DIFFERENT outing each
+        # episode, not from banning a location — so a never-shipped 11-clip home day must stay
+        # intact & near the top even though "home" is over-represented in aggregate.
+        _protect_ids: set = set()
+        if os.getenv("RF_EVENT_CLUSTERS", "1") == "1":
+            _rich_min = int(os.getenv("RF_OUTING_RICH_MIN", "4"))
+            for _o in _rf_event_clusters((avail_videos or []) + (_arch_field or [])):
+                if (_o.get("n_clips") or 0) >= _rich_min:
+                    _protect_ids.update(_o.get("clip_ids") or [])
+        avail_videos = _lead_with_underused(avail_videos, _la_freq, _loc_over, _protect_ids)
         _photos = _lead_with_underused(_photos, _la_freq, _loc_over)
         # Hard scarcity cap so the Writer can't fill with over-used locations (reorder
         # alone wasn't enough — it kept picking home). Only when there's a real fresh
-        # pool to fall back on; the floor keeps ≥6 usable.
+        # pool to fall back on; the floor keeps ≥6 usable. Rich unused outings are exempt.
         _cap = float(os.getenv("RF_OVERUSED_LOC_CAP", "0.34"))
         _before_cap = len(avail_videos)
-        avail_videos = _cap_overused_locations(avail_videos, _loc_over, cap_frac=_cap)
+        avail_videos = _cap_overused_locations(avail_videos, _loc_over, cap_frac=_cap,
+                                               protect_ids=_protect_ids)
         _avoid_overused = {
             "over_used_locations": sorted(_loc_over),
             "over_used_location_activity": sorted(f"{l}/{a}" for (l, a) in _la_over),
-            "note": ("최근 real_footage 업로드가 위 장소/활동에 과도하게 쏠려 있다. 이번 컷은 "
-                     "가능한 다른 장소(예: 야외/카페/옛 영상)·다른 활동을 우선 골라라. "
-                     "풀은 이미 신선한 것부터 정렬돼 있으니 위쪽 후보를 우선 검토하라."),
+            "note": ("최근 real_footage 업로드가 위 장소/활동에 과도하게 쏠려 있다. 단, "
+                     "candidate_outings의 풍부한 묶음(같은 날·장소의 안 써본 사건)은 그 장소가 "
+                     "과대표집이어도 우선 골라라 — 반복의 단위는 *장소*가 아니라 *이벤트*다. "
+                     "고를 만한 풍부한 나들이가 없을 때만 다른 장소/활동(야외/카페/옛 영상)으로 "
+                     "분산하라. 풀은 신선한 것부터 정렬돼 있다."),
         }
         if progress_cb and (_loc_over or _la_over):
             _capmsg = (f", 풀 {_before_cap}→{len(avail_videos)} 캡"
@@ -2243,14 +2285,19 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
              "the JSON array.")
     if _outings:
         user += ("\n\n⭐ 나들이 우선(candidate_outings): 각 항목은 같은 날·같은 장소의 클립 묶음 "
-                 "= 하나의 실제 사건이다. 기본값은 이 중 ONE 나들이를 골라 그 안의 영상들로 "
+                 "= 하나의 실제 사건이고, 모두 최근에 *이벤트로 쓰지 않은* 것이다(쿨다운 통과). "
+                 "기본값은 이 중 ONE 나들이(되도록 컷이 많은 풍부한 것)를 골라 그 안의 영상들로 "
                  "처음→중간→끝 video-first 에피소드를 짜는 것 — 서로 다른 날/해의 무관한 클립을 "
-                 "이어 붙여 '하나의 사건'인 척하지 마라('각자의 방식' 금지). 여러 날을 섞는 건 "
-                 "명시적 '그때 vs 지금' 비교일 때만 하고, 그때는 각 컷의 시점을 캡션에 라벨하라.")
+                 "이어 붙여 '하나의 사건'인 척하지 마라('각자의 방식' 금지). 그 나들이의 장소가 "
+                 "avoid_overused_setups에 있어도 우선해도 된다 — 반복의 단위는 *장소*가 아니라 "
+                 "*이벤트*다(같은 home이라도 안 써본 다른 날의 사건이면 새 콘텐츠). 여러 날을 "
+                 "섞는 건 명시적 '그때 vs 지금' 비교일 때만 하고, 그때는 각 컷의 시점을 캡션에 라벨하라.")
     if _avoid_overused.get("over_used_locations") or _avoid_overused.get("over_used_location_activity"):
         user += ("\n\n⚠️ 신선도: available_videos는 신선한(덜 쓴) 클립부터 정렬돼 있다. "
-                 "avoid_overused_setups의 장소/활동은 최근 과도하게 반복됐으니 컷의 과반을 "
-                 "그쪽으로 채우지 마라 — 야외/카페/옛 영상 등 다른 장소·활동을 우선 골라라.")
+                 "avoid_overused_setups의 장소/활동은 최근 과도하게 반복됐으니, 고를 만한 풍부한 "
+                 "나들이가 없을 때는 컷의 과반을 그쪽으로 채우지 말고 야외/카페/옛 영상 등 다른 "
+                 "장소·활동을 우선 골라라. (단 위 ⭐나들이 우선이 상위 규칙 — 풍부한 안 써본 "
+                 "나들이가 있으면 그 장소가 과대표집이어도 그걸 골라라.)")
     if _reuse_segs:
         user += ("\n\n⚠️ 구간 재사용: recently_used_segments는 최근 에피소드가 이미 쓴 "
                  "(클립별) 구간이다. 같은 클립을 다시 쓰려면 그 구간과 겹치지 않는 다른 "
