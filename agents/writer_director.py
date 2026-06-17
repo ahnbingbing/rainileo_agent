@@ -2359,7 +2359,14 @@ def _consolidate_short_to_one_take(c: dict) -> None:
     # _enforce_wink_empty_captions also dedupes, but guard at the source too.)
     cuts = [cc for cc in cuts if cc.get("function") != "wink_ending"]
     wink_subject = _pick_wink_subject(c)
-    wink_cut = _build_wink_cut(wink_subject, cuts[-1])
+    # PD 2026-06-17: if BOTH pets are in the episode, the ending is a two-pet wink
+    # EXCHANGE — the OTHER pet winks first, then wink_subject (story winner) gives the
+    # final 햅삐 wink. Solo episode → single wink.
+    _subs = [str(s).lower() for s in (c.get("subjects") or [])]
+    _has_r = any(("ryani" in s or "랴니" in s) for s in _subs)
+    _has_l = any(("leo" in s or "레오" in s) for s in _subs)
+    _other = ("leo" if wink_subject == "ryani" else "ryani") if (_has_r and _has_l) else None
+    wink_cut = _build_wink_cut(wink_subject, cuts[-1], other=_other)
     cuts.append(wink_cut)
     c["cuts"] = cuts
     log.info(
@@ -2562,62 +2569,74 @@ def _pick_wink_subject(c: dict) -> str:
     return "ryani"
 
 
-def _build_wink_cut(subject: str, prev_cut: dict) -> dict:
-    """Construct the chained wink-ending cut. Always chain_from_prev so
-    lighting + setting cascade from the prior cut."""
-    if subject == "leo":
-        char_desc = (
-            "Leo — MALE 8-month-old orange tabby cat (he/him, channel's 아들 "
-            "레오), pale yellow-green chartreuse eyes, white chin tuft, lean "
-            "agile young male body, paler cream-orange cheeks and belly than "
-            "the back"
+def _wink_char_desc(s: str) -> str:
+    """Marking-exact character descriptor for the wink cut (canon-consistent)."""
+    if s == "leo":
+        return ("Leo — MALE 8-month-old orange tabby cat (he/him, channel's 아들 레오), "
+                "pale yellow-green chartreuse eyes, white chin tuft, lean agile young male "
+                "body, paler cream-orange cheeks and belly than the back")
+    return ("Ryani — FEMALE 11-year-old senior black French Bulldog (she/her, channel's "
+            "랴니엄마). SPAYED FEMALE — NO male anatomy. THIN Boston Terrier-style white "
+            "blaze (a NARROW line, NOT a wide splash) from nose to forehead, a faint subtle "
+            "eyebrow-like white mark above each eye (NOT a bold round dot), silver-grey aged "
+            "muzzle, white chin, large white chest patch, bat ears, ABSOLUTELY NO TAIL (her "
+            "rear is bare and tailless), petite refined feminine body, only black/white/grey, no brown")
+
+
+def _build_wink_cut(subject: str, prev_cut: dict, other: str | None = None) -> dict:
+    """Chained wink-ending cut. PD 2026-06-17: when BOTH pets are present (`other`
+    given), render a TWO-pet wink EXCHANGE — `other` winks first, then `subject`
+    gives the FINAL 햅삐 wink (the sign-off). Solo single-wink otherwise. Always
+    chain_from_prev so lighting/setting cascade from the prior cut."""
+    names = {"leo": "Leo", "ryani": "Ryani"}
+    if other and other != subject:
+        # Two-pet exchange: `other` winks first → `subject` (story winner) winks last.
+        motion = (
+            "Continue seamlessly from the previous moment — SAME setting, SAME lighting, "
+            "shadow direction and color temperature as the input frame. BOTH pets are in "
+            f"frame together: {_wink_char_desc(other)}; AND {_wink_char_desc(subject)}. "
+            "They settle for a beat (a small natural breath). Over ~2s the camera slowly "
+            "pushes IN (smooth forward dolly, no panning) to a cozy tight two-shot. FIRST, "
+            f"{names.get(other, other)} turns to the camera and gives a slow, playful WINK "
+            "— one eye closes for a clear beat while the other stays open — with a little "
+            f"smile. A BEAT LATER, {names.get(subject, subject)} turns to the camera and "
+            "gives the FINAL slow, deliberate happy WINK (the closing sign-off), one eye "
+            "closed with a smug satisfied smile. Each pet winks ONCE, in TURN (NOT at the "
+            "same time). HOLD on both, lingering, for the remaining time. Casual iPhone "
+            "snapshot, natural fur strands, no studio polish. Completely bare-furred — NO "
+            "clothing, NO collar, NO accessories. Keep each pet's exact markings (Ryani has NO tail)."
         )
-        cap_ko = "레오: ...찡긋 ♥"
-        cap_en = "Leo: ...wink ♥"
+        who = f"{other},{subject}"
+        action = f"{names.get(other, other)} winks first, then {names.get(subject, subject)} gives the final happy wink"
     else:
-        char_desc = (
-            "Ryani — FEMALE 11-year-old senior black French Bulldog "
-            "(she/her, channel's 랴니엄마). SPAYED FEMALE — smooth feminine "
-            "underbelly, NO male genitalia of any kind. THIN Boston "
-            "Terrier-style white blaze (a NARROW line, NOT a wide splash) "
-            "from nose to forehead, a faint subtle eyebrow-like white mark above each eye (NOT a bold round dot), "
-            "silver-grey aged muzzle, white chin, large white chest patch, bat ears, "
-            "ABSOLUTELY NO TAIL (her rear is bare and tailless), petite "
-            "refined feminine body (NOT muscular male), only black/white/"
-            "grey, no brown"
+        # Solo single wink (only one pet in the episode).
+        char_desc = _wink_char_desc(subject)
+        motion = (
+            "Continue seamlessly from the previous moment — SAME pose, SAME setting, "
+            "SAME lighting, shadow direction and color temperature as the input "
+            f"frame. {char_desc} stays where it was and settles for a beat (a small "
+            "natural movement — a relaxed breath, ears shifting). Then, over about "
+            "2 seconds, the camera slowly pushes IN with a smooth forward dolly (no "
+            "panning) toward an intimate tight CLOSE-UP where the face fills the "
+            "frame. As the lens pushes in, the subject slowly turns its head to look "
+            "directly into the camera and holds steady, warm eye contact for a clear "
+            "beat. Then a slow, deliberate, playful WINK — one eye closes for a "
+            "noticeable moment while the other stays wide open on the camera — with "
+            "a subtle smug satisfied smile, mouth corner slightly raised. HOLD that "
+            "close-up wink and smile, lingering, for the remaining time. "
+            "Casual iPhone snapshot, natural fur strands visible at this close "
+            "distance, no studio polish. Completely bare-furred — NO clothing, "
+            "NO collar, NO accessories."
         )
-        cap_ko = "랴니: ...찡긋 ♥"
-        cap_en = "Ryani: ...wink ♥"
-    # PD 2026-06-06: the wink was too short and felt 뜬금없다 (abrupt/random).
-    # Fix: (1) OPEN by continuing the exact pose/setting of the previous moment
-    # so it reads as a natural beat of the same scene, not a teleport; (2) a
-    # small in-character action first (settle, a relaxed breath) before turning;
-    # (3) a SLOW push-in; (4) longer held eye-contact and a longer held wink so
-    # it lands. Total 7s so it lingers instead of flashing by.
-    motion = (
-        "Continue seamlessly from the previous moment — SAME pose, SAME setting, "
-        "SAME lighting, shadow direction and color temperature as the input "
-        f"frame. {char_desc} stays where it was and settles for a beat (a small "
-        "natural movement — a relaxed breath, ears shifting). Then, over about "
-        "2 seconds, the camera slowly pushes IN with a smooth forward dolly (no "
-        "panning) toward an intimate tight CLOSE-UP where the face fills the "
-        "frame. As the lens pushes in, the subject slowly turns its head to look "
-        "directly into the camera and holds steady, warm eye contact for a clear "
-        "beat. Then a slow, deliberate, playful WINK — one eye closes for a "
-        "noticeable moment while the other stays wide open on the camera — with "
-        "a subtle smug satisfied smile, mouth corner slightly raised. HOLD that "
-        "close-up wink and smile, lingering, for the remaining time. "
-        "Casual iPhone snapshot, natural fur strands visible at this close "
-        "distance, no studio polish. Completely bare-furred — NO clothing, "
-        "NO collar, NO accessories."
-    )
+        who = subject
+        action = f"{subject} winks at camera"
     return {
         "tag": "cut_wink_ending",
         "beat": "wink_ending",
-        "who": subject,
+        "who": who,
         "function": "wink_ending",
-        "action": f"{subject} winks at camera",
-        "description": f"{subject} winks at camera",
+        "action": action,
+        "description": action,
         # PD 2026-06-06: 5s felt too short/abrupt — 7s so the wink lingers.
         "duration_seconds": 7,
         "seedance_mode": "i2v",

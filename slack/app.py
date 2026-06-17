@@ -38,6 +38,16 @@ PHOTOS_CHANNEL = os.getenv("SLACK_PHOTOS_CHANNEL", "C0B5TEX2LQZ")
 EPISODE_CHANNEL = os.getenv("SLACK_EPISODE_CHANNEL", "C0B6Q1TDYCQ")
 BACKGROUND_CHANNEL = os.getenv("SLACK_BACKGROUND_CHANNEL", "C0B5TGGB9J9")
 REFERENCES_CHANNEL = os.getenv("SLACK_REFERENCES_CHANNEL", "C0B60EC81NX")
+# PD 2026-06-17: 할머니·할아버지 에셋 업로드 채널. 여기 올린 사진/영상은 펫 에셋
+# 라이브러리로 바로 ingest(= PHOTOS_CHANNEL과 같은 경로). 비-기술 사용자라 확인
+# 메시지는 따뜻하고 단순하게(asset_id 같은 용어 금지).
+GRANDMOMPAPA_CHANNEL = os.getenv("SLACK_GRANDMOMPAPA_CHANNEL", "C0BASN221UL")
+# 할머니·할아버지용 따뜻한 확인 문구 (subject 태깅 요청을 쉬운 말로).
+GRANDMA_THANKS = (
+    "💛 할머니·할아버지, 감사합니다! 잘 받았어요 🐾\n"
+    "어떤 장면인지(누구인지, 뭐 하고 있는지) 이 글에 한 줄 적어주시면 "
+    "영상 만들 때 딱 맞게 쓸게요 😊"
+)
 # PD 2026-06-12: live agent channel — PD chats here and a headless Claude Code
 # (`claude -p`) runs against the repo with full tools and replies (full perms).
 BOARD_CHANNEL = os.getenv("SLACK_BOARD_CHANNEL")
@@ -1037,6 +1047,73 @@ def _handle_reference_upload(event: dict, client, file_id: str, message_text: st
         log.warning("Reference upload failed: %s", e)
 
 
+def _grandma_converse(client, channel, user, text, thread_ts, asset_id=None):
+    """할머니·할아버지 메시지 처리: LLM이 이해하고 따뜻하게 대화 + 내용을 파이프라인에
+    기억시킨다. 일화/설명 → episode_stories(브레인스토밍 재료), '영상 만들어줘' 요청 →
+    [요청] 태그로 같은 곳에 저장(우선 가중), 함께 올린 에셋이 있으면 설명을 그 에셋 notes에 보강."""
+    text = (text or "").strip()
+    if not text:
+        return
+    reply, intent, summary = "", "story", text[:80]
+    try:
+        from agents.llm_cascade import call_text_cascade
+        import json as _json, re as _re
+        sys_p = (
+            "너는 'Ryani(랴니=강아지, 꼬리 없음)와 Leo(레오=고양이)' 펫 숏츠 채널의 따뜻한 "
+            "비서다. 할머니·할아버지가 펫 사진/영상과 설명, 또는 '이런 영상 만들어줘' 요청을 "
+            "올린다. 메시지를 읽고 JSON만 답하라: {\"reply\": 정감있는 한국어 존댓말 2~3문장"
+            "(내용 이해했다는 확인 + 필요시 가벼운 후속 질문 1개, 이모지 약간), "
+            "\"intent\": \"request\"(영상 제작 요청)|\"story\"(펫 일화·설명)|\"chat\"(인사·잡담), "
+            "\"subjects\": 메시지에 나온 펫(\"ryani\"|\"leo\"|\"ryani,leo\"|\"\"=모름), "
+            "\"summary\": 한 줄 요약}"
+        )
+        usr = f"메시지: {text}" + (" (사진/영상도 같이 올렸어요)" if asset_id else "")
+        raw = call_text_cascade(sys_p, usr, max_tokens=400).strip()
+        raw = _re.sub(r"^```(?:json)?\s*", "", raw); raw = _re.sub(r"\s*```$", "", raw)
+        d = _json.loads(raw)
+        reply = (d.get("reply") or "").strip()
+        intent = (d.get("intent") or "story").strip()
+        summary = (d.get("summary") or text[:80]).strip()
+        subjects = (d.get("subjects") or "").strip()
+    except Exception as e:
+        log.warning("grandma LLM failed: %s", e)
+        reply = "💛 감사합니다! 잘 받았어요. 영상 만들 때 꼭 참고할게요 🐾"
+        subjects = ""
+    # 설명에서 펫을 알아냈고 함께 올린 에셋이 있으면 클릭 없이 자동 subject 태깅.
+    if asset_id and subjects in ("ryani", "leo", "ryani,leo"):
+        try:
+            with db() as con:
+                con.execute("UPDATE assets SET subjects_csv = ? WHERE asset_id LIKE ? || '%'",
+                            (subjects, asset_id[:30]))
+        except Exception as e:
+            log.warning("grandma subject tag failed: %s", e)
+    # 일화/요청 → episode_stories (브레인스토밍이 자동으로 읽음). 요청은 [요청] 태그.
+    if intent in ("request", "story"):
+        store = ("[요청] " if intent == "request" else "") + text
+        try:
+            with db() as con:
+                con.execute(
+                    "INSERT INTO episode_stories (text, author, slack_ts) VALUES (?, ?, ?)",
+                    (store, user or "", thread_ts or ""))
+            log.info("grandma %s saved: %s", intent, summary[:50])
+        except Exception as e:
+            log.warning("grandma story save failed: %s", e)
+    # 함께 올린 에셋이 있으면 설명을 그 에셋에 붙임(자막/소재에 활용).
+    if asset_id and intent != "chat":
+        try:
+            with db() as con:
+                con.execute(
+                    "UPDATE assets SET notes = COALESCE(notes,'') || ? WHERE asset_id LIKE ? || '%'",
+                    (f" [할머니설명] {summary}", asset_id[:30]))
+        except Exception as e:
+            log.warning("grandma asset note failed: %s", e)
+    try:
+        client.chat_postMessage(channel=channel, thread_ts=thread_ts,
+                                text=reply or GRANDMA_THANKS)
+    except Exception:
+        pass
+
+
 @app.event("file_shared")
 def handle_file_shared(event, client, say):
     file_id = event.get("file_id")
@@ -1052,8 +1129,8 @@ def handle_file_shared(event, client, say):
         _handle_reference_upload(event, client, file_id, "")
         return
 
-    # Only process files in photos channel (or workroom as fallback)
-    allowed_channels = {PHOTOS_CHANNEL, WORKROOM}
+    # Only process files in photos channel, grandparents' channel, or workroom
+    allowed_channels = {PHOTOS_CHANNEL, WORKROOM, GRANDMOMPAPA_CHANNEL}
     if channel_id not in allowed_channels:
         return
 
@@ -1079,13 +1156,22 @@ def handle_file_shared(event, client, say):
     if asset.get("duration_sec"):
         size_info += f" | {asset['duration_sec']:.1f}s"
 
-    say(
-        text=(
-            f":white_check_mark: `{asset['asset_id'][:30]}`{size_info}\n"
-            f"subject 태깅: 이 스레드에 `랴니` / `레오` / `랴니레오` 로 답글 달아주세요."
-        ),
-        thread_ts=event.get("event_ts"),
-    )
+    if channel_id == GRANDMOMPAPA_CHANNEL:
+        # 할머니·할아버지: 용어 없이 따뜻하게 + 하트 리액션
+        say(text=GRANDMA_THANKS, thread_ts=event.get("event_ts"))
+        try:
+            client.reactions_add(channel=channel_id,
+                                 timestamp=event.get("event_ts"), name="heart")
+        except Exception:
+            pass
+    else:
+        say(
+            text=(
+                f":white_check_mark: `{asset['asset_id'][:30]}`{size_info}\n"
+                f"subject 태깅: 이 스레드에 `랴니` / `레오` / `랴니레오` 로 답글 달아주세요."
+            ),
+            thread_ts=event.get("event_ts"),
+        )
 
 
 @app.event({"type": "message", "subtype": "file_share"})
@@ -1101,7 +1187,9 @@ def handle_file_share_message(event, client):
         return
 
     # Photos channel
-    if channel in {PHOTOS_CHANNEL, WORKROOM} and files:
+    if channel in {PHOTOS_CHANNEL, WORKROOM, GRANDMOMPAPA_CHANNEL} and files:
+        n_ok = 0
+        last_asset_id = None
         for f in files:
             mimetype = f.get("mimetype", "")
             if mimetype.startswith("image/") or mimetype.startswith("video/"):
@@ -1109,9 +1197,32 @@ def handle_file_share_message(event, client):
                     file_info = client.files_info(file=f["id"])["file"]
                     asset = _ingest_file(file_info, client)
                     if asset:
+                        n_ok += 1
+                        last_asset_id = asset["asset_id"]
                         log.info("Ingested file_share %s → %s", f["id"], asset["asset_id"])
                 except Exception as e:
                     log.warning("file_share ingest failed: %s", e)
+        # 할머니·할아버지: 함께 적은 설명이 있으면 LLM이 이해+대화(+에셋 연결), 없으면 따뜻한 확인.
+        if channel == GRANDMOMPAPA_CHANNEL and n_ok:
+            ts = event.get("ts") or event.get("event_ts", "")
+            comment = (event.get("text") or "").strip()
+            try:
+                if ts:
+                    client.reactions_add(channel=channel, timestamp=ts, name="heart")
+            except Exception:
+                pass
+            if comment:
+                _grandma_converse(client, channel, event.get("user", ""), comment,
+                                  ts, asset_id=last_asset_id)
+            else:
+                try:
+                    client.chat_postMessage(
+                        channel=channel, thread_ts=ts,
+                        text=(f"💛 할머니·할아버지, 감사합니다! {n_ok}개 잘 받았어요 🐾\n"
+                              "랴니예요, 레오예요, 둘 다예요? 답글로 "
+                              "`랴니` / `레오` / `랴니레오` 만 적어주시면 돼요 😊"))
+                except Exception:
+                    pass
 
 
 @app.message(re.compile(r".*"))
@@ -1146,6 +1257,12 @@ def handle_thread_replies(message, client, context):
         # Text-only message in references channel — save as description update
         if text:
             log.info("References channel text (no image): %s", text[:100])
+        return
+
+    # ── grandmompapa: 할머니·할아버지와 대화 + 설명/요청 기억 (LLM) ──
+    if channel == GRANDMOMPAPA_CHANNEL and text:
+        _grandma_converse(client, channel, event.get("user", ""), text,
+                          thread_ts or event.get("ts"), asset_id=None)
         return
 
     # ── Episode channel: save stories to DB ──
