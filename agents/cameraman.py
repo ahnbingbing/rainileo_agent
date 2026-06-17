@@ -962,9 +962,11 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
             _keep = [i for i in range(len(cuts)) if i not in _drop]
             cuts = [cuts[i] for i in _keep]
             concept_cuts = [concept_cuts[i] for i in _keep if i < len(concept_cuts)]
-            if progress_cb:
-                progress_cb(f":scissors: 단일 사진 플래시 {len(_drop)}컷 드롭 "
-                            f"(사진은 같은-시각 ≥2장 묶음일 때만 시퀀스 허용)")
+            # NOTE: generate_manifests has no progress_cb in scope — referencing it
+            # here raised NameError and crashed EVERY render whose concept had a
+            # single-photo-flash cut to drop (the 6/18 03:00 batch lost all of 6/19).
+            log.info("dropped %d single-photo-flash cut(s) "
+                     "(photos sequence only when ≥2 same-session)", len(_drop))
         # re-drop any now-trailing photo so the episode still ends on real video
         while len(cuts) > 1 and _is_photo_cut(len(cuts) - 1, cuts[-1]):
             cuts.pop()
