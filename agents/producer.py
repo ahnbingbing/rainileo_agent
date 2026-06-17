@@ -1105,6 +1105,50 @@ def _rf_location_groups(pool: list) -> dict:
     return {k: ids for k, ids in groups.items() if len(ids) >= 2}
 
 
+def _rf_event_clusters(pool: list, min_clips: int = 2, max_outings: int = 12) -> list[dict]:
+    """PD 2026-06-17 (RF req #6 — coherent OUTING primitive): group candidate VIDEO
+    clips into real events = same capture DATE + same LOCATION. The diversity pool
+    scatters same-day clips across (location×year×activity) strata, so the Writer never
+    SEES a coherent "one outing" bundle and stitches unrelated clips across years into a
+    fake single event ('각자의 방식'). Surfacing the clusters lets the Writer build a
+    video-first episode from ONE real outing (PD's own method when hand-picking the
+    6/17 cafe day): DIVERSITY BETWEEN outings, COHERENCE WITHIN one.
+
+    Returns the richest outings (most clips → most story material) first, newest as the
+    tiebreak. Each outing carries its clip_ids + per-clip scene/activity so the Writer
+    can compose 처음→중간→끝 from real footage of that single event."""
+    groups: dict = {}
+    for v in (pool or []):
+        if not isinstance(v, dict):
+            continue
+        vid = v.get("id")
+        date = (v.get("date") or "")[:10]
+        if not vid or not date:
+            continue
+        loc = (v.get("loc") or "unknown") or "unknown"
+        groups.setdefault((date, loc), []).append(v)
+    outings: list[dict] = []
+    for (date, loc), clips in groups.items():
+        if len(clips) < min_clips:
+            continue
+        acts = sorted({c.get("act") for c in clips if c.get("act")})
+        ya = next((c.get("years_ago") for c in clips
+                   if c.get("years_ago") is not None), None)
+        outings.append({
+            "date": date,
+            "location": loc,
+            "years_ago": ya,
+            "n_clips": len(clips),
+            "activities": acts,
+            "clip_ids": [c.get("id") for c in clips],
+            "scenes": [(c.get("sc") or "")[:110] for c in clips],
+        })
+    # Richest events first (more clips = more story), newest as tiebreak. Diversity is
+    # BETWEEN outings (the list spans days/years); the Writer picks ONE and stays inside it.
+    outings.sort(key=lambda o: (o.get("n_clips") or 0, o.get("date") or ""), reverse=True)
+    return outings[:max_outings]
+
+
 def _drop_branding(items: list, branding_ids: set) -> list:
     """Remove PD-marked channel branding assets (bumper/promo) from a candidate pool."""
     if not branding_ids:
@@ -2048,6 +2092,13 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     _reuse_segs = {aid: [[round(s, 1), round(e, 1)] for (s, e) in wins]
                    for aid, wins in _used_segs.items()
                    if aid in _pool_ids and wins}
+    # PD 2026-06-17 (RF req #6): coherent OUTING bundles from the usable pool.
+    _outings = (_rf_event_clusters((avail_videos or []) + (_arch_field or []))
+                if os.getenv("RF_EVENT_CLUSTERS", "1") == "1" else [])
+    if _outings and progress_cb:
+        _top = _outings[0]
+        progress_cb(f":busts_in_silhouette: 나들이 묶음 {len(_outings)}개 — "
+                    f"최대 {_top['date']}/{_top['location']} {_top['n_clips']}컷")
     _LONG_MIN = float(os.getenv("RF_ONETAKE_MIN_SEC", "12"))
     _long = sorted(
         ({"id": v.get("id"), "dur": v.get("dur"),
@@ -2073,6 +2124,13 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         "archive_videos": _arch_field,
         "archive_year_summary": context.get("archive_year_summary", {}),
         "video_date_clusters": context.get("video_date_summary", {}),
+        # PD 2026-06-17 (RF req #6): coherent OUTING bundles — clips that are the SAME
+        # day + SAME location = one real event. The Writer DEFAULTS to building a
+        # video-first episode from ONE outing (처음→중간→끝) instead of stitching
+        # unrelated cross-year clips into a fake single event ('각자의 방식'). Built from
+        # the USABLE pool (post-cooldown/cap) so a surfaced outing is actually pickable.
+        # Diversity lives BETWEEN outings; coherence WITHIN. RF_EVENT_CLUSTERS=0 reverts.
+        "candidate_outings": _outings,
         # PD 2026-06-13: MACRO context (recent episodes + performance + audience comments)
         # so the writer AVOIDS repeating what we just shipped, from the very first draft.
         "macro_context_recent_uploads": context.get("macro_context", ""),
@@ -2183,6 +2241,12 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
              "Follow the 5-step order. Every caption must be grounded in the "
              "clip's actual sc. Flowing narrative, not dry list. Output ONLY "
              "the JSON array.")
+    if _outings:
+        user += ("\n\n⭐ 나들이 우선(candidate_outings): 각 항목은 같은 날·같은 장소의 클립 묶음 "
+                 "= 하나의 실제 사건이다. 기본값은 이 중 ONE 나들이를 골라 그 안의 영상들로 "
+                 "처음→중간→끝 video-first 에피소드를 짜는 것 — 서로 다른 날/해의 무관한 클립을 "
+                 "이어 붙여 '하나의 사건'인 척하지 마라('각자의 방식' 금지). 여러 날을 섞는 건 "
+                 "명시적 '그때 vs 지금' 비교일 때만 하고, 그때는 각 컷의 시점을 캡션에 라벨하라.")
     if _avoid_overused.get("over_used_locations") or _avoid_overused.get("over_used_location_activity"):
         user += ("\n\n⚠️ 신선도: available_videos는 신선한(덜 쓴) 클립부터 정렬돼 있다. "
                  "avoid_overused_setups의 장소/활동은 최근 과도하게 반복됐으니 컷의 과반을 "
