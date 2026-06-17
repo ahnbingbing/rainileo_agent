@@ -358,7 +358,8 @@ def download_asset_by_uuid(uuid: str, dest_dir: Path) -> str | None:
 
 
 def download_assets_by_uuids(uuids: "list[str]", dest_dir: Path,
-                             timeout: float = 300.0) -> "dict[str, str]":
+                             timeout: float = 300.0,
+                             max_attempts: int = 3) -> "dict[str, str]":
     """Bulk on-demand fetch: download MANY originals by Photos UUID in a SINGLE
     osxphotos export (one library scan for the whole set, not one per photo).
 
@@ -369,6 +370,16 @@ def download_assets_by_uuids(uuids: "list[str]", dest_dir: Path,
     the AV slot got 0/7 → 0 cuts → skipped. One --uuid-from-file export scans
     once and exports all of them in seconds. Returns {uuid: local_path} for the
     ones that arrived (missing keys = caller drops/swaps that cut).
+
+    PD 2026-06-17: the bulk fix above DROPPED the per-photo retry (3× backoff)
+    that the old download_asset_by_uuid loop had — so a TRANSIENT PhotoKit
+    throttle (library scans fine but the iCloud download silently returns 0
+    under self-heal-loop contention) now yields 0/N with no retry, and the AV
+    slot empties in the 03:00 batch. RESTORE the retry at the bulk layer: after
+    each export, collect what landed and RE-EXPORT ONLY the still-missing uuids
+    (smaller set scans faster) after a short backoff, up to max_attempts, all
+    within the overall `timeout` budget. The same photos download fine in
+    isolation, so a retry on a transient 0 is the direct cure.
     """
     cli = _osxphotos_cli()
     uuids = [u for u in (uuids or []) if u]
@@ -376,34 +387,60 @@ def download_assets_by_uuids(uuids: "list[str]", dest_dir: Path,
         return {}
     dest_dir.mkdir(parents=True, exist_ok=True)
     method = os.getenv("ICLOUD_EXPORT_METHOD", "--use-photokit")
-    uuid_file = dest_dir / ".prefetch_uuids.txt"
-    uuid_file.write_text("\n".join(uuids) + "\n")
-    cmd = [cli, "export", str(dest_dir), "--uuid-from-file", str(uuid_file),
-           "--download-missing", "--update", method, "--skip-edited",
-           "--skip-bursts", "--filename", "{uuid}", "--retry", "2"]
     # Same cross-process lock as the single-UUID path — only one osxphotos export
     # touches the Photos library at a time across concurrent launch slots.
     import fcntl as _fcntl
     import tempfile as _tempfile
     _lockpath = Path(_tempfile.gettempdir()) / "rianileo_osxphotos.lock"
-    try:
+
+    def _export(targets: "list[str]", subprocess_timeout: float) -> None:
+        uuid_file = dest_dir / ".prefetch_uuids.txt"
+        uuid_file.write_text("\n".join(targets) + "\n")
+        cmd = [cli, "export", str(dest_dir), "--uuid-from-file", str(uuid_file),
+               "--download-missing", "--update", method, "--skip-edited",
+               "--skip-bursts", "--filename", "{uuid}", "--retry", "2"]
         with open(_lockpath, "w") as _lk:
             _fcntl.flock(_lk, _fcntl.LOCK_EX)
             try:
                 subprocess.run(cmd, check=False, stdin=subprocess.DEVNULL,
-                               timeout=timeout)
+                               timeout=subprocess_timeout)
             finally:
                 _fcntl.flock(_lk, _fcntl.LOCK_UN)
-    except Exception as e:
-        log.warning("download_assets_by_uuids failed (%d uuids): %s", len(uuids), e)
-        # fall through — pick up whatever did land before the timeout
-    out: "dict[str, str]" = {}
-    for u in uuids:
+
+    def _landed(u: str) -> str | None:
         matches = sorted(Path(dest_dir).glob(f"{u}.*"))
-        plain = [m for m in matches if " (" not in m.name and m.name != ".prefetch_uuids.txt"]
-        cand = [m for m in (plain or matches) if not m.name.endswith(".txt")]
-        if cand:
-            out[u] = str(cand[0])
+        cand = [m for m in matches
+                if not m.name.endswith(".txt") and " (" not in m.name]
+        cand = cand or [m for m in matches if not m.name.endswith(".txt")]
+        return str(cand[0]) if cand else None
+
+    out: "dict[str, str]" = {}
+    pending = list(uuids)
+    start = time.monotonic()
+    for attempt in range(max(1, max_attempts)):
+        remaining = timeout - (time.monotonic() - start)
+        if remaining <= 0:
+            break
+        try:
+            _export(pending, remaining)
+        except Exception as e:
+            log.warning("download_assets_by_uuids export attempt %d failed "
+                        "(%d uuids): %s", attempt + 1, len(pending), e)
+            # fall through — pick up whatever did land before the timeout
+        for u in list(pending):
+            fp = _landed(u)
+            if fp:
+                out[u] = fp
+        pending = [u for u in pending if u not in out]
+        if not pending:
+            break
+        if attempt + 1 < max(1, max_attempts):
+            log.warning("prefetch: %d/%d still missing after attempt %d — "
+                        "retrying just the missing ones", len(pending),
+                        len(uuids), attempt + 1)
+            backoff = 1.5 * (attempt + 1)  # 1.5s, then 3.0s
+            if timeout - (time.monotonic() - start) > backoff:
+                time.sleep(backoff)
     return out
 
 
