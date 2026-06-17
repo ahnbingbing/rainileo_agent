@@ -3697,18 +3697,27 @@ def _trim_real_footage_clips(manifests: dict, anim_dir: Path,
         if transpose_vf:
             vf = ",".join(p for p in (transpose_vf, vf) if p)
 
-        # PD 2026-06-11: fill the 9:16 frame (no black letterbox) as the FINAL vf
-        # step. A landscape clip pans horizontally to reveal its width over time; a
-        # human-cropped clip (crop_vf already chose a face-excluding window) only
-        # fits (no pan, so the sweep can't pan a face back in). Toggle: RF_PANSCAN=0.
-        if os.getenv("RF_PANSCAN", "1") == "1":
+        # Landscape-source reframing for the 9:16 frame (FINAL vf step). Two modes:
+        #  - letterbox (DEFAULT, PD 2026-06-17): show the WHOLE landscape (fit width, black
+        #    top/bottom) so the subject is NEVER cropped out — a 9:16 crop of wide footage
+        #    kept losing 랴니 ("랴니가 안 보이는 샷이 너무 많다"). Full frame, subject smaller.
+        #  - panscan (RF_LANDSCAPE_MODE=panscan): fill by cropping + a horizontal sweep (no
+        #    black bars, fuller screen) but can crop the subject out at the sides.
+        # A portrait clip already fills 9:16, so neither applies. RF_PANSCAN=0 disables both
+        # (assemble then letterboxes at concat anyway). RF_LANDSCAPE_MODE=off also disables.
+        _land_mode = os.getenv("RF_LANDSCAPE_MODE", "letterbox").lower()
+        if os.getenv("RF_PANSCAN", "1") == "0":
+            _land_mode = "off"
+        if _land_mode != "off":
             _dw, _dh = _probe_display_dims(src_path)
             _is_land = bool(_dw and _dh and (_dw / _dh) > (720.0 / 1280.0))
-            # only landscape needs reframing; a portrait clip already fills 9:16.
             if _is_land:
-                _do_pan = not bool(crop_vf)
-                vf = ",".join(p for p in (vf, _panscan_fill_filter(
-                    trim_dur, is_landscape=True, pan=_do_pan)) if p)
+                if _land_mode == "panscan":
+                    _reframe = _panscan_fill_filter(
+                        trim_dur, is_landscape=True, pan=not bool(crop_vf))
+                else:  # letterbox (default)
+                    _reframe = _letterbox_fill_filter()
+                vf = ",".join(p for p in (vf, _reframe) if p)
 
         cmd = ["ffmpeg", "-y", "-nostats", "-loglevel", "error"]
         if transpose_vf:
@@ -4027,6 +4036,16 @@ def _panscan_fill_filter(dur: float, is_landscape: bool, pan: bool = True,
             x = f"(in_w-{W})/2"
         return f"{scale},crop={W}:{H}:{x}:(in_h-{H})/2"
     return f"{scale},crop={W}:{H}:(in_w-{W})/2:(in_h-{H})/2"
+
+
+def _letterbox_fill_filter(W: int = 720, H: int = 1280) -> str:
+    """PD 2026-06-17: fit the WHOLE landscape source into the 9:16 frame with black bars
+    top/bottom, instead of cropping it to fill. A landscape clip cropped to 9:16 (panscan)
+    only shows a vertical slice, so the subject kept getting cropped out — "랴니가 안 보이는
+    샷이 너무 많다". Letterbox shows the entire frame (가로를 폭에 맞추고 위아래 블랙) so the
+    subject is ALWAYS in view, just smaller. Output is exactly WxH (concat pads nothing)."""
+    return (f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
+            f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1")
 
 
 def _build_crop_filter(crop_out: str, zoom: float = 1.3) -> str:
