@@ -640,6 +640,16 @@ def propose_concepts(target: dt.date, context: dict, style_filter: str | None = 
                 _db(), today=target.isoformat(), render_style="ai_vtuber")
         except Exception as e:
             log.warning("arc directive (av) failed: %s", e)
+        # Same-batch concept-dedup: fold the sibling-slot exclusions INTO the arc
+        # directive the Writer/Director always reads — so dedup holds whether or not
+        # the (optional, sometimes-off) brainstorm stage runs. [[batch_concept_dedup_gate]]
+        try:
+            from agents import concept_brainstorm as _cb
+            _xb = _cb._exclude_block(context)
+            if _xb:
+                context["arc_directive"] = (context.get("arc_directive") or "") + "\n" + _xb
+        except Exception as e:
+            log.warning("av exclude_concepts inject failed: %s", e)
         # PD 2026-06-14: brainstorm storylines and let the reviewer (YouTube-audience lens)
         # pick the winner BEFORE the expensive render — the reviewer gates the IDEA, not the
         # finished $40-50 video. The winning storyline seeds the Writer. CONCEPT_BRAINSTORM=0
@@ -651,7 +661,9 @@ def propose_concepts(target: dt.date, context: dict, style_filter: str | None = 
                     or ("레오·랴니의 짧은 숏츠 — 참신한 상상/반사실/일상 과장 중 하나로. "
                         "장소·구조·계절은 이야기에 맞게 자유롭게(거실 현실→상상→현실은 한 옵션일 뿐).")
                 _n = int(os.getenv("CONCEPT_BRAINSTORM_N", "5"))
-                _res = _cb.best("ai_vtuber", _brief, _n)
+                # Pass context so the brainstorm honors exclude_concepts — same-batch
+                # concept-dedup (don't ship two near-identical concepts on one day).
+                _res = _cb.best("ai_vtuber", _brief, _n, context=context)
                 _win = _res.get("winner")
                 if _win:
                     if progress_cb:
@@ -2273,6 +2285,13 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
             log.warning("RF concept brainstorm failed (skipping): %s", e)
     if context.get("rf_storyline_seed"):
         user += context["rf_storyline_seed"]
+    # Same-batch concept-dedup — works even though RF brainstorm is off by default
+    # (RF_CONCEPT_BRAINSTORM=0). The singlepass Writer reads this directly.
+    try:
+        from agents import concept_brainstorm as _cb
+        user += _cb._exclude_block(context)
+    except Exception as e:
+        log.warning("RF exclude_concepts inject failed: %s", e)
     if prior_feedback:
         user += (
             "\n\n## ⚠️ 이전 시도가 기리(Giri) 검수를 통과하지 못했다. 아래 지적을 "

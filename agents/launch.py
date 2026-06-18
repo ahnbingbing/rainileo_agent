@@ -214,6 +214,25 @@ def launch_pipeline(target: dt.date, *,
     # uploaded so the cooldown is inert) still avoids the other slot's clips.
     batch_used_assets: set = set(exclude_asset_ids or [])
 
+    # PD 2026-06-18: same-batch CONCEPT dedup (not just clip dedup). Two AV slots on
+    # 6/19 shipped near-identical concepts (both "꼬리" theme, same set, same wink) —
+    # batch_used_assets only blocks reusing the same CLIP, and the macro reviewer judges
+    # freshness vs PAST public uploads, not vs the sibling slot. So accumulate each
+    # slot's concept descriptor and feed it forward as exclude_concepts. Seed from any
+    # sibling ALREADY scheduled/live for this date (state!=archived, has a video_id) so a
+    # single-slot re-render / self-heal round also avoids the day's other concepts.
+    batch_concepts: list = []
+    try:
+        with _db() as _con:
+            for _r in _con.execute(
+                "SELECT theme FROM cards WHERE date=? AND youtube_video_id IS NOT NULL "
+                "AND state!='archived' AND theme IS NOT NULL",
+                (target.isoformat(),)).fetchall():
+                if _r[0]:
+                    batch_concepts.append({"theme": _r[0]})
+    except Exception as e:
+        log.warning("batch_concepts seed failed: %s", e)
+
     def _slot_pipeline(lane: str, hhmm: str) -> dict | None:
         # PD 2026-06-08: each slot proposes ITS OWN concept and renders it in one
         # thread, so the slow av Writer/Director proposals overlap each other AND
@@ -287,6 +306,8 @@ def launch_pipeline(target: dt.date, *,
             ctx = dict(context)
             if batch_used_assets:
                 ctx["exclude_asset_ids"] = sorted(batch_used_assets)
+            if batch_concepts:
+                ctx["exclude_concepts"] = list(batch_concepts)
             try:
                 batch = propose_concepts(target, ctx, style_filter=lane, progress_cb=sp)
             except Exception as e:
@@ -321,6 +342,13 @@ def launch_pipeline(target: dt.date, *,
             # the first propose excluded them but a retry re-picked them (재탕).
             if batch_used_assets:
                 concept["_batch_exclude_asset_ids"] = sorted(batch_used_assets)
+            # Register this concept so LATER slots (and self-heal rounds) diverge from it
+            # — same-batch concept-dedup. theme carries the core motif ("내 꼬리는 어디에").
+            _desc = {"title": concept.get("title"),
+                     "theme": concept.get("theme") or concept.get("title"),
+                     "logline": concept.get("logline") or ""}
+            if _desc.get("theme") or _desc.get("title"):
+                batch_concepts.append(_desc)
             # PD 2026-06-12: RESERVE this concept's clips NOW (before the slow render)
             # so a later slot's propose already excludes them. Two RF one-takes both
             # grabbed the longest clip for 6/13 because the mark only happened AFTER

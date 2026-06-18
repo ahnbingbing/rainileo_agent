@@ -85,6 +85,27 @@ def _audience_rubric() -> str:
             "middle), a payoff/button, charm & relatability, rewatch/share-worthy.")
 
 
+def _exclude_block(context: dict | None) -> str:
+    """Sibling concepts already locked into TODAY's batch (the other slots produced
+    for the same publish day). New candidates must diverge from these in SUBSTANCE —
+    premise/motif/set/punchline — not merely in which clips they use. A shared broad
+    format or theme (both 거실, both memory-lane) is fine; the same *story* is not.
+    This is intra-batch concept-dedup, a different axis from the macro reviewer's
+    footage-freshness vs PAST public uploads (which is footage-, not theme-, based)."""
+    ex = (context or {}).get("exclude_concepts") or []
+    lines = []
+    for c in ex:
+        t = (c.get("title") or c.get("theme") or "").strip()
+        lg = (c.get("logline") or "").strip()
+        if t or lg:
+            lines.append(f"  - {t}" + (f" :: {lg}" if lg else ""))
+    if not lines:
+        return ""
+    return ("\n★오늘 같은 배치(같은 날 공개)에 이미 확정된 회차 — 아래와 핵심 모티프·전개·"
+            "배경·펀치라인이 실질적으로 겹치면 안 된다. 포맷·넓은 테마가 같은 건 괜찮지만 "
+            "'같은 이야기'는 금지다. 확실히 다른 앵글/소재로 가라:\n" + "\n".join(lines) + "\n")
+
+
 def brainstorm(style: str, brief: str, n: int = 5, *, context: dict | None = None) -> list[dict]:
     """Generate n DISTINCT storyline candidates for the brief. LLM, cheap."""
     facts = _character_facts()
@@ -129,6 +150,7 @@ def brainstorm(style: str, brief: str, n: int = 5, *, context: dict | None = Non
         "각 후보 = {title(한국어), logline(한 줄 요약), beats(컷별 한 줄 3~6개), "
         "imagination_hook(상상 훅 한 줄; rf면 '없음'), why_appealing(시청자가 왜 좋아할지 한 줄)}.\n"
         "후보끼리 훅이 겹치면 안 된다(다양성이 핵심). JSON 배열만 출력.")
+    system += _exclude_block(context)
     user = f"brief: {brief}\n스타일: {style}\n후보 {n}개를 JSON 배열로."
     txt = call_text_cascade(system, user, max_tokens=2500).strip()
     txt = re.sub(r"^```(?:json)?\s*", "", txt)
@@ -185,10 +207,55 @@ def rank_by_audience(candidates: list[dict], style: str) -> list[dict]:
     return sorted(candidates, key=lambda c: -c.get("audience_score", 0))
 
 
+def _is_redundant_vs_batch(cand: dict, exclude: list[dict]) -> dict:
+    """Same-batch concept-dedup gate: is `cand` substantially the SAME episode as a
+    sibling already locked into today's batch? Substance = premise/motif/set/punchline,
+    NOT a merely shared format/broad theme. Returns {redundant: bool, vs, reason}."""
+    if not cand or not exclude:
+        return {"redundant": False}
+    system = (
+        "너는 'Ryani & Leo' 숏츠 편성 PD다. 같은 날 배치에 두 회차가 '실질적으로 같은 "
+        "이야기'면 시청자에겐 반복이고 한 슬롯이 낭비된다. 새 후보가 아래 기존 회차 중 "
+        "하나와 핵심 모티프·전개·배경·펀치라인이 사실상 같으면 redundant=true. 단지 "
+        "포맷/넓은 테마(둘 다 거실, 둘 다 메모리레인)만 같고 이야기·훅·소재가 다르면 "
+        "false. JSON만: {\"redundant\":bool,\"vs\":\"겹치는 기존 제목 또는 ''\","
+        "\"reason\":\"한 줄\"}.")
+    user = json.dumps({
+        "new": {"title": cand.get("title"), "logline": cand.get("logline"),
+                "imagination_hook": cand.get("imagination_hook"),
+                "beats": cand.get("beats")},
+        "existing": [{"title": c.get("title") or c.get("theme"),
+                      "logline": c.get("logline")} for c in exclude],
+    }, ensure_ascii=False)
+    txt = call_text_cascade(system, user, max_tokens=300).strip()
+    txt = re.sub(r"^```(?:json)?\s*", "", txt); txt = re.sub(r"\s*```$", "", txt)
+    try:
+        out = json.loads(txt)
+        return out if isinstance(out, dict) else {"redundant": False}
+    except Exception:
+        return {"redundant": False}
+
+
 def best(style: str, brief: str, n: int = 5, *, context: dict | None = None) -> dict:
-    """Brainstorm n, rank by audience, return {winner, ranking}."""
+    """Brainstorm n, rank by audience, return {winner, ranking}.
+
+    Same-batch concept-dedup: when context carries exclude_concepts (sibling slots
+    already locked for today), walk the ranking best-first and skip any candidate that
+    duplicates a sibling in substance — so two slots on one day never ship the same
+    story. If ALL collide, fall back to the top-ranked (launch backstop + PD veto)."""
     cands = brainstorm(style, brief, n, context=context)
     ranked = rank_by_audience(cands, style)
+    exclude = (context or {}).get("exclude_concepts") or []
+    if exclude and ranked:
+        winner = None
+        for c in ranked:
+            v = _is_redundant_vs_batch(c, exclude)
+            if v.get("redundant"):
+                c["_batch_redundant"] = v
+                continue
+            winner = c
+            break
+        return {"winner": winner or ranked[0], "ranking": ranked}
     return {"winner": ranked[0] if ranked else None, "ranking": ranked}
 
 
