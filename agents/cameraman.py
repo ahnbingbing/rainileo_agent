@@ -2111,6 +2111,14 @@ def _vlm_post_render_caption_rewrite(work_dir: Path, manifests: dict,
             tag = ordered_tags[idx] if idx < len(ordered_tags) else None
         if not tag or tag not in cap_data:
             continue
+        # The wink_ending cut carries the channel's FIXED sign-off caption
+        # ("오늘도 햅삐 ♥ / Happy as ever ♥") set upstream — it is the single
+        # warm payoff and must land last. The Caption Agent re-run otherwise
+        # describes the clip ("찡긋! 고양이의 하루~") and overwrites it, so the
+        # happy ♥ no longer closes the episode. Preserve the canonical caption.
+        _cc_wink = concept_cuts[idx] if idx < len(concept_cuts) else {}
+        if _cc_wink.get("function") == "wink_ending":
+            continue
         new_caps = new_cut.get("captions") or []
         if not new_caps:
             continue
@@ -4573,27 +4581,34 @@ def run_cartoon_sticker_pipeline(manifests: dict, card: dict, work_dir: Path,
     # Step 2: AI regen with cartoon style
     if progress_cb:
         progress_cb(":art: [2/6] AI 캐릭터 생성 시작...")
+    # SCENE LOCK decision FIRST — it gates whether we pin a SINGLE scene-grounded ref.
+    # A concept-ref places BOTH pets in ONE scene and pins EVERY cut's regen to it
+    # (and the Seedance scene-ref anchors every cut to ONE empty room). That's perfect
+    # for a single-space Short but FATAL for a multi-space concept: 083613's 6 distinct
+    # rooms (창가→침실→부엌→소파) all collapsed to the SAME purple-cabinet two-shot, so
+    # captions describing bed/couch/night had no matching footage (Giri caption 1/10).
+    # The old code computed _lock_scene AFTER building concept_ref, so lock_scene=False
+    # only relaxed generate_batch — the concept_ref still pinned every cut. Decide FIRST,
+    # and for multi-location DON'T build the single scene-grounded ref at all; each cut
+    # renders its OWN space from its own regen_prompt (character fidelity then rides on
+    # the per-cut character refs, not a scene-locking establishing image).
+    # AV_SCENE_LOCK = 1 (force lock) / 0 (force unlock) / auto (default).
+    _lock_env = os.getenv("AV_SCENE_LOCK", "auto").lower()
+    if _lock_env in ("1", "on", "true"):
+        _lock_scene = True
+    elif _lock_env in ("0", "off", "false"):
+        _lock_scene = False
+    else:
+        _lock_scene = not _concept_is_multi_location(payload)
+    if not _lock_scene and progress_cb:
+        progress_cb(":world_map: 멀티장소 컨셉 — 단일 concept/scene ref 해제, 컷별로 자기 공간 생성")
     if not dry_run:
         from scripts.generate_character_scene import generate_batch
-        # PD 2026-06-12: build a concept-grounded character ref (Ryani+Leo in THIS
-        # scene) and pin every cut's regen to it so the scene doesn't drift.
+        # Single concept-grounded character ref pins every cut to ONE scene → ONLY when
+        # the scene is locked (single-space). Multi-location → None (per-cut own space).
         concept_ref = None
-        if os.getenv("AV_CONCEPT_REF", "1") != "0":
+        if _lock_scene and os.getenv("AV_CONCEPT_REF", "1") != "0":
             concept_ref = _build_concept_char_ref(payload, regen_dir, progress_cb)
-        # PD 2026-06-13: SCENE LOCK pins every cut to the concept-ref's FIRST location,
-        # which COLLAPSED a multi-location journey (무더위: 분수광장→거실 선풍기→욕실
-        # 세면대 all rendered at the fountain). Detect multi-location concepts and lock
-        # only the CHARACTERS, letting each cut keep its own background. Env override:
-        # AV_SCENE_LOCK = 1 (force lock) / 0 (force unlock) / auto (default).
-        _lock_env = os.getenv("AV_SCENE_LOCK", "auto").lower()
-        if _lock_env in ("1", "on", "true"):
-            _lock_scene = True
-        elif _lock_env in ("0", "off", "false"):
-            _lock_scene = False
-        else:
-            _lock_scene = not _concept_is_multi_location(payload)
-        if not _lock_scene and progress_cb:
-            progress_cb(":world_map: 멀티장소 컨셉 감지 — SCENE LOCK 해제(캐릭터만 고정, 컷별 배경 허용)")
         failures = generate_batch(
             Path(manifests["regen_prompts"]),
             input_dir if input_dir.exists() else None,
@@ -5532,20 +5547,53 @@ def _concept_is_multi_location(payload: dict) -> bool:
     return len(buckets) >= 2
 
 
+def _pick_real_both_pets_seed() -> Path | None:
+    """A REAL marking-correct photo of BOTH pets, with a local file. Seeding the
+    concept reference from a real photo makes the model COPY the real markings
+    (thin blaze, no tail, chartreuse eyes) instead of inventing them — the highest-
+    leverage input for first-pass fidelity. None when no usable photo exists locally
+    (icloud-pruned), so the caller falls back to the static official ref."""
+    try:
+        con = _db()
+        rows = con.execute(
+            "SELECT file_path FROM assets WHERE kind='photo' "
+            "AND subjects_csv LIKE '%ryani%' AND subjects_csv LIKE '%leo%' "
+            "AND quality_score >= 0.7 "
+            "ORDER BY quality_score DESC, captured_iso DESC LIMIT 25"
+        ).fetchall()
+        for r in rows:
+            p = Path(r[0])
+            if p.exists() and p.stat().st_size > 10000:
+                return p
+    except Exception as e:
+        log.warning("real both-pets seed lookup failed: %s", e)
+    return None
+
+
 def _build_concept_char_ref(payload: dict, regen_dir: Path,
                             progress_cb: ProgressCb = None) -> Path | None:
-    """PD 2026-06-12: generate a CONCEPT-GROUNDED character reference — Ryani+Leo
-    already placed in THIS episode's scene (payload.set_description) — built fresh
-    from the official markings ref. Pinning EVERY cut's regen to it stops the scene
-    drifting (beach→indoor mid-episode, ep 204306: the static indoor official ref +
-    per-cut style-anchor chain let cuts 2-4 fall back indoors). Returns the ref path,
-    or None to fall back to the old chain. Gate: AV_CONCEPT_REF."""
+    """Generate a CONCEPT-GROUNDED character reference — Ryani+Leo placed in THIS
+    episode's scene (payload.set_description). Every cut's regen is pinned to it, so
+    it stops the scene drifting (beach→indoor mid-episode) AND it is the single seed
+    whose fidelity propagates to all cuts. Because of that leverage we spend the
+    selection budget HERE, not on every cut:
+      • seed from a REAL both-pets photo (markings copied, not invented) — Lever 2;
+      • generate AV_CONCEPT_REF_BEST_OF candidates and let still_select pick the
+        marking-accurate one — Lever 1.
+    A validated reference lets the per-cut REGEN_BEST_OF drop (cuts inherit a good
+    seed instead of re-rolling 5× to dodge a bad one). Returns the locked ref path,
+    or None to fall back to the old style-anchor chain. Gate: AV_CONCEPT_REF."""
     set_desc = (payload.get("set_description") or "").strip()
     if len(set_desc) < 30:
         return None
     try:
         from scripts.generate_character_scene import generate_scene, _get_reference_image
-        official = _get_reference_image("both", "S4")
+        # Lever 2: prefer a real both-pets photo as the markings seed.
+        seed = None
+        if os.getenv("AV_REF_REAL_SEED", "1") != "0":
+            seed = _pick_real_both_pets_seed()
+        if seed is None:
+            seed = _get_reference_image("both", "S4")
         prompt = (
             "A casual photorealistic snapshot. Ryani (a small black French Bulldog — "
             "thin white muzzle blaze, white chest patch, white toes, NO tail, spayed "
@@ -5554,13 +5602,53 @@ def _build_concept_char_ref(payload: dict, regen_dir: Path,
             "Keep their EXACT markings from the reference image. "
             f"SCENE: {set_desc[:450]}"
         )
-        data = generate_scene(prompt, reference_image=official)
         regen_dir.mkdir(parents=True, exist_ok=True)
+        # Lever 1: best-of-N reference candidates, judged for canon fidelity.
+        best_of = max(1, int(os.getenv("AV_CONCEPT_REF_BEST_OF", "4")))
+        cands: list[Path] = []
+        for k in range(best_of):
+            try:
+                data = generate_scene(prompt, reference_image=seed)
+            except Exception as e:
+                log.warning("concept ref cand %d/%d failed: %s", k + 1, best_of, str(e)[:120])
+                continue
+            cp = regen_dir / f"_concept_char_ref_cand{k+1}.png"
+            cp.write_bytes(data)
+            cands.append(cp)
+        if not cands:
+            return None
         out = regen_dir / "_concept_char_ref.png"
-        out.write_bytes(data)
+        if len(cands) == 1:
+            winner = cands[0]
+        else:
+            try:
+                from agents import still_select
+                ref_cut = {
+                    "beat": "establishing reference still",
+                    "subjects": "both",
+                    "scene": set_desc[:300],
+                    "regen_prompt": "both pets full body, exact canon markings, natural pose",
+                }
+                pick = still_select.pick_best_still(
+                    cands, cut=ref_cut, concept=payload, lane="ai_vtuber")
+                winner = Path(pick["winner_path"])
+                if progress_cb:
+                    progress_cb(f":dart: 컨셉 레퍼런스 best-of-{len(cands)} → #{pick['winner']} "
+                                f"마킹-정확 1장 락: {(pick.get('reason') or '')[:50]}")
+            except Exception as e:
+                log.warning("concept ref select failed: %s — using first candidate", e)
+                winner = cands[0]
+        shutil.copy(winner, out)
+        for cp in cands:  # keep only the locked winner
+            if cp != winner and cp.exists():
+                try:
+                    cp.unlink()
+                except Exception:
+                    pass
         if progress_cb:
-            progress_cb(f":beach_with_umbrella: 컨셉 레퍼런스 생성 — 랴니·레오를 이 씬에 배치 "
-                        f"({len(data)//1024} KB), 모든 컷 ref로 고정")
+            _seed_kind = "실사진" if (seed and "assets/photos" in str(seed)) else "official"
+            progress_cb(f":beach_with_umbrella: 컨셉 레퍼런스 락 완료 — 랴니·레오를 이 씬에 배치 "
+                        f"({_seed_kind} 시드, 전 컷 ref로 고정)")
         return out
     except Exception as e:
         log.warning("concept char ref gen failed (fallback to chain): %s", e)
@@ -5602,27 +5690,34 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
     # Step 2: AI regen via GPT character generation
     if progress_cb:
         progress_cb(":art: [2/6] AI 캐릭터 생성 시작...")
+    # SCENE LOCK decision FIRST — it gates whether we pin a SINGLE scene-grounded ref.
+    # A concept-ref places BOTH pets in ONE scene and pins EVERY cut's regen to it
+    # (and the Seedance scene-ref anchors every cut to ONE empty room). That's perfect
+    # for a single-space Short but FATAL for a multi-space concept: 083613's 6 distinct
+    # rooms (창가→침실→부엌→소파) all collapsed to the SAME purple-cabinet two-shot, so
+    # captions describing bed/couch/night had no matching footage (Giri caption 1/10).
+    # The old code computed _lock_scene AFTER building concept_ref, so lock_scene=False
+    # only relaxed generate_batch — the concept_ref still pinned every cut. Decide FIRST,
+    # and for multi-location DON'T build the single scene-grounded ref at all; each cut
+    # renders its OWN space from its own regen_prompt (character fidelity then rides on
+    # the per-cut character refs, not a scene-locking establishing image).
+    # AV_SCENE_LOCK = 1 (force lock) / 0 (force unlock) / auto (default).
+    _lock_env = os.getenv("AV_SCENE_LOCK", "auto").lower()
+    if _lock_env in ("1", "on", "true"):
+        _lock_scene = True
+    elif _lock_env in ("0", "off", "false"):
+        _lock_scene = False
+    else:
+        _lock_scene = not _concept_is_multi_location(payload)
+    if not _lock_scene and progress_cb:
+        progress_cb(":world_map: 멀티장소 컨셉 — 단일 concept/scene ref 해제, 컷별로 자기 공간 생성")
     if not dry_run:
         from scripts.generate_character_scene import generate_batch
-        # PD 2026-06-12: build a concept-grounded character ref (Ryani+Leo in THIS
-        # scene) and pin every cut's regen to it so the scene doesn't drift.
+        # Single concept-grounded character ref pins every cut to ONE scene → ONLY when
+        # the scene is locked (single-space). Multi-location → None (per-cut own space).
         concept_ref = None
-        if os.getenv("AV_CONCEPT_REF", "1") != "0":
+        if _lock_scene and os.getenv("AV_CONCEPT_REF", "1") != "0":
             concept_ref = _build_concept_char_ref(payload, regen_dir, progress_cb)
-        # PD 2026-06-13: SCENE LOCK pins every cut to the concept-ref's FIRST location,
-        # which COLLAPSED a multi-location journey (무더위: 분수광장→거실 선풍기→욕실
-        # 세면대 all rendered at the fountain). Detect multi-location concepts and lock
-        # only the CHARACTERS, letting each cut keep its own background. Env override:
-        # AV_SCENE_LOCK = 1 (force lock) / 0 (force unlock) / auto (default).
-        _lock_env = os.getenv("AV_SCENE_LOCK", "auto").lower()
-        if _lock_env in ("1", "on", "true"):
-            _lock_scene = True
-        elif _lock_env in ("0", "off", "false"):
-            _lock_scene = False
-        else:
-            _lock_scene = not _concept_is_multi_location(payload)
-        if not _lock_scene and progress_cb:
-            progress_cb(":world_map: 멀티장소 컨셉 감지 — SCENE LOCK 해제(캐릭터만 고정, 컷별 배경 허용)")
         failures = generate_batch(
             Path(manifests["regen_prompts"]),
             input_dir if input_dir.exists() else None,
@@ -5672,7 +5767,11 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
     # shared across all episodes that use the same set, (2) per-render
     # GPT-generated fallback for unknown / special-concept sets.
     scene_ref_path: Path | None = None
-    if use_seedance:
+    # Single empty-room scene_ref anchors EVERY Seedance cut to ONE room — only when the
+    # scene is locked (single-space). Multi-location → None, so each cut keeps the space
+    # its own still already established (else the lone home_livingroom ref drags every
+    # cut back to the living room, re-collapsing the journey).
+    if use_seedance and _lock_scene:
         set_anchor = concept_obj.get("set_anchor")
         fallback_path = work_dir / "scene_ref.png"
         if progress_cb and set_anchor:
