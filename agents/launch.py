@@ -93,6 +93,13 @@ def day_assignments(target: dt.date) -> list[tuple[str, str]]:
         else:
             lane = "real_footage" if first else "ai_vtuber"
         out.append((lane, hhmm))
+    # Pause a lane's auto-fill WITHOUT unloading the whole batch: LAUNCH_PAUSE_LANES is a
+    # comma-sep list of lanes to SKIP (e.g. "ai_vtuber" while the AV still-gen — which
+    # collapsed every cut of a multi-space concept into one identical two-shot — is being
+    # fixed). Paused slots are simply left empty: no junk, no Seedance spend.
+    paused = {s.strip() for s in os.getenv("LAUNCH_PAUSE_LANES", "").split(",") if s.strip()}
+    if paused:
+        out = [(lane, hhmm) for lane, hhmm in out if lane not in paused]
     return out
 
 
