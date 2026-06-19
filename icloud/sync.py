@@ -34,7 +34,9 @@ Age-tag inference:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
+import fcntl
 import hashlib
 import json
 import logging
@@ -44,6 +46,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Iterable
@@ -53,6 +56,64 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 log = logging.getLogger("icloud.sync")
+
+# ── Cross-process osxphotos / PhotoKit serialization ─────────────────────────
+# EVERY osxphotos export (--download-missing pulls originals via PhotoKit) and every
+# PhotosDB() open MUST be serialized across ALL processes: the 03:00 launchd batch, the
+# 06:00 daily sync, and any CLI/Claude session. Two osxphotos touching the Photos library
+# at once contend on PhotoKit and BOTH hang to their timeout — the 6/19 batch lost all 4
+# slots exactly this way (a parallel session left osxphotos running overnight, so the
+# batch's prefetches ran concurrently and timed out at 600s).
+#
+# The lock path MUST be a FIXED absolute path. It used to be tempfile.gettempdir()/...,
+# but $TMPDIR differs per process/session (launchd's own temp vs /tmp/claude-501/...), so
+# the two lock files never matched and the "serialization" silently did nothing.
+_OSXPHOTOS_LOCK = ROOT / "data" / ".osxphotos.lock"
+_osxphotos_lock_tls = threading.local()
+
+
+@contextlib.contextmanager
+def _osxphotos_lock(wait_s: float = 900.0):
+    """Serialize ALL osxphotos/PhotoKit access via ONE fixed lock file, across every
+    process and session. Re-entrant within a thread (nested calls are no-ops, so wrapping
+    both a PhotosDB open and a later export never self-deadlocks). If another process holds
+    the lock longer than wait_s, log loudly and proceed WITHOUT exclusivity — a stuck
+    holder then surfaces in the logs instead of silently starving the batch forever."""
+    depth = getattr(_osxphotos_lock_tls, "depth", 0)
+    if depth:                                    # already held by this thread → no-op
+        _osxphotos_lock_tls.depth = depth + 1
+        try:
+            yield
+        finally:
+            _osxphotos_lock_tls.depth -= 1
+        return
+    _OSXPHOTOS_LOCK.parent.mkdir(parents=True, exist_ok=True)
+    lk = open(_OSXPHOTOS_LOCK, "w")
+    acquired = False
+    start = time.monotonic()
+    try:
+        while True:
+            try:
+                fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except OSError:
+                if time.monotonic() - start > wait_s:
+                    log.warning("osxphotos lock held by another process >%.0fs — proceeding "
+                                "WITHOUT exclusivity; a stuck osxphotos may be running "
+                                "(check for leftover sessions/renders)", wait_s)
+                    break
+                time.sleep(2.0)
+        _osxphotos_lock_tls.depth = 1
+        yield
+    finally:
+        _osxphotos_lock_tls.depth = 0
+        if acquired:
+            try:
+                fcntl.flock(lk, fcntl.LOCK_UN)
+            except Exception:
+                pass
+        lk.close()
 
 DB_PATH = Path(os.getenv("DB_PATH", str(ROOT / "data" / "agent.db"))).resolve()
 PHOTOS_DIR = Path(os.getenv("PHOTOS_DIR", str(ROOT / "data" / "assets" / "photos"))).resolve()
@@ -272,7 +333,8 @@ def bulk_export_to(album_name: str, dest_dir: Path, dry_run: bool = False,
     log.info("Option A export (download-missing → %s, filename={uuid}):", dest_dir)
     log.info("  %s", " ".join(cmd))
     try:
-        proc = subprocess.run(cmd, check=False, stdin=subprocess.DEVNULL)
+        with _osxphotos_lock():   # don't run concurrently with a render-time prefetch
+            proc = subprocess.run(cmd, check=False, stdin=subprocess.DEVNULL)
         if proc.returncode != 0:
             log.warning("osxphotos export rc=%d (some items may have failed)", proc.returncode)
     except FileNotFoundError:
@@ -333,21 +395,12 @@ def download_asset_by_uuid(uuid: str, dest_dir: Path) -> str | None:
     cmd = [cli, "export", str(dest_dir), "--uuid", uuid, "--download-missing",
            "--update", method, "--skip-edited", "--skip-bursts",
            "--filename", "{uuid}", "--retry", "2"]
-    # PD 2026-06-10: SERIALIZE osxphotos exports with a cross-process file lock.
-    # The launch batch runs an RF cut and an AV cut concurrently; two osxphotos
-    # exports hitting the Photos library at once made one transiently fail (return
-    # nothing) — which killed the whole AV slot (av went 0/2 on 6/11). One export
-    # at a time removes that contention. The lock is held only for the subprocess.
-    import fcntl as _fcntl
-    import tempfile as _tempfile
-    _lockpath = Path(_tempfile.gettempdir()) / "rianileo_osxphotos.lock"
+    # SERIALIZE osxphotos exports with the shared cross-process lock (see _osxphotos_lock):
+    # the launch batch, the daily sync, and any other session must never hit the Photos
+    # library at once or both osxphotos calls hang. The lock is held only for the subprocess.
     try:
-        with open(_lockpath, "w") as _lk:
-            _fcntl.flock(_lk, _fcntl.LOCK_EX)
-            try:
-                subprocess.run(cmd, check=False, stdin=subprocess.DEVNULL, timeout=180)
-            finally:
-                _fcntl.flock(_lk, _fcntl.LOCK_UN)
+        with _osxphotos_lock():
+            subprocess.run(cmd, check=False, stdin=subprocess.DEVNULL, timeout=180)
     except Exception as e:
         log.warning("download_asset_by_uuid failed for %s: %s", uuid, e)
         return None
@@ -387,11 +440,6 @@ def download_assets_by_uuids(uuids: "list[str]", dest_dir: Path,
         return {}
     dest_dir.mkdir(parents=True, exist_ok=True)
     method = os.getenv("ICLOUD_EXPORT_METHOD", "--use-photokit")
-    # Same cross-process lock as the single-UUID path — only one osxphotos export
-    # touches the Photos library at a time across concurrent launch slots.
-    import fcntl as _fcntl
-    import tempfile as _tempfile
-    _lockpath = Path(_tempfile.gettempdir()) / "rianileo_osxphotos.lock"
 
     def _export(targets: "list[str]", subprocess_timeout: float) -> None:
         uuid_file = dest_dir / ".prefetch_uuids.txt"
@@ -399,13 +447,11 @@ def download_assets_by_uuids(uuids: "list[str]", dest_dir: Path,
         cmd = [cli, "export", str(dest_dir), "--uuid-from-file", str(uuid_file),
                "--download-missing", "--update", method, "--skip-edited",
                "--skip-bursts", "--filename", "{uuid}", "--retry", "2"]
-        with open(_lockpath, "w") as _lk:
-            _fcntl.flock(_lk, _fcntl.LOCK_EX)
-            try:
-                subprocess.run(cmd, check=False, stdin=subprocess.DEVNULL,
-                               timeout=subprocess_timeout)
-            finally:
-                _fcntl.flock(_lk, _fcntl.LOCK_UN)
+        # Shared cross-process lock — one osxphotos export at a time across the launch
+        # batch, the daily sync, and any other session (see _osxphotos_lock).
+        with _osxphotos_lock():
+            subprocess.run(cmd, check=False, stdin=subprocess.DEVNULL,
+                           timeout=subprocess_timeout)
 
     def _landed(u: str) -> str | None:
         matches = sorted(Path(dest_dir).glob(f"{u}.*"))
@@ -451,8 +497,9 @@ def backfill_uuids(album_name: str) -> int:
     con = sqlite3.connect(DB_PATH)
     ensure_source_uuid_column(con)
     log.info("backfill: opening Photos library…")
-    photosdb = osxphotos.PhotosDB()
-    photos = list(photosdb.photos(albums=[album_name]))
+    with _osxphotos_lock():
+        photosdb = osxphotos.PhotosDB()
+        photos = list(photosdb.photos(albums=[album_name]))
     n = 0
     for p in photos:
         captured = p.date or dt.datetime.now()
@@ -535,9 +582,9 @@ def sync_album(
         ) from e
 
     log.info("opening Photos library via osxphotos (this can take a few seconds)")
-    photosdb = osxphotos.PhotosDB()
-
-    photos = list(photosdb.photos(albums=[album_name]))
+    with _osxphotos_lock():
+        photosdb = osxphotos.PhotosDB()
+        photos = list(photosdb.photos(albums=[album_name]))
     if not photos:
         raise SystemExit(
             f"album '{album_name}' has no photos (or doesn't exist).\n"
