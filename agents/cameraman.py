@@ -1469,15 +1469,25 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
             # canon만 남아 이미지 모델이 장소를 임의로(실내 마룻바닥) 채운다. Director의
             # 컷별 장면 지시(action/scene/beat)를 폴백 체인으로 반드시 주입 — 컷의
             # 장소·포즈·액션이 regen에 도달해야 멀티장소 여정이 산다.
+            # The Director writes the cut's SPACE/scene into veo_prompt (rich EN scene with
+            # the room) / motion_prompt / description (KO), and usually leaves
+            # regen_prompt/scene/action EMPTY. Without pulling the scene from those fields
+            # the still prompt loses the per-cut room → every cut of a multi-space concept
+            # renders the SAME scene (083613: 6 rooms → one purple-cabinet two-shot, captions
+            # 1/10). The image model renders the described setting; camera/motion verbs are
+            # harmless for a still.
             per_cut_prompt = (cc.get("regen_prompt")
                               or cc.get("scene")
                               or cc.get("action")
+                              or cc.get("veo_prompt")
+                              or cc.get("motion_prompt")
+                              or cc.get("description")
                               or item.get("action")
                               or "")
             if not per_cut_prompt:
                 log.warning("regen_prompts: cut %s has NO scene direction "
-                            "(regen_prompt/scene/action all empty) — image model "
-                            "will invent the location", tag)
+                            "(regen_prompt/scene/action/veo/motion/description all empty) — "
+                            "image model will invent the location", tag)
             full_prompt = f"{overall_style}. {_scene_lock_prefix}{per_cut_prompt}. " \
                           f"Featuring {subjects}. {preserve}"
             regen[tag] = full_prompt
