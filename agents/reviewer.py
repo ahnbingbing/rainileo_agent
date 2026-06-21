@@ -145,7 +145,7 @@ E. Visual style, F. Pacing, G. Upload value, H. Cultural fit
 Additionally check:
 - **Photo selection quality**: Do the selected photos match the narrative beats?
   Are Ryani's white markings visible? Is there background variety across cuts?
-- **Caption quality**: Readable? Correct position? Not overflowing? Not blocking subjects?
+- **Caption sizing & fit (캡션 크기 — PD priority)**: the rendered KO+EN caption must FIT the 9:16 frame — sized to sit within the safe margins, fully on-screen, never running off the left/right edges, never so large it covers the pets or dominates the frame, and large enough to read on a phone. An OVERSIZED caption that overflows the frame edge, wraps/clips awkwardly, or blocks the subject is a real defect → lower `caption_quality`, set `caption_overflow: true`, and note "캡션 크기/넘침". Judge ONLY what is visibly oversized/overflowing WITHIN a single frame — do NOT infer "truncation/cut short" from a *different* caption appearing in the next sampled frame (that is normal scene progression — see the sparse-sampling note above). This sizing check is about the rendered text fitting; it is separate from CHECK 0 (caption-vs-clip truthfulness).
 - **BGM**: Present? Appropriate mood?
 
 Return JSON:

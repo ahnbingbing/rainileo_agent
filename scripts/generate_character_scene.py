@@ -105,6 +105,7 @@ ABSOLUTE REQUIREMENTS:
 - REAL fur textures, REAL lighting, REAL environment. Shallow depth of field, natural bokeh.
 - This MUST look like an actual photograph. NEVER cartoon, NEVER illustration, NEVER anime, NEVER digital art.
 - Pets are bare-furred — NO clothing/hanbok/costumes (unless the scene explicitly says a harness).
+- NO duplicate animals: render each pet the scene names EXACTLY ONCE. Never place a second, identical copy of the same animal anywhere in the frame or background (a cloned twin — e.g. a second orange cat on a shelf — is a defect). One genuinely different companion pet is fine; a clone is not.
 - Vertical 9:16 composition.
 - Do NOT add any text, captions, watermarks, or logos to the image.
 
@@ -283,9 +284,21 @@ def generate_batch(prompts_file: Path, in_dir: Path | None, out_dir: Path,
     # Style anchor: first generated cut becomes the reference for all subsequent cuts
     # This ensures visual consistency across the episode
     style_anchor: Path | None = None
+    # Space anchor: the FIRST still generated in each distinct space. A multi-location
+    # episode (거실→해변→거실) must RETURN to the exact same room it opened in — without
+    # this, a return cut chained off the intervening beach cut and the "character lock"
+    # note (which tells GPT to build the room from text, ignoring the ref's location)
+    # invented a different living room. Keyed by the cut's space/set_anchor.
+    space_anchor: dict[str, Path] = {}
+
+    def _space_key(t: str) -> str:
+        cc = (cuts_by_tag or {}).get(t) or {}
+        return str(cc.get("space") or cc.get("set_anchor") or "").strip().lower()
 
     for tag in tags:
         per_cut = prompts[tag]
+        skey = _space_key(tag)
+        returning = bool(skey and skey in space_anchor)
 
         # Add style consistency instruction after first cut
         style_note = ""
@@ -338,18 +351,37 @@ def generate_batch(prompts_file: Path, in_dir: Path | None, out_dir: Path,
                     "pets' appearance constant across cuts; everything else follows the per-cut "
                     "direction."
                 )
+        # Returning to a space shown earlier in the episode: lock to THAT space's
+        # established frame so the room matches exactly (the opening 거실 must be the
+        # same 거실 we come back to). Overrides the "build room from text" character-lock.
+        same_space_note = ""
+        if returning:
+            same_space_note = (
+                "⚠️ RETURN TO THE SAME PLACE — this cut goes BACK to a location already "
+                "shown earlier in the episode, and the REFERENCE IMAGE is that exact room. "
+                "Keep the SAME room, background, furniture, layout and lighting as the "
+                "reference (same sofa/bench, same cushions, same window) — do NOT invent a "
+                "different room. Only change the pets' pose/action to match the scene "
+                "direction. Keep the pets' identity constant."
+            )
         prompt = build_character_prompt(
             scene_prompt=per_cut,
             subjects="both",
             overall_style=full_style,
-            extra_rules=f"{preserve}\n{style_note}\n{bg_note}\n{ref_lock_note}".strip(),
+            extra_rules=f"{preserve}\n{style_note}\n{bg_note}\n{ref_lock_note}\n{same_space_note}".strip(),
         )
 
         # PD 2026-06-12: a concept-grounded reference (Ryani+Leo already in THIS
         # episode's scene) holds the scene for EVERY cut — no style-anchor chain,
         # which let the scene drift (beach→indoor). Falls back to the old chain when
         # no override is supplied.
-        if reference_override and Path(reference_override).exists():
+        if returning:
+            # Already established this space — lock to its ACTUAL first frame. This is a
+            # stronger, more specific anchor than the generic concept-ref (which drifted:
+            # a single-space concept's cut2 came out a detailed 거실 and cut3 a sparse
+            # room). Wins even when a concept reference_override exists.
+            ref_image = space_anchor[skey]
+        elif reference_override and Path(reference_override).exists():
             ref_image = reference_override
         else:
             # Reference image: use style_anchor (previous cut) if available, else character ref
@@ -414,10 +446,14 @@ def generate_batch(prompts_file: Path, in_dir: Path | None, out_dir: Path,
             except Exception:
                 pass
 
-        # PD 2026-06-17: best-of-N stills per cut + VLM/Giri selection (the PD-expected
-        # "컷당 5장 만들어 select"). Was 1 still/cut → marking/prop/background drift
-        # shipped unselected. REGEN_BEST_OF=1 restores the single-still path (cost).
-        best_of = max(1, int(os.getenv("REGEN_BEST_OF", "5")))
+        # Best-of-N stills per cut + Giri selection (still_select). The per-cut count
+        # is now LOW because the episode's concept reference is itself validated
+        # best-of-N (cameraman._build_concept_char_ref) and seeded from a real both-pets
+        # photo — cuts inherit a marking-accurate seed instead of re-rolling 5× to dodge
+        # a bad one, so the selection budget moved upstream to the reference (cheaper +
+        # higher fidelity). REGEN_BEST_OF=1 restores the single-still path; raise it only
+        # if per-cut drift returns despite a good reference.
+        best_of = max(1, int(os.getenv("REGEN_BEST_OF", "2")))
         cands = []
         for k in range(best_of):
             b = _gen_one()
@@ -455,6 +491,10 @@ def generate_batch(prompts_file: Path, in_dir: Path | None, out_dir: Path,
             if style_anchor is None:
                 style_anchor = out_path
                 print(f"    → style anchor set: {out_path.name}")
+            # First successful still in this space becomes its anchor — later cuts that
+            # return to the same space lock back to this exact room.
+            if skey and skey not in space_anchor:
+                space_anchor[skey] = out_path
         else:
             print("    FAILED")
             failures += 1

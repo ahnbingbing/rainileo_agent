@@ -64,6 +64,9 @@ RYANI_MARKING = (
     "Only black/white/grey — no brown. Above each eye she has a FAINT, subtle "
     "eyebrow-like white mark (small and thin, brow-like — present but understated; "
     "NOT a bold or large round dot). "
+    "SIZE (PD 2026-06-21): she is a stocky, solid adult French Bulldog — in any frame "
+    "shared with Leo the cat she reads HEAVIER and a bit LARGER than him (he is a small "
+    "lean young cat), never smaller than the cat. "
     "★The center forehead blaze must stay a THIN pencil-width line in EVERY cut — it "
     "must NEVER thicken or widen into a broad white stripe/patch (a thick or wide "
     "center blaze is WRONG; keep it a fine narrow line). Keep the face "
@@ -78,7 +81,11 @@ LEO_MARKING = (
     " CRITICAL — Leo the orange tabby cat must look like the REAL cat, not AI-"
     "generated: pale yellow-green / chartreuse eyes (NOT gold or amber), white chin "
     "tuft, lean young-adult body, natural real-cat face and proportions. Do not "
-    "warp, plasticize, or redraw his face.")
+    "warp, plasticize, or redraw his face."
+    " SIZE (PD 2026-06-21): Leo is a SMALL, slim young cat (~8 months, ~3kg) — when he "
+    "shares the frame with Ryani he must read NOTICEABLY SMALLER and lighter than her: "
+    "she is a stocky, heavy adult French Bulldog and he is a lean young cat. Do NOT "
+    "render Leo large, chunky, or bigger than the dog.")
 
 # generate_character_scene.py image-generation identity canon.
 RYANI_IMAGE_CANON = (
@@ -92,7 +99,9 @@ RYANI_IMAGE_CANON = (
     "TAIL. Her BACK, neck and spine are SOLID BLACK — NO white stripe/line down the "
     "back or neck (white is FOREHEAD blaze + chin + chest + toes ONLY). "
     "Only black/white/grey — NO brown. Petite, "
-    "refined, feminine build (NOT a muscular barrel-chested male). A REAL dog, not "
+    "refined, feminine build (NOT a muscular barrel-chested male) — but still a stocky, "
+    "solid adult French Bulldog: in any two-shot with Leo she is HEAVIER and a bit "
+    "LARGER than the small young cat, never smaller than him. A REAL dog, not "
     "a cartoon. POSE = MATCH THE SCENE'S ACTION (PD 2026-06-12): render exactly the "
     "action this cut describes (splashing in waves, sitting, looking up, leaping, "
     "being held, etc.). Do NOT auto-insert a nose-down sniffing/licking-the-floor "
@@ -103,7 +112,9 @@ LEO_IMAGE_CANON = (
     "Leo — REAL orange tabby cat, MALE (he/him, young ~8 months). Pale "
     "YELLOW-GREEN / chartreuse eyes (NOT amber, NOT gold), white chin tuft, white "
     "whiskers, lean agile young-adult body, paler cream-orange cheeks and belly "
-    "than the back. A REAL cat, not a cartoon.")
+    "than the back. A REAL cat, not a cartoon. SIZE: a SMALL slim young cat (~3kg) — "
+    "in any shot with Ryani he is NOTICEABLY SMALLER and lighter than her stocky adult "
+    "French Bulldog build; never render him large, chunky, or bigger than the dog.")
 
 # arc.py showrunner authority block (Korean). Personality/ability/fear facts.
 CHARACTER_FACTS = (
@@ -196,11 +207,19 @@ REVIEW_RYANI = (
     "blaze is FOREHEAD-only). ALSO flag as a MAJOR failure any "
     "distorted / melted / uncanny face, mismatched or asymmetric eyes, or a floating "
     "white blob/orb artifact on the face — these are common when a still photo is "
-    "animated (photo_i2v) and MUST lower the verdict, not pass.")
+    "animated (photo_i2v) and MUST lower the verdict, not pass. "
+    "RELATIVE SIZE: she is a stocky, heavy adult French Bulldog and reads BIGGER and "
+    "heavier than Leo the cat — in any AI-rendered cut sharing the frame with Leo, flag "
+    "as a defect any frame where Leo appears as large as or larger than Ryani (Seedance "
+    "tends to over-size the cat). Real-clip cuts are exempt — there the sizes are real, "
+    "and camera perspective can make either pet look big; judge size only on AI cuts.")
 REVIEW_LEO = (
     "**Leo (orange tabby, ~8mo, MALE)**: pale yellow-green chartreuse eyes (NOT "
     "gold-amber), faint scar across nose bridge, white chin tuft. Tail often in a "
-    "question-mark shape. Lean agile body, paler cream-orange cheeks/belly than the back.")
+    "question-mark shape. Lean agile body, paler cream-orange cheeks/belly than the back. "
+    "RELATIVE SIZE: he is a SMALL, slim young cat — in any AI-rendered cut he must read "
+    "NOTICEABLY SMALLER and lighter than the stocky adult Frenchie Ryani; flag Leo "
+    "rendered large, chunky, or bigger than the dog as a defect (real-clip cuts exempt).")
 
 
 def image_canon(subjects: str) -> str:

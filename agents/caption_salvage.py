@@ -121,10 +121,15 @@ def _vlm_describe(mp4: Path) -> str:
             if not parts:
                 return ""
             parts.append(
-                "1-2 short Korean sentences: what ACTUALLY happens in this 5s pet "
-                "clip? Be specific about which pet (고양이 레오 / 강아지 랴니), its "
-                "position and movement, and any explicit sound (짖다/야옹). Ground-"
-                "truth observer only, no speculation.")
+                # Identity is fixed by SPECIES — the VLM was naming the moving DOG '레오'
+                # (the cat's name), shipping a swapped caption. Anchor it hard.
+                "레오 = the ORANGE TABBY CAT (고양이). 랴니 = the BLACK FRENCH BULLDOG "
+                "with NO tail (강아지). The cat is ALWAYS 레오; the dog is ALWAYS 랴니 — "
+                "NEVER call the cat 랴니 or the dog 레오; identify each pet by its species "
+                "(color + cat-vs-dog), then attribute the action to the correct name. "
+                "1-2 short Korean sentences: what ACTUALLY happens in this 5s pet clip? "
+                "Be specific about WHICH pet acts, its position and movement, and any "
+                "explicit sound (짖다/야옹). Ground-truth observer only, no speculation.")
             resp = client.models.generate_content(
                 model=os.getenv("VLM_MODEL", "gemini-2.5-flash"),
                 contents=parts,

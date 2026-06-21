@@ -73,13 +73,35 @@ you assign cinematography per cut. Do not collapse a short to a single cut.
   up to 1.3 on pure-action cuts, back to 1.0 on captioned cuts. Bridge bg changes between
   scenes with caption beats ("며칠 후" / "잠시 뒤").
 
-**Camera default vs. still cuts.** On a live pet-MOTION i2v cut the motion comes from the
-pets, so the camera holds — first sentence of `motion_prompt` = `"Camera POV-A, pet
-eye-level, locked static framing — no panning, no zoom, no camera movement throughout."`
-Two exceptions that DO move the camera: (a) the closer/wink beat = slow `push_in`; (b) any
-STILL-IMAGE cut (a held photo or a photo_sequence montage frame) MUST use ken-burns —
-`camera_move` = `zoom_in_slow` / `zoom_out_slow` / `pan` — or else a short duration; a long
-frozen still is a dead frame. Apply the static-framing sentence ONLY to live-motion cuts.
+**Camera energy matches the cut's energy.** The camera move is a story choice, not a
+fixed default. Pick it from how much KINETIC energy the beat carries, because the wrong
+default flattens the cut: a locked camera on a high-action beat reads as dead — doubly so
+because Seedance lets the smaller/darker pet go static (Ryani freezes into a prop while
+only the cat moves), so a still camera + a still Ryani = nothing alive on screen.
+
+- **Observational / calm beats** (a pet settling, watching, a home-cam look): camera
+  HOLDS. First sentence of `motion_prompt` = `"Camera POV-A, pet eye-level, locked static
+  framing — no panning, no zoom, no camera movement throughout."` The life comes from the
+  pet; the lock IS the aesthetic (home-cam concepts want exactly this).
+- **Action / high-energy beats** (chase, pounce, alarm, dance, the "승" twist): the camera
+  MOVES with the action — a slow `push_in` that tracks the lunge, a short `pan`/`tilt`
+  following a pet, or a gentle handheld `sway`. AND give the quieter pet her own explicit,
+  continuous action in the Shot-beats (ears pin, drops into a play-bow, barks, paws) so the
+  frame always has two moving subjects, never one actor + one statue.
+- **Closer / wink beat**: slow `push_in` for 여운. The wink is just a relaxed one-eye
+  close, and the pet can be in any comfortable pose (sitting, lying, even belly-up). The
+  thing to protect is anatomical plausibility — write the pose so head and neck stay within
+  a real animal's range; do NOT script a "turn head around to wink" move, because Seedance
+  resolves an extreme head-turn into an impossible ~180° neck twist (a "zombie" frame). Let
+  the body face roughly where the head looks.
+- **Still-IMAGE cut** (a held photo or photo_sequence frame): MUST ken-burns — `camera_move`
+  = `zoom_in_slow` / `zoom_out_slow` / `pan`, or a short duration; a long frozen still is a
+  dead frame.
+
+Example: the 침입자 alarm concept came out flat — every cut was locked-static and Ryani
+stood still while only the cat moved. Fix: the cat-pounce hook gets a `push_in` tracking
+the lunge, and Ryani's Shot-beats give her her own motion (ears back, play-bow, a bark)
+so two subjects move.
 
 Within a cut, write `motion_prompt` as Seedance multi-shot beats that stay in the SAME
 camera/POV:
@@ -298,6 +320,17 @@ thin Boston Terrier-style white blaze (NARROW line, not the typical wide splash)
 
 Standard string (paste verbatim when Ryani in frame, except possibly cut 1 where full description goes first):
 > "An old black French Bulldog (Ryani, age 11). White markings on her black face: a thin Boston Terrier-style white blaze (NARROW line, not the typical wide splash) from nose to forehead, a faint subtle eyebrow-like white mark above each eye (small and thin, NOT a bold round dot). The center forehead blaze stays a THIN pencil-width line — never a thick/wide stripe. Silver-grey aged muzzle. White chin. Large white chest patch. Bat ears. No tail. Stocky compact body. Only black, white, grey — no brown."
+
+**Reference IMAGE governs her age — pick it deliberately.** The attached reference image
+drives Ryani's rendered age more strongly than the text does: name `ryani_solo` (the real
+present-day adult — grey muzzle) for EVERY present-day cut, and `ryani_young` ONLY for cuts
+that are explicitly a past/flashback/memory-lane era (2015-ish, no grey muzzle). Why: when
+a present-day concept accidentally renders a smooth-faced "young Ryani," it is almost always
+because the cut conditioned on `ryani_young` (or on a generic `pair` sheet that under-ages
+her) — the text "age 11, silver-grey muzzle" cannot override a young reference image. Keep
+the whole concept on ONE Ryani reference unless the story deliberately time-travels. Example:
+the 침입자 (present-day living room) cuts must all use `ryani_solo`; a "11년 전 첫 질주"
+flashback is the only kind of cut that uses `ryani_young`.
 
 ### Character marking — Leo (레오, ~8mo orange tabby)
 > "An orange tabby cat (Leo, ~8 months old, young adult, pale yellow-green / chartreuse eyes, white chin tuft, lean and agile body, paler cream-orange cheeks and belly). Tail often raised in question mark shape."

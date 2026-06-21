@@ -1265,6 +1265,15 @@ def handle_thread_replies(message, client, context):
                           thread_ts or event.get("ts"), asset_id=None)
         return
 
+    # ── rayleo_board: 자연어 운영 비서 (PD 2026-06-21). PD가 채널에 말하면 LLM이
+    # 의도를 파싱해 실제 액션(컨셉예약/현황/지식/veto/렌더)을 실행하거나 CLI로
+    # 에스컬레이션. 돈/되돌리기 어려운 건 실행 전 확인. 슬롯 쓰레드는 WORKROOM이라
+    # 충돌 없음 → 보드의 모든 텍스트(탑레벨+쓰레드)를 비서로 보낸다. ──
+    if BOARD_CHANNEL and channel == BOARD_CHANNEL and text:
+        from slack import board_agent
+        board_agent.handle_board_message(client, event, db=db, do_veto=_do_veto)
+        return
+
     # ── Episode channel: save stories to DB ──
     if channel == EPISODE_CHANNEL and text:
         try:

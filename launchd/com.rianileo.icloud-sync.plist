@@ -28,6 +28,7 @@
       <string>--download-missing</string>
       <string>--vlm</string>
       <string>--prune</string>
+      <string>--warm</string>
     </array>
 
     <key>WorkingDirectory</key><string>/Users/ahnbingbing/code/rianileo-agent</string>
@@ -39,10 +40,14 @@
       <key>LOG_LEVEL</key><string>INFO</string>
     </dict>
 
+    <!-- Runs at 01:30, BEFORE the 03:00 launch batch, so the day's import + warm
+         cache land while the Photos library is fast — the batch then reads local
+         files instead of risking an on-demand download in the 3-6am Photos
+         maintenance window (the download-failure root cause, PD 2026-06-21). -->
     <key>StartCalendarInterval</key>
     <dict>
-      <key>Hour</key><integer>6</integer>
-      <key>Minute</key><integer>0</integer>
+      <key>Hour</key><integer>1</integer>
+      <key>Minute</key><integer>30</integer>
     </dict>
 
     <key>StandardOutPath</key><string>/Users/ahnbingbing/code/rianileo-agent/data/logs/icloud.out.log</string>

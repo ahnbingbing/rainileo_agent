@@ -120,6 +120,13 @@ PHOTOS_DIR = Path(os.getenv("PHOTOS_DIR", str(ROOT / "data" / "assets" / "photos
 CLIPS_DIR  = Path(os.getenv("CLIPS_DIR",  str(ROOT / "data" / "assets" / "clips"))).resolve()
 LOGS_DIR   = Path(os.getenv("LOGS_DIR",   str(ROOT / "data" / "logs"))).resolve()
 
+# Apple content-labels (Korean, this library) that flag a candidate Leo/Ryani photo.
+# Used by --pet-labels to find pet photos across the WHOLE library, not just the album
+# (PD 2026-06-21 '펫 사진 누락 방지'). Deliberately dog/cat-specific — broad labels like
+# 동물/포유동물 over-include; the VLM tagger does the final Leo/Ryani filtering anyway.
+PET_LABELS = ["개", "고양이", "불도그", "토이 불독", "걸어가는 개", "사냥개",
+              "새끼고양이", "범무늬 고양이", "고양이아과", "갯과의 동물"]
+
 DEFAULT_SUBJECT_MAP = {
     "랴니": "ryani", "Ryani": "ryani", "ryani": "ryani", "riani": "ryani",
     "레오": "leo",   "Leo": "leo",     "leo": "leo",
@@ -281,6 +288,29 @@ def _osxphotos_cli() -> str | None:
     return None
 
 
+def _osxphotos_healthy(probe_timeout: float = 45.0) -> bool:
+    """Quick probe: is the Photos library opening at normal speed right now?
+
+    The 6/21 batch wipeout was a TRANSIENT slow window — Photos took hours to open,
+    so every `osxphotos export` blew its timeout. A fast `query --count` (which opens
+    the same library) completing within `probe_timeout` means we're in a healthy window
+    and a download will succeed; a timeout means we're inside a slow window and should
+    back off and retry later rather than burn a long export budget that's doomed.
+    Serialized under the shared lock so the probe doesn't itself contend.
+    """
+    cli = _osxphotos_cli()
+    if not cli:
+        return False
+    try:
+        with _osxphotos_lock(wait_s=probe_timeout + 30):
+            subprocess.run([cli, "query", "--count"], check=True,
+                           stdin=subprocess.DEVNULL, capture_output=True,
+                           timeout=probe_timeout)
+        return True
+    except Exception:
+        return False
+
+
 def bulk_export_to(album_name: str, dest_dir: Path, dry_run: bool = False,
                    since: "dt.date | None" = None,
                    uuids: "list[str] | None" = None) -> bool:
@@ -308,7 +338,6 @@ def bulk_export_to(album_name: str, dest_dir: Path, dry_run: bool = False,
     dest_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
         cli, "export", str(dest_dir),
-        "--album", album_name,
         "--download-missing",
         "--update",               # reuse prior export DB → no interactive prompt
         method,
@@ -318,18 +347,20 @@ def bulk_export_to(album_name: str, dest_dir: Path, dry_run: bool = False,
         "--retry", "2",
     ]
     # PD 2026-06-13: scope to an explicit NEW-uuid list (preferred — no date to
-    # remember). Written to a file so a large list never blows the arg limit.
+    # remember). Written to a file so a large list never blows the arg limit. The uuid
+    # list IS the scope — do NOT also pass --album (PD 2026-06-21: that intersected the
+    # two and dropped every pet-label photo that lives OUTSIDE the album → 0 exported).
     uuid_file: Path | None = None
     if uuids:
         uuid_file = dest_dir / ".new_uuids.txt"
         uuid_file.write_text("\n".join(uuids) + "\n")
         cmd += ["--uuid-from-file", str(uuid_file)]
-    # PD 2026-06-12: WITHOUT scoping, --download-missing re-downloads EVERY pruned
-    # original in the album (7306 items under the efficient-storage model). Scope the
-    # export to items ADDED to the library on/after `since` so a routine sync only
-    # pulls NEW content, not the whole archive.
-    elif since:
-        cmd += ["--added-after", since.isoformat()]
+    else:
+        # Whole-album mode: scope by album, and (PD 2026-06-12) by date so an unscoped
+        # --download-missing doesn't re-pull every pruned original in the album.
+        cmd[3:3] = ["--album", album_name]
+        if since:
+            cmd += ["--added-after", since.isoformat()]
     log.info("Option A export (download-missing → %s, filename={uuid}):", dest_dir)
     log.info("  %s", " ".join(cmd))
     try:
@@ -412,7 +443,7 @@ def download_asset_by_uuid(uuid: str, dest_dir: Path) -> str | None:
 
 def download_assets_by_uuids(uuids: "list[str]", dest_dir: Path,
                              timeout: float = 300.0,
-                             max_attempts: int = 3) -> "dict[str, str]":
+                             max_attempts: int = 6) -> "dict[str, str]":
     """Bulk on-demand fetch: download MANY originals by Photos UUID in a SINGLE
     osxphotos export (one library scan for the whole set, not one per photo).
 
@@ -463,12 +494,16 @@ def download_assets_by_uuids(uuids: "list[str]", dest_dir: Path,
     out: "dict[str, str]" = {}
     pending = list(uuids)
     start = time.monotonic()
+    # Cap EACH attempt so a hung export (slow osxphotos window) fails fast and leaves
+    # budget for the health-probe + backoff + retry below — otherwise the first attempt
+    # eats the whole budget on one doomed hang and the slow-window retry never runs.
+    per_attempt = float(os.getenv("PREFETCH_ATTEMPT_S", "200"))
     for attempt in range(max(1, max_attempts)):
         remaining = timeout - (time.monotonic() - start)
         if remaining <= 0:
             break
         try:
-            _export(pending, remaining)
+            _export(pending, min(remaining, per_attempt))
         except Exception as e:
             log.warning("download_assets_by_uuids export attempt %d failed "
                         "(%d uuids): %s", attempt + 1, len(pending), e)
@@ -484,7 +519,19 @@ def download_assets_by_uuids(uuids: "list[str]", dest_dir: Path,
             log.warning("prefetch: %d/%d still missing after attempt %d — "
                         "retrying just the missing ones", len(pending),
                         len(uuids), attempt + 1)
-            backoff = 1.5 * (attempt + 1)  # 1.5s, then 3.0s
+            # Slow-window aware backoff: if the export came up empty AND a quick health
+            # probe shows Photos is opening slowly, we're inside a transient slow window
+            # — wait it out with a long backoff (a few minutes) instead of immediately
+            # burning another doomed export. Only worth it while budget remains; a truly
+            # sustained window is covered by the warm local cache, not by waiting here.
+            slow_backoff = float(os.getenv("ICLOUD_SLOW_BACKOFF_S", "90"))
+            if not _osxphotos_healthy(probe_timeout=float(os.getenv("ICLOUD_HEALTH_PROBE_S", "45"))):
+                backoff = slow_backoff
+                log.warning("prefetch: Photos in a SLOW window — backing off %.0fs "
+                            "before retry (budget left %.0fs)", backoff,
+                            timeout - (time.monotonic() - start))
+            else:
+                backoff = 1.5 * (attempt + 1)  # healthy: quick retry (1.5s, 3.0s…)
             if timeout - (time.monotonic() - start) > backoff:
                 time.sleep(backoff)
     return out
@@ -516,9 +563,42 @@ def backfill_uuids(album_name: str) -> int:
 
 
 def prune_originals(dry_run: bool = False) -> tuple[int, int]:
-    """Efficient model: delete the local ORIGINAL file for assets that are
-    VLM-tagged AND have a source_uuid (re-downloadable). Keeps the DB row +
-    file_path; render re-downloads on demand. Returns (count, bytes_freed)."""
+    """Disk-pressure-aware prune: free the bulky local ORIGINAL only when disk is
+    actually tight, and only down to a free-space floor — never the whole library.
+
+    PD 2026-06-21 (download-failure root cause): the old "efficient model" pruned
+    EVERY re-downloadable VLM-tagged original after each sync (5554 pruned, 12 left
+    on disk). That made every render depend on a healthy osxphotos re-download — so
+    a single transient iCloud/Photos slow window (the kind that makes a library open
+    take hours and every `osxphotos export` hit its 600s timeout) turned into TOTAL
+    render failure across a whole launch batch. With disk headroom now (tens of GB
+    free), keeping the working set local is strictly safer and removes the fragile
+    re-download from the hot path entirely.
+
+    Policy:
+      • If free space ≥ ICLOUD_PRUNE_FREE_FLOOR_GB (default 30) → skip (no-op).
+      • Otherwise prune oldest-touched (mtime) first, but NEVER files touched within
+        the last ICLOUD_PRUNE_KEEP_DAYS (default 7) — those are the working set a
+        recent/upcoming render just downloaded. Stop as soon as free ≥ floor.
+    Keeps the DB row + file_path so a render can still re-download on demand if a
+    pruned clip is ever needed during a healthy window. Returns (count, bytes_freed).
+    """
+    floor_gb = float(os.getenv("ICLOUD_PRUNE_FREE_FLOOR_GB", "30"))
+    keep_days = float(os.getenv("ICLOUD_PRUNE_KEEP_DAYS", "7"))
+    floor_bytes = floor_gb * 1e9
+
+    def _free() -> int:
+        try:
+            return shutil.disk_usage(str(ROOT)).free
+        except Exception:
+            return 0
+
+    free0 = _free()
+    if free0 >= floor_bytes:
+        log.info("prune: skip — %.1f GB free ≥ %.0f GB floor (keeping working set)",
+                 free0 / 1e9, floor_gb)
+        return 0, 0
+
     con = sqlite3.connect(DB_PATH)
     ensure_source_uuid_column(con)
     rows = con.execute(
@@ -526,20 +606,202 @@ def prune_originals(dry_run: bool = False) -> tuple[int, int]:
         "AND source_uuid != '' AND vlm_analyzed_at IS NOT NULL"
     ).fetchall()
     con.close()
-    n = 0
-    freed = 0
+
+    now = time.time()
+    keep_cutoff = now - keep_days * 86400
+    cand = []
     for aid, fp in rows:
         try:
             if fp and os.path.exists(fp):
-                sz = os.path.getsize(fp)
-                if not dry_run:
-                    os.remove(fp)
-                freed += sz
-                n += 1
+                mt = os.path.getmtime(fp)
+                if mt >= keep_cutoff:
+                    continue  # protect the recent working set
+                cand.append((mt, aid, fp))
+        except Exception as e:
+            log.warning("prune stat skip %s: %s", aid, e)
+    cand.sort()  # oldest mtime first
+
+    n = 0
+    freed = 0
+    for mt, aid, fp in cand:
+        if _free() + freed >= floor_bytes:
+            break  # back above the floor — stop
+        try:
+            sz = os.path.getsize(fp)
+            if not dry_run:
+                os.remove(fp)
+            freed += sz
+            n += 1
         except Exception as e:
             log.warning("prune skip %s: %s", aid, e)
-    log.info("%sprune: %d files, %.1f GB", "[dry] " if dry_run else "", n, freed / 1e9)
+    log.info("%sprune: %d files, %.1f GB (free %.1f→%.1f GB, floor %.0f)",
+             "[dry] " if dry_run else "", n, freed / 1e9,
+             free0 / 1e9, _free() / 1e9, floor_gb)
     return n, freed
+
+
+def _pending_card_asset_ids(con: sqlite3.Connection) -> "list[str]":
+    """Asset ids referenced by not-yet-published cards for today onward — the clips
+    an upcoming launch batch / re-render is most likely to need. Best-effort parse of
+    the payload (recommended_assets + per-cut asset_id); card_assets is unused today."""
+    ids: list[str] = []
+    try:
+        rows = con.execute(
+            "SELECT payload_json FROM cards WHERE state IN "
+            "('approved','rendered','pd_review','draft') AND date >= date('now','-1 day')"
+        ).fetchall()
+    except Exception:
+        return ids
+    for (pj,) in rows:
+        try:
+            d = json.loads(pj)
+        except Exception:
+            continue
+        for a in (d.get("recommended_assets") or []):
+            if isinstance(a, str):
+                ids.append(a)
+            elif isinstance(a, dict) and a.get("asset_id"):
+                ids.append(a["asset_id"])
+        for c in (d.get("cuts") or []):
+            if isinstance(c, dict) and c.get("asset_id"):
+                ids.append(c["asset_id"])
+    return ids
+
+
+def warm_working_set(budget_gb: "float | None" = None,
+                     progress=None) -> "tuple[int, float]":
+    """Pre-download a BOUNDED local working set so launch renders rarely need a
+    risky on-demand re-download (which fails during a transient Photos-slow window).
+
+    The prune fix keeps clips that are already local, but after the historical prune
+    the cache was cold (≈all originals offloaded), so every memory-lane render still
+    had to re-fetch. This proactively warms — in a healthy window, ahead of the 03:00
+    batch — the assets most likely to be used, capped at ICLOUD_CACHE_BUDGET_GB so it
+    never fills the disk:
+      priority 1: assets referenced by pending/upcoming cards (definitely needed),
+      priority 2: most-recently-CAPTURED clips+photos (what fresh concepts draw from).
+    Stops once the on-disk re-downloadable footprint reaches the budget. Returns
+    (downloaded_count, gb_on_disk_after).
+    """
+    budget_gb = budget_gb if budget_gb is not None else float(
+        os.getenv("ICLOUD_CACHE_BUDGET_GB", "25"))
+    budget = budget_gb * 1e9
+    cli = _osxphotos_cli()
+    if not cli:
+        log.info("warm: osxphotos unavailable — skip")
+        return 0, 0.0
+    if not _osxphotos_healthy():
+        log.warning("warm: Photos in a slow window — skip warm (try later)")
+        return 0, 0.0
+
+    con = sqlite3.connect(DB_PATH)
+    ensure_source_uuid_column(con)
+    rows = con.execute(
+        "SELECT asset_id, source_uuid, file_path, captured_iso FROM assets "
+        "WHERE source_uuid IS NOT NULL AND source_uuid != ''"
+    ).fetchall()
+    by_id = {r[0]: r for r in rows}
+    pend = _pending_card_asset_ids(con)
+    con.close()
+
+    # priority order: pending-card assets first, then most-recent captures
+    ordered, seen = [], set()
+    for aid in pend:
+        r = by_id.get(aid)
+        if r and aid not in seen:
+            ordered.append(r); seen.add(aid)
+    for r in sorted(rows, key=lambda r: (r[3] or ""), reverse=True):
+        if r[0] not in seen:
+            ordered.append(r); seen.add(r[0])
+
+    def _bytes_on_disk() -> int:
+        tot = 0
+        for r in rows:
+            fp = r[2]
+            if fp and os.path.exists(fp):
+                try:
+                    tot += os.path.getsize(fp)
+                except OSError:
+                    pass
+        return tot
+
+    on_disk = _bytes_on_disk()
+    if on_disk >= budget:
+        log.info("warm: cache already %.1f GB ≥ %.0f GB budget — nothing to do",
+                 on_disk / 1e9, budget_gb)
+        return 0, on_disk / 1e9
+
+    # collect uuids for assets NOT yet local, stop adding once we'd exceed budget
+    missing = []
+    projected = on_disk
+    for aid, uuid, fp, _ in ordered:
+        if fp and os.path.exists(fp):
+            continue
+        missing.append((aid, uuid, fp))
+        projected += 30 * 1e6  # rough avg clip/photo size estimate for the cap
+        if projected >= budget:
+            break
+    if not missing:
+        log.info("warm: working set already cached (%.1f GB)", on_disk / 1e9)
+        return 0, on_disk / 1e9
+
+    # Never warm so aggressively that free disk drops below the prune floor (else the
+    # next prune would just evict what we warmed). Keep a 5 GB margin above the floor.
+    floor_gb = float(os.getenv("ICLOUD_PRUNE_FREE_FLOOR_GB", "30"))
+    free_stop = (floor_gb + 5) * 1e9
+
+    def _free() -> int:
+        try:
+            return shutil.disk_usage(str(ROOT)).free
+        except Exception:
+            return 0
+
+    log.info("warm: fetching ~%d assets toward %.0f GB budget (on disk %.1f GB, "
+             "free %.1f GB, stop if free<%.0f GB)…",
+             len(missing), budget_gb, on_disk / 1e9, _free() / 1e9, floor_gb + 5)
+    got = 0
+    # download in chunks; re-check real disk usage between chunks (estimate is rough)
+    CHUNK = 25
+    staging = (PHOTOS_DIR.parent / "warm_staging")
+    for i in range(0, len(missing), CHUNK):
+        if _bytes_on_disk() >= budget:
+            break
+        if _free() <= free_stop:
+            log.info("warm: stopping — free disk near prune floor (%.1f GB)",
+                     _free() / 1e9)
+            break
+        chunk = missing[i:i + CHUNK]
+        res = download_assets_by_uuids([u for _, u, _ in chunk], staging,
+                                       timeout=420.0, max_attempts=2)
+        # move/keep: the render path resolves by file_path; copy into the asset's
+        # canonical path so future renders find it without re-export.
+        for aid, uuid, fp in chunk:
+            src = res.get(uuid)
+            if src and fp:
+                try:
+                    Path(fp).parent.mkdir(parents=True, exist_ok=True)
+                    if not os.path.exists(fp):
+                        # MOVE (not copy) — leaving the staging dup was a real leak:
+                        # warm_staging grew to 6.6 GB of never-cleaned exports (PD 2026-06-21).
+                        shutil.move(src, fp)
+                    elif os.path.exists(src):
+                        os.remove(src)   # already cached → drop the redundant staging copy
+                    got += 1
+                except Exception as e:
+                    log.warning("warm: place %s failed: %s", aid, e)
+        if progress:
+            progress(f"warm {got}/{len(missing)} (disk {_bytes_on_disk()/1e9:.1f} GB)")
+    # warm_staging holds only transient {uuid}.ext exports — clear it so it can't
+    # accumulate into a multi-GB orphan again.
+    try:
+        if staging.exists():
+            shutil.rmtree(staging)
+    except Exception as e:
+        log.warning("warm: staging cleanup failed: %s", e)
+    final = _bytes_on_disk() / 1e9
+    log.info("warm: downloaded %d assets — cache now %.1f GB (budget %.0f)",
+             got, final, budget_gb)
+    return got, final
 
 
 def insert_asset(con: sqlite3.Connection, **kw) -> None:
@@ -572,7 +834,14 @@ def sync_album(
     dry_run: bool = False,
     download_missing: bool = False,
     backfill: bool = False,
+    labels: "list[str] | None" = None,
 ) -> dict:
+    """If `labels` is given, select photos across the WHOLE library whose Apple
+    content-labels intersect that set (e.g. 개/고양이/불도그), instead of by album —
+    this catches pet photos the human never added to the album (PD 2026-06-21,
+    '펫 사진 누락 방지'). Pair with backfill=True to ingest every not-yet-ingested
+    match; the VLM tagger then keeps only the ones that are actually Leo/Ryani.
+    Default (labels=None) = the original album behaviour, unchanged."""
     try:
         import osxphotos  # type: ignore
     except ImportError as e:
@@ -584,8 +853,17 @@ def sync_album(
     log.info("opening Photos library via osxphotos (this can take a few seconds)")
     with _osxphotos_lock():
         photosdb = osxphotos.PhotosDB()
-        photos = list(photosdb.photos(albums=[album_name]))
+        if labels:
+            lset = set(labels)
+            photos = [p for p in photosdb.photos()
+                      if lset & set(getattr(p, "labels", []) or [])]
+            log.info("label-select %s → %d candidate photos (whole library)",
+                     labels, len(photos))
+        else:
+            photos = list(photosdb.photos(albums=[album_name]))
     if not photos:
+        if labels:
+            raise SystemExit(f"no photos match labels {labels}.")
         raise SystemExit(
             f"album '{album_name}' has no photos (or doesn't exist).\n"
             f"  available albums: {', '.join(a.title for a in photosdb.album_info)[:200]} ..."
@@ -954,11 +1232,28 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--prune", action="store_true",
                     help="efficient model: delete local originals for VLM-tagged "
                          "+ uuid'd assets (re-downloadable on demand). Frees space.")
+    ap.add_argument("--warm", action="store_true",
+                    help="pre-download a bounded local working-set cache (pending-card "
+                         "assets + recent captures, up to ICLOUD_CACHE_BUDGET_GB) so "
+                         "launch renders rarely need a risky on-demand re-download.")
+    ap.add_argument("--pet-labels", action="store_true",
+                    help="ingest by Apple content-label across the WHOLE library "
+                         "(개/고양이/불도그/…), not just the album — catches pet photos "
+                         "never added to the album. VLM keeps only Leo/Ryani. Pair with "
+                         "--download-missing --vlm; --backfill ingests all matches.")
+    ap.add_argument("--labels", help="comma list of content-labels to select by "
+                    "(overrides the --pet-labels default set)")
     args = ap.parse_args(argv)
 
     if args.backfill_uuids:
         n = backfill_uuids(args.album)
         print(f"backfill: set source_uuid on {n} rows")
+        if not (args.prune or args.warm):
+            return 0
+    # Standalone warm only when no sync intent (otherwise it runs AFTER the sync).
+    if args.warm and not (args.download_missing or args.vlm or args.watch):
+        got, gb = warm_working_set()
+        print(f"warm: downloaded {got} assets — cache now {gb:.1f} GB")
         if not args.prune:
             return 0
     # Standalone prune only when no sync intent. Otherwise prune runs AFTER the
@@ -971,6 +1266,13 @@ def main(argv: list[str] | None = None) -> int:
     subject_map = parse_subject_map(args.subject_map)
     since = dt.date.fromisoformat(args.since) if args.since else None
     added_since = dt.date.fromisoformat(args.added_since) if args.added_since else None
+    # Pet-photo coverage (PD 2026-06-21): select by Apple content-label across the
+    # whole library so album-omitted pet photos still get in. VLM filters to Leo/Ryani.
+    sel_labels = None
+    if args.labels:
+        sel_labels = [s.strip() for s in args.labels.split(",") if s.strip()]
+    elif args.pet_labels:
+        sel_labels = PET_LABELS
 
     def _one():
         try:
@@ -983,6 +1285,7 @@ def main(argv: list[str] | None = None) -> int:
                 dry_run=args.dry_run,
                 download_missing=args.download_missing,
                 backfill=args.backfill,
+                labels=sel_labels,
             )
             print_summary(s)
             # PD 2026-06-07: tag newly-imported assets so the Writer can use
@@ -994,11 +1297,28 @@ def main(argv: list[str] | None = None) -> int:
                 _run_vlm_tagging(imported)
             elif args.vlm and imported == 0:
                 log.info("--vlm: no new assets imported — skipping VLM tagging")
-            # Efficient model: after tagging, free the bulky originals (kept
-            # re-downloadable by uuid). Daily steady-state stays small.
+            # Keep the GCS mirror current (PD 2026-06-21) — BEFORE prune, so an asset is
+            # safely in GCS before its local original can be deleted. Uploads newly-imported
+            # captures + anything warm/backfill pulled local. Idempotent; non-fatal.
+            if not args.dry_run:
+                try:
+                    from icloud import gcs as _gcs
+                    if _gcs.enabled():
+                        n = _gcs.mirror_local()
+                        log.info("post-sync GCS mirror: %d assets present in GCS", n)
+                except Exception:
+                    log.exception("post-sync GCS mirror failed (non-fatal)")
+            # Efficient model: after mirroring, free the bulky originals (kept
+            # re-downloadable by uuid AND now in GCS). Daily steady-state stays small;
+            # the chunked backlog driver sets KEEP_DAYS=0 to delete each batch right away.
             if args.prune and not args.dry_run:
                 n, freed = prune_originals()
                 log.info("post-sync prune: %d files, %.1f GB freed", n, freed / 1e9)
+            # Warm a bounded working-set cache so the next launch batch rarely needs a
+            # risky on-demand re-download. Runs in this (healthy, post-sync) window.
+            if args.warm and not args.dry_run:
+                got, gb = warm_working_set()
+                log.info("post-sync warm: +%d assets, cache %.1f GB", got, gb)
             return 0
         except SystemExit:
             raise

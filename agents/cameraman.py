@@ -999,7 +999,7 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
                 # PD 2026-06-15/17: in a VIDEO-FIRST RF episode a photo is only a ~0.5s flash
                 # accent — clamp its duration and blank its captions below. In a photo-MAJORITY
                 # montage (memory-lane) the photo is a FULL captioned story beat, NOT a flash.
-                _flash = _video_first
+                _flash = _rf_has_video
                 if _flash:
                     _photo_flash_tags.add(tag)
                 _pdur = (PHOTO_FLASH_SEC if _flash
@@ -3505,7 +3505,21 @@ def _ensure_local(file_path: str, source_uuid: str | None, *, force: bool = Fals
     try:
         if file_path and Path(file_path).exists():
             return file_path
-        # PD 2026-06-15: downloads happen ONLY in the controlled upfront prefetch
+        # GCS-first (PD 2026-06-21): a missing original is pulled from the GCS mirror —
+        # fast, reliable, no Photos-library open / PhotoKit / dawn window / osxphotos lock
+        # (the whole reason on-demand iCloud downloads failed). Safe mid-render, so it runs
+        # BEFORE the RENDER_NO_ICLOUD_FETCH gate; osxphotos below is now only the fallback
+        # for assets not yet mirrored.
+        if file_path:
+            try:
+                from icloud import gcs as _gcs
+                if _gcs.enabled():
+                    got = _gcs.download_to(file_path)
+                    if got:
+                        return got
+            except Exception as _e:
+                log.warning("gcs ensure_local fetch failed for %s: %s", file_path, _e)
+        # PD 2026-06-15: osxphotos downloads happen ONLY in the controlled upfront prefetch
         # (force=True), never mid-render. RENDER_NO_ICLOUD_FETCH=1 makes mid-render
         # _ensure_local calls fail fast (caller drops the cut) instead of triggering a
         # serialized per-photo osxphotos loop that hung the batch 8h (av 0/2). The prefetch
@@ -6695,6 +6709,25 @@ def _persist_render_meta(work_dir: Path, manifests: dict, cuts: list,
         log.warning("render_meta persist failed (salvage may be unavailable): %s", e)
 
 
+def _log_batch_problem(rec: dict) -> None:
+    """Append a structured batch-failure record so launch problems are DIAGNOSABLE
+    after the fact. PD 2026-06-21: prefetch failures used to be swallowed — only a
+    generic '드롭' surfaced, so when the 03:00 batch lost slots we couldn't tell why
+    (slow osxphotos window vs genuinely-missing asset). This writes the real cause to
+    data/logs/batch_problems.jsonl AND to stderr (→ launch.err.log) so both the PD's
+    Slack and the on-disk logs carry it."""
+    try:
+        import datetime as _dt
+        rec = {"ts": _dt.datetime.now().isoformat(timespec="seconds"), **rec}
+        p = ROOT / "data" / "logs" / "batch_problems.jsonl"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        log.warning("BATCH PROBLEM: %s", json.dumps(rec, ensure_ascii=False))
+    except Exception as e:
+        log.warning("batch problem log failed: %s", e)
+
+
 def _prestage_concept_assets(concept: dict | None, card: dict | None,
                              progress_cb: ProgressCb = None) -> None:
     """PD 2026-06-11: DOWNLOAD all of a concept's source assets to disk BEFORE the
@@ -6734,6 +6767,26 @@ def _prestage_concept_assets(concept: dict | None, card: dict | None,
             need.append((aid, fp, uuid))
     if not need:
         return
+    # GCS-first bulk prefetch (PD 2026-06-21): pull whatever is mirrored to GCS —
+    # fast/reliable, no Photos-library open / PhotoKit / dawn window. Only GCS-misses
+    # (assets not yet mirrored) fall through to the osxphotos export below. This is the
+    # durable fix for the recurring dawn download failures.
+    try:
+        from icloud import gcs as _gcs
+        if _gcs.enabled():
+            still, g_ok = [], 0
+            for aid, fp, uuid in need:
+                if _gcs.download_to(fp):
+                    g_ok += 1
+                else:
+                    still.append((aid, fp, uuid))
+            if g_ok and progress_cb:
+                progress_cb(f":cloud: GCS에서 {g_ok}개 선다운로드 (osxphotos 불필요)")
+            need = still
+        if not need:
+            return
+    except Exception as _e:
+        log.warning("gcs bulk prefetch failed, falling back to osxphotos: %s", _e)
     # PD 2026-06-16: download iCloud-only originals UPFRONT in ONE bulk osxphotos
     # export (a single --uuid-from-file call = one library scan for the whole set),
     # then place each {uuid}.ext at its expected file_path. The old per-photo loop
@@ -6742,7 +6795,11 @@ def _prestage_concept_assets(concept: dict | None, card: dict | None,
     # 90s/photo budget → AV got 0/7 → 0 cuts → slot skipped (the 6/17 AV-전멸).
     # One scan + bulk export does the same 7 photos in seconds. Whatever still
     # doesn't arrive is left for the per-cut gate to swap/drop; render never downloads.
-    budget = float(os.getenv("PREFETCH_BUDGET", "600"))
+    # PD 2026-06-21: bumped 600→1200 so the prefetch can WAIT OUT a transient slow
+    # osxphotos window (common in the 03:00 batch hour). With the per-attempt cap +
+    # slow-window backoff in download_assets_by_uuids, the extra budget = more retries
+    # to catch the window recovering — the 03:00 batch has hours before review/publish.
+    budget = float(os.getenv("PREFETCH_BUDGET", "1200"))
     if progress_cb:
         progress_cb(f":arrow_down: 렌더 전 자산 사전 다운로드 {len(need)}개 (일괄 1회, 예산 {int(budget)}s)")
     from icloud.sync import download_assets_by_uuids
@@ -6750,6 +6807,7 @@ def _prestage_concept_assets(concept: dict | None, card: dict | None,
     got = download_assets_by_uuids([uuid for _aid, _fp, uuid in need], staging,
                                    timeout=budget)
     ok = 0
+    failed: list[str] = []
     for aid, fp, uuid in need:
         src = got.get(uuid)
         if src and Path(src).exists():
@@ -6762,8 +6820,36 @@ def _prestage_concept_assets(concept: dict | None, card: dict | None,
                 if Path(src).exists():  # move failed but bytes exist — still usable
                     ok += 1
                     continue
+        failed.append(str(aid))
+    if failed:
+        # Diagnose WHY instead of swallowing it: a quick health probe distinguishes a
+        # transient slow-osxphotos window (common in the 03:00–06:00 system-maintenance
+        # hours — recovers on its own) from a genuinely-unavailable asset (iCloud not
+        # synced / file gone / permissions). Record it so the cause is never lost again.
+        try:
+            from icloud.sync import _osxphotos_healthy
+            healthy = _osxphotos_healthy(probe_timeout=45)
+        except Exception:
+            healthy = None
+        reason = ("osxphotos SLOW WINDOW — 라이브러리 열기가 느려 다운로드가 예산 내 미완료 "
+                  "(일시적; 새벽 시스템 유지보수 시간대에 잦음, 보통 스스로 회복)"
+                  if healthy is False else
+                  "osxphotos 정상 — 다운로드 자체 실패(iCloud 미동기화/파일 손상/권한 가능)"
+                  if healthy else "osxphotos 상태 확인 불가")
+        _title = (concept or {}).get("title") or (card or {}).get("theme") or "?"
+        if isinstance(_title, dict):
+            _title = _title.get("ko") or _title.get("en") or "?"
+        _log_batch_problem({
+            "stage": "prefetch", "concept": str(_title)[:80],
+            "card_id": (card or {}).get("card_id"),
+            "budget_s": int(budget), "ok": ok, "total": len(need),
+            "failed_assets": failed, "osxphotos_healthy": healthy, "reason": reason,
+        })
         if progress_cb:
-            progress_cb(f":warning: 사전 다운로드 실패 {str(aid)[:24]} — 렌더 중 교체/드롭")
+            for aid in failed:
+                progress_cb(f":warning: 사전 다운로드 실패 {aid[:24]} — 렌더 중 교체/드롭")
+            progress_cb(f":rotating_light: 사전 다운로드 {ok}/{len(need)} — 원인: {reason} "
+                        f"(상세: data/logs/batch_problems.jsonl)")
     if progress_cb:
         progress_cb(f":white_check_mark: 사전 다운로드 {ok}/{len(need)} 완료")
 

@@ -30,6 +30,7 @@ You do NOT write a new concept. You output a critique JSON that the revise pass 
   - ❌ "오늘도 이 둘이에요" — 의미 없는 declarative
   - ✅ "오늘도 둘은 같이 있었어요" / "결국 또 나란히 누워버렸네요" / "이 둘의 하루는 이렇게 끝나가요"
   - 원칙: 주어 + 구체적 동사 + 종결. 추상 주어를 "이에요"로 받으면 nothing-sentence가 된다.
+- **마지막 스토리 컷(결)이 따뜻한 해소로 끝나는가?** ("오늘도 잘 지내요", "둘이 행복해요", "오늘도 같이 있네요" 등) → issue. 결은 펀치라인·반전·콜백으로 닫아야 한다. 따뜻한 햅삐 ♥는 그 뒤 시스템이 붙이는 윙크 컷의 몫이라, 결에서 미리 쓰면 감정 피크가 윙크 전에 터져 마지막 햅삐가 김빠진 중복이 된다.
 - 캡션 한 scene이 **15자 넘는가**? → 즉시 issue, 더 작은 scene으로 쪼개라 (start/end 분할).
 - **`\n` 줄바꿈이 ko/en 필드 안에 있나?** → 즉시 issue (render system이 wrap, manual `\n` 금지).
 - 한 cut에 scene이 1개뿐이고 ko가 14자 넘으면 issue (펫 가려짐).

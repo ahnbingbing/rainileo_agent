@@ -71,23 +71,35 @@ GIRI_FEWSHOT_N = int(os.getenv("GIRI_FEWSHOT_N", "2"))
 def _call_anthropic(system: str, user: str, *, model: str,
                     max_tokens: int = 16000,
                     cache_system: bool = True) -> str:
-    """LLM cascade (PD 2026-06-02 reorder): OpenAI gpt-4.1 (primary) →
-    Gemini 2.5 Pro → Anthropic (last fallback).
+    """LLM cascade for the HEAVY Writer/Director generations: Anthropic (primary,
+    prompt-cached) → OpenAI gpt-4.1 → Gemini 2.5 Pro.
 
-    Function name kept as `_call_anthropic` for code-history compatibility,
-    but Anthropic is now the LAST resort — used only if OpenAI and Gemini
-    both fail. The `model` arg is passed to the Anthropic call only.
+    These calls pair a ~25KB system prompt with a ~16k-token JSON output. Anthropic
+    is primary here because (a) its 5-min ephemeral prompt cache gives ~90% input
+    discount on the system repeated across a concept's many calls, and (b) it actually
+    COMPLETES the long JSON within budget — whereas gpt-4.1/Gemini on the short
+    fail-fast timeout cannot emit 16k output tokens in time and reliably time out,
+    stalling the run and forcing the slow fall-through anyway. The many small, fast
+    cascade calls elsewhere stay OpenAI-primary (agents/llm_cascade.py); only these
+    heavy generations route Anthropic-first.
 
-    Rationale: PD observed Anthropic overload causing repeated launch
-    failures. OpenAI has been more reliably available and is competitive
-    on quality + cost for these workloads. Anthropic prompt caching
-    (5min ephemeral, ~90% input discount) lost when not primary —
-    acceptable cost for availability.
+    Circuit breakers skip a provider that just failed so a down provider doesn't burn
+    the timeout on every call. `model` applies to the Anthropic call.
     """
-    # PD 2026-06-08: circuit breaker — skip a provider that just failed (cooldown)
-    # instead of burning the 45s timeout on every one of an av concept's ~9 calls.
     from agents import circuit
-    # 1) OpenAI primary
+    # 1) Anthropic primary — prompt-cached, completes the 25KB-system + 16k-JSON call
+    if not circuit.is_down("anthropic"):
+        try:
+            out = _call_anthropic_raw(system, user, model=model,
+                                      max_tokens=max_tokens, cache_system=cache_system)
+            circuit.mark_up("anthropic")
+            return out
+        except Exception as e:
+            circuit.mark_down("anthropic")
+            log.warning("Anthropic primary failed (%s) — trying OpenAI", e)
+    else:
+        log.info("writer_director: skip Anthropic (circuit open) → OpenAI")
+    # 2) OpenAI fallback
     if not circuit.is_down("openai"):
         try:
             out = _call_openai_fallback(system, user, max_tokens=max_tokens)
@@ -95,24 +107,11 @@ def _call_anthropic(system: str, user: str, *, model: str,
             return out
         except Exception as e:
             circuit.mark_down("openai")
-            log.warning("OpenAI primary failed (%s) — circuit open, trying Gemini", e)
+            log.warning("OpenAI fallback failed (%s) — trying Gemini", e)
     else:
         log.info("writer_director: skip OpenAI (circuit open) → Gemini")
-    # 2) Gemini fallback
-    if not circuit.is_down("gemini"):
-        try:
-            out = _call_gemini_fallback(system, user, max_tokens=max_tokens)
-            circuit.mark_up("gemini")
-            return out
-        except Exception as e:
-            circuit.mark_down("gemini")
-            log.warning("Gemini failed (%s) — circuit open, last fallback Anthropic", e)
-    else:
-        log.info("writer_director: skip Gemini (circuit open) → Anthropic")
-    # 3) Anthropic last fallback (only if OpenAI + Gemini both down)
-    return _call_anthropic_raw(system, user, model=model,
-                                 max_tokens=max_tokens,
-                                 cache_system=cache_system)
+    # 3) Gemini last fallback (only if Anthropic + OpenAI both down)
+    return _call_gemini_fallback(system, user, max_tokens=max_tokens)
 
 
 def _call_anthropic_raw(system: str, user: str, *, model: str,
@@ -221,8 +220,9 @@ def _strip_fences(text: str) -> str:
 def _parse_json_loose(text: str) -> Any:
     """Parse JSON, tolerating fences and surrounding prose."""
     t = _strip_fences(text)
+    # strict=False tolerates raw control chars (unescaped newlines/tabs in a string).
     try:
-        return json.loads(t)
+        return json.loads(t, strict=False)
     except json.JSONDecodeError:
         # Try to find a JSON array or object inside, with a trailing-comma repair
         # (PD 2026-06-09: common LLM-fallback malformation).
@@ -231,9 +231,9 @@ def _parse_json_loose(text: str) -> Any:
             if m:
                 frag = m.group(0)
                 try:
-                    return json.loads(frag)
+                    return json.loads(frag, strict=False)
                 except json.JSONDecodeError:
-                    return json.loads(re.sub(r',\s*([}\]])', r'\1', frag))
+                    return json.loads(re.sub(r',\s*([}\]])', r'\1', frag), strict=False)
         raise
 
 
@@ -643,6 +643,36 @@ def run_director(story_concepts: list[dict], context: dict,
     except json.JSONDecodeError as e:
         log.error("Director JSON parse failed: %s\nfirst 500:\n%s", e, out_text[:500])
         raise RuntimeError(f"Director pass produced non-JSON: {e}")
+
+    # Normalize to the list-of-concepts shape the pipeline expects. Anthropic (now the
+    # primary for these heavy calls) tends to return EITHER a single concept object
+    # {title, cuts, ...} OR a wrapper {"concepts": [...]} — both valid JSON but not the
+    # bare list OpenAI used to emit. Unwrap them instead of falling all the way back to
+    # the legacy single-pass (which loses the Writer/Director quality + director_shots
+    # rules). A bare single concept → wrap in a 1-element list.
+    if isinstance(out, dict):
+        if out.get("cuts") or out.get("title") or out.get("theme"):
+            out = [out]  # a single concept object
+        else:
+            # Wrapper dict: pull the concepts list out of whatever key it used. Try
+            # known names first, then ANY non-empty list value (Anthropic varies the
+            # wrapper key), then a tag-keyed dict of concept objects as last resort.
+            known = ("concepts", "cuts_concepts", "results", "items", "storyboard",
+                     "output", "episodes", "shots", "directed", "director_output")
+            picked = None
+            for k in known:
+                if isinstance(out.get(k), list) and out[k]:
+                    picked = out[k]
+                    break
+            if picked is None:
+                list_vals = [v for v in out.values() if isinstance(v, list) and v]
+                if list_vals:
+                    picked = list_vals[0]
+                elif out and all(isinstance(v, dict) for v in out.values()):
+                    picked = list(out.values())  # tag-keyed dict of concepts
+            if picked is None:
+                log.error("Director dict not normalizable; keys=%s", list(out.keys()))
+            out = picked if picked is not None else out
 
     if not isinstance(out, list) or not out:
         raise RuntimeError(f"Director returned wrong shape: {type(out).__name__}")
