@@ -496,8 +496,15 @@ def main() -> int:
             from slack_sdk import WebClient
             ch = os.environ.get("SLACK_WORKROOM_CHANNEL")
             if ch:
+                # Channel Manager recommendation rides on the weekly report so the
+                # posteriors actually drive a "what/where to push" message (Phase 3).
+                try:
+                    from agents.channel_manager import recommend_text
+                    rec = "\n\n" + recommend_text()
+                except Exception as e:
+                    log.warning("recommend_text failed: %s", e); rec = ""
                 WebClient(token=os.environ["SLACK_BOT_TOKEN"]).chat_postMessage(
-                    channel=ch, text=":bar_chart: *주간 av-vs-rf 리포트*\n" + rep)
+                    channel=ch, text=":bar_chart: *주간 av-vs-rf 리포트*\n" + rep + rec)
                 print("posted to slack")
         except Exception as e:
             log.warning("slack post failed: %s", e)

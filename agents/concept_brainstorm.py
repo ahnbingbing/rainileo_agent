@@ -151,6 +151,13 @@ def brainstorm(style: str, brief: str, n: int = 5, *, context: dict | None = Non
         "imagination_hook(상상 훅 한 줄; rf면 '없음'), why_appealing(시청자가 왜 좋아할지 한 줄)}.\n"
         "후보끼리 훅이 겹치면 안 된다(다양성이 핵심). JSON 배열만 출력.")
     system += _exclude_block(context)
+    # Channel Manager Phase 4: feed back what's WINNING (energy/format/packaging pattern,
+    # not topics — freshness still rules topics). Empty until enough performance data.
+    try:
+        from agents.channel_manager import portfolio_signal
+        system += portfolio_signal()
+    except Exception:
+        pass
     user = f"brief: {brief}\n스타일: {style}\n후보 {n}개를 JSON 배열로."
     txt = call_text_cascade(system, user, max_tokens=2500).strip()
     txt = re.sub(r"^```(?:json)?\s*", "", txt)
