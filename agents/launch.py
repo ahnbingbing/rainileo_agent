@@ -93,6 +93,26 @@ def day_assignments(target: dt.date) -> list[tuple[str, str]]:
         else:
             lane = "real_footage" if first else "ai_vtuber"
         out.append((lane, hhmm))
+    # Bandit loop-closure (Channel Manager Phase 2): the Latin square is the EXPLORATION
+    # backbone (balanced 2av+2rf → clean marginals). Once a lane has clearly WON
+    # (bandit.stabilized: P(best)≥θ & enough n), tilt the mix 2-2 → 3-1 toward it, but
+    # KEEP one slot of the other lane so exploration never fully stops (drift detection).
+    # Until a lane stabilizes (sparse launch data) this is a NO-OP — the balanced square
+    # stands, so closing the loop changes nothing until the data earns it. Disable: BANDIT_STEER=0.
+    if os.getenv("BANDIT_STEER", "1") == "1":
+        try:
+            from agents import bandit
+            win = bandit.stabilized("lane")
+            if win in LANES:
+                lose = "real_footage" if win == "ai_vtuber" else "ai_vtuber"
+                lose_slots = [i for i, (ln, _h) in enumerate(out) if ln == lose]
+                for i in lose_slots[1:]:          # convert all but one loser slot → winner
+                    out[i] = (win, out[i][1])
+                if len(lose_slots) > 1:
+                    log.info("bandit steer: lane '%s' stabilized → tilt to %s",
+                             win, [f"{h}:{l}" for l, h in out])
+        except Exception as e:
+            log.warning("bandit steer skipped (Latin square stands): %s", e)
     # Pause a lane's auto-fill WITHOUT unloading the whole batch: LAUNCH_PAUSE_LANES is a
     # comma-sep list of lanes to SKIP (e.g. "ai_vtuber" while the AV still-gen — which
     # collapsed every cut of a multi-space concept into one identical two-shot — is being

@@ -201,8 +201,8 @@ Return JSON:
       "ai_notes": "..."
     }
   ],
-  "bgm_mood": "warm_acoustic" | "playful_upbeat" | "gentle_ambient" | "chill_documentary",
-  "reasoning": "brief explanation of selection logic"
+  "bgm_mood": "pick ONE that matches THIS episode's energy/era/place — vary across episodes, don't default to one. Menu: gentle_acoustic | warm_acoustic | soft_lofi | gentle_ambient | cozy | lullaby | playful_upbeat | playful_synth | upbeat_cute | fun | whistle | ukulele | chill_documentary | chill | happy | bright | bossa_summer | jazz_quirky | country_folk | piano_sparkle | drama_orchestral | comedy | bouncy | picnic | optimistic | pet_themed | spooky",
+  "reasoning": "brief explanation of selection logic (incl. why this bgm_mood fits)"
 }
 """
 

@@ -22,11 +22,17 @@ CLI:
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
 import math
 import os
 import sqlite3
 from pathlib import Path
+
+# A dimension "stabilizes" (stop exploring, pin the winner) once one arm both wins
+# P(best)≥THETA_STABLE and has ≥N_STABLE observations. Tunable via env.
+THETA_STABLE = float(os.getenv("BANDIT_STABLE_THETA", "0.9"))
+N_STABLE = int(os.getenv("BANDIT_STABLE_MIN_N", "8"))
 
 log = logging.getLogger("agents.bandit")
 ROOT = Path(__file__).resolve().parent.parent
@@ -71,10 +77,15 @@ def ensure_table(con: sqlite3.Connection) -> None:
             retention_pct REAL,
             est_minutes   REAL,
             source        TEXT,
-            fetched_at    TEXT
+            fetched_at    TEXT,
+            packaging_arm TEXT
         )
         """
     )
+    # migrate older tables that predate the packaging-arm experiment dimension
+    cols = [r[1] for r in con.execute("PRAGMA table_info(video_performance)")]
+    if "packaging_arm" not in cols:
+        con.execute("ALTER TABLE video_performance ADD COLUMN packaging_arm TEXT")
     con.commit()
 
 
@@ -123,8 +134,8 @@ def collect(con: sqlite3.Connection | None = None) -> list[dict]:
     from youtube.analytics import video_metrics, window_48h
 
     rows = con.execute(
-        "SELECT card_id, render_style, youtube_video_id, youtube_publish_at "
-        "FROM cards WHERE uploaded=1 AND youtube_video_id IS NOT NULL"
+        "SELECT card_id, render_style, youtube_video_id, youtube_publish_at, "
+        "payload_json FROM cards WHERE uploaded=1 AND youtube_video_id IS NOT NULL"
     ).fetchall()
 
     collected: list[dict] = []
@@ -146,21 +157,29 @@ def collect(con: sqlite3.Connection | None = None) -> list[dict]:
         m = video_metrics(vid, s, e)
         lane = (r["render_style"] or "").lower()
         slot = _timeslot_of(pub)
+        # packaging arm (Channel Manager experiment) for per-arm reward attribution
+        parm = None
+        try:
+            parm = (json.loads(r["payload_json"] or "{}")
+                    .get("draft", {}).get("packaging_arm"))
+        except Exception:
+            parm = None
         con.execute(
             """
             INSERT INTO video_performance
               (video_id, card_id, lane, timeslot, publish_at, views_48h,
-               retention_pct, est_minutes, source, fetched_at)
-            VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))
+               retention_pct, est_minutes, source, fetched_at, packaging_arm)
+            VALUES (?,?,?,?,?,?,?,?,?,datetime('now'),?)
             ON CONFLICT(video_id) DO UPDATE SET
               views_48h=excluded.views_48h,
               retention_pct=excluded.retention_pct,
               est_minutes=excluded.est_minutes,
               source=excluded.source,
-              fetched_at=excluded.fetched_at
+              fetched_at=excluded.fetched_at,
+              packaging_arm=excluded.packaging_arm
             """,
             (vid, r["card_id"], lane, slot, pub, m["views"],
-             m["retention_pct"], m["est_minutes"], m["source"]),
+             m["retention_pct"], m["est_minutes"], m["source"], parm),
         )
         collected.append({"video_id": vid, "lane": lane, "timeslot": slot,
                           **m})
@@ -256,7 +275,7 @@ def analyze(con: sqlite3.Connection | None = None) -> dict:
     rows = _rows_with_reward(con)
     out = {"n_total": len(rows), "levels": {}}
     for level, key in (("lane", "lane"), ("timeslot", "timeslot"),
-                       ("arm", None)):
+                       ("packaging", "packaging_arm"), ("arm", None)):
         if key is None:
             groups: dict[str, list[float]] = {}
             for r in rows:
@@ -276,7 +295,7 @@ def analyze(con: sqlite3.Connection | None = None) -> dict:
 def report(con: sqlite3.Connection | None = None) -> str:
     a = analyze(con)
     lines = [f"*av vs rf 밴딧* — 표본 {a['n_total']}편"]
-    for level in ("lane", "timeslot", "arm"):
+    for level in ("lane", "timeslot", "packaging", "arm"):
         lvl = a["levels"].get(level, {})
         if not lvl:
             continue
@@ -394,6 +413,37 @@ def choose_timeslot(con: sqlite3.Connection | None = None) -> str:
         return TIMESLOTS[0].strip()
     draws = {k: random.gauss(v["mu"], v["sd"]) for k, v in slots.items()}
     return max(draws, key=draws.get)
+
+
+def choose_packaging(con: sqlite3.Connection | None = None) -> str | None:
+    """Thompson-sample the packaging-arm posteriors → the arm to favor next.
+    Returns None when there's no packaging performance data yet (caller then
+    round-robins so all 3 arms keep getting tested)."""
+    import random
+    a = analyze(con)
+    arms = a["levels"].get("packaging", {})
+    if not arms:
+        return None
+    draws = {k: random.gauss(v["mu"], v["sd"]) for k, v in arms.items()}
+    return max(draws, key=draws.get)
+
+
+def stabilized(level: str, con: sqlite3.Connection | None = None) -> str | None:
+    """If one arm of `level` (lane / timeslot / packaging) has clearly won —
+    P(best) ≥ THETA_STABLE AND ≥ N_STABLE observations — return its key so the
+    caller can stop exploring and pin the winner. Else None (keep exploring).
+    This is what makes loop-closure SAFE: with sparse data nothing stabilizes,
+    so allocation stays on the exploratory Latin-square / round-robin default."""
+    a = analyze(con)
+    # exclude the "?" / null bucket (rows with no recorded arm) — "unknown" never wins
+    lvl = {k: v for k, v in a["levels"].get(level, {}).items() if k not in ("?", None)}
+    if len(lvl) < 2:           # need ≥2 real arms competing to declare a winner
+        return None
+    best = max(lvl.items(), key=lambda kv: kv[1].get("p_best", 0.0))
+    key, v = best
+    if v.get("p_best", 0.0) >= THETA_STABLE and v.get("n", 0) >= N_STABLE:
+        return key
+    return None
 
 
 def main() -> int:

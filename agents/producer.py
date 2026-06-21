@@ -580,12 +580,15 @@ def _propose_concepts_legacy(target: dt.date, context: dict, style_filter: str |
     text = text.strip()
     if not text:
         raise RuntimeError("LLM returned empty response for concept proposals")
+    # strict=False tolerates raw control chars (unescaped newlines/tabs inside a
+    # JSON string) that LLMs sometimes emit — otherwise a single stray newline in a
+    # motion_prompt blew up the whole legacy fallback ("Invalid control character").
     try:
-        return json.loads(text)
+        return json.loads(text, strict=False)
     except json.JSONDecodeError:
         match = re.search(r'\[[\s\S]*\]', text)
         if match:
-            return json.loads(match.group(0))
+            return json.loads(match.group(0), strict=False)
         raise RuntimeError(f"No valid JSON array in LLM response (len={len(text)}): {text[:200]}")
 
 
@@ -3493,11 +3496,33 @@ def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.dat
     except Exception:
         payload = {}
     draft = payload.get("draft", {})
-    title = draft.get("title") or row["theme"] or "Ryani & Leo"
-    if isinstance(title, dict):
-        title = title.get("ko") or "Ryani & Leo"
-    desc = draft.get("description", "") or ""
-    tags = [str(t).lstrip("#") for t in (draft.get("hashtags") or [])]
+    # Channel Manager packaging (Phase 1): generate a hook title + SEO description +
+    # concept-specific hashtags, rotating 3 tone arms as an experiment. This runs ONLY
+    # here — at upload time — so a Giri-failed render never spends an LLM call on it.
+    # Falls back to the static draft if the LLM is down so an upload never blocks.
+    title = desc = None
+    tags = []
+    try:
+        from agents.channel_manager import make_packaging
+        # payload top-level carries the concept (title/oneliner/cuts) for normal cards;
+        # pinned cards have only draft.title — make_packaging degrades gracefully.
+        concept = dict(payload)
+        concept.setdefault("title", draft.get("title") or row["theme"])
+        pkg = make_packaging(concept, card_id=card_id)
+        title, desc = pkg["title"], pkg["description"]
+        tags = [str(t).lstrip("#") for t in pkg["hashtags"]]
+        draft["packaging_arm"] = pkg["arm"]          # record arm for perf attribution
+        payload["draft"] = draft
+        con.execute("UPDATE cards SET payload_json=? WHERE card_id=?",
+                    (json.dumps(payload, ensure_ascii=False), card_id))
+    except Exception as e:
+        log.warning("packaging failed for %s, using static draft: %s", card_id[:8], e)
+    if not title:                                     # fallback: legacy static draft
+        title = draft.get("title") or row["theme"] or "Ryani & Leo"
+        if isinstance(title, dict):
+            title = title.get("ko") or "Ryani & Leo"
+        desc = draft.get("description", "") or ""
+        tags = [str(t).lstrip("#") for t in (draft.get("hashtags") or [])]
     publish_at = publish_at_iso or _compute_publish_at(target)
     try:
         from youtube.upload import upload_short
