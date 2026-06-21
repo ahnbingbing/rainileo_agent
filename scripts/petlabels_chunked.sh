@@ -26,6 +26,16 @@ LOG="${LOG:-data/logs/petlabels_chunked_$(date +%Y%m%d).log}"
 echo "pet-label backlog: ${BATCH_GB}GB/round (≈$((BATCH_GB*2))GB peak), max ${MAX_ROUNDS} rounds, log=$LOG"
 zero_streak=0
 for round in $(seq 1 "$MAX_ROUNDS"); do
+  # Stay OUT of the 01:00–06:59 protected window: it covers the 01:30 icloud-sync, the
+  # 03:00 launch batch, and the 3–6am Photos-maintenance / iCloud download-failure window.
+  # The osxphotos lock only WAITS then proceeds WITHOUT exclusivity, so overlapping the
+  # batch here re-creates the PhotoKit contention. If we enter the window mid-run, stop
+  # cleanly — the 07:00 launchd job (com.rianileo.petlabel-backlog) resumes the backlog.
+  hour=$(( 10#$(date +%H) ))
+  if [ "$hour" -ge 1 ] && [ "$hour" -lt 7 ]; then
+    echo ">>> 01:00–07:00 protected window (sync/batch/Photos-maint) — stopping; 07:00 job resumes." | tee -a "$LOG"
+    break
+  fi
   free_gb=$(df -g / | tail -1 | awk '{print $4}')
   if [ "${free_gb:-0}" -lt "$MIN_FREE_GB" ]; then
     echo ">>> free disk ${free_gb}GB < ${MIN_FREE_GB}GB floor — pausing 60s to let prune/system catch up" | tee -a "$LOG"

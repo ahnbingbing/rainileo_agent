@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Pet-photo coverage backlog — chunked iCloud import + VLM + GCS mirror + prune.
+  Drains the whole-library pet-labeled photos that aren't ingested yet, ~3GB/round,
+  disk-guarded, idempotent/resumable (already-ingested uuids skipped → self-continues),
+  self-terminating when drained.
+
+  Fires at 07:00 — AFTER the 01:30 icloud-sync, the 03:00 launch batch, and the
+  3–6am Photos-maintenance / iCloud download-failure window. The script also self-stops
+  if it ever runs into that 01:00–06:59 protected window, so a long run never collides
+  with the next day's sync/batch (the osxphotos lock only WAITS then proceeds WITHOUT
+  exclusivity, which would re-create the 6/19 PhotoKit contention).
+
+  Install:
+      cp launchd/com.rianileo.petlabel-backlog.plist ~/Library/LaunchAgents/
+      launchctl unload ~/Library/LaunchAgents/com.rianileo.petlabel-backlog.plist 2>/dev/null
+      launchctl load   ~/Library/LaunchAgents/com.rianileo.petlabel-backlog.plist
+  Pause (e.g. when the backlog is drained or you want the machine free):
+      launchctl unload ~/Library/LaunchAgents/com.rianileo.petlabel-backlog.plist
+  Logs: data/logs/petlabels_chunked_YYYYMMDD.log
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key><string>com.rianileo.petlabel-backlog</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/bin/bash</string>
+      <string>/Users/ahnbingbing/code/rianileo-agent/scripts/petlabels_chunked.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key><string>/Users/ahnbingbing/code/rianileo-agent</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>TZ</key><string>Asia/Seoul</string>
+      <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+      <key>BATCH_GB</key><string>3</string>
+      <key>LOG_LEVEL</key><string>INFO</string>
+    </dict>
+
+    <!-- 07:00: after the 03:00 batch + the 3-6am download-failure window. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+      <key>Hour</key><integer>7</integer>
+      <key>Minute</key><integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key><string>/Users/ahnbingbing/code/rianileo-agent/data/logs/petlabel-backlog.out.log</string>
+    <key>StandardErrorPath</key><string>/Users/ahnbingbing/code/rianileo-agent/data/logs/petlabel-backlog.err.log</string>
+
+    <!-- No RunAtLoad: do NOT start now (before tonight's batch). First run = 07:00 tomorrow. -->
+    <key>ProcessType</key><string>Background</string>
+    <key>Nice</key><integer>10</integer>
+  </dict>
+</plist>
