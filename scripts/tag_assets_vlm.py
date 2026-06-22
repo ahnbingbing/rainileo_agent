@@ -123,9 +123,14 @@ def _temporal_grounding(captured_iso: str | None) -> str:
     elif date:
         leo_rule = f"\n\n(This frame was captured on {date}.)"
     return (leo_rule +
-            "\n★Ryani is a DOG (black French Bulldog, no tail) — NEVER label a CAT as "
+            "\n★Ryani is a DOG (black French Bulldog, NO tail) — NEVER label a CAT as "
             "'ryani'. If an animal is a cat, it is at most Leo (only when the date allows) "
-            "or an unknown cat, never Ryani.")
+            "or an unknown cat, never Ryani."
+            "\n★Ryani has NO TAIL and is almost entirely BLACK (only a thin white "
+            "chin/chest). A black-and-WHITE tuxedo dog, or any dog WITH a tail, is NOT "
+            "Ryani — it is another/friend dog (do NOT put 'ryani' in subjects_visible for "
+            "it; describe it as a separate dog). This matters in old footage where a "
+            "tailed tuxedo dog often appears alongside Ryani.")
 
 
 def _call_gemini_vision(image_path: Path, captured_iso: str | None = None) -> dict:
@@ -397,6 +402,18 @@ def main() -> int:
                         "(sqlite-safe). Set 1 for the old sequential behaviour.")
     p.add_argument("--kind", choices=["photo", "video"], default=None,
                    help="restrict to one asset kind (e.g. --kind video)")
+    # PD 2026-06-22: targeted re-tag of OLD footage to clear the pre-adoption
+    # mislabel residue (prose calling a stray cat '레오'; a cat tagged as the dog).
+    # captured_iso bounds + an optional scene_description LIKE filter let a re-run
+    # hit exactly the suspect rows instead of re-tagging the whole archive.
+    p.add_argument("--captured-before", default=None,
+                   help="only assets with captured_iso < this ISO date (e.g. 2025-09-25)")
+    p.add_argument("--captured-after", default=None,
+                   help="only assets with captured_iso >= this ISO date")
+    p.add_argument("--scene-like", default=None,
+                   help="comma-separated substrings; match assets whose "
+                        "scene_description/subjects_csv/focus_subject contains ANY of them "
+                        "(case-insensitive). e.g. 'leo,레오,고양이,cat,tabby'")
     args = p.parse_args()
 
     con = _db()
@@ -422,6 +439,19 @@ def main() -> int:
         where = "vlm_analyzed_at IS NULL"
     if args.kind:
         where = f"({where}) AND kind = '{args.kind}'"
+    if args.captured_before:
+        where = f"({where}) AND captured_iso < '{args.captured_before}'"
+    if args.captured_after:
+        where = f"({where}) AND captured_iso >= '{args.captured_after}'"
+    if args.scene_like:
+        subs = [s.strip().replace("'", "''") for s in args.scene_like.split(",") if s.strip()]
+        ors = " OR ".join(
+            f"lower(scene_description) LIKE '%{s.lower()}%' "
+            f"OR lower(subjects_csv) LIKE '%{s.lower()}%' "
+            f"OR lower(focus_subject) LIKE '%{s.lower()}%'"
+            for s in subs)
+        if ors:
+            where = f"({where}) AND ({ors})"
     limit_clause = f"LIMIT {args.limit}" if args.limit else ""
     rows = con.execute(
         f"SELECT * FROM assets WHERE {where} ORDER BY captured_iso DESC {limit_clause}"
