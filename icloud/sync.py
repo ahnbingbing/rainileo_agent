@@ -230,6 +230,15 @@ def map_subjects(
 
 
 def compute_phash(path: Path) -> str | None:
+    # phash exists for RF footage dedup / visual-similarity freshness, whose consumers
+    # operate on recent candidate footage — not on bulk archival-library backfill. For a
+    # HEIC, imagehash.phash only needs a 64×64 thumbnail, but PIL must software-decode the
+    # FULL grid image first (libheif decode + rotate + colorspace = a multi-core CPU hog,
+    # ~0.25-2s/photo). At hundreds of photos/round that decode, not the network, is the
+    # bottleneck. ICLOUD_SKIP_PHASH=1 (set by the chunked backlog) skips it; phash=None is
+    # already a valid stored state and can be backfilled later by a dedicated pass.
+    if os.getenv("ICLOUD_SKIP_PHASH") == "1":
+        return None
     try:
         from PIL import Image
         import imagehash  # type: ignore

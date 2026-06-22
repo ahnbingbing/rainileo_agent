@@ -45,8 +45,12 @@ for round in $(seq 1 "$MAX_ROUNDS"); do
   echo "===== ROUND $round ($(date '+%T'))  free=${free_gb}GB  batch~${BATCH_GB}GB =====" | tee -a "$LOG"
   # KEEP_DAYS=0 → prune deletes this round's batch right after it's mirrored to GCS.
   # ALLOW_FULL_EXPORT=1 + BATCH_BYTES → bypass the bootstrap guard but stay chunk-bounded.
+  # ICLOUD_SKIP_PHASH=1: the backlog is archival-library coverage tagging, not RF dedup.
+  # phash needs a full HEIC software-decode per photo (libheif = the real CPU bottleneck,
+  # NOT the network) and isn't needed for these old photos; skip it. The daily pipeline
+  # still computes phash. Backfill later with a dedicated pass if dedup ever needs it.
   out=$(ICLOUD_ALLOW_FULL_EXPORT=1 ICLOUD_BACKFILL_BATCH_BYTES="$BATCH_BYTES" \
-        ICLOUD_PRUNE_KEEP_DAYS=0 ICLOUD_PRUNE_FREE_FLOOR_GB=50 \
+        ICLOUD_PRUNE_KEEP_DAYS=0 ICLOUD_PRUNE_FREE_FLOOR_GB=50 ICLOUD_SKIP_PHASH=1 \
         "$PY" -m icloud.sync --pet-labels --backfill --download-missing --vlm --prune 2>&1)
   echo "$out" >> "$LOG"
   echo "$out" | grep -E "label-select|BACKFILL batch|imported (photos|clips)|GCS mirror|prune:|NEW to download|nothing new" | tail -8

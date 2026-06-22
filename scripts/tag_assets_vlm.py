@@ -26,6 +26,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
 from pathlib import Path
 
@@ -140,20 +141,41 @@ def _call_gemini_vision(image_path: Path) -> dict:
     client = _genai.Client(api_key=api_key, http_options=_types.HttpOptions(
         timeout=int(os.getenv("VLM_TIMEOUT_MS", "90000"))))
     model_name = os.getenv("VLM_MODEL", "gemini-2.5-flash")
-    response = client.models.generate_content(
-        model=model_name,
-        contents=[
-            _types.Part.from_bytes(data=buf.getvalue(), mime_type="image/jpeg"),
-            ANALYSIS_PROMPT,
-        ],
-        config=_types.GenerateContentConfig(
-            response_mime_type="application/json",
-        ),
+    # thinking_budget=0 disables gemini-2.5-flash's default dynamic thinking, which
+    # otherwise adds large latency (and truncation risk) to every call. This is a pure
+    # tagging task — no reasoning needed — so we match the rest of the repo's VLM calls
+    # (producer/cameraman/facecheck all set thinking_budget=0). Big throughput win.
+    cfg = _types.GenerateContentConfig(
+        response_mime_type="application/json",
+        thinking_config=_types.ThinkingConfig(thinking_budget=0),
     )
-    text = (response.text or "").strip()
-    text = re.sub(r"^```(?:json)?\s*", "", text)
-    text = re.sub(r"\s*```$", "", text)
-    return json.loads(text)
+    # Retry transient rate-limit / unavailable errors with exponential backoff. Essential
+    # once we run workers in parallel: bursts can trip 429 RESOURCE_EXHAUSTED / 503.
+    last_err = None
+    for attempt in range(int(os.getenv("VLM_MAX_RETRIES", "4"))):
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=[
+                    _types.Part.from_bytes(data=buf.getvalue(), mime_type="image/jpeg"),
+                    ANALYSIS_PROMPT,
+                ],
+                config=cfg,
+            )
+            text = (response.text or "").strip()
+            text = re.sub(r"^```(?:json)?\s*", "", text)
+            text = re.sub(r"\s*```$", "", text)
+            return json.loads(text)
+        except Exception as e:  # noqa: BLE001
+            msg = str(e)
+            last_err = e
+            transient = any(s in msg for s in (
+                "429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE", "500",
+                "INTERNAL", "deadline", "timeout", "Timeout"))
+            if not transient or attempt == int(os.getenv("VLM_MAX_RETRIES", "4")) - 1:
+                raise
+            time.sleep(min(2 ** attempt + 0.5, 20))
+    raise last_err  # pragma: no cover
 
 
 def _extract_video_frame(video_path: Path, at_sec: float = 1.0) -> Path | None:
@@ -342,7 +364,13 @@ def main() -> int:
     p.add_argument("--since", default=None,
                    help="only analyze assets where vlm_analyzed_at < this ISO "
                         "timestamp (or NULL). e.g. '2026-06-02 13:00:00'")
-    p.add_argument("--delay", type=float, default=0.5, help="seconds between API calls")
+    p.add_argument("--delay", type=float, default=0.5,
+                   help="seconds between API calls (sequential mode only; ignored when "
+                        "--workers > 1, where concurrency paces the API)")
+    p.add_argument("--workers", type=int, default=int(os.getenv("VLM_WORKERS", "6")),
+                   help="parallel VLM API calls. The slow part is network I/O, so workers "
+                        "give near-linear speedup. DB writes stay on the main thread "
+                        "(sqlite-safe). Set 1 for the old sequential behaviour.")
     p.add_argument("--kind", choices=["photo", "video"], default=None,
                    help="restrict to one asset kind (e.g. --kind video)")
     args = p.parse_args()
@@ -383,30 +411,55 @@ def main() -> int:
 
     success = 0
     errors = 0
-    for i, row in enumerate(rows, 1):
-        asset = dict(row)
-        print(f"[{i}/{total}] {asset['asset_id'][:40]} ({asset['kind']})...", end=" ", flush=True)
 
-        result = analyze_asset(asset, dry_run=args.dry_run)
+    def _persist(asset: dict, result: dict | None, idx: int) -> None:
+        """Write one VLM result to the DB. MAIN-THREAD ONLY (sqlite is single-writer)."""
+        nonlocal success, errors
+        tag = f"[{idx}/{total}] {asset['asset_id'][:40]} ({asset['kind']})"
         if result:
             update_asset_tags(con, asset["asset_id"], result)
-            # PD 2026-06-12: COMMIT immediately after each update so the write lock is
-            # held only for the instant UPDATE — NOT across the next ~20 slow VLM calls
-            # (the old batch-of-20 transaction held the lock ~60s and made a concurrent
-            # render fail with "database is locked"). WAL + short locks = safe parallel.
+            # COMMIT immediately after each update so the write lock is held only for the
+            # instant UPDATE — NOT across slow VLM calls (the old batch-of-20 transaction
+            # held the lock ~60s and made a concurrent render fail "database is locked").
+            # WAL + short locks = safe even with parallel workers feeding this thread.
             con.commit()
             success += 1
             activity = result.get("activity", "?")
             human = "👤" if result.get("has_human") else ""
-            score = result.get("quality_score", 0)
-            print(f"✓ {activity} {human} q={score:.1f}")
+            score = result.get("quality_score", 0) or 0
+            print(f"{tag}... ✓ {activity} {human} q={score:.1f}", flush=True)
         else:
             errors += 1
-            print("✗" if not args.dry_run else "(dry)")
+            print(f"{tag}... " + ("✗" if not args.dry_run else "(dry)"), flush=True)
 
-        # Rate limiting
-        if not args.dry_run and args.delay > 0:
-            time.sleep(args.delay)
+    workers = max(1, args.workers)
+    if args.dry_run or workers == 1:
+        # Sequential path (debug / dry-run / explicit --workers 1). Keeps the legacy
+        # inter-call delay for gentle rate-limiting.
+        for i, row in enumerate(rows, 1):
+            asset = dict(row)
+            _persist(asset, analyze_asset(asset, dry_run=args.dry_run), i)
+            if not args.dry_run and args.delay > 0:
+                time.sleep(args.delay)
+    else:
+        # Parallel path: workers run the slow network call (analyze_asset) concurrently;
+        # the main thread alone touches the DB as results arrive. This is the throughput
+        # win — tagging is I/O-bound on the Gemini API, so N workers ≈ N× faster up to
+        # the account's RPM ceiling (retry/backoff in _call_gemini_vision absorbs 429s).
+        print(f"==> tagging with {workers} parallel workers")
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            fut_to_asset = {
+                ex.submit(analyze_asset, dict(row), args.dry_run): (dict(row), i)
+                for i, row in enumerate(rows, 1)
+            }
+            for fut in as_completed(fut_to_asset):
+                asset, idx = fut_to_asset[fut]
+                try:
+                    result = fut.result()
+                except Exception as e:  # noqa: BLE001
+                    log.warning("VLM worker failed for %s: %s", asset["asset_id"], str(e)[:200])
+                    result = None
+                _persist(asset, result, idx)
 
     con.commit()
     print(f"\n=== Done: {success} tagged, {errors} errors, {total} total ===")
