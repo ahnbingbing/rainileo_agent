@@ -104,7 +104,31 @@ def _db() -> sqlite3.Connection:
     return con
 
 
-def _call_gemini_vision(image_path: Path) -> dict:
+def _temporal_grounding(captured_iso: str | None) -> str:
+    """Date-aware anti-hallucination rule for the VLM (PD 2026-06-22).
+
+    The VLM was labelling ANY orange cat 'leo' and ANY black animal 'ryani' regardless
+    of when the photo was taken, so pre-adoption footage got impossible subjects (a 2020
+    clip tagged 'leo,ryani' → captioned "5년 전 레오"). Leo was born ~2025-09-25 / rescued
+    2025-11-15; Ryani (born 2015) is a DOG. Tell the model the capture date + these
+    boundaries so it stops inventing the pets into footage they can't be in."""
+    date = (captured_iso or "")[:10]
+    leo_rule = ""
+    if date and date < "2025-09-25":
+        leo_rule = (f"\n\n★IMPORTANT TEMPORAL FACT: this frame was captured on {date}. "
+                    "Leo the orange cat did NOT exist yet (born ~2025-09, rescued "
+                    "2025-11-15). Any orange/tabby cat here is therefore NOT Leo — it is "
+                    "an unknown/stray cat. Do NOT put 'leo' in subjects_visible; describe "
+                    "it as a cat, never as Leo.")
+    elif date:
+        leo_rule = f"\n\n(This frame was captured on {date}.)"
+    return (leo_rule +
+            "\n★Ryani is a DOG (black French Bulldog, no tail) — NEVER label a CAT as "
+            "'ryani'. If an animal is a cat, it is at most Leo (only when the date allows) "
+            "or an unknown cat, never Ryani.")
+
+
+def _call_gemini_vision(image_path: Path, captured_iso: str | None = None) -> dict:
     """Send image to Gemini Flash vision and return parsed JSON.
 
     PD 2026-06-03 migration: switched from `google.generativeai` (deprecated,
@@ -158,7 +182,7 @@ def _call_gemini_vision(image_path: Path) -> dict:
                 model=model_name,
                 contents=[
                     _types.Part.from_bytes(data=buf.getvalue(), mime_type="image/jpeg"),
-                    ANALYSIS_PROMPT,
+                    ANALYSIS_PROMPT + _temporal_grounding(captured_iso),
                 ],
                 config=cfg,
             )
@@ -224,7 +248,7 @@ def analyze_asset(asset: dict, dry_run: bool = False) -> dict | None:
         return None
 
     try:
-        result = _call_gemini_vision(analyze_path)
+        result = _call_gemini_vision(analyze_path, captured_iso=asset.get("captured_iso"))
         return result
     except Exception as e:
         log.warning("VLM failed for %s: %s", asset["asset_id"], str(e)[:200])

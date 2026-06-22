@@ -222,7 +222,7 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
     _photo_rows = _diversity_sample(_photo_rows, 70, loc_col="location_type",
                                     act_col="activity")
     best_photos = [
-        {"id": r["asset_id"], "act": r["activity"] or "", "sub": r["subjects_csv"] or "",
+        {"id": r["asset_id"], "act": r["activity"] or "", "sub": _ground_subjects(r["subjects_csv"], r["captured_iso"]),
          "mood": r["mood"] or "", "bg": r["background"] or "",
          "sc": _ground_truth_sc(r),
          **_extra_vlm(r)}
@@ -285,7 +285,7 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
     _video_rows = _diversity_sample(_video_rows, 100, loc_col="location_type",
                                     act_col="activity")
     best_videos = [
-        {"id": r["asset_id"], "act": r["activity"] or "", "sub": r["subjects_csv"] or "",
+        {"id": r["asset_id"], "act": r["activity"] or "", "sub": _ground_subjects(r["subjects_csv"], r["captured_iso"]),
          "mood": r["mood"] or "", "sc": _ground_truth_sc(r),
          "dur": r["duration_sec"], "date": (r["captured_iso"] or "")[:10],
          "loc": r["location_type"] or "",
@@ -353,7 +353,7 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
         _per_year[yr] = _per_year.get(yr, 0) + 1
         archive_videos.append({
             "id": r["asset_id"], "act": r["activity"] or "",
-            "sub": r["subjects_csv"] or "", "mood": r["mood"] or "",
+            "sub": _ground_subjects(r["subjects_csv"], r["captured_iso"]), "mood": r["mood"] or "",
             "sc": _ground_truth_sc(r), "dur": r["duration_sec"],
             "date": (r["captured_iso"] or "")[:10],
             "years_ago": _years_ago(r["captured_iso"] or ""),
@@ -388,7 +388,7 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
         _ppy[yr] = _ppy.get(yr, 0) + 1
         archive_photos.append({
             "id": r["asset_id"], "act": r["activity"] or "",
-            "sub": r["subjects_csv"] or "", "mood": r["mood"] or "",
+            "sub": _ground_subjects(r["subjects_csv"], r["captured_iso"]), "mood": r["mood"] or "",
             "bg": r["background"] or "", "sc": _ground_truth_sc(r),
             "date": (r["captured_iso"] or "")[:10],
             "years_ago": _years_ago(r["captured_iso"] or ""),
@@ -782,6 +782,22 @@ def _ensure_uploaded_column(con: sqlite3.Connection) -> None:
             log.info("added cards.uploaded column")
     except Exception as e:
         log.warning("ensure uploaded column failed: %s", e)
+
+
+def _ground_subjects(subjects_csv: "str | None", captured_iso: "str | None") -> str:
+    """Strip temporally-impossible pets from a clip's VLM subjects (PD 2026-06-22).
+
+    The VLM tagger labels ANY orange cat 'leo' even in footage that predates his
+    ~2025-10 adoption (and any black animal 'ryani'), so old clips carry impossible
+    subjects (a 2020 clip tagged 'leo,ryani'). The Writer trusts `sub` verbatim and
+    captioned "5년 전 레오". canon.pet_exists_on is the single existence boundary; drop
+    any pet that couldn't be in this clip's date so the Writer never names them."""
+    if not subjects_csv:
+        return ""
+    from agents import canon
+    kept = [s for s in (x.strip() for x in str(subjects_csv).split(","))
+            if s and canon.pet_exists_on(s, captured_iso)]
+    return ",".join(kept)
 
 
 def _recently_used_rf_assets(con: sqlite3.Connection,
@@ -1846,18 +1862,66 @@ def _rf_cooldown_sessions(cooldown: "set[str]") -> "set[str]":
     return {k for k in (_rf_session_key(a) for a in cooldown) if k}
 
 
+def _recently_used_rf_primary_sessions(con: sqlite3.Connection,
+                                       n: int = RF_CLIP_COOLDOWN_EPISODES) -> "set[str]":
+    """Shoot-sessions (capture dates) that were the PRIMARY outing of a recently
+    PRODUCED RF card — defined as that card drawing >=2 cuts from that session.
+
+    This is the reconciliation of two opposite past bugs:
+      • 2026-06-17: cooling a whole session whenever ANY one clip of it was used was
+        too coarse — a past episode that used a single flash from a rich outing locked
+        the Writer out of ever building a proper montage from that outing.
+      • 2026-06-22: cooling only the EXACT asset_id was too loose — a second episode
+        (카페 fXIY) reused the SAME 2025-11-21 cafe outing as an earlier one via
+        DIFFERENT files, so it looked like a re-run.
+    Cooling only PRIMARY (>=2-cut) sessions of already-produced cards kills the
+    same-outing re-run while leaving incidentally-touched and brand-new outings fully
+    pickable. Counts produced drafts too (denylist state filter), so unuploaded
+    same-outing dups are caught without depending on the published-only reviewer."""
+    out: set[str] = set()
+    try:
+        _k = int(os.getenv("RF_COOLDOWN_RECENT_CARDS", str(max(n, 8) * 3)))
+    except Exception:
+        _k = max(n, 8) * 3
+    if _k <= 0:
+        return out
+    try:
+        rows = con.execute(
+            "SELECT payload_json FROM cards WHERE render_style='real_footage' "
+            "AND state NOT IN ('discarded','vetoed','failed','rejected') "
+            "ORDER BY created_at DESC LIMIT ?", (_k,)).fetchall()
+        for r in rows:
+            try:
+                p = json.loads(r[0] or "{}")
+            except Exception:
+                continue
+            counts: dict[str, int] = {}
+            for c in (p.get("cuts") or []):
+                aid = c.get("asset_id") or (c.get("asset") or {}).get("asset_id")
+                sk = _rf_session_key(aid) if aid else None
+                if sk:
+                    counts[sk] = counts.get(sk, 0) + 1
+            out.update(sk for sk, ct in counts.items() if ct >= 2)
+    except Exception as e:
+        log.warning("primary-session cooldown lookup failed: %s", e)
+    return out
+
+
 def _rf_is_cooled(v: dict, cooldown: "set[str]", sessions: "set[str]") -> bool:
     """Cooled if the clip's EXACT asset_id was recently used.
 
-    PD 2026-06-17: the session-level cooldown (cool the whole shoot DAY when any one
-    clip is used) was TOO COARSE — it locked out an entire coherent outing. A cafe
-    VISIT has many DIFFERENT moments (explore / nap / lying together), not near-dups;
-    cooling the day made the pipeline unable to find/group good same-day footage ("이걸
-    왜 못찾는거야"). Back to exact-asset_id cooldown; near-DUPLICATE same-session clips
-    (the water_peppy 115132≈115456 case) are caught by the reviewer footage-overlap
-    (vis_phash), not by blanket session exclusion. `sessions` kept for signature compat."""
+    PD 2026-06-22: `sessions` is now the set of PRIMARY (>=2-cut) outings of already-
+    produced cards (see _recently_used_rf_primary_sessions), NOT every touched session.
+    Cool a clip if its exact id was used OR its outing was the primary subject of a past
+    episode — this stops the same-outing re-run (카페 fXIY reused the 2025-11-21 cafe via
+    different files) WITHOUT the 2026-06-17 over-coarseness (a single past flash no longer
+    locks out a whole rich outing the Writer wants to build from fresh). The call site's
+    >=6 relax still protects the Writer from being starved."""
     vid = v.get("id") or v.get("asset_id")
-    return bool(vid) and vid in cooldown
+    if bool(vid) and vid in cooldown:
+        return True
+    sk = _rf_session_key(vid) if vid else None
+    return bool(sk) and sk in sessions
 
 
 def _rf_temporal_coherence(concept: dict, target_year: int) -> list[str]:
@@ -2022,7 +2086,9 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     try:
         _con = _db()
         cooldown = _recently_used_rf_assets(_con)
-        _cool_sessions = _rf_cooldown_sessions(cooldown)
+        # PD 2026-06-22: cool the PRIMARY outing of past episodes (>=2 cuts), not every
+        # touched session — re-run prevention without 6/17 over-coarseness.
+        _cool_sessions = _recently_used_rf_primary_sessions(_con)
         before = len(avail_videos)
         filtered = [v for v in avail_videos if not _rf_is_cooled(v, cooldown, _cool_sessions)]
         # Safety: don't starve the writer. If the cooldown leaves too few clips

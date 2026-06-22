@@ -37,6 +37,7 @@ RYANI = {
     "tail": "NO tail",               # French Bulldog — never render a tail
     "blaze": "THIN narrow white Boston-Terrier-style blaze",  # a fine line, NOT a wide splash
     "ears": "large UPRIGHT bat ears (erect, pointed up — NOT folded rose ears)",  # PD 2026-06-10
+    "exists_from": "2015-05-05",     # born — cannot appear in footage before this
 }
 LEO = {
     "name_ko": "레오",
@@ -45,7 +46,23 @@ LEO = {
     "sex_ko": "수컷",
     "age_months": 8,                 # NEVER "veteran"/senior/11년차
     "eyes_en": "pale yellow-green / chartreuse",  # NOT gold, NOT amber
+    # Born ~2025-09-25, rescued 2025-11-15. He CANNOT appear in any earlier footage —
+    # an orange cat in pre-2025 clips is a different/stray cat, NOT Leo. (PD 2026-06-22:
+    # a 2020 clip got captioned "5년 전 레오"; this date is the machine-usable boundary
+    # the VLM tagger + subject guard read so that can't happen again.)
+    "exists_from": "2025-09-25",
 }
+
+
+def pet_exists_on(pet: str, captured_iso: "str | None") -> bool:
+    """Could `pet` (canonical key 'ryani'/'leo') appear in footage captured at
+    captured_iso? Missing/blank date or unknown pet → True (never strip on no data).
+    The single source for temporal subject grounding — VLM tagger, the producer RF
+    subject guard, and any caption check all read this, so the boundary is defined once."""
+    if not captured_iso:
+        return True
+    ef = {"ryani": RYANI, "leo": LEO}.get((pet or "").strip().lower(), {}).get("exists_from")
+    return True if not ef else str(captured_iso)[:10] >= ef
 
 # ──────────────────────────────────────────────────────────────────────
 # Rendered blocks — authoritative text. Edit HERE; consumers import these.
