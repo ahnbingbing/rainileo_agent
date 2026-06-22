@@ -5576,6 +5576,41 @@ def _concept_is_multi_location(payload: dict) -> bool:
     return len(buckets) >= 2
 
 
+def _concept_is_continuous_take(payload: dict) -> bool:
+    """True ONLY for a single CONTINUOUS-MOMENT ai_vtuber concept — one unbroken take
+    where each cut literally continues the previous cut's motion, so seeding each cut
+    from the prior cut's last frame (chain mode) is correct.
+
+    DEFAULT FALSE. Most AV concepts are multi-action MONTAGES — each cut is a distinct
+    trick/beat, often a different subject (랴니 코→랴니 브이→레오 꼬리잡기→…). There the
+    per-cut action-still IS the cut's content; auto-chaining discards that still and
+    feeds Seedance the previous cut's last frame instead, so cut 1's drift (Seedance's
+    push-in) cascades and EVERY later cut collapses into cut 1's ending — captions then
+    match nothing (PD 2026-06-22: the 장기 대결 episode rendered as one sleepy-dog
+    close-up across all cuts). For a montage, each cut must drive Seedance from its OWN
+    still.
+
+    Chaining is opt-IN: an explicit continuous-take flag on the concept AND a single
+    consistent subject across the (non-wink) cuts. A subject change across cuts is, by
+    itself, proof of a montage → never auto-chain. The wink_ending still chains via its
+    own per-cut `chain_from_prev` (it is a true continuation of the last cut)."""
+    if not payload:
+        return False
+    flag = str(payload.get("editing_concept") or payload.get("shot_structure")
+               or payload.get("structure") or "").strip().lower()
+    declared = (payload.get("continuous_take") is True
+                or flag in {"one_take", "oner", "long_take", "single_take", "continuous"})
+    if not declared:
+        return False
+    subs = {
+        str(c.get("who") or c.get("subjects") or "").strip().lower()
+        for c in (payload.get("cuts") or [])
+        if isinstance(c, dict) and c.get("function") != "wink_ending"
+    }
+    subs.discard("")
+    return len(subs) <= 1
+
+
 def _pick_real_both_pets_seed() -> Path | None:
     """A REAL marking-correct photo of BOTH pets, with a local file. Seeding the
     concept reference from a real photo makes the model COPY the real markings
@@ -6311,18 +6346,23 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         # and use that as the i2v first_frame. Cascades bg/character
         # continuity through the cut chain. Cut 1 still uses regen still
         # or asset_id-based first_frame (set above).
-        # PD 2026-06-13: make chaining the DEFAULT for single-location ai_vtuber
-        # concepts — each cut was a FRESH regen, so the background drifted (the bench
-        # cushions / pillows / drawers shifted across the last cuts). Seeding each cut
-        # from the previous cut's last frame keeps the background pixel-continuous
-        # (Seedance 2.0 has no native scene-chaining; this is the workaround). Only
-        # within a locked single scene (multi-location keeps fresh regen to relocate);
-        # disable with AV_CHAIN_CUTS=0. Tradeoff: continuity vs slow drift over a long
-        # chain — acceptable for a 5-6 cut single-room episode.
+        # Auto-chain is opt-IN, for a CONTINUOUS-TAKE concept only (PD 2026-06-22).
+        # History: 2026-06-13 this auto-chained EVERY single-location AV concept to keep
+        # the background pixel-continuous (cushions/pillows had drifted across fresh
+        # regens). But single-LOCATION ≠ single-MOMENT: a 거실 "각자 장기 대결" is one room
+        # yet a MONTAGE — each cut a different trick/subject. Chaining there discarded
+        # each cut's own action-still and fed Seedance the previous cut's last frame, so
+        # cut 1's push-in drift cascaded and every cut collapsed into one sleepy-dog
+        # close-up — all captions then matched nothing. Fix: chain ONLY when the concept
+        # is a declared continuous take with a single consistent subject; otherwise each
+        # cut drives Seedance from ITS OWN still (background stays consistent anyway via
+        # the validated concept_ref + scene-lock seed). Per-cut chain_from_prev (e.g. the
+        # wink) is always honored. Global kill: AV_CHAIN_CUTS=0.
         _av_chain_on = (
             (card.get("render_style") or "").lower() == "ai_vtuber"
             and os.getenv("AV_CHAIN_CUTS", "1") != "0"
             and not _concept_is_multi_location(payload)
+            and _concept_is_continuous_take(payload)
         )
         if (cc.get("chain_from_prev") or _av_chain_on) and i > 0:
             prev_tag = cuts[i - 1].get("tag")

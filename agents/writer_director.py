@@ -2357,14 +2357,34 @@ def _consolidate_short_to_one_take(c: dict) -> None:
     }
     def _shot_ord(s):
         return _SHOT_ORD.get((s or "").strip().lower().replace("-", "_"), 3)
+
+    def _pets_in(cut: dict) -> frozenset:
+        """The PET subjects of a cut (ryani/leo), ignoring human_hand. A cut that
+        focuses on a different pet than the previous one is a montage beat, not a
+        continuation — chaining it from the prev pet's last frame is wrong."""
+        t = (str(cut.get("who") or "") + " "
+             + " ".join(str(s) for s in (cut.get("subjects") or []))).lower()
+        t = t.replace("랴니", "ryani").replace("레오", "leo")
+        return frozenset(p for p in ("ryani", "leo") if p in t)
+
     _chain_delta = int(os.getenv("AV_CHAIN_SHOT_DELTA", "2"))
     for i, cut in enumerate(cuts):
         cut["duration_seconds"] = min(int(cut.get("duration_seconds") or 5), 5)
+        prev = cuts[i - 1] if i > 0 else None
+        # PD 2026-06-22: break the chain (independent ref render from the cut's OWN
+        # still) on a SUBJECT change too, not only a big framing change. A single-space
+        # episode can still be a multi-action MONTAGE (랴니 코→랴니 브이→레오 꼬리잡기→…);
+        # chaining a leo cut from a ryani cut's last frame discarded the leo still and
+        # collapsed the cut into the prior dog frame, so the caption matched nothing.
+        big_shot_change = (prev is not None and abs(
+            _shot_ord(cut.get("shot_size")) - _shot_ord(prev.get("shot_size"))) >= _chain_delta)
+        subject_change = (prev is not None
+                          and _pets_in(cut) and _pets_in(prev)
+                          and _pets_in(cut) != _pets_in(prev))
         if i == 0:
             cut.setdefault("seedance_mode", "ref")
-        elif abs(_shot_ord(cut.get("shot_size"))
-                 - _shot_ord(cuts[i - 1].get("shot_size"))) >= _chain_delta:
-            # big framing change → independent ref-mode render (new composition)
+        elif big_shot_change or subject_change:
+            # new composition (framing or subject) → render from this cut's own still
             cut["seedance_mode"] = "ref"
             cut["chain_from_prev"] = False
         else:

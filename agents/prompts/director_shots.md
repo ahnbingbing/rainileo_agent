@@ -60,9 +60,16 @@ For `render_style = real_footage`: default cuts to `"real"`. Use `"interp"` only
 
 **Episode format awareness.** `episode_format` (`short`/`mid`) sets the video LENGTH,
 not the story size. Both carry the Writer's full causal arc + kick across MULTIPLE
-chained cuts (cut 1 = ref mode; cut 2+ = `chain_from_prev` i2v, so each cut continues
-from the previous cut's last frame). The Writer fixes the cut count and per-cut beats;
-you assign cinematography per cut. Do not collapse a short to a single cut.
+cuts. Cut 1 = ref mode. Cut 2+ chains (`chain_from_prev` i2v, continuing from the
+previous cut's last frame) ONLY when it stays on the SAME subject in a similar framing;
+a cut that switches the pet (랴니↔레오) or changes shot_size sharply renders INDEPENDENTLY
+in ref mode from its OWN still. Why: chaining freezes the previous frame, so a new
+subject or a new action never appears and its caption matches nothing (a "now Leo's
+turn" cut chained off a Ryani frame stays Ryani — Leo's move vanishes). So your
+`shot_size` and the cut's `who` are what decide chaining — vary them deliberately when a
+beat needs its own composition, and each beat renders distinctly. The Writer fixes the
+cut count and per-cut beats; you assign cinematography per cut. Do not collapse a short
+to a single cut.
 
 - **`short`** (~25-30s): keep the Writer's cut count — it follows the story's beats (up
   to ~8 video cuts; readability floor ~2.5s per captioned video cut). Set each cut's
@@ -265,7 +272,7 @@ PD 2026-06-08: if a cut's gag/payoff is a pet **drinking or interacting with wat
 PD 2026-06-08 (욕실편 "레오 등장" 오류): the Writer's beat was a reveal — "그때, 랴니의 시야에 들어온 누군가" (Leo appears) — a good dramatic beat. But the cuts kept Leo **statically sitting in the background the whole take**, so the "appears" caption became a lie. The fix is NOT to weaken the caption — it's to **stage the entrance in the motion_prompt and deliver it via i2v**, so the appearance is REAL.
 
 When a caption/beat introduces or reveals a character ("등장", "나타나다", "시야에 들어온", "고개를 내밀다", "그때 누군가"):
-1. **That character must be ABSENT (off-frame) in the cut(s) BEFORE the reveal.** In chain mode this is critical: each cut chains from the previous cut's last frame, so if the character is in the earlier frame they're already on screen and CANNOT enter. Plan their on-screen timeline: keep them out of the setup cuts' motion_prompts entirely.
+1. **That character must be ABSENT (off-frame) in the cut(s) BEFORE the reveal.** Keep them out of the setup cuts' motion_prompts entirely — if they already sit in an earlier frame they're on screen and CANNOT "enter". (A reveal cut that brings in a NEW pet auto-renders independently from its own still — a subject switch breaks the chain — so the entrance CAN render; but only if the setup cuts kept that pet off-frame.)
 2. **In the reveal cut, write the motion_prompt so the character physically ENTERS the frame** — e.g. "the orange tabby walks IN from the right edge of frame / pokes his head in from behind the doorway / steps into view from off-screen left", with a clear from-off-screen direction. Use `seedance_mode="ref"` (or i2v from a first frame that does NOT yet contain the character) so the entrance can actually render.
 3. If you CANNOT stage a true entrance (e.g. the chosen footage/refs force the character to be present), then change the beat/caption to match reality ("뒤에서 지켜보던 레오") — never claim an entrance the render won't show.
 
