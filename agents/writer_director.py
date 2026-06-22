@@ -2540,11 +2540,14 @@ def _pick_wink_subject(c: dict) -> str:
     """Pick Leo vs Ryani for the wink ending based on STORY WINNER, not
     mention count.
 
-    PD 2026-06-01 PM: "스토리상 랴니가 윙크해야지. 레오걸 뺐어 먹었으니까."
-    The winner = whoever pulled off the gag / outsmarted the other / stole
-    something / acted while the other was unaware. NOT whoever was named
-    last in captions (that's often the LOSER — the one whose obliviousness
-    is the punchline).
+    The winner = whoever the PUNCHLINE lands in favor of / who ended up with
+    the payoff. That includes the active schemer (outsmarted / stole / teased)
+    AND the passive beneficiary who simply ended up with it (e.g. Leo ate all of
+    Ryani's food → Leo; Ryani only THOUGHT she got the treat but Leo ate it →
+    Leo). NOT whoever was named last in captions — that's often the LOSER whose
+    obliviousness / misbelief IS the punchline. The Writer should set the
+    explicit `wink_subject`; this keyword guess is a fallback and can't reliably
+    read a semantic twist, so it never overrides the explicit field.
 
     Priority: explicit `wink_subject` field on concept → schemer/winner
     patterns in captions → loser-pattern inverted → subjects[0] → ryani.
@@ -2580,6 +2583,9 @@ def _pick_wink_subject(c: dict) -> str:
             "랴니가 챙겨", "랴니가 줍", "랴니가 먼저", "랴니가 가져",
             "랴니가 뺏어", "랴니의 회수", "랴니가 챙겼", "랴니가 발견",
             "랴니가 약올", "랴니가 놀려", "랴니가 장난", "랴니: 이거",
+            # 결국 차지한 수혜자도 승자 (PD: 능동 갸그가 아니어도 펀치라인이 향한 쪽)
+            "랴니가 다 먹", "랴니가 먹어치", "랴니가 독차지", "랴니가 차지",
+            "랴니가 꿀꺽", "랴니가 낼름", "랴니가 혼자 다",
         ],
         "leo": [
             "레오의 작전", "레오가 슬쩍", "레오가 회수", "레오가 가로채",
@@ -2587,6 +2593,8 @@ def _pick_wink_subject(c: dict) -> str:
             "레오의 회수", "레오가 챙겼", "레오가 발견",
             "레오가 약올", "레오가 놀려", "레오가 장난", "레오: 이거",
             "레오가 꼬리", "레오의 꼬리", "레오가 시전",
+            "레오가 다 먹", "레오가 먹어치", "레오가 독차지", "레오가 차지",
+            "레오가 꿀꺽", "레오가 낼름", "레오가 혼자 다",
         ],
     }
     for subj, patterns in winner_patterns.items():
