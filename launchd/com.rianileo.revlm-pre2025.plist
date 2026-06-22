@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  One-shot re-VLM of pre-adoption footage (PD 2026-06-22), scheduled 07:10 KST.
+  Clears the residue where old clips' scene_description prose still names a stray cat
+  "레오" or labels a cat as the dog Ryani. Runs scripts/revlm_pre2025_oneshot.sh, which
+  re-tags pre-2025 cat-mentioning rows with the date-aware grounding prompt and then
+  self-disables (done-marker + self-unload) so it never repeats.
+
+  Offset to 07:10 so it does NOT collide with com.rianileo.petlabel-backlog (07:00).
+
+  Install:
+      cp launchd/com.rianileo.revlm-pre2025.plist ~/Library/LaunchAgents/
+      launchctl unload ~/Library/LaunchAgents/com.rianileo.revlm-pre2025.plist 2>/dev/null
+      launchctl load   ~/Library/LaunchAgents/com.rianileo.revlm-pre2025.plist
+  Re-run later: rm data/logs/.revlm_pre2025_done, re-copy + reload the plist.
+  Cancel before 7am: launchctl unload ~/Library/LaunchAgents/com.rianileo.revlm-pre2025.plist
+  Logs: data/logs/revlm_pre2025_residue.log
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key><string>com.rianileo.revlm-pre2025</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/bin/bash</string>
+      <string>/Users/ahnbingbing/code/rianileo-agent/scripts/revlm_pre2025_oneshot.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key><string>/Users/ahnbingbing/code/rianileo-agent</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>TZ</key><string>Asia/Seoul</string>
+      <key>PATH</key><string>/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin</string>
+      <key>LOG_LEVEL</key><string>INFO</string>
+    </dict>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+      <key>Hour</key><integer>7</integer>
+      <key>Minute</key><integer>10</integer>
+    </dict>
+
+    <key>RunAtLoad</key><false/>
+
+    <key>StandardOutPath</key><string>/Users/ahnbingbing/code/rianileo-agent/data/logs/revlm_pre2025.out.log</string>
+    <key>StandardErrorPath</key><string>/Users/ahnbingbing/code/rianileo-agent/data/logs/revlm_pre2025.err.log</string>
+  </dict>
+</plist>
