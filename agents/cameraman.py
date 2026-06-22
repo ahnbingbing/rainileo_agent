@@ -1394,6 +1394,9 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
             "a faint subtle eyebrow-like white mark above each eye (NOT a bold round dot), "
             "silver-grey aged muzzle, white chin, "
             "white chest patch. Only black/white/grey — no brown. "
+            "The NAPE (back of the neck / behind the head), spine and back are SOLID "
+            "BLACK — no white spot, dot or patch there (only the FRONT throat/chest is "
+            "white; a white dot on the BACK of the neck is a hallucination — remove it). "
             "ABSOLUTELY NO TAIL (French Bulldog — her rear is bare and "
             "tailless; never render any tail). "
             "Leo is MALE (he/him, 8mo young male orange tabby — channel's "
@@ -2882,7 +2885,9 @@ def _append_character_canon(prompt: str) -> str:
             "silver-grey aged muzzle, white chin, "
             "large white chest patch, bat ears, ABSOLUTELY NO TAIL, petite "
             "refined feminine body (NOT muscular), only black/white/grey — no "
-            "brown. Keep her EXACTLY as in the source photo."
+            "brown. The NAPE (back of the neck) / spine / back are SOLID BLACK — no "
+            "white spot or patch there (white is the FRONT throat/chest only). "
+            "Keep her EXACTLY as in the source photo."
         )
         if "Boston Terrier-style white blaze" not in prompt:
             prompt = prompt + " " + ryani_canon

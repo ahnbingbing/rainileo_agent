@@ -91,9 +91,18 @@ Kill switch: `BOARD_PICKER_ENABLED=0` or `launchctl unload`.
    above).
 
 ## Still open (from prior handoffs, not addressed)
-- ★ 흰점(목/등) image-fix for Ryani markings.
 - RF freshness tuning (broader than the outing fix).
-- 삐용이 canon promotion into canon.py/character_sheets.
+
+### DONE 2026-06-22 (later) — Ryani markings + 삐용이
+- **흰점(목뒤) fix**: PD clarified 목**앞**(throat)=흰색 OK / 목**뒤**(nape)=순검정. Superseded the
+  coarse "neck SOLID BLACK" canon (which both let the nape-dot slip and risked suppressing the
+  legit front-throat white) across canon.py (RYANI_MARKING/RYANI_IMAGE_CANON/REVIEW_RYANI),
+  cameraman.py (preserve + _append_character_canon), generate_ref_sheets.py, character_sheets.md.
+  Reviewer now flags a nape/back-of-neck white spot but NOT the front-throat white. Same pass
+  fixed a stale ref_sheets eye-dot drift. (memory `ryani_nape_no_white`)
+- **삐용이 promoted**: into canon.CHARACTER_FACTS friend-cast (alongside 태풍/남산이) + RF prompts
+  (realfootage_concept.md, writer_realfootage.md) — tail/tuxedo disambiguation (꼬리 달린 흑백 개 =
+  삐용이 ≠ 꼬리없는 랴니) + 추모-민감 tone guard. (memory `bbiyong_canon`)
 
 ## Notes
 - Verify YouTube state via **live API**, never the DB (memory `verify_youtube_state_via_api`).

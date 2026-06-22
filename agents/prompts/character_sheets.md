@@ -84,10 +84,11 @@ Pick the segment matching the story's time setting:
   - **은회색 주둥이** — 나이로 인해 주둥이와 볼이 은회색으로 변함. 할아버지 수염처럼 보임. 얼굴에서 가장 넓은 밝은 영역.
   - **눈썹 마킹** — 양쪽 눈 바로 위에 흰색/밝은 회색 패치가 눈썹처럼 있음. 검은 이마와 뚜렷한 대비.
   - **눈 주변** — 양쪽 눈 소켓 주위에 밝은 회색 톤. 안경처럼 보임. (주의: 따뜻한 조명에서 갈색처럼 보일 수 있지만 **실제 색은 회색/흰색**)
-  - **흰 턱** — 주둥이 은회색에서 턱의 흰색으로 자연스럽게 이어짐.
+  - **흰 턱** — 주둥이 은회색에서 턱의 흰색으로 자연스럽게 이어짐. 이 턱 흰색은 **목 앞쪽(throat)을 타고 내려와 가슴 흰 패치로 이어진다** — 목**앞**은 흰색이 맞으니 유지.
+  - **목뒤·등은 순검정** — 흰 마킹은 이마 블레이즈 + 눈썹 + 턱 + **목앞/가슴** + 발끝뿐이다. **목뒤(뒷덜미)·척추·등은 흰점/흰패치 없이 순검정**이어야 한다. i2v/이미지 모델이 **목 뒤쪽에 흰 점/패치를 헛것으로** 그리는 경향이 있는데 그건 오류 — 목뒤는 까맣게.
   - **색상 원칙**: 랴니 얼굴은 **검정 + 흰색 + 회색** 3색만 존재. 갈색/탄색은 없음. 조명에 따라 따뜻하게 보일 뿐.
   - **Veo 프롬프트 표준 문구 (vF2 — 58회 테스트 최적)**: 
-    "White markings on her black face: a thin Boston Terrier-style white blaze (NARROW line, not the typical wide splash) from nose to forehead, a faint subtle eyebrow-like white mark above each eye (small and thin, NOT a bold round dot). The center forehead blaze stays a THIN pencil-width line — never a thick/wide stripe. Silver-grey aged muzzle. White chin. Large white chest patch. Bat ears. No tail. Only black, white, grey — no brown."
+    "White markings on her black face: a thin Boston Terrier-style white blaze (NARROW line, not the typical wide splash) from nose to forehead, a faint subtle eyebrow-like white mark above each eye (small and thin, NOT a bold round dot). The center forehead blaze stays a THIN pencil-width line — never a thick/wide stripe. Silver-grey aged muzzle. White chin (the chin-white flows down the FRONT of the throat into the chest patch). Large white chest patch. The NAPE (back of the neck), spine and back are SOLID BLACK — no white spot, dot or patch on the back of the neck. Bat ears. No tail. Only black, white, grey — no brown."
   - **사진 퀄리티 부스터** (프롬프트 앞에 추가): "Professional pet portrait photograph. 85mm, f/1.8, warm natural light."
 - **BODY WHITE MARKINGS** (must ALWAYS be visible):
   - **Large white chest patch** — broad and prominent, extends from under chin down the chest. Very visible from front view.
