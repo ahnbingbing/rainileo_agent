@@ -1308,6 +1308,19 @@ def _enforce_wink_empty_captions(c: dict) -> None:
     if new_cuts and new_cuts[-1] is not closer:
         new_cuts = [cut for cut in new_cuts if cut is not closer] + [closer]
     c["cuts"] = new_cuts
+    # PD 2026-06-23: the 햅삐 sign-off also leaked into a STORY cut's CAPTION (a closer
+    # wrote "오늘도 햅삐 ♥" before the wink) → the episode showed "오늘도 햅삐" TWICE. The
+    # warm sign-off belongs ONLY to the final wink, so scrub it from every non-closer cut's
+    # captions (drop the offending scene; keep the cut's other scenes).
+    for _cut in new_cuts:
+        if _cut is closer:
+            continue
+        _scs = _cut.get("captions") or []
+        _kept = [s for s in _scs if not (isinstance(s, dict) and (
+            "오늘도 햅삐" in (s.get("ko", "") or "")
+            or "happy as ever" in (s.get("en", "") or "").lower()))]
+        if len(_kept) != len(_scs):
+            _cut["captions"] = _kept
     # PD 2026-06-17: Seedance spontaneously winks/blinks pets even when NO cut asked
     # for it → a stray wink right before the closing wink (PD kept seeing a double
     # wink with clean concepts). Pin every NON-closer cut to eyes-open so the only
