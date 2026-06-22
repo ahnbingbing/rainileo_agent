@@ -761,7 +761,23 @@ def _generate_t2v_manifests(card: dict, concept: dict, concept_cuts: list[dict],
     import hashlib as _h
     card_id = card.get("card_id", "") or concept.get("title", "") or "default"
     seed = int(_h.sha1(card_id.encode("utf-8")).hexdigest()[:8], 16)
-    bgm_file = candidates[seed % len(candidates)]
+    # PD 2026-06-23 ("왜 또 맨날 똑같은거"): recently-used cooldown so BGM doesn't repeat.
+    # Exclude the last ~12 picked tracks; pick from the fresh remainder (still deterministic
+    # by card hash). Only falls back to the full list if every candidate is on cooldown.
+    import json as _json
+    _recent_path = ROOT / "data" / "tmp" / ".recent_bgm.json"
+    try:
+        _recent = [str(x) for x in _json.loads(_recent_path.read_text(encoding="utf-8"))][-12:]
+    except Exception:
+        _recent = []
+    _fresh = [c for c in candidates if c not in _recent]
+    _pool = _fresh if _fresh else candidates
+    bgm_file = _pool[seed % len(_pool)]
+    try:
+        _recent_path.parent.mkdir(parents=True, exist_ok=True)
+        _recent_path.write_text(_json.dumps((_recent + [bgm_file])[-12:]), encoding="utf-8")
+    except Exception:
+        pass
     result["bgm"] = str(ROOT / "assets" / "bgm" / bgm_file)
     result["bgm_mood_used"] = bgm_mood
     result["bgm_pick_count"] = len(candidates)
@@ -1625,21 +1641,25 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
         return
 
     _sys = (
-        "You verify ONE caption against ONE video frame for the pet channel 'Ryani & Leo'. "
+        "You verify ONE caption against TWO frames (A = earlier, B = later) from the SAME "
+        "scene of a pet-channel clip ('Ryani & Leo'). Two frames let you judge MOTION. "
         "Our two pets: RYANI = a small BLACK French bulldog (white chin/chest/paws, GREY "
-        "muzzle, NO tail). LEO = an ORANGE tabby cat. You get the frame + the caption shown "
-        "over it. Answer ONLY JSON: {\"ryani_visible\":bool, \"leo_visible\":bool, "
-        "\"other_animal\":\"short desc or empty (e.g. golden retriever, corgi)\", "
-        "\"frame_ok\":bool (IMAGE QUALITY only — false ONLY if the picture itself is too "
-        "dark, blown-out, or blurry to judge what's in it; a CLEAR frame that simply has no "
+        "muzzle, NO tail). LEO = an ORANGE tabby cat. Answer ONLY JSON: {\"ryani_visible\":bool, "
+        "\"leo_visible\":bool, \"other_animal\":\"short desc or empty (e.g. golden retriever, "
+        "corgi)\", \"frame_ok\":bool (IMAGE QUALITY only — false ONLY if the pictures are too "
+        "dark, blown-out, or blurry to judge what's in them; a CLEAR frame that simply has no "
         "pet in it — a person, hand, water, or scenery — is frame_ok=TRUE, NOT false), "
-        "\"caption_matches\":bool (does the caption fairly describe THIS frame? false if it "
-        "names a pet not in frame, calls a different animal/breed our pet, claims an "
-        "action the frame contradicts, OR claims a PLACE/SETTING the frame contradicts — "
-        "e.g. caption says indoors/'집 안'/'거실'/'카페' but the frame is clearly OUTDOORS "
-        "(road, field, rooftop, park), or says an outdoor '산책길' but the frame is clearly "
-        "INDOORS), \"action\":\"≤12-word Korean of what actually happens\"}. Judge THIS "
-        "single frame, literally and strictly.")
+        "\"moving\":bool (does the pet actually MOVE between A and B — walks/steps/comes closer/"
+        "turns away/leaps? true=locomotion, false=STATIONARY i.e. stays in the same spot, "
+        "sitting/lying/just eating or chewing in place), "
+        "\"caption_matches\":bool (does the caption fairly describe these frames? false if it "
+        "names a pet not in frame, calls a different animal/breed our pet, claims a PLACE the "
+        "frames contradict (says 거실/카페/집 but clearly OUTDOORS, or says 산책길 but clearly "
+        "INDOORS), OR claims an ACTION the frames contradict — ESPECIALLY a LOCOMOTION claim "
+        "(걷다/다가오다/순찰/스텝/스텔스/돌아다니다/달리다/뛰다/쫓다/지나간다) while moving=false: a "
+        "stationary pet captioned as patrolling/stepping/sneaking is a MISMATCH), "
+        "\"action\":\"≤12-word Korean of what ACTUALLY happens; if the pet is stationary say so "
+        "(e.g. '레오가 가만히 앉아 받아먹는다')\"}. Judge literally and strictly from the two frames.")
 
     def _frame_at(mp4: Path, t: float):
         jpg = work_dir / f"_gg_{mp4.stem}_{t:.1f}.jpg"
@@ -1648,20 +1668,30 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
                        capture_output=False, timeout=15)
         return jpg if (jpg.exists() and jpg.stat().st_size > 1000) else None
 
-    def _check_scene(mp4: Path, mid: float, ko: str):
-        jpg = _frame_at(mp4, mid)
-        if not jpg:
+    def _check_scene(mp4: Path, start: float, end: float, ko: str):
+        # TWO frames (early + late) so the VLM can judge motion (stationary vs locomotion).
+        span = max(float(end) - float(start), 0.0)
+        ta = float(start) + min(0.3, span * 0.25)
+        tb = float(end) - min(0.3, span * 0.25)
+        if tb <= ta:                       # degenerate/very short scene → single mid-frame
+            ta = tb = (float(start) + float(end)) / 2.0
+        jpgs = [p for p in (_frame_at(mp4, ta), (_frame_at(mp4, tb) if tb != ta else None)) if p]
+        if not jpgs:
             return None
         try:
-            parts = [_gt.Part.from_bytes(data=jpg.read_bytes(), mime_type="image/jpeg"),
-                     f'Caption shown over this frame: "{ko}". Verify it.']
+            parts = []
+            for lab, jp in zip(("A (earlier)", "B (later)"), jpgs):
+                parts.append(_gt.Part.from_bytes(data=jp.read_bytes(), mime_type="image/jpeg"))
+                parts.append(f"[frame {lab}]")
+            parts.append(f'Caption shown over this scene: "{ko}". Verify it across the frames.')
         except Exception:
             return None
         finally:
-            try:
-                jpg.unlink()
-            except Exception:
-                pass
+            for jp in jpgs:
+                try:
+                    jp.unlink()
+                except Exception:
+                    pass
         for _ in range(2):
             try:
                 resp = client.models.generate_content(
@@ -1700,8 +1730,8 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
             if not ko:
                 continue
             n_scenes += 1
-            mid = (float(sc.get("start", 0.1)) + float(sc.get("end", 1.0))) / 2.0
-            scene_vs.append((idx, ko, _check_scene(mp4, mid, ko)))
+            scene_vs.append((idx, ko, _check_scene(
+                mp4, float(sc.get("start", 0.1)), float(sc.get("end", 1.0)), ko)))
         # CUT-LEVEL dominant other-animal (union across the cut's scenes that saw one) —
         # so a breed-mismatch is caught even when a given scene's OWN frame missed the
         # other dog (per-frame VLM flicker let "웰시 코기" slip when the retriever had walked
@@ -1744,6 +1774,12 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
                 reasons.append(f"견종 불일치(캡션:{'/'.join(_mentioned)}≠화면:{(v.get('other_animal') or cut_oa)[:24]})")
             if v.get("frame_ok") is False:
                 reasons.append("과노출/암부로 주인공 안보임")
+            if (v.get("moving") is False
+                    and any(w in low for w in ("순찰", "스텝", "스텔스", "돌아다", "걷", "다가",
+                                               "달려", "달리", "뛰", "쫓", "지나", "patrol",
+                                               "step", "sneak", "stealth", "walk", "run"))
+                    and "이동" not in " ".join(reasons)):
+                reasons.append(f"이동-주장(화면은 정지: {(v.get('action') or '')[:16]})")
             if v.get("caption_matches") is False and not reasons:
                 reasons.append(f"캡션≠화면({(v.get('other_animal') or v.get('action') or '')[:20]})")
             if reasons:
@@ -1799,6 +1835,9 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
         "▲화면에 없는 펫을 주어로 쓰지 마라 — 안 보이면 그 펫 얘기를 하지 마라. "
         "▲다른 동물을 우리 펫으로 부르지 마라(리트리버를 '랴니'라 하지 마라). "
         "▲견종·마킹 같은 메타 설명 금지. "
+        "▲★이동을 지어내지 마라 — actual이 '가만히/앉아/엎드려/제자리/받아먹는다'처럼 정지 상태면 "
+        "'순찰/스텝/스텔스/돌아다닌다/다가온다/걷는다' 같은 이동 표현을 절대 쓰지 말고, 그 정지 상태 "
+        "그대로(앉아 받아먹기·구경·기다리기 등) 담백히 써라. "
         "▲★과거(예전/아기 때) 클립이면 시점을 캡션에 명시하라 — actual에 '아기'·어린 모습·옛 정황이 "
         "보이면 '○개월 전', '아기 땐', '그때는' 같이 시점을 드러내(현재 클립과 헷갈리지 않게). "
         "▲'낯선 친구'·익명 관찰자 톤은 other_animal에 **진짜 다른 동물**(리트리버 등)이 있을 때만. "
