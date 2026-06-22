@@ -12,14 +12,22 @@
    - `qk2l8T6Btxo` — 흙길 5년전: a **2020 stray cat mislabeled "레오"** (Leo adopted 2025-10).
    Verify via live YouTube API (DB is stale — memory `verify_youtube_state_via_api`), then
    `/veto` + re-make. PD asked; not yet done.
-2. **Re-VLM pre-2025 footage** to finish cleaning bug-2 residue. The subject DATA is fixed
-   (624 assets stripped of false 'leo' + a live guard), but old clips' `scene_description`
-   PROSE still says "오렌지 고양이 레오" and some cats are still mislabeled as the DOG Ryani.
-   A re-tag pass with today's improved VLM prompt fixes both. Cheap now (VLM is ~60/min
-   after today's speedup). e.g. `tag_assets_vlm.py --since '2025-09-25' --kind photo` style,
-   or a targeted `captured_iso < '2025-09-25'` re-run.
-3. **Activate the escalation picker** if PD wants the board bot's "CLI가 처리" to be real
-   (built + verified today, NOT activated — see below). PD's call.
+2. ~~Re-VLM pre-2025 footage~~ **SCHEDULED (later 6/22)**: launchd `com.rianileo.revlm-pre2025`
+   fires **07:10 KST** (one-shot, self-disables) → re-tags pre-2025 cat-mentioning rows
+   (`--captured-before 2025-09-25 --scene-like leo,레오,고양이,cat,…`) with the date-aware
+   grounding prompt. ~210/1410 already done interactively (verified 0 leo-residue). The
+   tagger also gained a "tailed tuxedo dog ≠ Ryani" rule so 삐용이 stops collapsing into
+   Ryani. ★**Tomorrow: confirm the 07:10 run finished** (`tail data/logs/revlm_pre2025_residue.log`,
+   look for `END rc=0`) and residue=0. NOTE: this surgical pass only clears CAT-mention rows;
+   삐용이-in-dog-only footage (tailed tuxedo dog mislabeled Ryani, no cat in prose) is NOT
+   covered — a broader pre-2025 dog-footage re-tag (~4h/~$14) is PD's separate call.
+3. ~~Activate the escalation picker~~ **DONE (later 6/22)**: launchd
+   `com.rianileo.board-escalations` loaded (20-min interval, RunAtLoad=false, read-only
+   headless Claude → posts to rayleo_board → marks handled). Queue currently empty.
+   Kill switch: `BOARD_PICKER_ENABLED=0` or `launchctl unload`.
+
+   STILL OPEN from item 1: the two 6/23 episodes (`fXIY_mc83p0` cafe-dup / `qk2l8T6Btxo`
+   2020-stray-cat-as-레오) were NOT vetoed this session — still need live-API verify + `/veto`.
 
 ## What shipped this session (committed)
 
