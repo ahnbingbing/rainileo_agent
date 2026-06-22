@@ -75,6 +75,42 @@ def db() -> sqlite3.Connection:
     return con
 
 
+def _event_dedup_key(event: dict) -> str:
+    """Stable per-message id. client_msg_id is set on real user messages; fall back
+    to channel:ts for events that lack it (edits, app messages)."""
+    return event.get("client_msg_id") or f"{event.get('channel','')}:{event.get('ts','')}"
+
+
+def _already_processed(event: dict) -> bool:
+    """Idempotency guard for message events (returns True = skip).
+
+    Slack redelivers any event we don't ack within ~3s (up to 3 retries) AND
+    redelivers still-unacked events after a listener restart. Both make the SAME
+    message get handled twice — PD saw the bot replay an old message + re-answer it.
+    We record each event's stable id once and treat a repeat as a duplicate. DB-backed
+    so it also survives a restart (which is exactly when the redelivery storm hits).
+    The real retries are prevented upstream by acking fast (heavy work runs in a
+    background thread); this guard is the belt-and-suspenders that makes handling
+    idempotent regardless."""
+    key = _event_dedup_key(event)
+    if not key or key.endswith(":"):
+        return False
+    try:
+        with db() as con:
+            con.execute(
+                "CREATE TABLE IF NOT EXISTS slack_processed_events ("
+                "  event_key TEXT PRIMARY KEY,"
+                "  seen_at   TEXT DEFAULT (datetime('now')))")
+            cur = con.execute(
+                "INSERT OR IGNORE INTO slack_processed_events(event_key) VALUES (?)",
+                (key,))
+            con.commit()
+            return cur.rowcount == 0  # 0 rows inserted → key already existed → dup
+    except Exception as e:  # never block real handling on a dedup hiccup
+        log.warning("dedup check failed (%s) — processing anyway", e)
+        return False
+
+
 def fmt_card_summary(row: sqlite3.Row) -> str:
     payload = json.loads(row["payload_json"])
     lane = payload.get("memory_lane")
@@ -1232,6 +1268,12 @@ def handle_thread_replies(message, client, context):
     # Skip bot messages to avoid loops
     if event.get("bot_id") or event.get("subtype"):
         return
+    # Idempotency: Slack redelivers unacked events (slow listener → 3s retry, or a
+    # listener restart replaying the unacked backlog). Skip anything already handled
+    # so the bot never replays/re-answers an old message.
+    if _already_processed(event):
+        log.info("skip duplicate/redelivered event key=%s", _event_dedup_key(event))
+        return
     channel = event.get("channel", "")
     thread_ts = event.get("thread_ts")
     text = (event.get("text") or "").strip()
@@ -1261,8 +1303,13 @@ def handle_thread_replies(message, client, context):
 
     # ── grandmompapa: 할머니·할아버지와 대화 + 설명/요청 기억 (LLM) ──
     if channel == GRANDMOMPAPA_CHANNEL and text:
-        _grandma_converse(client, channel, event.get("user", ""), text,
-                          thread_ts or event.get("ts"), asset_id=None)
+        # Run the LLM conversation off-thread so the event handler returns immediately
+        # and Bolt acks within Slack's 3s window (a slow inline LLM call is what made
+        # Slack retry → duplicate replies).
+        threading.Thread(
+            target=_grandma_converse,
+            args=(client, channel, event.get("user", ""), text, thread_ts or event.get("ts")),
+            kwargs=dict(asset_id=None), daemon=True).start()
         return
 
     # ── rayleo_board: 자연어 운영 비서 (PD 2026-06-21). PD가 채널에 말하면 LLM이
@@ -1271,7 +1318,13 @@ def handle_thread_replies(message, client, context):
     # 충돌 없음 → 보드의 모든 텍스트(탑레벨+쓰레드)를 비서로 보낸다. ──
     if BOARD_CHANNEL and channel == BOARD_CHANNEL and text:
         from slack import board_agent
-        board_agent.handle_board_message(client, event, db=db, do_veto=_do_veto)
+        # Off-thread: the assistant parses intent + may call an LLM / render, which
+        # takes well over Slack's 3s ack window. Returning now lets Bolt ack fast so
+        # Slack doesn't retry the event (the cause of the repeated replies PD saw).
+        threading.Thread(
+            target=board_agent.handle_board_message,
+            args=(client, event), kwargs=dict(db=db, do_veto=_do_veto),
+            daemon=True).start()
         return
 
     # ── Episode channel: save stories to DB ──

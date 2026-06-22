@@ -57,8 +57,9 @@ Usage
 
 Exit codes
 ----------
-    0   all requested cuts succeeded
-    1   one or more cuts failed
+    0   at least one cut produced an output and no real errors (cuts whose input
+        mp4 was absent upstream are skipped, not failed)
+    1   a real ffmpeg/ffprobe error on a present input, OR nothing was produced
     2   bad setup (caption file missing, font missing, no ffmpeg)
 
 Dependencies
@@ -496,19 +497,29 @@ def main() -> int:
     TMP_DIR.mkdir(parents=True, exist_ok=True)
 
     tags = [args.cut] if args.cut else list(captions.keys())
-    failures = 0
+    # Three outcomes, not two: a cut whose input mp4 is simply ABSENT (upstream
+    # skipped it — e.g. a Director cut that carried no veo_prompt, so no video was
+    # ever generated) is NOT a burn failure. Only a genuine ffmpeg/ffprobe error on
+    # a PRESENT input is. Conflating the two made burn return rc=1 whenever any cut
+    # was absent, which hard-failed the whole render and sent retry_loop into an
+    # infinite re-render of a deterministic miss. We still fail if NOTHING got
+    # produced (produced==0) so an entirely-empty render can't slip through.
+    failures = 0   # real ffmpeg/ffprobe errors on present inputs
+    skipped = 0    # legitimately nothing to do (absent input / no captions)
+    produced = 0   # cuts that yielded an output mp4
     for tag in tags:
         if tag not in captions:
             print(f"  ! {tag} missing from captions JSON; skipping",
                   file=sys.stderr)
-            failures += 1
+            skipped += 1
             continue
         entry = captions[tag]
 
         src = in_dir / f"{tag}.mp4"
         if not src.exists():
-            print(f"  ! {src} not found; skipping", file=sys.stderr)
-            failures += 1
+            print(f"  ! {src} not found; skipping (cut not rendered upstream)",
+                  file=sys.stderr)
+            skipped += 1
             continue
 
         try:
@@ -539,6 +550,7 @@ def main() -> int:
                     check=True,
                 )
                 size_mb = out.stat().st_size / 1e6
+                produced += 1
                 print(f"    ok ({size_mb:.2f} MB, passthrough) → {_rel(out)}")
             except subprocess.CalledProcessError as e:
                 print(f"    ! passthrough copy failed (rc={e.returncode})",
@@ -559,7 +571,7 @@ def main() -> int:
             vf = build_vf_multi(scenes, tag, dur, caption_position=cut_caption_pos)
             if not vf:
                 print(f"  ! {tag} all scenes empty; skipping", file=sys.stderr)
-                failures += 1
+                skipped += 1
                 continue
             if args.dry_run:
                 for i, dt in enumerate(vf.split(",")):
@@ -591,7 +603,7 @@ def main() -> int:
                 en = entry.get("en", "").strip()
             if not ko and not en:
                 print(f"  ! {tag} has empty ko/en; skipping", file=sys.stderr)
-                failures += 1
+                skipped += 1
                 continue
             print(f"    ko  = {ko!r}")
             print(f"    en  = {en!r}")
@@ -614,13 +626,21 @@ def main() -> int:
                 continue
 
         size_mb = out.stat().st_size / 1e6
+        produced += 1
         print(f"    ok ({size_mb:.2f} MB) → {_rel(out)}")
 
     print()
-    if failures:
-        print(f"done — {failures} failure(s)")
+    # Fail only on REAL errors, or if nothing at all was produced (a render with
+    # zero output cuts is broken regardless). Cuts merely absent upstream (skipped)
+    # don't fail the pass — assemble's gutted-render guard still catches a render
+    # that lost too many cuts.
+    if failures or produced == 0:
+        print(f"done — {produced} burned, {skipped} skipped, {failures} failure(s)")
         return 1
-    print("done — all cuts burned")
+    if skipped:
+        print(f"done — {produced} burned, {skipped} skipped (absent upstream)")
+    else:
+        print("done — all cuts burned")
     return 0
 
 
