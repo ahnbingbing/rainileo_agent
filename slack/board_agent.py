@@ -184,6 +184,19 @@ def _act_status(db) -> str:
     with db() as con:
         rows = arc.list_concept_directives(con, today)
         pend = kn.pending_questions(con)
+        # Open CLI escalations — so "이거 하고 있어?" gets a truthful answer instead of
+        # the agent silently sitting on a dead-letter queue. These are processed when a
+        # CLI (Claude Code) session next opens the repo, NOT automatically.
+        try:
+            esc = con.execute(
+                "SELECT id, summary, ts FROM board_escalations WHERE handled=0 "
+                "ORDER BY id DESC LIMIT 8").fetchall()
+        except Exception:
+            esc = []
+    if esc:
+        lines.append(f"*대기 중 CLI 요청:* {len(esc)}개 (다음 CLI 세션에서 처리)")
+        for e in esc:
+            lines.append(f"  • `#{e['id']}` {(e['summary'] or '')[:80]}")
     if rows:
         lines.append("*예약된 컨셉:*")
         for r in rows:
@@ -260,10 +273,15 @@ def _act_escalate(text: str, params: dict, db, user: str) -> str:
             con.execute(
                 "INSERT INTO board_escalations (author, request, summary) VALUES (?,?,?)",
                 (user or "", text, summary))
+            eid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
     except Exception as e:
         log.warning("escalation save failed: %s", e)
-    return (f":inbox_tray: 이건 좀 복잡해서 CLI(클로드)에게 넘겼어요 — \"{summary}\". "
-            f"다음 세션에서 처리하고 결과를 여기로 알려드릴게요.")
+        eid = "?"
+    # Honest reply: this is QUEUED, not auto-run. A human-opened CLI (Claude Code)
+    # session processes the queue — there is no autonomous picker (yet). Don't promise
+    # a result "next session" as if it happens on its own; tell PD how to see/pull it.
+    return (f":inbox_tray: 제가 바로 못 하는 일이라 CLI 대기열에 적어뒀어요 — `#{eid}` \"{summary}\".\n"
+            f"_CLI(클로드) 세션이 열릴 때 처리됩니다. `대기열` 또는 `현황` 으로 밀린 요청을 볼 수 있어요._")
 
 
 _HELP = (
