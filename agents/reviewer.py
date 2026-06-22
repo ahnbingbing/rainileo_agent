@@ -666,7 +666,11 @@ def _temporal_grounding_gate(concept: dict | None, report: dict) -> None:
                     blob.append(str(sc.get("en", "")))
                 else:
                     blob.append(str(sc))
-        for k in ("ko", "en", "caption", "time_ago_phrase"):
+        # ONLY scan what actually gets burned on screen. NOT time_ago_phrase —
+        # that is _stamp_years_ago's INTERNAL knowledge of the gap, not a visible
+        # caption; including it made the gate think every dated archive clip was
+        # "narrated" and pass (false negative on ep 034500's 2016-17 footage).
+        for k in ("ko", "en", "caption"):
             if c.get(k):
                 blob.append(str(c[k]))
     text = " ".join(blob).lower()
