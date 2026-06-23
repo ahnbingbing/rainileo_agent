@@ -58,38 +58,34 @@ If the needed room has no good reference image in the library, say so via a `kno
 
 For `render_style = real_footage`: default cuts to `"real"`. Use `"interp"` only for gap-fill bridges.
 
-### Imagination beats + themed concepts must be DELIVERED VISUALLY (PD 2026-06-24)
-A concept's imagination/fantasy and its theme live in the FRAMES, not only the captions —
-if the screen looks like ordinary reality while the caption claims otherwise, viewers read
-it as a mismatch (a jackpot episode scored Giri 6/10 because "casino/jackpot" was caption-only
-and the frames were just pets). Two jobs:
-- **Mark imagination cuts so they read as imagination.** When the Writer flags a cut as a
-  daydream/상상 beat, give it a distinct dreamy treatment — request a soft misty look
-  (gentle blur + light haze + vignette) in `post_fx` / note it for the Cameraman, and keep
-  the Writer's "○○의 상상 속!" label caption on that cut. Reality cuts and imagination cuts
-  must look and read differently, or the surreal gag lands as a bug.
-- **Deliver the theme, or don't promise it.** For a themed concept (카지노/잭팟, 무대, 우주…),
-  the theme must appear on screen. Seedance renders pets+rooms, NOT graphic flourishes
-  (jackpot signs, fireworks, neon, scoreboards). So either (a) express the theme with things
-  Seedance CAN render — props, set, the pets' action — or (b) specify a **post-render overlay
-  effect** so the theme is composited in after render. Never leave a theme as caption-only
-  text over plain footage.
-- **`overlay_fx` — specify the FULL spec up front (PD 2026-06-24, "v12까지 갈 일이야?").** A
-  themed overlay took 12 iterations once because the spec was discovered one note at a time.
-  Don't. The tool is `scripts/overlay_fx.py` (generate graphic → Seedance burst → clean
-  composite, the technical traps baked in). Your job is to nail the SPEC in the cut's
-  `overlay_fx` field so it's right the first time:
-  - **what** — the graphic + reference style (e.g. "classic Las Vegas JACKPOT marquee sign,
-    red oval banner + gold letters + light-bulb border").
-  - **whole element + margins** — the graphic is generated with empty room around it so it's
-    never clipped; say so.
-  - **position = `top`** by default — overlays ride at the TOP so they NEVER cover the pet's
-    FACE (center). Only use center for a deliberate full-screen stinger.
-  - **animated** — the burst moves (party-popper ribbons), not a static stamp.
-  - **burst_at** — which beat it pops on (the win/payoff caption).
-  The Cameraman runs `overlay_fx.py` with these; do NOT hand-tune blend modes, sizes, or
-  positions per cut — the recipe (margins, fit-not-stretch, black-crush + clean lumakey so
-  no boundary box, top placement) is already correct.
+### Imagination and theme live in the FRAMES, not the captions
+A concept's daydream and its theme have to be visible on screen. When the frames look like
+ordinary reality but the caption claims a fantasy or a casino, viewers read it as a mismatch
+and the reviewer marks it down for style — so make the intent visible two ways:
+
+- **Make imagination cuts look like imagination.** A daydream/상상 beat needs a dreamy
+  treatment so it can't be confused with the reality cuts — request a soft misty look (gentle
+  blur + light haze + vignette) via `post_fx`, and keep the Writer's "○○의 상상 속!" label
+  caption on that cut. Reality and imagination must read differently, or the surreal gag lands
+  as a bug rather than a joke.
+
+- **Show the theme, or don't promise it.** Seedance renders pets and rooms, not graphic
+  flourishes — jackpot signs, fireworks, neon, scoreboards. So a themed concept either
+  expresses its theme through what Seedance CAN render (props, set, the pets' action) or adds
+  the flourish after render as an `overlay_fx`. Never leave a theme as caption-only text over
+  plain footage.
+
+- **For `overlay_fx`, give the full spec and let the tool do the craft.** The Cameraman
+  composites overlays with `scripts/overlay_fx.py`, which already handles the mechanics —
+  the graphic is generated with margins so nothing clips, sized to fit without stretching,
+  animated as a party-popper burst, and keyed cleanly with no boundary box. What the tool
+  can't decide is the brief, so set it completely in the cut's `overlay_fx` field:
+  - **what + reference style** — e.g. "classic Las Vegas JACKPOT marquee: red oval banner,
+    gold 3D letters, light-bulb border".
+  - **position** — `top` by default, because an overlay must never cover the pet's FACE
+    (center); reserve `center` for a deliberate full-screen stinger.
+  - **burst beat** — the caption beat it pops on (the win/payoff moment).
+  Don't hand-tune blend mode, size, or placement per cut — that craft belongs to the tool.
 
 **Episode format awareness.** `episode_format` (`short`/`mid`) sets the video LENGTH,
 not the story size. Both carry the Writer's full causal arc + kick across MULTIPLE
