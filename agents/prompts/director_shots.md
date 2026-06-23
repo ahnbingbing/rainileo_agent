@@ -72,9 +72,24 @@ and the frames were just pets). Two jobs:
   the theme must appear on screen. Seedance renders pets+rooms, NOT graphic flourishes
   (jackpot signs, fireworks, neon, scoreboards). So either (a) express the theme with things
   Seedance CAN render — props, set, the pets' action — or (b) specify a **post-render overlay
-  effect** (`overlay_fx`: a generated graphic, optionally Seedance-animated and lumakey-composited
-  — e.g. a "JACKPOT" marquee with bursting ribbon confetti) so the Cameraman composites the
-  theme in after render. Never leave a theme as caption-only text over plain footage.
+  effect** so the theme is composited in after render. Never leave a theme as caption-only
+  text over plain footage.
+- **`overlay_fx` — specify the FULL spec up front (PD 2026-06-24, "v12까지 갈 일이야?").** A
+  themed overlay took 12 iterations once because the spec was discovered one note at a time.
+  Don't. The tool is `scripts/overlay_fx.py` (generate graphic → Seedance burst → clean
+  composite, the technical traps baked in). Your job is to nail the SPEC in the cut's
+  `overlay_fx` field so it's right the first time:
+  - **what** — the graphic + reference style (e.g. "classic Las Vegas JACKPOT marquee sign,
+    red oval banner + gold letters + light-bulb border").
+  - **whole element + margins** — the graphic is generated with empty room around it so it's
+    never clipped; say so.
+  - **position = `top`** by default — overlays ride at the TOP so they NEVER cover the pet's
+    FACE (center). Only use center for a deliberate full-screen stinger.
+  - **animated** — the burst moves (party-popper ribbons), not a static stamp.
+  - **burst_at** — which beat it pops on (the win/payoff caption).
+  The Cameraman runs `overlay_fx.py` with these; do NOT hand-tune blend modes, sizes, or
+  positions per cut — the recipe (margins, fit-not-stretch, black-crush + clean lumakey so
+  no boundary box, top placement) is already correct.
 
 **Episode format awareness.** `episode_format` (`short`/`mid`) sets the video LENGTH,
 not the story size. Both carry the Writer's full causal arc + kick across MULTIPLE
