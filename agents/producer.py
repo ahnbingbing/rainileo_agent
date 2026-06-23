@@ -225,6 +225,7 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
         {"id": r["asset_id"], "act": r["activity"] or "", "sub": _ground_subjects(r["subjects_csv"], r["captured_iso"]),
          "mood": r["mood"] or "", "bg": r["background"] or "",
          "sc": _ground_truth_sc(r),
+         "date": (r["captured_iso"] or "")[:10],   # for the AV era-floor filter
          **_extra_vlm(r)}
         for r in _photo_rows
     ]
@@ -592,6 +593,33 @@ def _propose_concepts_legacy(target: dt.date, context: dict, style_filter: str |
         raise RuntimeError(f"No valid JSON array in LLM response (len={len(text)}): {text[:200]}")
 
 
+def _av_era_floor() -> str:
+    """Earliest capture date an ai_vtuber present-day concept may source from.
+
+    PD 2026-06-23 (#1 generator grounding). The asset pool is dominated by ~6,600
+    pre-Leo (2015-2018) photos/clips; the AV Writer kept pulling them for Leo
+    episodes, so the render showed a pre-Leo stray tabby labelled "레오" (ep 034500)
+    or cut a 4-month kitten Leo against an 8-month Leo as one moment (택배 v1) — the
+    era-mix the deterministic gate then has to reject. Fixing the CHECKER isn't
+    enough; the GENERATOR must not select those assets in the first place.
+
+    Floor = Leo's 6-month mark (exists_from + 182d ≈ 2026-03-25): excludes ALL
+    pre-Leo footage AND Leo's fast-changing 0-6mo kitten window. With the youngest
+    sourced Leo always ≥6 months, the temporal gate's kitten rule can never fire on
+    AV, and the >1yr rule can't either — AV concepts pass the era-mix gate by
+    construction. Override via env AV_ERA_FLOOR (set "" to disable, e.g. for an
+    explicit narrated memory-lane batch that intentionally uses archive footage)."""
+    env = os.getenv("AV_ERA_FLOOR")
+    if env is not None:
+        return env
+    try:
+        from agents import canon as _canon
+        ef = dt.date.fromisoformat(_canon.LEO["exists_from"])
+        return (ef + dt.timedelta(days=182)).isoformat()
+    except Exception:
+        return "2026-03-25"
+
+
 def propose_concepts(target: dt.date, context: dict, style_filter: str | None = None,
                      progress_cb: ProgressCb = None) -> list[dict]:
     """Generate 1-2 video concepts.
@@ -633,6 +661,22 @@ def propose_concepts(target: dt.date, context: dict, style_filter: str | None = 
             return _propose_realfootage_singlepass(
                 target, context, progress_cb,
                 prior_feedback=context.get("reviewer_feedback", "")) or []
+        # --- AV path (ai_vtuber) below ---
+        # #1 generator grounding (PD 2026-06-23): restrict the asset pools the AV
+        # Writer + brainstorm can pick from to the current era, so AV can't source a
+        # pre-Leo cat or a kitten-era clip (root of the 034500 / 택배 era-mix). RF
+        # already returned above and gets the full pool (memory-lane uses archive).
+        # context here is a per-lane copy (launch passes dict(context)), so
+        # reassigning the pool keys does not affect the RF call.
+        _floor = _av_era_floor()
+        if _floor:
+            for _key in ("available_photos", "available_videos"):
+                _pool = context.get(_key) or []
+                _kept = [a for a in _pool if (a.get("date") or "") >= _floor]
+                if len(_kept) != len(_pool):
+                    log.info("AV era-floor %s: %s %d→%d (dropped %d pre-era)",
+                             _floor, _key, len(_pool), len(_kept), len(_pool) - len(_kept))
+                context[_key] = _kept
         if os.getenv("USE_WRITER_DIRECTOR", "1") == "0":
             return _propose_concepts_legacy(target, context, style_filter)
         # PD 2026-06-06: feed the UNIFIED arc into the ai_vtuber writer.

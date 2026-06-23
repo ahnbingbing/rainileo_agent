@@ -87,6 +87,24 @@ def _db() -> sqlite3.Connection:
     return con
 
 
+def _av_era_floor() -> str:
+    """Earliest capture date an ai_vtuber pick may use (PD 2026-06-23, #1 grounding).
+    Mirrors producer._av_era_floor — this DB query is the OTHER place AV assets are
+    chosen (it can override the Writer's pick), so it must apply the same floor or it
+    re-introduces the pre-Leo / kitten-era footage the pool filter just removed.
+    Leo's 6-month mark (exists_from + 182d). Override via env AV_ERA_FLOOR ("" disables)."""
+    import os as _os
+    import datetime as _dt
+    env = _os.getenv("AV_ERA_FLOOR")
+    if env is not None:
+        return env
+    try:
+        from agents import canon as _canon
+        return (_dt.date.fromisoformat(_canon.LEO["exists_from"]) + _dt.timedelta(days=182)).isoformat()
+    except Exception:
+        return "2026-03-25"
+
+
 def search_candidates(concept: dict, limit: int = 20) -> list[dict]:
     """Search DB for candidate assets matching the concept's requirements."""
     con = _db()
@@ -183,7 +201,10 @@ def search_candidates(concept: dict, limit: int = 20) -> list[dict]:
                 sub_params + [limit],
             ).fetchall()
     else:
-        # For ai_vtuber: random high-quality photos
+        # For ai_vtuber: random high-quality photos — current-era only, so the
+        # selector can't swap a pre-Leo / kitten clip back in (PD 2026-06-23 #1).
+        _floor = _av_era_floor()
+        _floor_clause = "AND substr(captured_iso,1,10) >= ?" if _floor else ""
         rows = con.execute(
             f"""
             SELECT asset_id, file_path, kind, scene_description, activity,
@@ -197,10 +218,11 @@ def search_candidates(concept: dict, limit: int = 20) -> list[dict]:
                   AND file_path NOT LIKE '%.heic'
                   AND (decoration_level IS NULL OR decoration_level = 'none')
                   AND ({sub_clauses})
+                  {_floor_clause}
             ORDER BY has_human ASC, quality_score DESC, RANDOM()
             LIMIT ?
             """,
-            [kind_filter] + sub_params + [limit],
+            [kind_filter] + sub_params + ([_floor] if _floor else []) + [limit],
         ).fetchall()
 
     return [dict(r) for r in rows]
