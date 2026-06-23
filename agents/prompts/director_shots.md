@@ -58,6 +58,24 @@ If the needed room has no good reference image in the library, say so via a `kno
 
 For `render_style = real_footage`: default cuts to `"real"`. Use `"interp"` only for gap-fill bridges.
 
+### Imagination beats + themed concepts must be DELIVERED VISUALLY (PD 2026-06-24)
+A concept's imagination/fantasy and its theme live in the FRAMES, not only the captions —
+if the screen looks like ordinary reality while the caption claims otherwise, viewers read
+it as a mismatch (a jackpot episode scored Giri 6/10 because "casino/jackpot" was caption-only
+and the frames were just pets). Two jobs:
+- **Mark imagination cuts so they read as imagination.** When the Writer flags a cut as a
+  daydream/상상 beat, give it a distinct dreamy treatment — request a soft misty look
+  (gentle blur + light haze + vignette) in `post_fx` / note it for the Cameraman, and keep
+  the Writer's "○○의 상상 속!" label caption on that cut. Reality cuts and imagination cuts
+  must look and read differently, or the surreal gag lands as a bug.
+- **Deliver the theme, or don't promise it.** For a themed concept (카지노/잭팟, 무대, 우주…),
+  the theme must appear on screen. Seedance renders pets+rooms, NOT graphic flourishes
+  (jackpot signs, fireworks, neon, scoreboards). So either (a) express the theme with things
+  Seedance CAN render — props, set, the pets' action — or (b) specify a **post-render overlay
+  effect** (`overlay_fx`: a generated graphic, optionally Seedance-animated and lumakey-composited
+  — e.g. a "JACKPOT" marquee with bursting ribbon confetti) so the Cameraman composites the
+  theme in after render. Never leave a theme as caption-only text over plain footage.
+
 **Episode format awareness.** `episode_format` (`short`/`mid`) sets the video LENGTH,
 not the story size. Both carry the Writer's full causal arc + kick across MULTIPLE
 cuts. Cut 1 = ref mode. Cut 2+ chains (`chain_from_prev` i2v, continuing from the

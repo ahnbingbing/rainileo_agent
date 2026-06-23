@@ -116,6 +116,20 @@ looks. These are CAPS (a ceiling), not soft notes:
 - **주체 저노출/트림 누락 (both)**: if a pet the concept centers on (or that PD wants more
   of — e.g. Leo) barely appears, OR the clip's payoff (the subject entering/acting) is
   trimmed off so the good part never shows → flag "주체 저노출/트림", cap ≤6.
+- **테마/비주얼 훅이 화면에 없음 — 캡션-only 테마 (ai_vtuber, PD 2026-06-24)**: if the
+  concept's title/captions promise a distinctive THEME or visual hook (카지노·잭팟, 무대,
+  우주, 폭죽 등) but the frames show only ordinary pets with NO sign of that theme (no
+  themed prop/set/effect/overlay), that is a caption-vs-content / style mismatch → flag
+  "테마 미표시(캡션-only)", cap ≤6. (A theme delivered via a post-render overlay effect —
+  e.g. a JACKPOT marquee with bursting confetti composited in — DOES count as shown; only
+  fail when the theme is nowhere on screen.)
+- **상상 컷이 상상으로 안 읽힘 (ai_vtuber, PD 2026-06-24)**: when a beat is meant as a
+  daydream/상상 (the caption says so, or the action is physically impossible-on-purpose),
+  that cut should READ as imagination — a dreamy/misty treatment and/or a clear "○○의 상상
+  속!" label. If a fantasy beat is rendered identical to the reality cuts with NO marker so
+  a viewer can't tell it's imagined (or a "sleeping/dreaming" caption sits over an obviously
+  wide-awake pet), note "상상/현실 구분 불명확" and lower caption/style; do not pass it as
+  "업로드". (This is about marking intent — NOT a penalty on the surreal content itself.)
 
 IMPORTANT STYLE RULES:
 - "ai_vtuber" style has multiple generation modes (Seedance 2.0 since 2026-05-30):
