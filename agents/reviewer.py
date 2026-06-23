@@ -707,6 +707,57 @@ def _temporal_grounding_gate(concept: dict | None, report: dict) -> None:
              report.get("판정"), report.get("점수"))
 
 
+def _pd_groundtruth_block(concept: dict | None) -> str:
+    """PD per-clip ground-truth → Giri (PD 2026-06-23).
+
+    PD repeatedly tells us what a clip ACTUALLY is — "the friend in this one is
+    삐용이", "this is the day we changed Ryani's car seat", "Leo is throwing a
+    tantrum to follow mom out". That context is the authoritative truth the
+    captions must honor, but Giri only ever saw the VLM's guess + the storyboard,
+    so it couldn't catch a caption that contradicts what PD said. This pulls each
+    cut's asset `pd_notes` (the PD-authoritative override, the [PD]-prefixed
+    ground truth) and hands it to the reviewer so caption-truthfulness is judged
+    against PD's stated content, not just the VLM. Empty when no cut has a PD note."""
+    if not concept:
+        return ""
+    cuts = concept.get("cuts") or []
+    pairs = []  # (label, asset_id) in cut order
+    for i, c in enumerate(cuts, 1):
+        aid = c.get("asset_id") or c.get("secondary_asset_id")
+        if aid:
+            pairs.append((c.get("beat") or c.get("tag") or f"cut{i}", aid))
+    if not pairs:
+        return ""
+    aids = [a for _, a in pairs]
+    notes = {}
+    try:
+        con = sqlite3.connect(str(ROOT / "data" / "agent.db"))
+        try:
+            qs = ",".join("?" * len(aids))
+            for aid, pdn in con.execute(
+                    f"SELECT asset_id, pd_notes FROM assets WHERE asset_id IN ({qs})", aids):
+                if pdn and str(pdn).strip():
+                    notes[aid] = str(pdn).strip()
+        finally:
+            con.close()
+    except Exception as e:
+        log.warning("pd ground-truth read failed: %s", e)
+        return ""
+    if not notes:
+        return ""
+    lines = ["\n## PD ground-truth per clip (AUTHORITATIVE — PD told us what this clip "
+             "actually is; it OVERRIDES the VLM tags and your own visual guess):"]
+    for label, aid in pairs:
+        if aid in notes:
+            lines.append(f"  - {label}: {notes[aid]}")
+    lines.append(
+        "→ The captions MUST be consistent with these PD-stated facts (the named "
+        "friend/person, the real event, what the pet is actually doing). A caption that "
+        "contradicts, renames, or ignores PD's stated content for a clip is a CHECK 0 "
+        "truthfulness failure — record it in 가장_큰_문제 and cap 점수 ≤5.")
+    return "\n".join(lines)
+
+
 def review(video: Path, storyboard: list[dict] | None = None,
            concept: dict | None = None) -> dict:
     """Full review: extract frames + audio check + VLM review.
@@ -745,6 +796,10 @@ def review(video: Path, storyboard: list[dict] | None = None,
             context += f"  Cut {i+1} ({beat}): {desc}\n"
     if concept:
         context += f"\n## Concept:\n{json.dumps(concept, ensure_ascii=False, indent=2)[:1000]}\n"
+
+    # PD per-clip ground-truth (PD 2026-06-23): captions must honor what PD said
+    # each clip actually is (삐용이 friend / car-seat day / Leo's tantrum …).
+    context += _pd_groundtruth_block(concept)
 
     # Phase E — prop fidelity: list expected canonical objects for this set
     if concept and concept.get("set_anchor"):
