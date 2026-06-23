@@ -1509,6 +1509,7 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
                             "image model will invent the location", tag)
             full_prompt = f"{overall_style}. {_scene_lock_prefix}{per_cut_prompt}. " \
                           f"Featuring {subjects}. {preserve}"
+            full_prompt = _ensure_sink_height_lock(full_prompt)  # floor-sink guard
             regen[tag] = full_prompt
 
         regen_path = work_dir / "regen_prompts.json"
@@ -1521,7 +1522,7 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
             if i < len(concept_cuts):
                 mp = concept_cuts[i].get("motion_prompt", "")
                 if mp:
-                    result["motion_prompts"][item["tag"]] = mp
+                    result["motion_prompts"][item["tag"]] = _ensure_sink_height_lock(mp)
 
     return result
 
@@ -2657,6 +2658,39 @@ def _apply_edit_plan(manifests: dict, plan: dict, anim_dir: "Path | None" = None
             progress_cb(f":scissors: EditPlan 적용 — drop={len(dropped)} 재배열={len(order)}컷")
     except Exception as e:
         log.warning("apply edit plan failed: %s", e)
+
+
+_SINK_CUES = ("세면대", "sink", "washbasin", "wash basin", "basin")
+_SINK_LOCK_TOKENS = ("mounted", "벽에 고정", "vanity", "counter height", "counter-height",
+                     "hand-washing height", "cm above", "built into", "built-in",
+                     "rim sits", "카운터 높이", "세면대 높이")
+_SINK_HEIGHT_LOCK = (
+    " IMPORTANT — sink mount: the sink / washbasin is BUILT INTO the bathroom vanity "
+    "at adult hand-washing height; its rim sits about 80cm ABOVE the tiled floor, set "
+    "against the wall, with the vanity cabinet, legs and plumbing clearly visible BELOW "
+    "the basin. The basin is NEVER resting on the floor — if a pet is inside the basin "
+    "it is elevated at counter height, not grounded.")
+
+
+def _ensure_sink_height_lock(prompt: str) -> str:
+    """Deterministic sink-height guard (PD 2026-06-23, '욕실 세면대 바닥 사건' 재발).
+
+    Seedance / gpt-image keep grounding a bathroom sink onto the FLOOR unless the
+    prompt explicitly states its mount height. The rule is in director_shots.md +
+    the Validator, but the Director/LLM keep omitting it (ep 200548 cut4 again put
+    Ryani inside a floor-level basin). So enforce it in CODE — same principle as the
+    era-mix gate: any prompt referencing a sink/세면대/basin that lacks an explicit
+    height-lock token gets the canonical mount-height clause appended. No-op when a
+    lock is already present or no sink is mentioned."""
+    if not prompt:
+        return prompt
+    pl = prompt.lower()
+    if not any(c.lower() in pl for c in _SINK_CUES):
+        return prompt
+    if any(t.lower() in pl for t in _SINK_LOCK_TOKENS):
+        return prompt
+    log.info("sink-height guard: auto-injected counter-mount lock (prompt mentioned a sink w/o height)")
+    return prompt.rstrip() + _SINK_HEIGHT_LOCK
 
 
 def _lint_seedance_prompt(prompt: str) -> list[str]:
