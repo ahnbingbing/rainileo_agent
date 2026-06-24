@@ -1164,34 +1164,64 @@ def _handle_reference_upload(event: dict, client, file_id: str, message_text: st
         log.warning("Reference upload failed: %s", e)
 
 
+def _grandma_history(client, channel, limit=14):
+    """Recent channel dialogue for CONTINUOUS conversation (PD 2026-06-24: the bot must
+    keep chatting with context, video-related or not — not one-shot replies). Returns a
+    list of {role, text} oldest→newest, excluding the just-arrived message."""
+    try:
+        resp = client.conversations_history(channel=channel, limit=limit + 1)
+        msgs = list(reversed(resp.get("messages", [])))  # oldest → newest
+    except Exception:
+        return []
+    out = []
+    for m in msgs:
+        if m.get("subtype") in ("channel_join", "channel_leave"):
+            continue
+        t = (m.get("text") or "").strip()
+        if not t:
+            continue
+        out.append({"role": "bot" if m.get("bot_id") else "family", "text": t[:300]})
+    return out[-limit:]
+
+
 def _grandma_converse(client, channel, user, text, thread_ts, asset_id=None):
-    """할머니·할아버지 메시지 처리: LLM이 이해하고 따뜻하게 대화 + 내용을 파이프라인에
-    기억시킨다. 일화/설명 → episode_stories(브레인스토밍 재료), '영상 만들어줘' 요청 →
-    [요청] 태그로 같은 곳에 저장(우선 가중), 함께 올린 에셋이 있으면 설명을 그 에셋 notes에 보강."""
+    """할머니·할아버지와 '계속' 대화하는 따뜻한 가족 비서 (PD 2026-06-24): 영상 얘기든 일상
+    잡담이든 이전 대화 맥락을 이어 자연스럽게 답한다. 대화 중 나온 펫 일화·영상 아이디어는
+    컨셉 소재로 저장 — 일화/설명 → episode_stories(브레인스토밍 재료), '영상 만들어줘' 요청 →
+    [요청] 태그(우선 가중), 함께 올린 에셋이 있으면 설명을 그 에셋 notes에 보강."""
     text = (text or "").strip()
     if not text:
         return
-    reply, intent, summary = "", "story", text[:80]
+    reply, intent, summary, concept = "", "chat", text[:80], ""
     try:
         from agents.llm_cascade import call_text_cascade
         import json as _json, re as _re
+        hist = _grandma_history(client, channel)
+        convo = "\n".join(
+            ("나(비서): " if h["role"] == "bot" else "가족: ") + h["text"] for h in hist)
         sys_p = (
             "너는 'Ryani(랴니=강아지, 꼬리 없음)와 Leo(레오=고양이)' 펫 숏츠 채널의 따뜻한 "
-            "비서다. 할머니·할아버지가 펫 사진/영상과 설명, 또는 '이런 영상 만들어줘' 요청을 "
-            "올린다. 메시지를 읽고 JSON만 답하라: {\"reply\": 정감있는 한국어 존댓말 2~3문장"
-            "(내용 이해했다는 확인 + 필요시 가벼운 후속 질문 1개, 이모지 약간), "
-            "\"intent\": \"request\"(영상 제작 요청)|\"story\"(펫 일화·설명)|\"chat\"(인사·잡담), "
-            "\"subjects\": 메시지에 나온 펫(\"ryani\"|\"leo\"|\"ryani,leo\"|\"\"=모름), "
+            "가족 비서다. 할머니·할아버지와 '계속' 대화한다 — 펫 영상 얘기든, 안부·날씨·일상 "
+            "잡담이든 무엇이든 끊지 말고 다정하게 받아준다. 아래 '최근 대화'의 맥락을 이어서 "
+            "자연스럽게 답하라(반복 금지, 이전에 한 질문 또 묻지 말 것). 대화 중 펫 일화나 "
+            "'이런 영상 만들면 좋겠다'는 아이디어가 나오면 컨셉 소재로 기억한다.\n"
+            "JSON만 답하라: {\"reply\": 정감있는 한국어 존댓말 1~3문장(맥락 이어가기 + 따뜻함 "
+            "+ 가끔 가벼운 후속 질문, 이모지 약간), "
+            "\"intent\": \"request\"(영상 제작 요청)|\"story\"(펫 일화·설명)|\"chat\"(인사·안부·잡담), "
+            "\"subjects\": \"ryani\"|\"leo\"|\"ryani,leo\"|\"\", "
+            "\"concept\": 대화에서 건질 만한 펫 영상 컨셉이 있으면 한 줄로(없으면 \"\"), "
             "\"summary\": 한 줄 요약}"
         )
-        usr = f"메시지: {text}" + (" (사진/영상도 같이 올렸어요)" if asset_id else "")
-        raw = call_text_cascade(sys_p, usr, max_tokens=400).strip()
+        usr = (("최근 대화:\n" + convo + "\n\n") if convo else "") + \
+            f"가족의 새 메시지: {text}" + (" (사진/영상도 같이 올렸어요)" if asset_id else "")
+        raw = call_text_cascade(sys_p, usr, max_tokens=500).strip()
         raw = _re.sub(r"^```(?:json)?\s*", "", raw); raw = _re.sub(r"\s*```$", "", raw)
         d = _json.loads(raw)
         reply = (d.get("reply") or "").strip()
-        intent = (d.get("intent") or "story").strip()
+        intent = (d.get("intent") or "chat").strip()
         summary = (d.get("summary") or text[:80]).strip()
         subjects = (d.get("subjects") or "").strip()
+        concept = (d.get("concept") or "").strip()
     except Exception as e:
         log.warning("grandma LLM failed: %s", e)
         reply = "💛 감사합니다! 잘 받았어요. 영상 만들 때 꼭 참고할게요 🐾"
@@ -1204,15 +1234,20 @@ def _grandma_converse(client, channel, user, text, thread_ts, asset_id=None):
                             (subjects, asset_id[:30]))
         except Exception as e:
             log.warning("grandma subject tag failed: %s", e)
-    # 일화/요청 → episode_stories (브레인스토밍이 자동으로 읽음). 요청은 [요청] 태그.
+    # 일화/요청/대화에서 건진 컨셉 → episode_stories (브레인스토밍이 자동으로 읽음).
+    #   요청=[요청] 태그(우선 가중), 잡담 중 떠오른 영상 아이디어=[컨셉] 태그로도 별도 저장.
+    saved = []
     if intent in ("request", "story"):
-        store = ("[요청] " if intent == "request" else "") + text
+        saved.append(("[요청] " if intent == "request" else "") + text)
+    if concept and concept not in ("없음", "-"):
+        saved.append("[컨셉] " + concept)
+    for store in saved:
         try:
             with db() as con:
                 con.execute(
                     "INSERT INTO episode_stories (text, author, slack_ts) VALUES (?, ?, ?)",
                     (store, user or "", thread_ts or ""))
-            log.info("grandma %s saved: %s", intent, summary[:50])
+            log.info("grandma saved (%s): %s", intent, store[:60])
         except Exception as e:
             log.warning("grandma story save failed: %s", e)
     # 함께 올린 에셋이 있으면 설명을 그 에셋에 붙임(자막/소재에 활용).
@@ -1224,9 +1259,10 @@ def _grandma_converse(client, channel, user, text, thread_ts, asset_id=None):
                     (f" [할머니설명] {summary}", asset_id[:30]))
         except Exception as e:
             log.warning("grandma asset note failed: %s", e)
+    # Reply in the main channel (not threaded) so it reads as a flowing conversation
+    # (PD 2026-06-24: "계속 이야길 해야해"). Continuity comes from _grandma_history.
     try:
-        client.chat_postMessage(channel=channel, thread_ts=thread_ts,
-                                text=reply or GRANDMA_THANKS)
+        client.chat_postMessage(channel=channel, text=reply or GRANDMA_THANKS)
     except Exception:
         pass
 
