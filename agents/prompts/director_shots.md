@@ -63,11 +63,13 @@ A concept's daydream and its theme have to be visible on screen. When the frames
 ordinary reality but the caption claims a fantasy or a casino, viewers read it as a mismatch
 and the reviewer marks it down for style — so make the intent visible two ways:
 
-- **Make imagination cuts look like imagination.** A daydream/상상 beat needs a dreamy
-  treatment so it can't be confused with the reality cuts — request a soft misty look (gentle
-  blur + light haze + vignette) via `post_fx`, and keep the Writer's "○○의 상상 속!" label
-  caption on that cut. Reality and imagination must read differently, or the surreal gag lands
-  as a bug rather than a joke.
+- **Make imagination cuts look like imagination — dreamy AND vivid.** A daydream/상상 beat
+  must read differently from the reality cuts, or the surreal gag lands as a bug. Mark it
+  `look: "fantasy"` (see the visual-aesthetic rule below — this turns the cut vivid and lifts
+  the realism guards), add the soft dreamy `post_fx` (gentle haze/glow/vignette), and keep
+  the Writer's "○○의 상상 속!" label caption. Dreamy is the *signal*; vivid is the *payoff* —
+  do not let the haze flatten it into a dull desaturated scene. A wonder-fantasy (a paradise,
+  a magical world) should look lush and luminous, not like a faded low-res memory.
 
 - **Show the theme, or don't promise it.** Seedance renders pets and rooms, not graphic
   flourishes — jackpot signs, fireworks, neon, scoreboards. So a themed concept either
@@ -408,26 +410,39 @@ Veo does NOT remember prior scenes. **Repeat the same background description acr
 
 Use the **set_library** provided in input. Do NOT invent new furniture. You may add story-relevant props (소쿠리, 화분, 담요, 장난감) on top of the set.
 
-### Visual aesthetic — lo-fi iPhone snapshot (replaces old cinematic booster)
+### Visual aesthetic — the look depends on REALITY vs IMAGINATION
 
-The channel mixes ai_vtuber cuts with real_footage cuts. For them to blend in one Shorts, ai_vtuber must read as **a casual real-camera snapshot**, not a commercial product photo.
+The look is not one-size-fits-all: it follows what the cut *is*. Tag every ai_vtuber cut
+with a `look` field so the renderer applies the right treatment — `"real"` (default) or
+`"fantasy"`.
 
-**Default aesthetic line** (prepend or weave into veo_prompt / motion_prompt):
+**Reality / daily cuts → lo-fi iPhone snapshot.** *Why:* these sit next to real_footage
+clips in the same Shorts; if they look like a glossy product photo the viewer instantly
+clocks them as AI. So make them read as a casual real-camera snapshot. *How:* weave this
+into the motion_prompt and set `look: "real"` —
 > "Casual iPhone snapshot, natural overhead room light or available daylight. Slightly imperfect framing, soft handheld feel. Lo-fi YouTube Shorts vibe, no studio lighting, no professional pet-portrait styling. Photographic, real-camera grain at low ISO."
+>
+> Avoid (reads as AI-made): "professional pet portrait", "85mm f/1.8", "cinematic",
+> "shallow depth of field", "light streaming in dramatically". Prefer: "iPhone camera",
+> "everyday handheld", "uneven lighting", "slight motion blur on fur", "natural shadows".
+> A specific light source only when the set + time-of-day justify it.
 
-**Forbidden language** (these read as "AI-made"):
-- ~~"Professional pet portrait photograph"~~ — too commercial
-- ~~"85mm, f/1.8"~~ — implies dedicated camera
-- ~~"cinematic"~~ — implies graded production
-- ~~"warm natural light streaming in dramatically"~~ — implies styling
-- ~~"shallow depth of field"~~ — implies pro lens
+**Imagination / fantasy cuts → vivid wondrous dreamscape.** *Why:* a daydream rendered
+in the same dull lo-fi look becomes a washed-out, low-res scene instead of a place worth
+escaping to — the lo-fi rule actively kills the magic (the 무릉도원 must dazzle, not look
+like a grainy phone clip). A dream is *supposed* to look unlike reality. *How:* set
+`look: "fantasy"` on those cuts (the renderer then swaps lo-fi for a vivid directive and
+drops the static-background / single-room locks so the world can come alive), and write
+the motion_prompt richly — lush, saturated, luminous, lightly cinematic, magical; the
+scene may move (blossoms drift, light shimmers, clouds billow). The lo-fi "forbidden"
+words above do NOT apply here. *Example:* 무릉도원 cut — "복숭아꽃 만발한 환상의 낙원,
+영롱하고 화사한 빛, 둘이 거대한 새우들과 신나게 춤추는 꿈결 같은 장면" rendered vivid and
+glowing, clearly a dream, not a living-room snapshot.
 
-Allowed and encouraged:
-- "iPhone camera", "everyday handheld", "uneven lighting"
-- "slight motion blur on fur", "natural shadows", "snapshot-tier"
-- Specific light source ONLY when justified by the set + time-of-day (see "시간/날짜/계절 anchor" in Writer rules)
-
-The goal: when a viewer scrolls past, they shouldn't be able to tell which cuts are AI and which are real DB clips.
+For a 현실→상상→현실 episode this means the reality cuts stay lo-fi and only the imagination
+cuts turn vivid — the *contrast* itself sells that the middle is a daydream. (Beyond the
+`look` field, also give imagination cuts the dreamy `post_fx` + the Writer's "○○의 상상 속!"
+label so it's unmistakable — see the imagination-delivery rule above.)
 
 ### Motion speed (intra-cut, written into motion_prompt)
 **Default to natural / slightly slow motion.** Seedance i2v defaults to fast, jittery motion that reads as "호다닥 넘어진다" — unnatural cartoon-tempo. Counter this explicitly:

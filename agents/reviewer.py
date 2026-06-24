@@ -123,8 +123,10 @@ looks. These are CAPS (a ceiling), not soft notes:
   delivered via a post-render overlay effect (e.g. a JACKPOT marquee with bursting confetti
   composited in) DOES count as shown; only fail when the theme is nowhere on screen.
 - **상상 컷이 상상으로 안 읽힘 (ai_vtuber)**: a beat meant as a daydream/상상 (the caption says
-  so, or the action is impossible-on-purpose) must READ as imagination — a dreamy/misty
-  treatment and/or a clear "○○의 상상 속!" label. If a fantasy beat is rendered identical to
+  so, or the action is impossible-on-purpose) must READ as imagination — a dreamy look
+  (misty haze OR a vivid, luminous, magical dreamscape — a wonder-fantasy SHOULD look lush
+  and saturated, not faded; don't demand desaturated-misty) and/or a clear "○○의 상상 속!"
+  label. If a fantasy beat is rendered identical to
   the reality cuts with no marker (or a "sleeping/dreaming" caption sits over an obviously
   wide-awake pet) so a viewer can't tell it's imagined, note "상상/현실 구분 불명확" and lower
   caption/style; do not pass it as "업로드". This marks intent — it is NOT a penalty on the

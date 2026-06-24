@@ -176,6 +176,38 @@ LOFI_REALISM_DIRECTIVE = (
     "reduce the animation. Lower the image quality, NOT the movement or the story."
 )
 
+# PD 2026-06-24: the lo-fi home-video look is for REALITY cuts (so AV blends with real_footage).
+# An imagination / fantasy beat (a daydream, a magical world, 무릉도원·근두운) should look the
+# OPPOSITE — lush and wondrous — or the dream renders as a dull, washed-out, low-res scene
+# instead of a place worth escaping to. For those cuts swap lo-fi for this and drop the
+# realism guards (static background, single-room spatial-lock) that fight a living dreamscape.
+VIVID_FANTASY_DIRECTIVE = (
+    "VIVID DREAMSCAPE — this is an imagination/fantasy beat, NOT real home footage: render it "
+    "lush, richly saturated and luminous, lightly cinematic with soft glow, bloom and depth — "
+    "a wondrous magical world, the opposite of a lo-fi phone snapshot. Colors vibrant and "
+    "dreamy. The world itself may gently come alive (blossoms drift, light shimmers, clouds "
+    "billow). Keep it unmistakably dream-like so it can't be confused with the reality cuts."
+)
+
+# Imagination/fantasy cuts get the vivid look + relaxed realism guards. The Director marks
+# them with look="fantasy"; keyword hints are a fallback for hand-authored directives.
+_AV_FANTASY_HINTS = (
+    "무릉도원", "근두운", "몽환", "초현실", "환상", "paradise", "fantasy", "fantastical",
+    "magical", "마법", "dreamscape", "dreamy", "misty", "surreal", "신비",
+)
+
+
+def _cut_is_fantasy(cc: dict | None) -> bool:
+    """True when a cut is an imagination/fantasy beat → vivid look, no realism guards."""
+    if not isinstance(cc, dict):
+        return False
+    look = str(cc.get("look") or cc.get("look_mode") or "").strip().lower()
+    if look in ("fantasy", "vivid", "imagination", "dream", "dreamscape", "판타지", "상상"):
+        return True
+    blob = " ".join(str(cc.get(k) or "") for k in
+                    ("motion_prompt", "regen_prompt", "scene", "beat", "description")).lower()
+    return any(h.lower() in blob for h in _AV_FANTASY_HINTS)
+
 
 def _resolve_scene_ref(set_anchor: str | None, set_description: str,
                        fallback_out_path: Path,
@@ -1538,8 +1570,16 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
                 log.warning("regen_prompts: cut %s has NO scene direction "
                             "(regen_prompt/scene/action/veo/motion/description all empty) — "
                             "image model will invent the location", tag)
-            full_prompt = f"{overall_style}. {_scene_lock_prefix}{per_cut_prompt}. " \
-                          f"Featuring {subjects}. {preserve}"
+            # Fantasy/imagination still: vivid wondrous look (swap lo-fi → vivid) and no
+            # single-room scene lock — the dreamscape is its own world (PD 2026-06-24).
+            if _cut_is_fantasy(cc):
+                _style = overall_style.replace(LOFI_REALISM_DIRECTIVE, VIVID_FANTASY_DIRECTIVE)
+                if "VIVID DREAMSCAPE" not in _style:
+                    _style = (_style + " " + VIVID_FANTASY_DIRECTIVE).strip()
+                full_prompt = f"{_style}. {per_cut_prompt}. Featuring {subjects}. {preserve}"
+            else:
+                full_prompt = f"{overall_style}. {_scene_lock_prefix}{per_cut_prompt}. " \
+                              f"Featuring {subjects}. {preserve}"
             full_prompt = _ensure_sink_height_lock(full_prompt)  # floor-sink guard
             regen[tag] = full_prompt
 
@@ -6065,21 +6105,29 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
             if no_clothing not in prompt:
                 prompt = prompt + " " + no_clothing
 
-        # Background stillness guardrail (PD 2026-06-01 PM: "갑자기 화분이 움직
-        # 이고"). Seedance freelances animation on bg objects — pots, books,
-        # plants spontaneously move. Lock everything except the pets.
+        # PD 2026-06-24: realism guards (static background, lo-fi look, single-room spatial
+        # lock) are for REALITY cuts. An imagination/fantasy beat needs the opposite — a
+        # living, vivid dreamscape — so skip those guards and use the vivid directive instead.
+        _fantasy = _cut_is_fantasy(cc)
+
+        # Background stillness guardrail (Seedance freelances animation on bg objects —
+        # pots, books, plants spontaneously move). Lock everything except the pets — but
+        # NOT in a fantasy cut, where the world is meant to come alive.
         bg_still = (
             "Background objects (plants in pots, books, decor, picture frames, "
             "furniture, lamps, dishes) are completely static throughout — "
             "ONLY the named pets and explicitly mentioned hands move. No "
             "shaking, drifting, swaying, or floating of stationary objects."
         )
-        if bg_still not in prompt:
+        if not _fantasy and bg_still not in prompt:
             prompt = prompt + " " + bg_still
 
-        # PD 2026-06-14: bake the lo-fi real-phone look into the i2v video too (not just
-        # the still) so the motion clip doesn't read as glossy AI.
-        if os.getenv("AV_LOFI", "1") != "0" and "LO-FI RESOLUTION" not in prompt:
+        # Look: lo-fi real-phone for reality cuts (so AV blends with real_footage);
+        # vivid wondrous dreamscape for imagination/fantasy cuts.
+        if _fantasy:
+            if "VIVID DREAMSCAPE" not in prompt:
+                prompt = prompt + " " + VIVID_FANTASY_DIRECTIVE
+        elif os.getenv("AV_LOFI", "1") != "0" and "LO-FI RESOLUTION" not in prompt:
             prompt = prompt + " " + LOFI_REALISM_DIRECTIVE
         # PD 2026-06-14: motion must ALWAYS be plentiful — lively, dynamic characters. Only
         # genuine rest/sleep beats are calm. Push the i2v toward active, energetic movement.
@@ -6101,14 +6149,11 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         if no_text not in prompt:
             prompt = prompt + " " + no_text
 
-        # Spatial anchor lock (PD 2026-06-02: "컷과 컷 사이에 배경이나 오브
-        # 젝트 위치 차이가 너무 크지 않도록 cameraman이 보정해야해"). Pull
-        # persistent_background layout from set_library and append as a
-        # FIXED-positions directive on every cut. Text reinforcement of
-        # the spatial layout reduces Seedance's tendency to relocate
-        # furniture across chain cuts.
+        # Spatial anchor lock — pin the room's furniture positions across cuts so the
+        # background doesn't drift. Skip on fantasy cuts: a dreamscape is a NEW world, not
+        # the locked living room, so anchoring it to home furniture would fight the fantasy.
         try:
-            if sa_for_anti and lib_data:
+            if sa_for_anti and lib_data and not _fantasy:
                 set_entry = lib_data.get(sa_for_anti) or {}
                 pb = set_entry.get("persistent_background") or {}
                 anchor_lines = []
