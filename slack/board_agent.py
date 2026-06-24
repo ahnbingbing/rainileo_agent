@@ -184,9 +184,9 @@ def _act_status(db) -> str:
     with db() as con:
         rows = arc.list_concept_directives(con, today)
         pend = kn.pending_questions(con)
-        # Open CLI escalations — so "이거 하고 있어?" gets a truthful answer instead of
-        # the agent silently sitting on a dead-letter queue. These are processed when a
-        # CLI (Claude Code) session next opens the repo, NOT automatically.
+        # Open escalations — now drained by the AUTONOMOUS executor (scripts.process_
+        # board_escalations), not a human CLI session. Unhandled here = in-flight or
+        # queued for the next ~5-min tick, so "이거 하고 있어?" gets a truthful answer.
         try:
             esc = con.execute(
                 "SELECT id, summary, ts FROM board_escalations WHERE handled=0 "
@@ -194,7 +194,7 @@ def _act_status(db) -> str:
         except Exception:
             esc = []
     if esc:
-        lines.append(f"*대기 중 CLI 요청:* {len(esc)}개 (다음 CLI 세션에서 처리)")
+        lines.append(f"*자동 처리 중인 요청:* {len(esc)}개 (곧 스레드에 결과)")
         for e in esc:
             lines.append(f"  • `#{e['id']}` {(e['summary'] or '')[:80]}")
     if rows:
@@ -262,26 +262,48 @@ def _act_render(params: dict) -> str:
             f"로그: `{logp.name}`. 완료되면 알려드릴게요.")
 
 
-def _act_escalate(text: str, params: dict, db, user: str) -> str:
+def _act_escalate(text: str, params: dict, db, user: str,
+                  channel: str = "", thread_ts: str = "") -> str:
     summary = (params.get("summary") or text)[:200]
+    eid = "?"
     try:
         with db() as con:
             con.execute(
                 "CREATE TABLE IF NOT EXISTS board_escalations ("
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT DEFAULT (datetime('now')), "
                 "author TEXT, request TEXT, summary TEXT, handled INTEGER DEFAULT 0)")
+            cols = [r[1] for r in con.execute("PRAGMA table_info(board_escalations)")]
+            for c, ddl in (("channel", "channel TEXT"), ("thread_ts", "thread_ts TEXT")):
+                if c not in cols:
+                    con.execute(f"ALTER TABLE board_escalations ADD COLUMN {ddl}")
             con.execute(
-                "INSERT INTO board_escalations (author, request, summary) VALUES (?,?,?)",
-                (user or "", text, summary))
+                "INSERT INTO board_escalations (author, request, summary, channel, thread_ts) "
+                "VALUES (?,?,?,?,?)", (user or "", text, summary, channel, thread_ts))
             eid = con.execute("SELECT last_insert_rowid()").fetchone()[0]
     except Exception as e:
         log.warning("escalation save failed: %s", e)
-        eid = "?"
-    # Honest reply: this is QUEUED, not auto-run. A human-opened CLI (Claude Code)
-    # session processes the queue — there is no autonomous picker (yet). Don't promise
-    # a result "next session" as if it happens on its own; tell PD how to see/pull it.
-    return (f":inbox_tray: 제가 바로 못 하는 일이라 CLI 대기열에 적어뒀어요 — `#{eid}` \"{summary}\".\n"
-            f"_CLI(클로드) 세션이 열릴 때 처리됩니다. `대기열` 또는 `현황` 으로 밀린 요청을 볼 수 있어요._")
+    # Autonomous now (PD 2026-06-25): kick the executor immediately so it's handled
+    # WITHOUT waiting for a human CLI session. The executor (scripts.process_board_
+    # escalations) implements the fix + commits + replies in this thread; paid renders /
+    # uploads are impossible there (paid keys stripped) and come back as a 1-tap approval.
+    _kick_executor()
+    return (f":robot_face: 자동 처리를 시작했어요 — `#{eid}` \"{summary}\".\n"
+            f"_분석·코드수정은 바로 반영해 이 스레드에 결과를 올릴게요. 돈 드는 렌더/업로드는 "
+            f"승인 한 번만 받을게요. `현황` 으로 진행을 볼 수 있어요._")
+
+
+def _kick_executor() -> None:
+    """Fire-and-forget the autonomous executor so escalations don't wait for the 5-min
+    launchd tick. Detached; the single-flight lock dedups against the launchd run."""
+    try:
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        py = os.path.join(root, ".venv", "bin", "python")
+        subprocess.Popen(
+            [py, "-m", "scripts.process_board_escalations"],
+            cwd=root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True)
+    except Exception as e:  # noqa: BLE001
+        log.warning("executor kick failed: %s", e)
 
 
 _HELP = (
@@ -296,7 +318,8 @@ _HELP = (
 )
 
 
-def _dispatch(d: dict, *, text: str, db, do_veto, user: str) -> str:
+def _dispatch(d: dict, *, text: str, db, do_veto, user: str,
+              channel: str = "", thread_ts: str = "") -> str:
     intent = d.get("intent")
     p = d.get("params") or {}
     if intent == "concept":
@@ -314,7 +337,7 @@ def _dispatch(d: dict, *, text: str, db, do_veto, user: str) -> str:
     if intent == "help":
         return _HELP
     if intent == "escalate":
-        return _act_escalate(text, p, db, user)
+        return _act_escalate(text, p, db, user, channel=channel, thread_ts=thread_ts)
     # chat
     return d.get("reply") or "네! 말씀하세요 🐾"
 
@@ -354,7 +377,8 @@ def handle_board_message(client, event, *, db, do_veto):
                     _PENDING.pop(thread_ts, None)
                 try:
                     out = _dispatch(pend["d"], text=pend["text"], db=db,
-                                    do_veto=do_veto, user=user)
+                                    do_veto=do_veto, user=user,
+                                    channel=channel, thread_ts=thread_ts)
                 except Exception as e:
                     log.exception("board confirmed action failed")
                     out = f":x: 실행 실패: {str(e)[:300]}"
@@ -393,7 +417,8 @@ def handle_board_message(client, event, *, db, do_veto):
     # 4) Read-only / cheap → run now. Lead with the LLM's friendly reply, then
     #    the action result.
     try:
-        out = _dispatch(d, text=text, db=db, do_veto=do_veto, user=user)
+        out = _dispatch(d, text=text, db=db, do_veto=do_veto, user=user,
+                        channel=channel, thread_ts=reply_thread)
     except Exception as e:
         log.exception("board action failed")
         out = f":x: 처리 실패: {str(e)[:300]}"

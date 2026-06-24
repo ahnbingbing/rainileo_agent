@@ -1,18 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Autonomous pickup for rayleo_board CLI escalations (PD 2026-06-22).
+  Autonomous EXECUTOR for rayleo_board escalations (PD 2026-06-22; exec upgrade 2026-06-25).
 
-  The board bot queues repo-level/ambiguous requests into board_escalations and tells
-  PD "a CLI session will handle it". This job is that consumer: every 20 min it spawns
-  a HEADLESS Claude Code in PLAN (read-only) mode to analyze each open escalation, posts
-  the analysis to the rayleo_board channel, and marks it handled. PLAN mode = can read
-  but cannot edit/commit, so it only ever produces analysis; real fixes stay human-gated.
+  Safety net behind board_agent's immediate kick: every 5 min it drains any open
+  board_escalations. For each it spawns a HEADLESS Claude Code with full edit/Bash tools
+  that investigates AND implements the fix, smoke-tests it, commits to the live branch,
+  pushes, and replies in the board thread — no human CLI session. Money/destruction is
+  blocked by construction: the subprocess env has all paid-API + YouTube-write keys
+  stripped (process_board_escalations.DENY_KEYS), so a render/upload cannot authenticate;
+  anything needing spend comes back as a 1-tap [APPROVAL] in Slack.
 
   Install:
       cp launchd/com.rianileo.board-escalations.plist ~/Library/LaunchAgents/
       launchctl unload ~/Library/LaunchAgents/com.rianileo.board-escalations.plist 2>/dev/null
       launchctl load   ~/Library/LaunchAgents/com.rianileo.board-escalations.plist
-  Disable (kill switch): set BOARD_PICKER_ENABLED=0 below + reload, or unload the job.
+  Kill switch: BOARD_PICKER_ENABLED=0 below + reload, or unload the job.
+  Read-only legacy mode: BOARD_EXEC_MODE=analyze.
   Logs: data/logs/board_escalations.{out,err}.log
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -37,9 +40,9 @@
       <key>LOG_LEVEL</key><string>INFO</string>
     </dict>
 
-    <key>StartInterval</key><integer>1200</integer>
+    <key>StartInterval</key><integer>300</integer>
 
-    <key>RunAtLoad</key><false/>
+    <key>RunAtLoad</key><true/>
 
     <key>StandardOutPath</key><string>/Users/ahnbingbing/code/rianileo-agent/data/logs/board_escalations.out.log</string>
     <key>StandardErrorPath</key><string>/Users/ahnbingbing/code/rianileo-agent/data/logs/board_escalations.err.log</string>
