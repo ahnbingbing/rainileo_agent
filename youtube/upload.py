@@ -62,6 +62,15 @@ def upload_short(
     return response
 
 
+def set_thumbnail(video_id: str, image_path: Path | str) -> None:
+    """Set a custom channel thumbnail on a video (PD 2026-06-24). Needs the
+    'youtube' OAuth scope (present in token.json). jpg/png, <2MB, ≥640px wide."""
+    yt = get_youtube()
+    media = MediaFileUpload(str(image_path), mimetype="image/jpeg")
+    yt.thumbnails().set(videoId=video_id, media_body=media).execute()
+    log.info("thumbnail set: %s ← %s", video_id, image_path)
+
+
 def veto_video(video_id: str, delete: bool = False) -> str:
     """Take down an auto-published launch episode (PD /veto). Default = flip to
     private (reversible — the scheduled publishAt is cleared so it won't go

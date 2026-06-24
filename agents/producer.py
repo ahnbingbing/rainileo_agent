@@ -3642,6 +3642,18 @@ def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.dat
         res = upload_short(out_path, title, desc, tags=tags,
                            publish_at_iso=publish_at)
         vid = res.get("id")
+        # PD 2026-06-24: auto-pick the best frame and set it as the channel thumbnail.
+        # Best-effort — a thumbnail failure must never fail the upload.
+        try:
+            import scripts.pick_thumbnail as _pt
+            from youtube.upload import set_thumbnail
+            _thumb = Path(out_path).with_suffix(".thumb.jpg")
+            _pk = _pt.make_thumbnail(out_path, _thumb, concept={"theme": title})
+            set_thumbnail(vid, _thumb)
+            if progress_cb:
+                progress_cb(f":frame_with_picture: 썸네일 자동 설정 — {_pk.get('reason','')[:60]}")
+        except Exception as _te:
+            log.warning("thumbnail set failed for %s (non-fatal): %s", vid, _te)
     except Exception as e:
         log.warning("auto-upload failed for %s: %s", card_id[:8], e)
         if progress_cb:

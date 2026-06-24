@@ -481,6 +481,52 @@ def bgm_fix_cmd(ack, body, respond):
 
 
 # ──────────────────────────────────────────────────────────────────────
+# /thumb <video_id | card_id_prefix> — 채널 썸네일 재선택 (PD 2026-06-24). 업로드 시
+#   best 프레임이 자동 설정되지만, 마음에 안 들면 이걸로 다시 골라 적용. (채널 전화인증
+#   필요 — 미인증이면 YouTube가 403.)
+# ──────────────────────────────────────────────────────────────────────
+@app.command("/thumb")
+def thumb_cmd(ack, body, respond):
+    ack()
+    ident = (body.get("text") or "").strip().split()[0:1]
+    if not ident:
+        respond("usage: `/thumb <youtube_video_id | card_id_prefix>`")
+        return
+    ident = ident[0].strip("`<>")
+    with db() as con:
+        row = con.execute(
+            "SELECT card_id, youtube_video_id, output_video_path, theme FROM cards "
+            "WHERE youtube_video_id=? OR card_id LIKE ? || '%' ORDER BY updated_at DESC LIMIT 1",
+            (ident, ident)).fetchone()
+    if not row or not row["youtube_video_id"] or not row["output_video_path"]:
+        respond(f":x: `{ident}` — 영상/파일을 못 찾았어요")
+        return
+    vid, vpath, theme = row["youtube_video_id"], row["output_video_path"], row["theme"]
+    respond(f":frame_with_picture: 썸네일 재선택 중 → `{vid}` …")
+
+    def _work():
+        try:
+            import scripts.pick_thumbnail as _pt
+            from youtube.upload import set_thumbnail
+            from pathlib import Path as _P
+            thumb = _P(vpath).with_suffix(".thumb.jpg")
+            pk = _pt.make_thumbnail(vpath, thumb, concept={"theme": theme})
+            set_thumbnail(vid, thumb)
+            respond(f":white_check_mark: 썸네일 설정 완료 — {pk.get('reason','')[:80]}\n"
+                    f"https://youtube.com/shorts/{vid}")
+        except Exception as e:  # noqa: BLE001
+            msg = str(e)
+            if "thumbnail" in msg and "permission" in msg.lower() or "403" in msg:
+                respond(":x: 채널이 커스텀 썸네일 권한이 없어요 — youtube.com/verify 에서 "
+                        "전화 인증 1회 하면 풀려요.")
+            else:
+                respond(f":x: 썸네일 실패: {msg[:300]}")
+
+    import threading
+    threading.Thread(target=_work, daemon=True).start()
+
+
+# ──────────────────────────────────────────────────────────────────────
 # /trend — 시의성 훅 (PD 2026-06-24). 캘린더(절기·메가이벤트)는 자동, 여기선 PD가
 #   본 유행 밈/챌린지를 즉석 추가. 컨셉 브레인스토밍이 이걸 읽어 시의성 회차를 만든다.
 #   /trend                      → 지금 활성 훅 목록
