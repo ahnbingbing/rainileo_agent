@@ -46,7 +46,16 @@ LOCK = ROOT / "data" / "tmp" / "board_picker.lock"
 MAX_PER_RUN = int(os.getenv("BOARD_PICKER_MAX", "3"))
 CLAUDE_TIMEOUT_S = int(os.getenv("BOARD_PICKER_TIMEOUT_S", "1500"))  # 25 min/escalation
 CLAUDE_BIN = os.getenv("CLAUDE_BIN", os.path.expanduser("~/.local/bin/claude"))
-EXEC_MODE = os.getenv("BOARD_EXEC_MODE", "auto")  # auto | analyze
+# Fail-safe default: read-only ANALYSIS. Autonomous code-edit+commit+push is a real
+# security surface (untrusted Slack input → auto-pushed code), so it must be OPTED INTO
+# explicitly by PD (set BOARD_EXEC_MODE=auto in the plist env + reload). Until then this
+# stays exactly as before — investigates and proposes, never mutates the repo.
+EXEC_MODE = os.getenv("BOARD_EXEC_MODE", "analyze")  # analyze | auto
+# Optional allowlist: when set (comma-sep Slack user IDs), only escalations authored by
+# these users get auto-exec; everyone else falls back to analyze even in auto mode.
+EXEC_AUTHOR_ALLOWLIST = {
+    u.strip() for u in os.getenv("BOARD_EXEC_AUTHORS", "").split(",") if u.strip()
+}
 AUTO_PUSH = os.getenv("BOARD_AUTO_PUSH", "1") == "1"
 
 # Paid / destructive credentials stripped from the executor subprocess. This is the
@@ -211,7 +220,10 @@ def _process_one(con: sqlite3.Connection, row: sqlite3.Row) -> None:
     thread_ts = row["thread_ts"] if "thread_ts" in row.keys() else None
     print(f"--- #{eid}: {req[:80]}")
 
-    read_only = (EXEC_MODE == "analyze")
+    author = row["author"] if "author" in row.keys() else ""
+    # auto-exec only when globally enabled AND (no allowlist OR author is on it).
+    read_only = (EXEC_MODE != "auto") or (
+        bool(EXEC_AUTHOR_ALLOWLIST) and author not in EXEC_AUTHOR_ALLOWLIST)
     env = _sanitized_env()
 
     # Refuse to run on a dirty tree (don't entangle our commit with unrelated edits).
