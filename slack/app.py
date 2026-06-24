@@ -1245,6 +1245,17 @@ def _grandma_converse(client, channel, user, text, thread_ts, asset_id=None):
         hist = _grandma_history(client, channel)
         convo = "\n".join(
             ("나(비서): " if h["role"] == "bot" else "가족: ") + h["text"] for h in hist)
+        import datetime as _dt
+        try:
+            from zoneinfo import ZoneInfo
+            _now = _dt.datetime.now(ZoneInfo("Asia/Seoul"))
+        except Exception:
+            _now = _dt.datetime.now()
+        _h = _now.hour
+        _part = ("새벽" if _h < 6 else "이른 아침" if _h < 8 else "아침" if _h < 11
+                 else "점심때" if _h < 14 else "오후" if _h < 18 else "저녁" if _h < 21
+                 else "밤")
+        now_label = _now.strftime("%Y년 %m월 %d일 %H시 %M분") + f" ({_part})"
         sys_p = (
             "너는 'Ryani(랴니=강아지, 꼬리 없음)와 Leo(레오=고양이)' 펫 숏츠 채널의 따뜻한 "
             "가족 비서다. 할머니·할아버지와 '계속' 대화한다 — 펫 영상 얘기든, 안부·날씨·일상 "
@@ -1267,9 +1278,10 @@ def _grandma_converse(client, channel, user, text, thread_ts, asset_id=None):
             "뜻이다 — 더 말해달라 하지 말고 '그러게요~ 다음에 같이 봐요' 식으로 가볍게 공감하며 받아라. "
             "단, 이해만 그렇게 하고 **답변은 반드시 깔끔한 표준어 존댓말**로 하라 "
             "— 사투리를 흉내내 답하지 마라(예: '~유', '~혀', '~겨' 금지).\n"
-            "★너는 현재 시각·날짜를 모른다. 시간 기반 추측이나 오지랖을 절대 하지 마라 "
-            "(예: '저녁 9시가 넘었는데 저녁은 드셨어요?', '늦었으니 주무세요', '아침이니~'). "
-            "끼니·취침·날씨 등을 가족이 먼저 말하지 않았으면 언급하지 말고, 실제로 적힌 내용에만 반응하라.\n"
+            f"★지금 한국 시각: {now_label}. 이 '실제' 시각을 알고 시간대에 자연스럽게 맞춰 대화하라 "
+            "(아침이면 상쾌한 아침 인사, 점심때면 식사, 저녁/밤이면 그에 맞는 따뜻한 인사·마무리). "
+            "시각을 추측·환각하지 말고 위 실제 시각만 기준으로 삼아라. 단 매 답을 시간 얘기로 시작하거나 "
+            "끼니·취침을 반복해 잔소리하진 마라 — 시각은 분위기를 맞추는 양념이고, 중심은 가족이 한 말이다.\n"
             "JSON만 답하라: {\"reply\": 정감있는 한국어 존댓말 1~3문장(맥락 이어가기 + 따뜻함 "
             "+ 가끔 가벼운 후속 질문, 이모지 약간), "
             "\"intent\": \"request\"(영상 제작 요청)|\"story\"(펫 일화·설명)|\"chat\"(인사·안부·잡담), "
