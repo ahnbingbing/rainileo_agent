@@ -907,6 +907,45 @@ def sync_album(
                 "WHERE source_uuid IS NOT NULL AND source_uuid != ''")
         }
 
+        # PD 2026-06-24 self-heal: an ALREADY-ingested asset whose local file is a
+        # 0-BYTE placeholder (a transient osxphotos slow-window left it empty on the
+        # 6/13 import) is excluded from NEW ("it's in DB") and never re-pulled, so it
+        # sits in permanent limbo — VLM can't extract a frame → can't tag it. Re-pull
+        # exactly those and copy them back onto their paths. ⚠️ A MISSING file is NOT
+        # broken — this repo prunes local originals that are safely mirrored in GCS
+        # (re-fetched on demand at render). Flag ONLY exists-but-0-byte, else we'd
+        # treat every pruned original as broken and re-download the archive (disk bomb).
+        broken: dict[str, str] = {}
+        for _u, _fp in con.execute(
+                "SELECT source_uuid, file_path FROM assets "
+                "WHERE source_uuid IS NOT NULL AND source_uuid != ''"):
+            try:
+                _p = Path(_fp)
+                if not _p.is_absolute():
+                    _p = ROOT / _p
+                if _p.exists() and _p.stat().st_size == 0:
+                    broken[_u] = str(_p)
+            except Exception:
+                continue
+        if broken and not dry_run:
+            log.info("self-heal: %d ingested assets have 0-byte files — re-downloading",
+                     len(broken))
+            repair_dir = ROOT / "data" / "tmp" / "icloud_repair"
+            shutil.rmtree(repair_dir, ignore_errors=True)
+            bulk_export_to(album_name, repair_dir, uuids=sorted(broken))
+            _repaired = 0
+            for _u, _dst in broken.items():
+                _cands = [c for c in sorted(repair_dir.glob(f"{_u}.*"))
+                          if not c.name.endswith(".txt") and c.stat().st_size > 0]
+                if not _cands:
+                    continue
+                _d = Path(_dst)
+                _d.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(_cands[0], _d)
+                _repaired += 1
+            log.info("self-heal: repaired %d/%d 0-byte files", _repaired, len(broken))
+            shutil.rmtree(repair_dir, ignore_errors=True)
+
         def _date_added(p):
             da = getattr(p, "date_added", None)
             return da.date() if da else None
@@ -1302,10 +1341,25 @@ def main(argv: list[str] | None = None) -> int:
             # the new ones.
             imported = (s.get("imported_photos", 0) + s.get("imported_clips", 0)
                         + s.get("imported_live_clips", 0))
-            if args.vlm and not args.dry_run and imported > 0:
-                _run_vlm_tagging(imported)
-            elif args.vlm and imported == 0:
-                log.info("--vlm: no new assets imported — skipping VLM tagging")
+            if args.vlm and not args.dry_run:
+                # PD 2026-06-24: tag EVERY untagged asset, not just this run's imports.
+                # A prior run's transient Gemini block/empty-response, or a 0-byte file
+                # recovered by the self-heal re-download below, leaves assets untagged —
+                # and a routine sync imports nothing new, so they'd sit in limbo forever
+                # ("no new assets → skipping VLM" was exactly that bug). tag_assets_vlm
+                # selects untagged only, so this is a fast no-op when the backlog is clean.
+                try:
+                    _c = sqlite3.connect(DB_PATH)
+                    _untagged = _c.execute(
+                        "SELECT COUNT(*) FROM assets WHERE vlm_analyzed_at IS NULL "
+                        "OR vlm_analyzed_at=''").fetchone()[0]
+                    _c.close()
+                except Exception:
+                    _untagged = 0
+                if imported > 0 or _untagged > 0:
+                    _run_vlm_tagging(max(imported, _untagged))
+                else:
+                    log.info("--vlm: nothing untagged — skipping VLM tagging")
             # Keep the GCS mirror current (PD 2026-06-21) — BEFORE prune, so an asset is
             # safely in GCS before its local original can be deleted. Uploads newly-imported
             # captures + anything warm/backfill pulled local. Idempotent; non-fatal.

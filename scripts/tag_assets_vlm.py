@@ -169,7 +169,6 @@ def _call_gemini_vision(image_path: Path, captured_iso: str | None = None) -> di
 
     client = _genai.Client(api_key=api_key, http_options=_types.HttpOptions(
         timeout=int(os.getenv("VLM_TIMEOUT_MS", "90000"))))
-    model_name = os.getenv("VLM_MODEL", "gemini-2.5-flash")
     # thinking_budget=0 disables gemini-2.5-flash's default dynamic thinking, which
     # otherwise adds large latency (and truncation risk) to every call. This is a pure
     # tagging task — no reasoning needed — so we match the rest of the repo's VLM calls
@@ -178,32 +177,56 @@ def _call_gemini_vision(image_path: Path, captured_iso: str | None = None) -> di
         response_mime_type="application/json",
         thinking_config=_types.ThinkingConfig(thinking_budget=0),
     )
-    # Retry transient rate-limit / unavailable errors with exponential backoff. Essential
-    # once we run workers in parallel: bursts can trip 429 RESOURCE_EXHAUSTED / 503.
+    contents = [
+        _types.Part.from_bytes(data=buf.getvalue(), mime_type="image/jpeg"),
+        ANALYSIS_PROMPT + _temporal_grounding(captured_iso),
+    ]
+    # Model fallback (PD 2026-06-24): gemini-2.5-flash sporadically returns
+    # block_reason=OTHER — an empty response with 0 candidates — on certain benign
+    # pet frames. It is DETERMINISTIC per (model, image): retrying the same model is
+    # futile and used to surface as a cryptic "Expecting value: line 1 col 1" JSON
+    # error, permanently skipping the asset. A different model (gemini-flash-latest)
+    # does NOT block the same image, so on an empty/blocked response we fall through
+    # to the next model. Transient 429/503 still retry with backoff per-model.
+    primary = os.getenv("VLM_MODEL", "gemini-2.5-flash")
+    fallbacks = [m.strip() for m in os.getenv(
+        "VLM_FALLBACK_MODELS", "gemini-flash-latest").split(",") if m.strip()]
+    models = [primary] + [m for m in fallbacks if m != primary]
+    max_retries = int(os.getenv("VLM_MAX_RETRIES", "4"))
+
     last_err = None
-    for attempt in range(int(os.getenv("VLM_MAX_RETRIES", "4"))):
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=[
-                    _types.Part.from_bytes(data=buf.getvalue(), mime_type="image/jpeg"),
-                    ANALYSIS_PROMPT + _temporal_grounding(captured_iso),
-                ],
-                config=cfg,
-            )
-            text = (response.text or "").strip()
+    blocked = []
+    for model_name in models:
+        for attempt in range(max_retries):
+            try:
+                response = client.models.generate_content(
+                    model=model_name, contents=contents, config=cfg)
+            except Exception as e:  # noqa: BLE001
+                msg = str(e)
+                last_err = e
+                transient = any(s in msg for s in (
+                    "429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE", "500",
+                    "INTERNAL", "deadline", "timeout", "Timeout"))
+                if transient and attempt < max_retries - 1:
+                    time.sleep(min(2 ** attempt + 0.5, 20))
+                    continue
+                break  # non-transient or exhausted → try next model
+            # Empty / safety-blocked response (no usable candidate). Deterministic per
+            # model+image, so don't retry the same model — fall through to the next.
+            br = getattr(getattr(response, "prompt_feedback", None), "block_reason", None)
+            try:
+                text = (response.text or "").strip()
+            except Exception:
+                text = ""
+            if not getattr(response, "candidates", None) or br is not None or not text:
+                blocked.append(f"{model_name}:{br or 'empty'}")
+                last_err = RuntimeError(f"VLM empty/blocked ({model_name} reason={br})")
+                break  # next model
             text = re.sub(r"^```(?:json)?\s*", "", text)
             text = re.sub(r"\s*```$", "", text)
             return json.loads(text)
-        except Exception as e:  # noqa: BLE001
-            msg = str(e)
-            last_err = e
-            transient = any(s in msg for s in (
-                "429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE", "500",
-                "INTERNAL", "deadline", "timeout", "Timeout"))
-            if not transient or attempt == int(os.getenv("VLM_MAX_RETRIES", "4")) - 1:
-                raise
-            time.sleep(min(2 ** attempt + 0.5, 20))
+    if blocked:
+        raise RuntimeError(f"VLM blocked on all models [{', '.join(blocked)}]")
     raise last_err  # pragma: no cover
 
 
