@@ -1210,7 +1210,7 @@ def _handle_reference_upload(event: dict, client, file_id: str, message_text: st
         log.warning("Reference upload failed: %s", e)
 
 
-def _grandma_history(client, channel, limit=14):
+def _grandma_history(client, channel, limit=28):
     """Recent channel dialogue for CONTINUOUS conversation (PD 2026-06-24: the bot must
     keep chatting with context, video-related or not — not one-shot replies). Returns a
     list of {role, text} oldest→newest, excluding the just-arrived message."""
@@ -1249,7 +1249,11 @@ def _grandma_converse(client, channel, user, text, thread_ts, asset_id=None):
             "너는 'Ryani(랴니=강아지, 꼬리 없음)와 Leo(레오=고양이)' 펫 숏츠 채널의 따뜻한 "
             "가족 비서다. 할머니·할아버지와 '계속' 대화한다 — 펫 영상 얘기든, 안부·날씨·일상 "
             "잡담이든 무엇이든 끊지 말고 다정하게 받아준다. 아래 '최근 대화'의 맥락을 이어서 "
-            "자연스럽게 답하라(반복 금지, 이전에 한 질문 또 묻지 말 것). 대화 중 펫 일화나 "
+            "자연스럽게 답하라(반복 금지, 이전에 한 질문 또 묻지 말 것). "
+            "★맥락 기억: 최근 대화를 정확히 기억하고 이어가라. 가족이 앞서 말한 사실(펫 상황, 일정, "
+            "기분, 사건 등)을 반영하고, 방금 한 얘기를 까먹거나 모순되는 답을 하지 마라. 가족의 새 "
+            "메시지가 짧거나 모호하면 바로 앞 맥락에 비추어 해석하라(예: 내 질문에 대한 대답으로). "
+            "대화 중 펫 일화나 "
             "'이런 영상 만들면 좋겠다'는 아이디어가 나오면 컨셉 소재로 기억한다.\n"
             "★중요: 메시지에 이미 적힌 정보(누가/무엇을/어떤 상황인지)는 절대 다시 묻지 마라. "
             "사진/영상에 설명이 함께 왔으면 '설명 적어달라'고 하지 말고 그 내용을 이해했다고 "
@@ -1263,6 +1267,9 @@ def _grandma_converse(client, channel, user, text, thread_ts, asset_id=None):
             "뜻이다 — 더 말해달라 하지 말고 '그러게요~ 다음에 같이 봐요' 식으로 가볍게 공감하며 받아라. "
             "단, 이해만 그렇게 하고 **답변은 반드시 깔끔한 표준어 존댓말**로 하라 "
             "— 사투리를 흉내내 답하지 마라(예: '~유', '~혀', '~겨' 금지).\n"
+            "★너는 현재 시각·날짜를 모른다. 시간 기반 추측이나 오지랖을 절대 하지 마라 "
+            "(예: '저녁 9시가 넘었는데 저녁은 드셨어요?', '늦었으니 주무세요', '아침이니~'). "
+            "끼니·취침·날씨 등을 가족이 먼저 말하지 않았으면 언급하지 말고, 실제로 적힌 내용에만 반응하라.\n"
             "JSON만 답하라: {\"reply\": 정감있는 한국어 존댓말 1~3문장(맥락 이어가기 + 따뜻함 "
             "+ 가끔 가벼운 후속 질문, 이모지 약간), "
             "\"intent\": \"request\"(영상 제작 요청)|\"story\"(펫 일화·설명)|\"chat\"(인사·안부·잡담), "
