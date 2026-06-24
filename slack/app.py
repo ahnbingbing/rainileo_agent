@@ -438,6 +438,49 @@ def veto_cmd(ack, body, respond):
 
 
 # ──────────────────────────────────────────────────────────────────────
+# /bgm-fix <video_id | card_id_prefix> [track.mp3] — 저작권 침해 복구 (PD 2026-06-24).
+#   YouTube Content-ID가 한 회차의 메인 BGM을 클레임하면: 범퍼는 그대로 두고
+#   메인 BGM만 안전한 다른 트랙으로 교체 → 클레임된 업로드 내리고 → 같은 일정으로
+#   다시 업로드 → 카드 갱신. 클레임된 트랙은 원장에 기록돼 picker가 다시 안 고른다.
+#   (재렌더 없음, 오디오만 재mux. 범퍼 공통 트랙은 한 영상만 걸릴 리 없으니 무죄.)
+#   /bgm-fix                       → 사용법
+#   /bgm-fix ptppVGHjltg           → 자동으로 안전한 트랙 골라 교체+재업로드
+#   /bgm-fix e67a9d8b sonican-sweet-moments-232318.mp3  → 트랙 지정
+# ──────────────────────────────────────────────────────────────────────
+@app.command("/bgm-fix")
+def bgm_fix_cmd(ack, body, respond):
+    ack()
+    parts = (body.get("text") or "").strip().split()
+    if not parts:
+        respond("usage: `/bgm-fix <youtube_video_id | card_id_prefix> [교체할_트랙.mp3]`\n"
+                "_저작권 클레임된 회차의 BGM을 안전한 트랙으로 바꿔 같은 일정으로 다시 올려요._")
+        return
+    ident = parts[0].strip("`<>")
+    track = parts[1].strip("`<>") if len(parts) > 1 else None
+    respond(f":musical_note: BGM 교체 시작 → `{ident}` (백그라운드 처리 중, 잠시만요…)")
+
+    def _work():
+        import importlib
+        try:
+            sb = importlib.import_module("scripts.swap_bgm")
+            res = sb.reupload(ident, new_bgm=track)
+            respond(
+                f":white_check_mark: BGM 교체 완료 — `{res['card_id'][:8]}`\n"
+                f"  • 클레임된 BGM: `{res.get('claimed_bgm')}` (원장 등록 → 재선택 차단)\n"
+                f"  • 새 BGM: `{res.get('new_bgm')}`\n"
+                f"  • 새 영상: `{res.get('new_video_id')}` "
+                f"(공개예정 {res.get('publish_at')})\n"
+                f"  https://youtube.com/shorts/{res.get('new_video_id')}"
+            )
+        except Exception as e:  # noqa: BLE001
+            log.exception("bgm-fix failed for %s", ident)
+            respond(f":x: BGM 교체 실패 ({ident}): {str(e)[:400]}")
+
+    import threading
+    threading.Thread(target=_work, daemon=True).start()
+
+
+# ──────────────────────────────────────────────────────────────────────
 # /concept <YYYY-MM-DD> <내용> — 특정 날짜 컨셉 예약 (PD 2026-06-07).
 #   그 날 제작 시 PD가 적은 내용을 최우선 방향으로 컨셉을 만든다.
 #   /concept                    → 다가오는 예약 목록

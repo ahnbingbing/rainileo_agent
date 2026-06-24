@@ -87,6 +87,21 @@ def _pick_bgm_track(bgm_mood: str, seed_key: str) -> str:
     import hashlib as _h
     candidates = _BGM_MOOD_MAP.get(
         bgm_mood, ["backgroundmusicforvideos-cute-cheerful-whistle-cute-music-249653.mp3"])
+    # PD 2026-06-24 (BGM 저작권 재발 방지): never pick a YouTube-Content-ID-claimed
+    # track or a track sharing a claimed track's label (claims are often catalog-wide).
+    # Ledger written by scripts/swap_bgm.py on a takedown.
+    import json as _json
+    try:
+        _claimed = set(_json.loads((ROOT / "data" / "bgm_claimed.json").read_text(encoding="utf-8")))
+    except Exception:
+        _claimed = set()
+    if _claimed:
+        def _lbl(fn: str) -> str:
+            t = fn.rsplit(".", 1)[0].split("-")
+            return "lp-studio" if t[:2] == ["lp", "studio"] else (t[0] if t else fn)
+        _bad = {_lbl(c) for c in _claimed}
+        _safe = [c for c in candidates if c not in _claimed and _lbl(c) not in _bad]
+        candidates = _safe or [c for c in candidates if c not in _claimed] or candidates
     seed = int(_h.sha1((seed_key or "default").encode("utf-8")).hexdigest()[:8], 16)
     return candidates[seed % len(candidates)]
 BUMPER_MUSIC = ROOT / os.getenv(
@@ -757,6 +772,22 @@ def _generate_t2v_manifests(card: dict, concept: dict, concept_cuts: list[dict],
         bgm_mood,
         ["backgroundmusicforvideos-cute-cheerful-whistle-cute-music-249653.mp3"],
     )
+    # PD 2026-06-24 (BGM 저작권 침해 재발 방지): never re-pick a track that YouTube
+    # Content-ID has claimed. The ledger (data/bgm_claimed.json, written by
+    # scripts/swap_bgm.py on a takedown) lists claimed filenames; claims are often
+    # catalog-wide so we also drop any track sharing a claimed track's label.
+    import json as _json
+    try:
+        _claimed = set(_json.loads((ROOT / "data" / "bgm_claimed.json").read_text(encoding="utf-8")))
+    except Exception:
+        _claimed = set()
+    if _claimed:
+        def _lbl(fn: str) -> str:
+            t = fn.rsplit(".", 1)[0].split("-")
+            return "lp-studio" if t[:2] == ["lp", "studio"] else (t[0] if t else fn)
+        _bad_labels = {_lbl(c) for c in _claimed}
+        _filtered = [c for c in candidates if c not in _claimed and _lbl(c) not in _bad_labels]
+        candidates = _filtered or [c for c in candidates if c not in _claimed] or candidates
     # Deterministic varied pick: hash(card_id) → index into candidates
     import hashlib as _h
     card_id = card.get("card_id", "") or concept.get("title", "") or "default"
