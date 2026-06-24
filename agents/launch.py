@@ -205,6 +205,18 @@ def launch_pipeline(target: dt.date, *,
     from agents.producer import (_db, _gather_context, produce_and_render,
                                   _auto_upload_episode)
     con = _db()
+    # PD 2026-06-24: refresh timely hooks (calendar events + live memes/challenges) BEFORE
+    # concepts are generated, so the brainstorm can ride what's hot now (World Cup, Halloween,
+    # viral pet challenges). Best-effort — the trends table feeds arc + concept_brainstorm.
+    if not dry_run and not lane_filter and not slot_filter:  # full daily batch only
+        try:
+            import scripts.trend_feed as _tf
+            res = _tf.refresh(con, target)
+            if progress_cb:
+                progress_cb(f":satellite: 시의성 훅 갱신 — 캘린더 {res['calendar_active']} / "
+                            f"발견 {res['discovered']}")
+        except Exception as _e:
+            log.warning("trend_feed refresh failed (non-fatal): %s", _e)
     assignments = day_assignments(target)
     if lane_filter:  # PD 2026-06-09: re-render only one lane's slots (e.g. AV redo)
         assignments = [(ln, hh) for ln, hh in assignments if ln == lane_filter]

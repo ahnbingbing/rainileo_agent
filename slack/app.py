@@ -481,6 +481,44 @@ def bgm_fix_cmd(ack, body, respond):
 
 
 # ──────────────────────────────────────────────────────────────────────
+# /trend — 시의성 훅 (PD 2026-06-24). 캘린더(절기·메가이벤트)는 자동, 여기선 PD가
+#   본 유행 밈/챌린지를 즉석 추가. 컨셉 브레인스토밍이 이걸 읽어 시의성 회차를 만든다.
+#   /trend                      → 지금 활성 훅 목록
+#   /trend 주술회전 소환 챌린지   → 밈으로 추가(기본 14일)
+# ──────────────────────────────────────────────────────────────────────
+@app.command("/trend")
+def trend_cmd(ack, body, respond):
+    ack()
+    import datetime as _dt
+    import scripts.trend_feed as tf
+    text = (body.get("text") or "").strip()
+    con = tf._conn()
+    today = _dt.date.today()
+    if not text:
+        rows = con.execute(
+            "SELECT category, title, fit_score, expiry_date, source FROM trends "
+            "WHERE expiry_date IS NULL OR expiry_date >= ? ORDER BY fit_score DESC LIMIT 12",
+            (today.isoformat(),)).fetchall()
+        con.close()
+        if not rows:
+            respond("활성 시의성 훅이 없어요. `/trend <유행 밈/챌린지>` 로 추가하거나 "
+                    "런치 배치가 자동 갱신해요.")
+            return
+        lines = [":satellite: *지금 활성 시의성 훅* (브레인스토밍이 이걸 탑니다)"]
+        for c, ti, f, ex, src in rows:
+            lines.append(f"  • [{src}/{c}] {f:.2f}  {ti}  _(만료 {ex})_")
+        lines.append("\n_추가:_ `/trend <유행 밈/챌린지 한 줄>`")
+        respond("\n".join(lines))
+        return
+    import hashlib as _h
+    tid = "manual_" + _h.sha1(text.encode()).hexdigest()[:10]
+    tf._upsert(con, tid, "manual", "meme", text, 0.78,
+               (today + _dt.timedelta(days=14)).isoformat(), {"why": "PD 수동 추가"})
+    con.commit(); con.close()
+    respond(f":white_check_mark: 시의성 훅 추가 — `{text}` (14일간 브레인스토밍에 반영)")
+
+
+# ──────────────────────────────────────────────────────────────────────
 # /concept <YYYY-MM-DD> <내용> — 특정 날짜 컨셉 예약 (PD 2026-06-07).
 #   그 날 제작 시 PD가 적은 내용을 최우선 방향으로 컨셉을 만든다.
 #   /concept                    → 다가오는 예약 목록

@@ -106,6 +106,51 @@ def _exclude_block(context: dict | None) -> str:
             "'같은 이야기'는 금지다. 확실히 다른 앵글/소재로 가라:\n" + "\n".join(lines) + "\n")
 
 
+def _active_trends_block(style: str) -> str:
+    """Timely-hook injection (PD 2026-06-24): the live `trends` rows (calendar events +
+    discovered memes/challenges, fed by scripts/trend_feed.py) so brainstorm can ride
+    what's hot NOW — the World Cup, Halloween, a viral pet challenge. The empty trends
+    table was exactly why the AV engine never proposed timely concepts on its own. A
+    recurring event lists its remaining angles + the ones used recently → rotate to a
+    NEW angle, never repeat the same sub-concept (월드컵: 대결 → 응원모드 → …)."""
+    import datetime as _dt
+    import json as _json
+    import sqlite3 as _sql
+    today = _dt.date.today().isoformat()
+    try:
+        con = _sql.connect(str(ROOT / "data" / "agent.db"))
+        rows = con.execute(
+            "SELECT category, title, fit_score, notes FROM trends "
+            "WHERE expiry_date IS NULL OR expiry_date >= ? "
+            "ORDER BY fit_score DESC LIMIT 6", (today,)).fetchall()
+        con.close()
+    except Exception:
+        return ""
+    if not rows:
+        return ""
+    lines = []
+    for cat, title, fit, notes_s in rows:
+        try:
+            nt = _json.loads(notes_s) if notes_s else {}
+        except Exception:
+            nt = {}
+        extra = ""
+        if nt.get("angles_remaining"):
+            extra += f" | 남은 각도: {', '.join(nt['angles_remaining'][:5])}"
+        if nt.get("recent_used"):
+            extra += f" | 이미 한 각도(반복 금지): {', '.join(nt['recent_used'][:3])}"
+        if nt.get("why"):
+            extra += f" | 재현: {nt['why']}"
+        if nt.get("hint"):
+            extra += f" | {nt['hint']}"
+        lines.append(f"  · [{cat} fit{float(fit or 0):.2f}] {title}{extra}")
+    return (
+        "\n★오늘의 시의성 훅(지금 한국에서 핫한 소재 — 적합하면 후보 중 1~2개는 이걸 메인 훅으로 "
+        "잡아라. fit≥0.9 라이브 이벤트는 강력 추천). 단 ①우리 자산/캐릭터로 자연스럽게 재현 가능할 "
+        "때만 ②같은 이벤트는 '남은 각도'에서 매번 새 각도로(이미 한 각도 반복 금지) ③옷 입히기 금지 "
+        "— 소품/오버레이로 테마 전달:\n" + "\n".join(lines) + "\n")
+
+
 def brainstorm(style: str, brief: str, n: int = 5, *, context: dict | None = None) -> list[dict]:
     """Generate n DISTINCT storyline candidates for the brief. LLM, cheap."""
     facts = _character_facts()
@@ -150,6 +195,7 @@ def brainstorm(style: str, brief: str, n: int = 5, *, context: dict | None = Non
         "각 후보 = {title(한국어), logline(한 줄 요약), beats(컷별 한 줄 3~6개), "
         "imagination_hook(상상 훅 한 줄; rf면 '없음'), why_appealing(시청자가 왜 좋아할지 한 줄)}.\n"
         "후보끼리 훅이 겹치면 안 된다(다양성이 핵심). JSON 배열만 출력.")
+    system += _active_trends_block(style)
     system += _exclude_block(context)
     # Channel Manager Phase 4: feed back what's WINNING (energy/format/packaging pattern,
     # not topics — freshness still rules topics). Empty until enough performance data.
