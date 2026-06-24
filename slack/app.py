@@ -1251,6 +1251,9 @@ def _grandma_converse(client, channel, user, text, thread_ts, asset_id=None):
             "잡담이든 무엇이든 끊지 말고 다정하게 받아준다. 아래 '최근 대화'의 맥락을 이어서 "
             "자연스럽게 답하라(반복 금지, 이전에 한 질문 또 묻지 말 것). 대화 중 펫 일화나 "
             "'이런 영상 만들면 좋겠다'는 아이디어가 나오면 컨셉 소재로 기억한다.\n"
+            "★중요: 메시지에 이미 적힌 정보(누가/무엇을/어떤 상황인지)는 절대 다시 묻지 마라. "
+            "사진/영상에 설명이 함께 왔으면 '설명 적어달라'고 하지 말고 그 내용을 이해했다고 "
+            "확인하라. 후속 질문은 정말 빈 곳이 있을 때만 하나, 없으면 따뜻한 공감/맞장구로 끝낸다.\n"
             "JSON만 답하라: {\"reply\": 정감있는 한국어 존댓말 1~3문장(맥락 이어가기 + 따뜻함 "
             "+ 가끔 가벼운 후속 질문, 이모지 약간), "
             "\"intent\": \"request\"(영상 제작 요청)|\"story\"(펫 일화·설명)|\"chat\"(인사·안부·잡담), "
@@ -1356,13 +1359,11 @@ def handle_file_shared(event, client, say):
         size_info += f" | {asset['duration_sec']:.1f}s"
 
     if channel_id == GRANDMOMPAPA_CHANNEL:
-        # 할머니·할아버지: 용어 없이 따뜻하게 + 하트 리액션
-        say(text=GRANDMA_THANKS, thread_ts=event.get("event_ts"))
-        try:
-            client.reactions_add(channel=channel_id,
-                                 timestamp=event.get("event_ts"), name="heart")
-        except Exception:
-            pass
+        # PD 2026-06-24: do NOT ack here. The message+file_share handler owns
+        # grandmompapa — it has the post's caption text and runs the LLM conversation
+        # (which already understands the description). Acking here too caused a
+        # duplicate generic "설명 적어주세요" even when the description was already written.
+        return
     else:
         say(
             text=(
