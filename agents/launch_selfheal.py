@@ -142,6 +142,7 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
     want = list(dict.fromkeys(assignments))  # ordered-unique (lane, slot)
     done: dict[tuple, dict] = {}
     diagnoses: list[dict] = []
+    fail_info: dict[tuple, dict] = {}  # (lane,slot) → {cat, rem, terminal} for the final summary
     # PD 2026-06-10 COST: a slot whose failure already SPENT Seedance (rendered then
     # failed Giri / face gate) is TERMINAL — re-rendering it every round is what
     # compounded to ~$100. It's saved for PD review (save-AV) and NOT retried. Only
@@ -175,6 +176,7 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
                 cat = classify_failure(logtext)
                 rem = _remediate(cat, rnd)
                 cap(f":x: [self-heal] {slot} {lane} 실패 ({cat}) — 조치: {rem}")
+                fail_info[(lane, slot)] = {"cat": cat, "rem": rem, "terminal": cat in EXPENSIVE}
                 if cat in EXPENSIVE:
                     terminal.add((lane, slot))
                     cap(f":coin: [self-heal] {slot} {lane} 비용 발생 실패 → 재렌더 중단 "
@@ -187,6 +189,7 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
                         f"→ {diag.get('fix_file', '?')}:{diag.get('fix_function', '?')}")
 
     failed = [(l, h) for (l, h) in want if (l, h) not in done]
+    ap = None
     if diagnoses:
         ART.mkdir(parents=True, exist_ok=True)
         ap = ART / f"selfheal_{target.isoformat()}.json"
@@ -194,10 +197,32 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
             {"date": str(target), "rounds": max_rounds,
              "failed": [f"{h} {l}" for l, h in failed], "diagnoses": diagnoses},
             ensure_ascii=False, indent=2), encoding="utf-8")
-        cap(f":clipboard: 진단 아티팩트: {ap} (코드 수정은 에이전트/PD가 검토·적용)")
 
-    cap(f":checkered_flag: self-heal 완료 — 성공 {len(done)}/{len(want)}, "
-        f"미해결 {len(failed)}")
+    # Consolidated end-of-batch summary to Slack (PD 2026-06-24): one digest with
+    # successes, per-slot failure reasons, and the LLM diagnosis (root cause + the code
+    # file/function to fix) for slots the auto re-work couldn't resolve.
+    def _lbl(l):
+        return "AV" if l == "ai_vtuber" else "RF"
+    diag_by = {(d.get("lane"), d.get("slot")): d for d in diagnoses}
+    lines = [f":checkered_flag: *배치 써머리* {target.isoformat()} — 성공 "
+             f"{len(done)}/{len(want)}" + ("" if failed else " (전부 성공 🎉)")]
+    for (l, h), v in done.items():
+        lines.append(f"  ✅ {h} {_lbl(l)} — `{v.get('video_id', '-')}` "
+                     f"(공개 {v.get('publish_at', '?')})")
+    for (l, h) in failed:
+        fi = fail_info.get((l, h), {})
+        term = " · 비용발생→재렌더 중단(영상 저장됨)" if fi.get("terminal") else ""
+        line = f"  ❌ {h} {_lbl(l)} — 실패: {fi.get('cat', '?')}{term}"
+        d = diag_by.get((l, h))
+        if d:
+            line += (f"\n     🔍 원인: {str(d.get('root_cause', '?'))[:150]}"
+                     f"\n     🛠 수정: {d.get('fix_file', '?')}:{d.get('fix_function', '?')} "
+                     f"(risk {d.get('risk', '?')})")
+        lines.append(line)
+    if failed:
+        lines.append("  → 자동 재작업(최대 %d회)으로 못 푼 슬롯이에요. 위 진단대로 코드 수정/재렌더 "
+                     "필요" % max_rounds + (f" — 상세 {ap.name}" if ap else "") + ".")
+    cap("\n".join(lines))
     return {
         "done": {f"{l}/{h}": v for (l, h), v in done.items()},
         "failed": [f"{h} {l}" for l, h in failed],
