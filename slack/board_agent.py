@@ -174,38 +174,113 @@ def _last_batch_summary() -> str:
     return "\n".join(out)
 
 
+def _ago(ts: str) -> str:
+    """'YYYY-MM-DD HH:MM:SS'(UTC, SQLite datetime('now')) → '3분 전' 류 상대시각."""
+    try:
+        t = dt.datetime.strptime((ts or "").strip(), "%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError):
+        return ""
+    secs = (dt.datetime.utcnow() - t).total_seconds()
+    if secs < 0:
+        return "방금"
+    if secs < 90:
+        return "방금"
+    if secs < 3600:
+        return f"{int(secs // 60)}분 전"
+    if secs < 86400:
+        return f"{int(secs // 3600)}시간 전"
+    return f"{int(secs // 86400)}일 전"
+
+
+def _esc_result_oneline(result: str | None) -> str:
+    """완료된 요청의 result(스레드에 올린 전문)에서 한 줄 결과 신호만 뽑는다."""
+    r = (result or "").strip()
+    if not r:
+        return "완료(결과 미기록)"
+    if "[APPROVAL]" in r:
+        return ":raised_hand: 승인 대기"
+    if "스모크" in r and "실패" in r or "되돌렸" in r or "되돌려" in r:
+        return ":x: 실패→되돌림"
+    if "커밋 `" in r or ("커밋" in r and ":white_check_mark:" in r):
+        return ":white_check_mark: 코드 수정·커밋"
+    if r.startswith(":x:") or "처리 실패" in r:
+        return ":x: 처리 실패"
+    if "분석만" in r:
+        return "분석만(코드변경 없음)"
+    # 결론 한 줄 — 헤더/이모지/마크다운 줄을 건너뛰고 첫 의미있는 문장.
+    for ln in r.splitlines():
+        s = re.sub(r"[`*_>#]", "", ln).strip()
+        s = re.sub(r"^:[a-z_]+:\s*", "", s).strip()
+        if s and not s.startswith("---") and "자동 처리" not in s and "Slack" not in s:
+            return s[:60] + ("…" if len(s) > 60 else "")
+    return "완료"
+
+
 def _act_status(db) -> str:
+    """진행 중인 '업무' 중심 현황 (PD 2026-06-25).
+
+    '현황'은 영상 배치 상태(동영상 현황)가 아니라 **지금 처리 중인 작업**이 먼저
+    보여야 한다 — PD가 board에 던진 요청을 executor가 어디까지 처리했는지가 핵심.
+    그래서 순서: ① 처리 중인 요청 → ② 방금 끝난 요청(결과 한 줄) → ③ PD 답 대기
+    지식질문 → ④ 예약된 컨셉(앞으로 만들 영상) → ⑤ 최근 영상 배치 결과는 맨 끝
+    보조 정보로 내린다.
+    """
     from agents import arc, knowledge as kn
     today = dt.date.today().isoformat()
-    lines = [":calendar: *보드 현황*"]
+    lines = [":hourglass_flowing_sand: *진행 현황*"]
+    with db() as con:
+        # 진행 중 / 방금 끝난 요청 — AUTONOMOUS executor(scripts.process_board_
+        # escalations)가 ~5분 틱마다 비운다. handled=0 = in-flight/큐 대기,
+        # handled=1 = 처리 완료(스레드에 결과). "이거 하고 있어?"에 진짜로 답한다.
+        try:
+            open_esc = con.execute(
+                "SELECT id, summary, ts FROM board_escalations WHERE handled=0 "
+                "ORDER BY id ASC LIMIT 10").fetchall()
+        except Exception:
+            open_esc = []
+        try:
+            done_esc = con.execute(
+                "SELECT id, summary, result, ts FROM board_escalations WHERE handled=1 "
+                "ORDER BY id DESC LIMIT 5").fetchall()
+        except Exception:
+            done_esc = []
+        rows = arc.list_concept_directives(con, today)
+        pend = kn.pending_questions(con)
+
+    # ① 처리 중인 요청 — 최우선
+    if open_esc:
+        lines.append(f"*:gear: 처리 중인 요청 {len(open_esc)}개* (executor가 ~5분마다 처리)")
+        for e in open_esc:
+            ago = _ago(e["ts"])
+            tag = f" ({ago})" if ago else ""
+            lines.append(f"  • `#{e['id']}`{tag} {(e['summary'] or '')[:90]}")
+    else:
+        lines.append("*:white_check_mark: 처리 중인 요청 없음* — 큐가 비어 있어요.")
+
+    # ② 방금 끝난 요청 — 결과 한 줄
+    if done_esc:
+        lines.append("*:checkered_flag: 최근 처리 완료:*")
+        for e in done_esc:
+            ago = _ago(e["ts"])
+            tag = f" ({ago})" if ago else ""
+            res = _esc_result_oneline(e["result"])
+            lines.append(f"  • `#{e['id']}`{tag} {(e['summary'] or '')[:60]} — {res}")
+
+    # ③ PD 답 대기 (파이프라인이 막혀 PD를 기다리는 일)
+    if pend:
+        lines.append(f"*:question: 답 대기 지식질문 {len(pend)}개* — `지식질문 보여줘` 로 확인")
+
+    # ④ 예약된 컨셉 — 앞으로 만들 영상(보조)
+    if rows:
+        lines.append("*:date: 예약된 컨셉:*")
+        for r in rows:
+            lines.append(f"  • `{r['target_date']}` — {r['directive'][:80]}")
+
+    # ⑤ 최근 영상 배치 결과 — 맨 끝 보조. '동영상 현황'은 묻지 않은 한 부차적.
     batch = _last_batch_summary()
     if batch:
         lines.append(batch)
-    with db() as con:
-        rows = arc.list_concept_directives(con, today)
-        pend = kn.pending_questions(con)
-        # Open escalations — now drained by the AUTONOMOUS executor (scripts.process_
-        # board_escalations), not a human CLI session. Unhandled here = in-flight or
-        # queued for the next ~5-min tick, so "이거 하고 있어?" gets a truthful answer.
-        try:
-            esc = con.execute(
-                "SELECT id, summary, ts FROM board_escalations WHERE handled=0 "
-                "ORDER BY id DESC LIMIT 8").fetchall()
-        except Exception:
-            esc = []
-    if esc:
-        lines.append(f"*자동 처리 중인 요청:* {len(esc)}개 (곧 스레드에 결과)")
-        for e in esc:
-            lines.append(f"  • `#{e['id']}` {(e['summary'] or '')[:80]}")
-    if rows:
-        lines.append("*예약된 컨셉:*")
-        for r in rows:
-            lines.append(f"  • `{r['target_date']}` — {r['directive'][:90]}")
-    else:
-        lines.append("_예약된 컨셉 없음._")
-    if pend:
-        lines.append(f"*대기 중 지식질문:* {len(pend)}개 — `지식질문 보여줘` 로 확인")
-    lines.append("_라이브 유튜브 예약 상태는 CLI에서 API로 확인하세요 (DB는 stale)._")
+        lines.append("_라이브 유튜브 예약 상태는 CLI에서 API로 확인하세요 (DB는 stale)._")
     return "\n".join(lines)
 
 
