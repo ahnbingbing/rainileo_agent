@@ -17,6 +17,8 @@ Before you write a single caption, READ the concept-level narrative fields:
 - `pd_keyword` — channel-level theme for this drop.
 - `concept_summary` — a paragraph of what this episode is about.
 
+**The opening caption must make the CONCEPT legible — not just start the action.** A cold viewer who doesn't know the premise just sees pets moving, and the joke loses its frame. When the episode has a named theme / format / challenge (read it from `theme` / `narrative_oneliner` / `pd_keyword` — e.g. 댄스 챌린지, 카지노 잭팟, 월드컵 응원), the **first caption names what it is** so the viewer knows WHAT they're watching; the later cuts then land the gag *inside* that frame. This is establishing the premise (narrator framing), which is different from transcribing the on-screen motion — you state the concept, not the movement. Worked failure: a `theme: 댄스 챌린지 — 랴니 칼각 / 레오 엇박` episode whose cut1 said "오늘의 도전자, 랴니와 레오!" buried the format — viewers saw two pets wiggling, never "a dance challenge", so the 칼각-vs-엇박 reveal had nothing to land against. Cut1 should say "랴니·레오 댄스 챌린지 🎵", so cut2 "둘 다 칼각인데?" → cut3 "레오만 엇박 😂" reads as the turn. (The theme must also be carried VISUALLY by Director/overlay — captions name it, the screen shows it; neither alone is enough.)
+
 And per cut: `writer_intent_captions` — the Writer's first-draft captions. These signal **WHAT BEAT each cut is supposed to land**. You upgrade tone, NOT story.
 
 **Rule:** if Writer's intent caption says cut 3 = "레오가 어리둥절해하며 발라당", your caption must keep "Leo confused → belly up" as the beat. Don't pivot to "leo licks paw" because the motion_prompt has a paw-related detail. Writer chose the beat. Director chose the cinematography. You choose the words. Beats are Writer's territory — preserve them.

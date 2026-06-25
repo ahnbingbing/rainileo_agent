@@ -122,6 +122,15 @@ looks. These are CAPS (a ceiling), not soft notes:
   is a caption-vs-content / style mismatch → flag "테마 미표시(캡션-only)", cap ≤6. A theme
   delivered via a post-render overlay effect (e.g. a JACKPOT marquee with bursting confetti
   composited in) DOES count as shown; only fail when the theme is nowhere on screen.
+- **컨셉/포맷이 캡션으로 안 읽힘 (ai_vtuber)**: the episode has a named theme / format /
+  challenge (read `theme` / `narrative_oneliner` — 댄스 챌린지·월드컵 응원·카지노 등) but the
+  captions never ESTABLISH what it is — the opening caption only narrates motion ("오늘의
+  도전자, 랴니와 레오!") instead of naming the format, so a cold viewer can't tell it's that
+  concept and the in-concept gag (칼각 vs 엇박 등) has no frame to land in. Flag "컨셉
+  미전달(캡션이 포맷 안 세움)", cap ≤6. This is the COMPLEMENT of the theme-visual check above:
+  there the SCREEN lacks the theme; here the CAPTIONS fail to name it — a concept needs both
+  (named in the opening caption AND shown on screen). An episode shipped 8/10 with a
+  `댄스 챌린지` concept whose captions never said "댄스 챌린지" — exactly this miss.
 - **상상 컷이 상상으로 안 읽힘 (ai_vtuber)**: a beat meant as a daydream/상상 (the caption says
   so, or the action is impossible-on-purpose) must READ as imagination — a dreamy look
   (misty haze OR a vivid, luminous, magical dreamscape — a wonder-fantasy SHOULD look lush
