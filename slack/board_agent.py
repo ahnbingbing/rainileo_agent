@@ -84,11 +84,38 @@ _SYS = (
 )
 
 
+def _board_llm(system: str, user: str, *, max_tokens: int = 700) -> str:
+    """The board talks to PD directly — a low-volume, high-touch surface — so it uses a
+    SMART model (Gemini 2.5 Pro by default) instead of the bulk pipeline's gpt-4.1-led
+    cascade, which is tuned for cost on caption/concept volume and reads dumb in chat.
+    Falls back to the generic cascade if Gemini is unavailable so the board never goes dead.
+    Override with BOARD_MODEL."""
+    try:
+        from google import genai as _genai
+        from google.genai import types as _gt
+        key = os.environ.get("GOOGLE_API_KEY")
+        if not key:
+            raise RuntimeError("no GOOGLE_API_KEY")
+        client = _genai.Client(api_key=key, http_options=_gt.HttpOptions(
+            timeout=int(os.getenv("LLM_TIMEOUT_S", "90")) * 1000))
+        resp = client.models.generate_content(
+            model=os.getenv("BOARD_MODEL", "gemini-2.5-pro"), contents=user,
+            config=_gt.GenerateContentConfig(system_instruction=system or None,
+                                             max_output_tokens=max_tokens))
+        out = (resp.text or "").strip()
+        if not out:
+            raise RuntimeError("empty gemini response")
+        return out
+    except Exception as e:  # noqa: BLE001
+        log.warning("board Gemini failed (%s) — falling back to cascade", e)
+        from agents.llm_cascade import call_text_cascade
+        return call_text_cascade(system, user, max_tokens=max_tokens)
+
+
 def _parse(text: str) -> dict:
-    from agents.llm_cascade import call_text_cascade
     today = dt.date.today().isoformat()
-    raw = call_text_cascade(_SYS, f"오늘은 {today} 입니다.\nPD 메시지: {text}",
-                            max_tokens=600).strip()
+    raw = _board_llm(_SYS, f"오늘은 {today} 입니다.\nPD 메시지: {text}",
+                     max_tokens=700).strip()
     raw = re.sub(r"^```(?:json)?\s*", "", raw)
     raw = re.sub(r"\s*```$", "", raw)
     d = json.loads(raw)
