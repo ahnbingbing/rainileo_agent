@@ -910,6 +910,88 @@ def _recently_used_rf_assets(con: sqlite3.Connection,
     return used
 
 
+# PD 2026-06-25: VISUAL cooldown. The exact-id (_recently_used_rf_assets) and
+# session (_recently_used_rf_primary_sessions) cooldowns both key on asset_id /
+# capture-date — neither knows what a clip LOOKS like. So RF kept shipping
+# near-identical footage two ways the id/date keys can't catch: (1) once a clip's
+# id-cooldown expires it returns looking identical to a twin still inside the
+# window, and (2) a DIFFERENT asset_id from a different day that happens to look
+# the same (same couch nap, same window sill) was never cooled at all. PD: "쿨타임
+# 지난 동영상 자꾸 비슷하게 뽑는다." Fix: cool any pool clip whose perceptual look
+# (vis_phash — the SAME signal _diversity_sample already dedups intra-pool on) is
+# within NEAR_DUP Hamming of a clip shipped in the recent RF window. Appearance-
+# based, so it catches both leaks. RF_VISUAL_COOLDOWN=0 reverts.
+RF_VISUAL_COOLDOWN = os.getenv("RF_VISUAL_COOLDOWN", "1") == "1"
+
+
+def _recently_used_rf_vphashes(con: sqlite3.Connection,
+                               n: int = RF_CLIP_COOLDOWN_EPISODES) -> list[str]:
+    """vis_phash signatures of the clips shipped in the recent RF cooldown window
+    (same card set as _recently_used_rf_assets). The visual companion to the exact-
+    id cooldown: what recent footage LOOKS like, so an appearance-equal clip — a
+    different file, or one returning after its id-cooldown lapsed while its twin is
+    still in window — is cooled by look, not just id/date."""
+    ids = _recently_used_rf_assets(con, n=n)
+    if not ids:
+        return []
+    try:
+        from agents.visual_hash import ensure_column as _vph_ensure
+        _vph_ensure(con)
+        rows = con.execute(
+            f"SELECT vis_phash FROM assets WHERE asset_id IN "
+            f"({','.join('?' for _ in ids)}) "
+            f"AND vis_phash IS NOT NULL AND vis_phash!=''", list(ids)).fetchall()
+        return [r[0] for r in rows if r and r[0]]
+    except Exception as e:
+        log.warning("rf visual-cooldown recent phash lookup failed: %s", e)
+        return []
+
+
+def _rf_visual_cooldown_ids(con: sqlite3.Connection, pool_ids,
+                            recent_vphashes: list[str],
+                            near_dup: "int | None" = None) -> set[str]:
+    """asset_ids in `pool_ids` whose perceptual look is within near_dup Hamming of
+    ANY recently-shipped clip's vis_phash = visual near-dups to cool. A missing
+    vis_phash is never treated as a dup (best-effort, exactly like _diversity_sample
+    — coverage grows as clips download). RF_VISUAL_COOLDOWN_NEARDUP overrides the
+    threshold (defaults to visual_hash.NEAR_DUP, the same gap-calibrated value)."""
+    if not RF_VISUAL_COOLDOWN or not recent_vphashes:
+        return set()
+    ids = [i for i in (pool_ids or ()) if i]
+    if not ids:
+        return set()
+    try:
+        from agents.visual_hash import hamming as _ham, NEAR_DUP as _ND
+    except Exception as e:
+        log.warning("rf visual-cooldown import failed: %s", e)
+        return set()
+    try:
+        nd = int(os.getenv("RF_VISUAL_COOLDOWN_NEARDUP", str(_ND)))
+    except Exception:
+        nd = _ND
+    if near_dup is not None:
+        nd = near_dup
+    cool: set[str] = set()
+    try:
+        rows = con.execute(
+            f"SELECT asset_id, vis_phash FROM assets WHERE asset_id IN "
+            f"({','.join('?' for _ in ids)}) "
+            f"AND vis_phash IS NOT NULL AND vis_phash!=''", ids).fetchall()
+    except Exception as e:
+        log.warning("rf visual-cooldown pool phash fetch failed: %s", e)
+        return set()
+    for r in rows:
+        aid, h = r[0], r[1]
+        if not aid or not h:
+            continue
+        for ph in recent_vphashes:
+            d = _ham(h, ph)
+            if d is not None and d <= nd:
+                cool.add(aid)
+                break
+    return cool
+
+
 def _robust_json_parse(text: str, allow_llm_repair: bool = True):
     """PD 2026-06-09: parse possibly-malformed LLM JSON robustly. With Gemini
     timing out → Anthropic fallback, the RF singlepass hit 'Expecting , delimiter'
@@ -1279,6 +1361,18 @@ def _rf_long_candidates(context: dict) -> list[dict]:
     _branding = _branding_asset_ids(_db())
     pool = _drop_branding((context.get("available_videos") or [])
                           + (context.get("archive_videos") or []), _branding)
+    # PD 2026-06-25: a one-take's whole clip can also look identical to recent footage
+    # without sharing its id — exclude visual near-dups of recently-shipped clips so the
+    # single chosen clip isn't a look-alike of yesterday's ("비슷하게"). Same vis_phash
+    # signal as the singlepass visual cooldown. RF_VISUAL_COOLDOWN=0 reverts.
+    if RF_VISUAL_COOLDOWN:
+        try:
+            _con = _db()
+            _pool_ids = {v.get("id") for v in pool if v.get("id")}
+            _excl |= _rf_visual_cooldown_ids(
+                _con, _pool_ids, _recently_used_rf_vphashes(_con))
+        except Exception as e:
+            log.warning("one-take visual cooldown lookup failed: %s", e)
     longs = [{"id": v.get("id"), "dur": float(v.get("dur") or 0),
               "sc": (v.get("sc") or "")[:240], "date": v.get("date")}
              for v in pool
@@ -1951,7 +2045,8 @@ def _recently_used_rf_primary_sessions(con: sqlite3.Connection,
     return out
 
 
-def _rf_is_cooled(v: dict, cooldown: "set[str]", sessions: "set[str]") -> bool:
+def _rf_is_cooled(v: dict, cooldown: "set[str]", sessions: "set[str]",
+                  vis_ids: "set[str] | None" = None) -> bool:
     """Cooled if the clip's EXACT asset_id was recently used.
 
     PD 2026-06-22: `sessions` is now the set of PRIMARY (>=2-cut) outings of already-
@@ -1960,9 +2055,15 @@ def _rf_is_cooled(v: dict, cooldown: "set[str]", sessions: "set[str]") -> bool:
     episode — this stops the same-outing re-run (카페 fXIY reused the 2025-11-21 cafe via
     different files) WITHOUT the 2026-06-17 over-coarseness (a single past flash no longer
     locks out a whole rich outing the Writer wants to build from fresh). The call site's
-    >=6 relax still protects the Writer from being starved."""
+    >=6 relax still protects the Writer from being starved.
+
+    PD 2026-06-25: `vis_ids` (from _rf_visual_cooldown_ids) cools clips that LOOK like
+    recently-shipped footage — a different asset_id / different day whose appearance is a
+    near-dup, which the id+session keys can't see. Same OR semantics: any one match cools."""
     vid = v.get("id") or v.get("asset_id")
     if bool(vid) and vid in cooldown:
+        return True
+    if vis_ids and bool(vid) and vid in vis_ids:
         return True
     sk = _rf_session_key(vid) if vid else None
     return bool(sk) and sk in sessions
@@ -2127,21 +2228,39 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     avail_videos = avail_videos + [v for v in _arch if v.get("id") and v.get("id") not in _seen]
     cooldown: set[str] = set()
     _cool_sessions: set[str] = set()
+    _visual_cool: set[str] = set()
     try:
         _con = _db()
         cooldown = _recently_used_rf_assets(_con)
         # PD 2026-06-22: cool the PRIMARY outing of past episodes (>=2 cuts), not every
         # touched session — re-run prevention without 6/17 over-coarseness.
         _cool_sessions = _recently_used_rf_primary_sessions(_con)
+        # PD 2026-06-25: VISUAL cooldown — cool any clip in ANY pool (videos+archive+
+        # photos) that LOOKS like recently-shipped footage, so a fresh-id / different-day
+        # near-dup ("쿨타임 지난 영상 자꾸 비슷하게") can't slip past the id+session keys.
+        # Computed once over the union of every pool the Writer can pick from.
+        if RF_VISUAL_COOLDOWN:
+            _recent_vph = _recently_used_rf_vphashes(_con)
+            _vis_pool_ids: set[str] = set()
+            for _src in (avail_videos, context.get("archive_videos", []),
+                         context.get("available_photos", []),
+                         context.get("archive_photos", [])):
+                for _v in (_src or []):
+                    _id = _v.get("id") or _v.get("asset_id")
+                    if _id:
+                        _vis_pool_ids.add(_id)
+            _visual_cool = _rf_visual_cooldown_ids(_con, _vis_pool_ids, _recent_vph)
         before = len(avail_videos)
-        filtered = [v for v in avail_videos if not _rf_is_cooled(v, cooldown, _cool_sessions)]
+        filtered = [v for v in avail_videos
+                    if not _rf_is_cooled(v, cooldown, _cool_sessions, _visual_cool)]
         # Safety: don't starve the writer. If the cooldown leaves too few clips
         # for a full episode, relax it (still prefer fresh, but allow reuse).
         if len(filtered) >= 6:
             avail_videos = filtered
-            if cooldown and progress_cb:
+            if (cooldown or _visual_cool) and progress_cb:
+                _vmsg = f" + 비슷한 룩 {len(_visual_cool)}개" if _visual_cool else ""
                 progress_cb(f":snowflake: 최근 {RF_CLIP_COOLDOWN_EPISODES}편 사용 클립 "
-                            f"{before - len(filtered)}개 제외 (쿨다운)")
+                            f"{before - len(filtered)}개 제외 (쿨다운{_vmsg})")
         else:
             log.warning("cooldown left only %d clips (<6) — relaxing", len(filtered))
             if progress_cb:
@@ -2187,8 +2306,8 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     def _pool_excluded(v):
         if v.get("id") in _excl or v.get("asset_id") in _excl:
             return True
-        return _rf_is_cooled(v, cooldown, _cool_sessions)
-    if _excl or cooldown:
+        return _rf_is_cooled(v, cooldown, _cool_sessions, _visual_cool)
+    if _excl or cooldown or _visual_cool:
         _pk = [p for p in _photos if not _pool_excluded(p)]
         # keep ≥6 vs the BATCH-dedup floor only; cooled photos may shrink below that
         # (they're supplementary) but never empty the pool entirely.

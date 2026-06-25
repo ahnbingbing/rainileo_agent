@@ -106,15 +106,11 @@ def _exclude_block(context: dict | None) -> str:
             "'같은 이야기'는 금지다. 확실히 다른 앵글/소재로 가라:\n" + "\n".join(lines) + "\n")
 
 
-def _active_trends_block(style: str) -> str:
-    """Timely-hook injection (PD 2026-06-24): the live `trends` rows (calendar events +
-    discovered memes/challenges, fed by scripts/trend_feed.py) so brainstorm can ride
-    what's hot NOW — the World Cup, Halloween, a viral pet challenge. The empty trends
-    table was exactly why the AV engine never proposed timely concepts on its own. A
-    recurring event lists its remaining angles + the ones used recently → rotate to a
-    NEW angle, never repeat the same sub-concept (월드컵: 대결 → 응원모드 → …)."""
+def _active_trend_rows(limit: int = 6) -> list[tuple]:
+    """Live `trends` rows (calendar events + discovered memes/challenges, fed by
+    scripts/trend_feed.py), highest-fit first. Shared by the prompt block and the
+    has_active_trends() gate so 'is there anything timely right now?' has one answer."""
     import datetime as _dt
-    import json as _json
     import sqlite3 as _sql
     today = _dt.date.today().isoformat()
     try:
@@ -122,12 +118,36 @@ def _active_trends_block(style: str) -> str:
         rows = con.execute(
             "SELECT category, title, fit_score, notes FROM trends "
             "WHERE expiry_date IS NULL OR expiry_date >= ? "
-            "ORDER BY fit_score DESC LIMIT 6", (today,)).fetchall()
+            "ORDER BY fit_score DESC LIMIT ?", (today, limit)).fetchall()
         con.close()
+        return rows
     except Exception:
-        return ""
+        return []
+
+
+def has_active_trends() -> bool:
+    """True when at least one timely hook is live. Lets a caller that REQUIRES a timely
+    episode (the daily 'one of two AVs must be 시의성' slot) check honestly whether
+    enforcement is even possible — there's nothing to ride if the trends table is dry."""
+    return bool(_active_trend_rows(limit=1))
+
+
+def _active_trends_block(style: str, *, require: bool = False) -> str:
+    """Timely-hook injection (PD 2026-06-24): so brainstorm can ride what's hot NOW —
+    the World Cup, Halloween, a viral pet challenge. The empty trends table was exactly
+    why the AV engine never proposed timely concepts on its own. A recurring event lists
+    its remaining angles + the ones used recently → rotate to a NEW angle, never repeat
+    the same sub-concept (월드컵: 대결 → 응원모드 → …).
+
+    `require=True` (PD 2026-06-25): this slot is the day's designated 시의성 AV — exactly
+    one of the two daily AVs must ride a timely hook, guaranteed, not merely suggested.
+    Then EVERY candidate must be built on one of today's hooks (mandatory), so whichever
+    one the ranker picks is timely. require is meaningful only for ai_vtuber: RF rides a
+    hook solely when real footage already supports it, so it never forces."""
+    rows = _active_trend_rows(limit=6)
     if not rows:
         return ""
+    import json as _json
     lines = []
     for cat, title, fit, notes_s in rows:
         try:
@@ -144,6 +164,13 @@ def _active_trends_block(style: str) -> str:
         if nt.get("hint"):
             extra += f" | {nt['hint']}"
         lines.append(f"  · [{cat} fit{float(fit or 0):.2f}] {title}{extra}")
+    if require and style == "ai_vtuber":
+        return (
+            "\n★★이 회차는 '오늘의 시의성 AV'다 — 반드시 아래 시의성 훅 중 하나를 메인 훅으로 잡아라"
+            "(선택 아님, 강제). 후보 5개를 서로 다른 훅/각도로 내되 전부 시의성 소재 위에 세워라. "
+            "가장 라이브하고 fit 높은 것(월드컵 등)을 우선 고려하라. 제약은 동일: ①우리 자산/캐릭터로 "
+            "자연스럽게 재현 가능한 각도로 ②같은 이벤트는 '남은 각도'에서 새 각도로(반복 금지) ③옷 "
+            "입히기 금지 — 소품/오버레이로 테마 전달:\n" + "\n".join(lines) + "\n")
     return (
         "\n★오늘의 시의성 훅(지금 한국에서 핫한 소재 — 적합하면 후보 중 1~2개는 이걸 메인 훅으로 "
         "잡아라. fit≥0.9 라이브 이벤트는 강력 추천). 단 ①우리 자산/캐릭터로 자연스럽게 재현 가능할 "
@@ -195,7 +222,8 @@ def brainstorm(style: str, brief: str, n: int = 5, *, context: dict | None = Non
         "각 후보 = {title(한국어), logline(한 줄 요약), beats(컷별 한 줄 3~6개), "
         "imagination_hook(상상 훅 한 줄; rf면 '없음'), why_appealing(시청자가 왜 좋아할지 한 줄)}.\n"
         "후보끼리 훅이 겹치면 안 된다(다양성이 핵심). JSON 배열만 출력.")
-    system += _active_trends_block(style)
+    system += _active_trends_block(
+        style, require=bool((context or {}).get("require_timely")))
     system += _exclude_block(context)
     # Channel Manager Phase 4: feed back what's WINNING (energy/format/packaging pattern,
     # not topics — freshness still rules topics). Empty until enough performance data.
@@ -296,6 +324,12 @@ def best(style: str, brief: str, n: int = 5, *, context: dict | None = None) -> 
     already locked for today), walk the ranking best-first and skip any candidate that
     duplicates a sibling in substance — so two slots on one day never ship the same
     story. If ALL collide, fall back to the top-ranked (launch backstop + PD veto)."""
+    # PD 2026-06-25: when this slot is the day's REQUIRED 시의성 AV but the trends table
+    # is dry (nothing live to ride), enforcement is impossible — degrade to a normal
+    # proposal and say so, rather than silently pretending it's timely.
+    if (context or {}).get("require_timely") and not has_active_trends():
+        log.warning("require_timely set but no active trends — proposing non-timely "
+                    "(trend_feed found nothing live for today)")
     cands = brainstorm(style, brief, n, context=context)
     ranked = rank_by_audience(cands, style)
     exclude = (context or {}).get("exclude_concepts") or []

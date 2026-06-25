@@ -218,6 +218,15 @@ def launch_pipeline(target: dt.date, *,
         except Exception as _e:
             log.warning("trend_feed refresh failed (non-fatal): %s", _e)
     assignments = day_assignments(target)
+    # PD 2026-06-25: GUARANTEE that one of the two daily AVs rides a timely (시의성) hook —
+    # World Cup, Halloween, a viral pet challenge — instead of leaving it to chance. The
+    # trends were only SUGGESTED to the brainstorm, so a day could ship zero timely AVs.
+    # Designate the EARLIEST AV slot of the day as the 시의성 slot (stable identity, computed
+    # from the UNFILTERED day plan so a single-slot re-render still knows which slot it is);
+    # that slot's concept proposal is forced timely (agents.concept_brainstorm require_timely
+    # → every candidate built on a live hook). The other AV stays free-form. RF never forces
+    # (footage-bound). Best-effort: if the trends table is dry, it degrades to a normal AV.
+    timely_av_slot = next((hh for ln, hh in assignments if ln == "ai_vtuber"), None)
     if lane_filter:  # PD 2026-06-09: re-render only one lane's slots (e.g. AV redo)
         assignments = [(ln, hh) for ln, hh in assignments if ln == lane_filter]
     if slot_filter:  # re-render only one timeslot (e.g. a single failed slot)
@@ -343,6 +352,13 @@ def launch_pipeline(target: dt.date, *,
             suffix = f" (재제안 {_att}/{max_repropose})" if _att > 1 else ""
             sp(f":bulb: {hhmm} {lane_lbl} 컨셉 생성 중...{suffix}")
             ctx = dict(context)
+            # The day's designated 시의성 AV slot: force a timely concept (see timely_av_slot
+            # above). Exactly one AV/day carries this; the other AV proposes free-form.
+            if lane == "ai_vtuber" and hhmm == timely_av_slot:
+                ctx["require_timely"] = True
+                if _att == 1:
+                    sp(f":calendar: {hhmm} {lane_lbl} — 오늘의 '시의성 AV' 슬롯 "
+                       "(월드컵/시즌 이벤트/밈 등 시의성 훅 강제)")
             if batch_used_assets:
                 ctx["exclude_asset_ids"] = sorted(batch_used_assets)
             if batch_concepts:
