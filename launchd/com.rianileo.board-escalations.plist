@@ -35,6 +35,7 @@
     <key>EnvironmentVariables</key>
     <dict>
       <key>TZ</key><string>Asia/Seoul</string>
+      <key>HOME</key><string>/Users/ahnbingbing</string>
       <key>PATH</key><string>/Users/ahnbingbing/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
       <key>BOARD_PICKER_ENABLED</key><string>1</string>
       <key>LOG_LEVEL</key><string>INFO</string>

@@ -251,7 +251,10 @@ def _process_one(con: sqlite3.Connection, row: sqlite3.Row) -> None:
             cmsg = (f"fix(board): autonomous handling of escalation #{eid}\n\n"
                     f"{(row['summary'] or req)[:160]}\n\n"
                     "Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>")
-            cp = _git("commit", "-m", cmsg)
+            # Explicit identity: launchd has no HOME, so git can't read ~/.gitconfig and
+            # `commit` would fail (the 2026-06-25 bug that left edits uncommitted/dirty).
+            cp = _git("-c", "user.name=ryaleo board-bot",
+                      "-c", "user.email=board-bot@ryani-leo.local", "commit", "-m", cmsg)
             sha = (_git("rev-parse", "--short", "HEAD").stdout or "").strip()
             pushed = ""
             if AUTO_PUSH:
