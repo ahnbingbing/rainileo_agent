@@ -35,7 +35,7 @@ RYANI = {
     "sex_ko": "암컷(중성화)",
     "age_years": 11,                 # NEVER "막내"/young/8개월
     "tail": "NO tail",               # French Bulldog — never render a tail
-    "blaze": "THIN narrow white Boston-Terrier-style blaze",  # a fine line, NOT a wide splash
+    "blaze": "THIN narrow white blaze (a fine pencil-width line)",  # a fine line, NOT a wide splash
     "ears": "large UPRIGHT bat ears (erect, pointed up — NOT folded rose ears)",  # PD 2026-06-10
     "exists_from": "2015-05-05",     # born — cannot appear in footage before this
 }
@@ -72,8 +72,9 @@ def pet_exists_on(pet: str, captured_iso: "str | None") -> bool:
 # it is appended to a motion_prompt).
 RYANI_MARKING = (
     " CRITICAL — Ryani the black French Bulldog must keep her exact markings every "
-    "frame: a THIN narrow white Boston-Terrier-style blaze (a fine line, NOT a wide "
-    "splash, do NOT enlarge it) from nose up the forehead, silver-grey aged muzzle, "
+    "frame: a THIN narrow white blaze (a fine pencil-width line up the muzzle, between "
+    "the eyes, to the forehead — NOT a wide splash, do NOT enlarge it) from nose up the "
+    "forehead, silver-grey aged muzzle, "
     "white chin, white chest patch, large UPRIGHT "
     "bat ears (erect/pointed up, NOT folded rose ears), NO "
     "tail. Her white is ONLY: the forehead blaze, chin, the FRONT of the throat (the "
@@ -82,6 +83,11 @@ RYANI_MARKING = (
     "of the neck / behind the head) and spine are SOLID BLACK — NO white spot, dot, "
     "patch, stripe or line on the back, nape or spine (Seedance/i2v often hallucinates "
     "a white dot/patch on the BACK of the neck — that is WRONG; the nape is pure black). "
+    "Ryani is a FRENCH BULLDOG, NOT a Boston Terrier — she has NONE of a Boston "
+    "Terrier's tuxedo white creeping up the neck/back; her nape, spine and back are "
+    "solid black. The only character with that tuxedo white is 삐용이 (her late friend); "
+    "any white creeping onto Ryani's neck or back is 삐용이's marking bleeding over and "
+    "is WRONG. "
     "Only black/white/grey — no brown. Above each eye she has a FAINT, subtle "
     "eyebrow-like white mark (small and thin, brow-like — present but understated; "
     "NOT a bold or large round dot). "
@@ -112,7 +118,7 @@ LEO_MARKING = (
 RYANI_IMAGE_CANON = (
     "Ryani — REAL black French Bulldog, SPAYED FEMALE (she/her, 11-year-old "
     "senior; clearly female, NO male anatomy). Markings (keep EXACTLY, do not "
-    "redraw): a THIN NARROW white blaze (a fine Boston-Terrier line from nose up "
+    "redraw): a THIN NARROW white blaze (a fine pencil-width line from nose up "
     "the forehead — NOT a wide splash, do NOT enlarge it), silver-grey aged muzzle, "
     "white chin, white chest patch, white toes, a FAINT subtle eyebrow-like white mark "
     "above each eye (small/thin, brow-like — NOT a bold round dot), "
@@ -200,9 +206,10 @@ CHARACTER_FACTS = (
     "흰 가슴·다리, 박쥐귀, ★**꼬리 있음**, 랴니보다 날렵). **지금은 무지개다리를 건넌(돌아가신) 친구**다. "
     "옛 외출 영상(특히 **2016년**)에 랴니와 함께 자주 등장한다. 식별: **랴니 곁/근처에 있는 "
     "꼬리 달린 흑백 턱시도 개 = 삐용이지 랴니가 아니다**(랴니는 거의 검정·**꼬리 없음**·턱/가슴만 "
-    "가는 흰색인데, 삐용이는 흰색이 훨씬 넓고 꼬리가 있다). ⚠️ 랴니 canon에 '보스턴테리어식 흰 "
-    "블레이즈'라 적혀 있어 **진짜 보스턴테리어(삐용이)를 랴니로 뭉개기 쉬우니** 옛 영상에 꼬리 달린 "
-    "흑백 개가 보이면 삐용이로 분리해 불러라(예: '어릴 적 단짝 삐용이랑'). ⚠️ **추모 민감(PD 깊이 "
+    "가는 흰색인데, 삐용이는 흰색이 훨씬 넓고 꼬리가 있다). ⚠️ **랴니는 보스턴테리어가 아니다**(프렌치불독) "
+    "— 옛 영상에 **꼬리 달린 흑백 턱시도 개**가 보이면 삐용이로 분리해 불러라(예: '어릴 적 단짝 삐용이랑'). "
+    "★**랴니 목/등에 흰색이 보이면 삐용이의 턱시도 흰색이 번진 것이라 잘못이다** — 랴니 목뒤·척추·등은 "
+    "순검정이다. ⚠️ **추모 민감(PD 깊이 "
     "아끼는 친구)**: 삐용이가 나오는 컷은 톤을 **PD와 먼저 확인**하고, 상실을 가벼운 개그로 쓰지 "
     "마라 — 함께 뛰놀던 추억을 담담히, 사실만(날조 금지).\n"
     "- **'하비' = 할아버지, '함미' = 할머니** — 랴니·레오를 키우는 충주 할아버지·할머니 본인을 "
@@ -231,8 +238,8 @@ GUARD_BG_STILLNESS = (
 # a different dog. And it never flagged the distorted/melted photo_i2v faces (it
 # passed a clearly-wrong Ryani face at 9/10). Both fixed here.
 REVIEW_RYANI = (
-    "**Ryani (French Bulldog, 11yr, SPAYED FEMALE)**: a THIN Boston Terrier-style "
-    "WHITE BLAZE that must be a THIN NARROW line (NOT a wide splash) from nose to "
+    "**Ryani (French Bulldog, 11yr, SPAYED FEMALE)**: a THIN narrow "
+    "WHITE BLAZE that must be a THIN NARROW line (a fine pencil-width line, NOT a wide splash) from nose to "
     "forehead — **flag a THICK or WIDE center blaze as a defect** (it should read as a "
     "fine pencil-width line); a FAINT subtle eyebrow-like white mark above each eye "
     "(small/thin, present but understated — NOT a bold round dot), "

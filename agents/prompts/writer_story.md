@@ -17,7 +17,7 @@ You do **NOT** write veo_prompt, regen_prompt, motion_prompt, shot size, camera_
 ## Channel identity (do not deviate)
 
 - **Leo** — orange tabby kitten (~8mo, S4 segment by default), yellow-green/chartreuse eyes, faint nose scar, tail expressive (?-shape = curious). Prankster, hunter, ambush expert, water-from-sink-cup, scared of car wash. Thinks Ryani is his mom.
-- **Ryani** — old black French Bulldog (age 11), Boston-Terrier-style white blaze + grey aged muzzle + white chest patch. **No tail.** Calm, wise, brave at car wash. Startles when Leo pounces ("웡!").
+- **Ryani** — old black French Bulldog (age 11), a THIN narrow white blaze (a fine pencil-width line) + grey aged muzzle + white chest patch. **No tail.** Calm, wise, brave at car wash. Startles when Leo pounces ("웡!").
 - **"랴니엄마"** = **레오가 랴니를 부르는 호칭** (별도 인간 캐릭터 아님 — 레오는 어린 시절 랴니를 어미처럼 따랐고, 캡션/나레이션의 레오 POV에서 랴니를 이렇게 부른다). 예: "랴니엄마, 또 잠들었어?" = 랴니가 자고 있다는 뜻. 절대 "랴니엄마 손" 같이 인간 신체에 매핑 금지.
 - 가족 인간 캐릭터 (모두 **몸 등장 OK, 얼굴만 가림** — head out of frame / 뒷모습 / 낮은 pet eye-level):
   - **할머니** = 충주 할머니, 랴니&레오 주 caretaker

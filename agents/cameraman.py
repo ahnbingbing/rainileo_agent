@@ -1475,8 +1475,8 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
             "Ryani is FEMALE (she/her, 11yo senior female French Bulldog — "
             "channel's 랴니엄마). Smooth feminine underbelly, NO male "
             "genitalia of any kind. Petite/refined feminine build, NOT "
-            "muscular male. THIN Boston Terrier-style white blaze (a NARROW "
-            "line, NOT a thick wide splash, never thick/wide) from nose to forehead, "
+            "muscular male. THIN narrow white blaze (a fine pencil-width "
+            "line up the muzzle, between the eyes, to the forehead — NOT a thick wide splash, never thick/wide) from nose to forehead, "
             "a faint subtle eyebrow-like white mark above each eye (NOT a bold round dot), "
             "silver-grey aged muzzle, white chin, "
             "white chest patch. Only black/white/grey — no brown. "
@@ -3042,8 +3042,8 @@ def _append_character_canon(prompt: str) -> str:
     if any(k in pl for k in ("ryani", "랴니", "french bulldog", "dog", "강아지", "개")):
         ryani_canon = (
             "Ryani is a SPAYED FEMALE 11-year-old senior French Bulldog "
-            "(she/her). Markings CONSISTENT: THIN Boston Terrier-style white "
-            "blaze (a THIN narrow line, NOT a wide splash, never thick/wide) from nose to forehead, "
+            "(she/her). Markings CONSISTENT: THIN narrow white "
+            "blaze (a fine pencil-width line up the muzzle, between the eyes, to the forehead — NOT a wide splash, never thick/wide) from nose to forehead, "
             "a faint subtle eyebrow-like white mark above each eye (NOT a bold round dot), "
             "silver-grey aged muzzle, white chin, "
             "large white chest patch, bat ears, ABSOLUTELY NO TAIL, petite "
@@ -3052,7 +3052,7 @@ def _append_character_canon(prompt: str) -> str:
             "white spot or patch there (white is the FRONT throat/chest only). "
             "Keep her EXACTLY as in the source photo."
         )
-        if "Boston Terrier-style white blaze" not in prompt:
+        if "white blaze" not in prompt:
             prompt = prompt + " " + ryani_canon
     if any(k in pl for k in ("leo", "레오", "orange tabby", "cat", "고양이")):
         leo_canon = (
@@ -4894,7 +4894,7 @@ def _review_script_before_render(veo_prompts: dict, manifests: dict,
     - Writes back fixed prompts to file
     """
     issues = []
-    ryani_marking_phrase = "Boston Terrier"  # key phrase from optimized prompt
+    ryani_marking_phrase = "white blaze"  # key phrase present in every Ryani marking block
 
     for tag, vp in veo_prompts.items():
         prompt = vp.get("prompt", "") if isinstance(vp, dict) else ""
@@ -4908,7 +4908,7 @@ def _review_script_before_render(veo_prompts: dict, manifests: dict,
             if ryani_marking_phrase.lower() not in prompt.lower():
                 ryani_desc = (
                     " (Ryani: old black French Bulldog, age 11. "
-                    "White markings on black face: thin Boston Terrier-style white blaze (NARROW line, not the typical wide splash) from nose to forehead, "
+                    "White markings on black face: a THIN narrow white blaze (a fine pencil-width line up the muzzle, between the eyes, to the forehead — NOT a wide splash) from nose to forehead, "
                     "a faint subtle eyebrow-like white mark above each eye (NOT a bold round dot). Silver-grey aged muzzle. "
                     "White chin. White chest patch. Bat ears. No tail. Only black, white, grey.)"
                 )
@@ -4973,7 +4973,7 @@ def _review_script_before_render(veo_prompts: dict, manifests: dict,
         score += checks["background"]
         # Has character marking (1 point for Ryani scenes)
         if "french bulldog" in prompt.lower() or "ryani" in prompt.lower():
-            checks["marking"] = 1 if "Boston Terrier" in prompt else 0
+            checks["marking"] = 1 if "white blaze" in prompt else 0
             score += checks["marking"]
         # Max 8 points
         prompt_scores.append({"tag": tag, "score": score, "checks": checks})
@@ -5058,12 +5058,11 @@ def _run_t2v_pipeline(manifests: dict, card: dict, work_dir: Path,
 
         # Final check: log if Ryani prompt has marking keywords
         if "ryani" in prompt.lower() or "french bulldog" in prompt.lower():
-            has_boston = "Boston Terrier" in prompt
-            has_blaze = "blaze" in prompt.lower()
-            if not has_boston:
-                log.warning("⚠ %s: Ryani scene WITHOUT 'Boston Terrier' marking!", tag)
-            log.info("%s: Ryani marking check: Boston=%s blaze=%s len=%d",
-                     tag, has_boston, has_blaze, len(prompt))
+            has_blaze = "white blaze" in prompt
+            if not has_blaze:
+                log.warning("⚠ %s: Ryani scene WITHOUT 'white blaze' marking!", tag)
+            log.info("%s: Ryani marking check: blaze=%s len=%d",
+                     tag, has_blaze, len(prompt))
 
         cmd = [
             "python3", "scripts/animate_hero_veo3_vertex.py",
@@ -6224,8 +6223,9 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                 "intact, NOT a male dog. Anatomically clearly female. Her "
                 "rear from belly to hind legs is clean smooth black fur "
                 "with NO visible genitalia at all (she is spayed). "
-                "Ryani's markings (CONSISTENT EVERY CUT): THIN Boston "
-                "Terrier-style white blaze (a narrow line, NOT the typical "
+                "Ryani's markings (CONSISTENT EVERY CUT): THIN narrow "
+                "white blaze (a fine pencil-width line up the muzzle, between the "
+                "eyes, to the forehead — NOT the typical "
                 "wide splash) from nose to forehead, a faint subtle eyebrow-like "
                 "white mark above each eye (NOT a bold round dot), "
                 "silver-grey aged muzzle, white chin, large white "
