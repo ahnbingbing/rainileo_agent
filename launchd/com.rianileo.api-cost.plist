@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Morning AI-API cost digest (PD 2026-06-25). Reads the api_calls ledger
+  (agents/api_ledger.py, written by cameraman._run / llm_cascade / still gen) and posts
+  a "어디서 돈 샜나" summary (provider × stage, call counts, Seedance multiplication flag,
+  + real OpenAI Costs API if OPENAI_ADMIN_KEY set) to the workroom every morning 08:10 KST.
+
+  Install:
+      cp launchd/com.rianileo.api-cost.plist ~/Library/LaunchAgents/
+      launchctl unload ~/Library/LaunchAgents/com.rianileo.api-cost.plist 2>/dev/null
+      launchctl load   ~/Library/LaunchAgents/com.rianileo.api-cost.plist
+  Logs: data/logs/api_cost.{out,err}.log
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key><string>com.rianileo.api-cost</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/Users/ahnbingbing/code/rianileo-agent/.venv/bin/python</string>
+      <string>-m</string>
+      <string>scripts.api_cost_report</string>
+      <string>--post</string>
+    </array>
+
+    <key>WorkingDirectory</key><string>/Users/ahnbingbing/code/rianileo-agent</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>TZ</key><string>Asia/Seoul</string>
+      <key>PATH</key><string>/Users/ahnbingbing/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+      <key>LOG_LEVEL</key><string>INFO</string>
+    </dict>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+      <key>Hour</key><integer>8</integer>
+      <key>Minute</key><integer>10</integer>
+    </dict>
+
+    <key>RunAtLoad</key><false/>
+
+    <key>StandardOutPath</key><string>/Users/ahnbingbing/code/rianileo-agent/data/logs/api_cost.out.log</string>
+    <key>StandardErrorPath</key><string>/Users/ahnbingbing/code/rianileo-agent/data/logs/api_cost.err.log</string>
+  </dict>
+</plist>

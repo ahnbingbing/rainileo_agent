@@ -47,6 +47,7 @@ def call_text_cascade(system: str, user: str, *,
                 raise RuntimeError("openai output truncated")
             log.info("LLM cascade: OpenAI used")
             circuit.mark_up("openai")
+            _log_text("openai", _models.OPENAI_TEXT, "openai_text", resp)
             return (resp.choices[0].message.content or "").strip()
         except Exception as e:
             circuit.mark_down("openai")
@@ -83,6 +84,7 @@ def call_text_cascade(system: str, user: str, *,
             pass
         log.info("LLM cascade: Gemini used")
         circuit.mark_up("gemini")
+        _log_text("google", model_name, "gemini_text", resp)
         return (resp.text or "").strip()
     except Exception as e:
         if "circuit open" not in str(e):   # real failure, not a skip → open circuit
@@ -107,8 +109,27 @@ def call_text_cascade(system: str, user: str, *,
     log.info("LLM cascade: Anthropic last-resort used")
     if getattr(msg, "stop_reason", "") == "max_tokens":
         log.warning("cascade Anthropic output truncated (max_tokens=%s)", max_tokens)
+    _log_text("anthropic", (anthropic_model or _models.ANTHROPIC_TEXT), "anthropic_text", msg)
     parts = [b.text for b in msg.content if getattr(b, "type", "") == "text"]
     return "".join(parts).strip()
+
+
+def _log_text(provider: str, model: str, price_key: str, resp) -> None:
+    """Best-effort cost-ledger entry for one text call; pulls token usage when present."""
+    try:
+        from agents import api_ledger as _led
+        meta = None
+        u = getattr(resp, "usage", None)
+        if u is not None:
+            tot = (getattr(u, "total_tokens", None)
+                   or ((getattr(u, "input_tokens", 0) or 0) + (getattr(u, "output_tokens", 0) or 0)))
+            if tot:
+                meta = {"tokens": int(tot)}
+        _led.log_call(provider, "text", price_key=price_key, model=model,
+                      stage=os.getenv("CURRENT_STAGE") or "cascade",
+                      card_id=os.getenv("CURRENT_CARD_ID") or None, meta=meta)
+    except Exception:
+        pass
 
 
 def call_user_only(prompt: str, *, max_tokens: int = 4000) -> str:

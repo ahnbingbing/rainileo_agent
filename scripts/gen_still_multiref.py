@@ -64,8 +64,25 @@ def generate(bg: Path, refs: list[Path], prompt: str, out: Path, api_key: str) -
             if inline and (inline.get("mime_type") or inline.get("mimeType", "")).startswith("image/"):
                 out.parent.mkdir(parents=True, exist_ok=True)
                 out.write_bytes(base64.b64decode(inline["data"]))
+                _log_still()
                 return
     raise RuntimeError(f"no image in response: {json.dumps(payload)[:600]}")
+
+
+def _log_still() -> None:
+    """Best-effort cost-ledger entry for one Gemini still image (~$0.04)."""
+    try:
+        import sys as _sys
+        from pathlib import Path as _P
+        _root = str(_P(__file__).resolve().parent.parent)
+        if _root not in _sys.path:
+            _sys.path.insert(0, _root)
+        from agents import api_ledger as _led
+        _led.log_call("google", "image", price_key="gemini_image",
+                      model="gemini-2.5-flash-image", stage="still",
+                      card_id=os.getenv("CURRENT_CARD_ID") or None)
+    except Exception:
+        pass
 
 
 def main() -> int:

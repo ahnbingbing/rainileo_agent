@@ -291,6 +291,13 @@ def _resolve_scene_ref(set_anchor: str | None, set_description: str,
         png_bytes = base64.b64decode(result.data[0].b64_json)
         fallback_out_path.parent.mkdir(parents=True, exist_ok=True)
         fallback_out_path.write_bytes(png_bytes)
+        try:
+            from agents import api_ledger as _led
+            _led.log_call("openai", "image", price_key="gpt_image",
+                          model=os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-2"),
+                          stage="scene_ref_fallback", card_id=os.getenv("CURRENT_CARD_ID") or None)
+        except Exception:
+            pass
         log.info("scene_ref fallback generated (%d KB) → %s",
                  len(png_bytes) // 1024, fallback_out_path.name)
         return fallback_out_path
@@ -2893,6 +2900,18 @@ def _run(cmd: list[str], step: str, progress_cb: ProgressCb = None,
         if progress_cb:
             progress_cb(f":coin: Seedance 호출 {_SEEDANCE_CALL_COUNT}/{_budget}")
         cmd = _seedance_preflight(cmd)
+    # Cost ledger (PD 2026-06-25): record every billable VIDEO dispatch (Seedance + Veo)
+    # so the morning report can show where money went + the re-render multiplication.
+    # Best-effort; never blocks a render.
+    try:
+        from agents import api_ledger as _led
+        _vid = _led.classify_video_cmd(cmd)
+        if _vid:
+            _prov, _svc, _pk, _mdl = _vid
+            _led.log_call(_prov, _svc, price_key=_pk, model=_mdl, stage=step,
+                          card_id=os.getenv("CURRENT_CARD_ID") or None)
+    except Exception:
+        pass
     proc = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=600)
     if proc.returncode != 0:
         err = proc.stderr[-2000:] if proc.stderr else proc.stdout[-2000:]
