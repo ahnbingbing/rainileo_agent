@@ -111,35 +111,37 @@ to a single cut.
   up to 1.3 on pure-action cuts, back to 1.0 on captioned cuts. Bridge bg changes between
   scenes with caption beats ("며칠 후" / "잠시 뒤").
 
-**Camera energy matches the cut's energy.** The camera move is a story choice, not a
-fixed default. Pick it from how much KINETIC energy the beat carries, because the wrong
-default flattens the cut: a locked camera on a high-action beat reads as dead — doubly so
-because Seedance lets the smaller/darker pet go static (Ryani freezes into a prop while
-only the cat moves), so a still camera + a still Ryani = nothing alive on screen.
+**Lock the camera — on Seedance, energy comes from the PETS, not the camera.** A moving
+camera (push_in / pan / handheld sway) does not add energy on Seedance — it makes the
+GENERATED BACKGROUND wobble, warp and drift, which reads worse than a dead-still frame.
+So default EVERY action/body cut to a locked, static camera AND a static background, and
+get the life from clear pet motion. The thing that actually flattens a cut is NOT the lock
+— it's letting the quieter/darker pet (Ryani) freeze into a prop while only the cat moves.
+The fix for flatness is to MOVE THE PETS, never to move the camera.
 
-- **Observational / calm beats** (a pet settling, watching, a home-cam look): camera
-  HOLDS. First sentence of `motion_prompt` = `"Camera POV-A, pet eye-level, locked static
-  framing — no panning, no zoom, no camera movement throughout."` The life comes from the
-  pet; the lock IS the aesthetic (home-cam concepts want exactly this).
-- **Action / high-energy beats** (chase, pounce, alarm, dance, the "승" twist): the camera
-  MOVES with the action — a slow `push_in` that tracks the lunge, a short `pan`/`tilt`
-  following a pet, or a gentle handheld `sway`. AND give the quieter pet her own explicit,
-  continuous action in the Shot-beats (ears pin, drops into a play-bow, barks, paws) so the
-  frame always has two moving subjects, never one actor + one statue.
-- **Closer / wink beat**: slow `push_in` for 여운. The wink is just a relaxed one-eye
-  close, and the pet can be in any comfortable pose (sitting, lying, even belly-up). The
-  thing to protect is anatomical plausibility — write the pose so head and neck stay within
-  a real animal's range; do NOT script a "turn head around to wink" move, because Seedance
-  resolves an extreme head-turn into an impossible ~180° neck twist (a "zombie" frame). Let
-  the body face roughly where the head looks.
-- **Still-IMAGE cut** (a held photo or photo_sequence frame): MUST ken-burns — `camera_move`
-  = `zoom_in_slow` / `zoom_out_slow` / `pan`, or a short duration; a long frozen still is a
+- **Default — all action / calm / dance / twist beats: camera HOLDS.** First sentence of
+  `motion_prompt` = `"Camera POV-A, pet eye-level, locked static framing — no panning, no
+  zoom, no push-in, no handheld sway; the background stays completely static throughout."`
+  Then give EACH pet — especially the quieter one — her own explicit, continuous Shot-beat
+  motion (ears pin, play-bow, paws lift, head bob, tail) so the frame always has two moving
+  subjects, never one actor + one statue. Keep the pet motion clear but MODERATE — big
+  jumps / body 휘청 / tumbles destabilize the Seedance room (the background starts shaking);
+  legible, contained motion on a dead-still frame beats huge motion on a wobbling one.
+- **Closer / wink beat**: a gentle slow `push_in` IS allowed here for 여운 — it's one
+  subject at the very end with little background left to wobble. The wink is a relaxed
+  one-eye close in any comfortable pose; protect anatomical plausibility — never script a
+  "turn head around to wink" (Seedance resolves an extreme head-turn into an impossible
+  ~180° neck twist). Let the body face roughly where the head looks.
+- **Still-IMAGE cut** (a held photo or photo_sequence frame): ken-burns — `camera_move` =
+  `zoom_in_slow` / `zoom_out_slow` / `pan`, or a short duration. This is a camera move over
+  a STATIC photo (no Seedance room to wobble), so it's fine — and a long frozen still is a
   dead frame.
 
-Example: the 침입자 alarm concept came out flat — every cut was locked-static and Ryani
-stood still while only the cat moved. Fix: the cat-pounce hook gets a `push_in` tracking
-the lunge, and Ryani's Shot-beats give her her own motion (ears back, play-bow, a bark)
-so two subjects move.
+Examples: the 침입자 alarm came out flat — but the cause was Ryani standing still while only
+the cat moved, NOT the locked camera; the fix is to keep the camera locked and give Ryani
+her own motion (ears back, play-bow, a bark). And the 댄스 챌린지: the version with a moving
+camera + big 휘청 motion wobbled the background, while the locked-camera + static-background
++ moderate pet-motion version was the keeper.
 
 Within a cut, write `motion_prompt` as Seedance multi-shot beats that stay in the SAME
 camera/POV:

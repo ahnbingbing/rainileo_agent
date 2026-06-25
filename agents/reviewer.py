@@ -108,6 +108,12 @@ looks. These are CAPS (a ceiling), not soft notes:
   — especially the closer suddenly in a different room — flag "배경 드리프트", cap ≤6.
   (EXCEPTION: a concept's INTENTIONAL space transition — 현실→상상→현실, a deliberate
   fantasy realm like 무릉도원 — is NOT drift; do not penalize a scripted scene change.)
+- **배경 흔들림 (ai_vtuber)**: distinct from drift. When the camera moves (panning / push-in /
+  handheld sway) under big subject motion, Seedance makes the BACKGROUND wobble, warp or
+  shake WITHIN a cut — which reads worse than a dead-still frame. The channel standard is a
+  locked, static camera + static background (energy from pet motion). If the background
+  visibly shakes/warps from camera movement, flag "배경 흔들림(카메라 무빙)", cap ≤7.
+  EXCEPTION: the closing wink's gentle push-in is fine (one subject, little background).
 - **정적 이야기 (both — HARD CAP, not a soft penalty)**: if the episode is flat observation
   — pets mostly still, no action/progression, cuts interchangeable — it is NOT shippable;
   score ≤6, verdict 수정 필요. An action/explore concept (e.g. spy) with no actual
