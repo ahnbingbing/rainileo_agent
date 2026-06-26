@@ -15,9 +15,72 @@ import sys
 from agents import arc
 from agents.producer import _db, _gather_context, propose_concepts, produce_and_render
 
-TARGET = dt.date(2026, 6, 25)
+TARGET = dt.date(2026, 6, 27)
 
 DIRECTIVES = {
+    # 6/27 18:00 AV — HOOK swap. PD: the late "첫인사" self-intro was awkward (channel is
+    # weeks old) AND the batch had two no-hook AVs; replace with a HOOK meme. Also the self-intro
+    # rendered with ref-mode cuts → mushy + within-cut morphing backgrounds (fatal for the
+    # photoreal feel). So this concept is i2v-only with locked backgrounds.
+    "plan_abc": (
+        "ai_vtuber 숏츠. 컨셉: 여름 '우리집 댕냥이 Plan A·B·C' 밈 — 기대(이상) vs 현실의 반전 코미디. "
+        "단일 공간(거실), 폭염/에어컨 시의성. 자막으로 'Plan A/B/C'를 또렷이 표시(컬러 이모지 금지, ♥/♡만).\n"
+        "막1(Plan A — intro): 자막 'Plan A : 우리집 천재 댕냥'. 거실, 랴니(11살 회색주둥이 성견, "
+        "꼬리없음)가 의젓하게 '척척' 모범 포즈로 앉아 앞발을 단정히 모은다 — 똑똑한 기대주. 레오(8개월 "
+        "주황태비)도 옆에서 따라 앉으려 한다. 기대 가득, 밝게.\n"
+        "막2(Plan B — develop): 자막 'Plan B : ...현실은 말썽쟁이'. 레오가 트릭은 안중에도 없이 장난 "
+        "모드로 돌변 — 쿠션을 앞발로 헤집고 우다다 사고를 친다. 랴니는 '얘 또 시작이네' 하며 가늘게 "
+        "뜬 눈으로 정색.\n"
+        "막3(Plan C — hook/펀치라인): 자막 'Plan C : 폭염엔 그냥 에어컨 밑에서 뻗기'. 트릭이고 말썽이고 "
+        "다 포기하고, 둘 다 시원한 에어컨 바람 아래 바닥에 대자로 발라당 뻗어 늘어진다 — 여름엔 이게 정답. "
+        "말랑한 배를 드러내고 녹아내리듯.\n"
+        "막4(여운 — closer): 자막 '결국 승자는 Plan C'. 둘이 에어컨 밑에 나란히 늘어져 더없이 만족스러운 "
+        "표정.\n"
+        "막5(윙크 — wink): 늘어진 그 자세 그대로 레오가 카메라 향해 윙크 1회. 윙크 캡션 '오늘도 햅삐 ♥'.\n"
+        "★훅 = 'Plan A 이상 → B 현실 → C 폭염 항복'의 반전 구조 + 여름 시의성. 단순 반복 금지, 기대→반전→"
+        "여운으로 웃음 포인트가 또렷해야 한다.\n"
+        "★승자/윙크 = 결국 모두를 Plan C로 끌어내린 레오(wink_subject=leo).\n"
+        "★★렌더 모드: 전 컷 i2v로, 각 컷 자기 still(거실 실사 또는 생성 still)을 first_frame으로 깔고 "
+        "애니메이트하라 — 배경을 통째로 만들어내는 ref(Omni Reference) 모드 절대 금지. (직전 자기소개가 "
+        "ref 모드라 cut3부터 배경이 뭉개지고 컷 안에서 재조립·출렁였다 — 실사 느낌이 깨졌다.) 배경은 "
+        "첫 프레임 그대로 완전히 고정 — 컷 진행 중 가구/벽/창을 추가·이동·모핑·재조립하지 말 것.\n"
+        "★단일 공간(거실)에서만. 카메라 전 컷 완전 고정(eye-level lock, 팬·줌·푸시인·핸드헬드 흔들림 금지), "
+        "배경 정적 — 활기는 펫의 몸 모션으로(모범 포즈·우다다·발라당 뻗기·윙크).\n"
+        "★레오 8개월 주황태비 고정(다른 고양이/성묘 금지), 랴니 present-day 성견 회색주둥이 꼬리없음 고정"
+        "(어린 랴니 금지). 꼬리 anatomy 그대로(랴니 없음·레오 있음). 의상 없음(맨몸). 사람 없음(또는 손만, "
+        "얼굴 X). 컷마다 자기 still로 또렷하게.\n"
+        "★모션 정적 금지 — 단, Seedance가 또렷이 렌더할 자연스러운 동작만(앉기·앞발 헤집기·우다다·발라당 "
+        "뻗기·윙크), 물리적으로 불가능한 정밀 묘기 금지."
+    ),
+    # 6/27 18:00 AV slot redo — the 03:00 batch's Leo self-intro was Validator-blocked
+    # (title↔content mismatch + duplicated 'develop' beats + thin set_description). This
+    # directive fixes all three: five DISTINCT acts/beats, a single living-room space, and
+    # content that actually DELIVERS the self-intro + 랴니엄마-옆자리 bond the title promises.
+    "leo_intro": (
+        "ai_vtuber 숏츠. 컨셉: '레오의 1인칭 자기소개 — 안녕, 나는 레오예요'. 단일 공간(거실), "
+        "8개월 주황태비 레오가 시청자에게 자기를 소개하는 밝고 사랑스러운 온보딩. 각 막은 서로 "
+        "다른 beat로 또렷이 구분(intro/develop/hook/closer/wink — beat 중복 금지).\n"
+        "막1(인사, intro): 거실, 레오(8개월 주황태비, 2025-09생)가 카메라 정면으로 또렷이 앉아 "
+        "'안녕!' 하듯 고개를 까딱 인사하고 한쪽 앞발을 살짝 든다. 밝고 친근.\n"
+        "막2(특기, develop): 레오가 창가 햇살 자리에서 발라당 배를 보이며 데구르르 뒹군다 — "
+        "'내 특기는 햇살 명상이랑 발라당!' (발라당=마음을 다 연 신뢰의 표현).\n"
+        "막3(랴니엄마 껌딱지, hook): 레오가 쪼르르 달려가 랴니(11살 회색주둥이 성견, 꼬리없음 — "
+        "레오가 '랴니엄마'라 부르는 든든한 존재)의 옆에 찰싹 붙어 몸을 기댄다 — '나는 랴니엄마 "
+        "옆자리 전문가예요!' 랴니는 의젓하게 받아준다. 두 마리가 또렷이 한 프레임.\n"
+        "막4(마무리, closer): 둘이 거실에 나란히 앉아 만족스럽게. 레오가 자리를 딱 잡고 카메라를 "
+        "바라본다 — '랴니엄마 옆이 제일 좋아요'.\n"
+        "막5(윙크, wink): 레오가 카메라 향해 윙크 1회. 윙크 캡션 '오늘도 햅삐 ♥'.\n"
+        "★승자/윙크 = 레오(wink_subject=leo) — 레오 자기소개편이니까.\n"
+        "★제목↔내용 일치 필수: 이름·나이(8개월)·특기(발라당)·랴니엄마 옆자리 전문가 면모를 실제로 "
+        "화면에 담을 것(제목만 약속하고 안 보여주면 Validator block).\n"
+        "★단일 공간(거실)에서만 전개. 카메라 전 컷 완전 고정(eye-level lock, 팬·줌·푸시인 금지), "
+        "배경 절대 정적 — 활기는 펫의 몸 모션으로(고개 까딱·발라당·달려가 붙기·윙크).\n"
+        "★레오 8개월 주황태비 고정(다른 고양이/성묘 금지), 랴니 present-day 성견 회색주둥이 "
+        "꼬리없음 고정(어린 랴니 금지), ref 모드 우선해 드리프트 방지. 꼬리 anatomy 그대로(랴니 "
+        "없음·레오 있음). 의상 없음(맨몸). 사람 없음(또는 손만, 얼굴 X). 컷마다 자기 still로 또렷하게.\n"
+        "★캡션은 레오 1인칭 보이스('안녕! 나는 레오예요', '내 특기는~', '나는 랴니엄마 옆자리 "
+        "전문가!'). 컬러 이모지 금지(♥/♡만 허용)."
+    ),
     # 6/25 — 시의성(trend) AV: 요즘 유행하는 아이돌 포인트 안무 댄스 챌린지 (PD 2026-06-25,
     # trend_feed 'cal_idoldance'). 단일 거실, 큰 동작 댄스, 합 맞추기+삑사리 반전.
     "idol_dance": (

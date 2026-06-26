@@ -65,29 +65,35 @@ _SYS = (
     "막내). 제작 레인 둘: ai_vtuber(AI 생성 숏츠)와 real_footage(실제 영상). 매일 03:00 배치가 다음날 "
     "4편을 자동 제작·예약하고, board에서 PD가 컨셉을 잡거나 영상을 내리거나 현황을 보거나 한다. "
     "코드·파이프라인 수정/분석 요청은 자율 실행기가 받아 바로 처리한다(예전처럼 사람 CLI를 기다리지 않는다).\n\n"
-    "PD 메시지의 의도를 파악해 **아래 JSON 하나만** 출력한다 — JSON 밖 텍스트는 절대 금지.\n"
-    '{"intent": <아래 목록 중 하나>, "params": {...}, "reply": "<PD에게 보낼 한국어 답변>"}\n\n'
-    "**reply 작성법**: 딱딱한 한 줄 말고, 맥락을 아는 똑똑한 동료처럼 자연스럽고 따뜻한 존댓말로 써라. "
-    "무엇을 이해했고 무엇을 할지(또는 뭐가 더 필요한지)를 구체적으로. 질문·상의·잡담이면 진짜 도움 되는 "
-    "내용을 충분히 담아도 된다(2~4문장 OK). 단순 실행이면 간결히. 모르거나 불확실하면 솔직히 그렇게 말하고 "
-    "확인할 방법을 제안해라. 추측으로 사실을 지어내지 마라. 이모지는 가볍게.\n\n"
-    "intent 목록:\n"
-    "- concept: 특정 날짜 컨셉/방향 예약. params={date:'YYYY-MM-DD'|null, text:'컨셉 지시문 전체', "
-    "lane:'ai_vtuber'|'real_footage'|null}. 날짜 없으면 null. 연도 생략=올해(오늘 기준), 지난 날짜면 "
-    "내년. 과거 연도 추측 금지.\n"
-    "- status: 예약 컨셉/스케줄/배치/처리 중인 요청 현황을 묻는다. params={}.\n"
-    "- knowledge_list: 파이프라인이 PD에게 물은 '모르는 캐릭터 사실' 목록. params={}.\n"
-    "- knowledge_answer: 그 질문에 답한다. params={id:'질문id'|null, answer:'답'}.\n"
-    "- veto: 특정 영상을 내린다. params={video_id:'...'|null, delete:true|false}. delete는 PD가 "
-    "'완전삭제/영구삭제'를 명시할 때만 true, 그냥 '내려/취소/비공개'는 false.\n"
-    "- render: 지금 즉시 한 편 렌더(돈 듦). params={slug:'hawaii'|'homecam'|'idol_dance'|null, "
-    "text:'프리셋이 아니면 컨셉 지시문'}.\n"
-    "- help: 뭘 할 수 있는지 묻는다. params={}.\n"
-    "- chat: 인사·잡담·질문·의견·상의 등 '액션이 아닌 모든 대화'. params={}. reply에 제대로, 똑똑하게 답해라.\n"
-    "- escalate: 코드·파이프라인 수정/분석/디버깅 같은 깊은 작업 — 자율 실행기가 받아 처리한다. "
-    "params={summary:'한 줄 요약'}. reply엔 무엇을 처리할지 적어라.\n\n"
-    "판단 기준: 단순 질문·대화는 chat으로 **직접 똑똑하게 답하고**, 코드·파이프라인 작업이면 escalate. "
-    "어설프게 action을 지어내지 말 것. 애매하면 chat으로 되묻는 게 낫다."
+    "너는 고정 메뉴를 고르는 게 아니라, 아래 '툴'을 직접 호출해 라이브 데이터를 확인하고 액션을 "
+    "실행하는 에이전트다. 사실은 추측하지 말고 반드시 툴로 확인해라. 한 번에 **JSON 하나만** 출력 "
+    "(JSON 밖 텍스트 절대 금지) — 두 형태 중 하나:\n"
+    '  {"tool": "<툴이름>", "args": {...}}   ← 툴 호출\n'
+    '  {"final": "<PD에게 보낼 한국어 답변>"}  ← 최종 답변\n'
+    "필요하면 툴을 여러 번 순차로 부른다. 각 툴 결과를 받아 다음 행동을 정하고, 충분하면 final로 끝낸다.\n\n"
+    "**final 작성법**: 딱딱한 한 줄 말고 맥락 아는 똑똑한 동료처럼 따뜻한 존댓말로. 무엇을 확인했고 "
+    "무엇을 할지(또는 뭐가 더 필요한지) 구체적으로. 데이터 답이면 툴 결과를 PD가 바로 읽기 좋게 정리해라. "
+    "잡담·의견·인사면 툴 없이 바로 final로 답해도 된다. 이모지는 가볍게.\n\n"
+    "툴 목록:\n"
+    "- youtube_schedule: 예약/공개 예정 영상의 슬롯·video_id·공개시각·privacy를 YouTube API로 **라이브** "
+    "확인. args={date:'YYYY-MM-DD'|생략}. PD가 '예약/배치/슬롯/비디오아이디/언제 올라가/오늘 만든 거' 류를 "
+    "물으면 무조건 이걸로 확인해 답해라(DB는 stale일 수 있으니 추측 금지).\n"
+    "- get_status: board에 들어온 코드/파이프라인 요청의 처리 큐·진행 현황. args={}. '뭐 하고 있어/진행상황'에.\n"
+    "- db_query: agent.db 읽기전용 SELECT(카드/성과/트렌드 등 임의 데이터 질문). args={sql:'SELECT …'}. SELECT/WITH만.\n"
+    "- read_log: 최근 로그 확인(디버깅 '왜 실패' 류). args={name:'launch_out'|'launch_err'|'batch_problems'|'slack_err', "
+    "contains:'필터문자열'|생략, lines:40}.\n"
+    "- list_knowledge: 파이프라인이 PD에게 물은 미답 캐릭터 사실 목록. args={}.\n"
+    "- set_concept: 특정 날짜 컨셉 예약(액션). args={date:'YYYY-MM-DD'|null, text:'컨셉 지시문 전체', "
+    "lane:'ai_vtuber'|'real_footage'|null}. 연도 생략=올해, 지난 날짜면 내년(과거 연도 추측 금지).\n"
+    "- answer_knowledge: 지식질문에 답. args={id:'질문id'|null, answer:'답'}.\n"
+    "- escalate: 코드·파이프라인 수정/분석/디버깅 같은 깊은 작업을 자율 실행기에 넘긴다. args={summary:'한 줄 요약'}. "
+    "넘긴 뒤엔 final로 무엇을 맡겼는지 알려라.\n"
+    "- veto: 영상 내림(되돌리기 어려움 → PD 확인 후 실행). args={video_id:'...'|null, delete:true|false}. "
+    "delete는 '완전삭제/영구삭제' 명시 때만 true.\n"
+    "- render: 지금 한 편 즉시 렌더(~$50 → PD 확인 후 실행). args={slug:'hawaii'|'homecam'|'chimipja'|null, "
+    "text:'프리셋 아니면 컨셉 지시문'}.\n\n"
+    "원칙: 모르면 툴로 확인하고 추측으로 사실을 지어내지 마라. 깊은 코드 작업은 escalate로. 애매하면 "
+    "되묻는 final이 낫다. veto/render 같은 비싼/되돌리기 어려운 건 PD가 확인 답을 주면 그때 실행된다."
 )
 
 
@@ -451,6 +457,206 @@ def _dispatch(d: dict, *, text: str, db, do_veto, user: str,
     return d.get("reply") or "네! 말씀하세요 🐾"
 
 
+# ── live tools (the agent calls these to read fresh state) ───────────────────
+def _live_schedule(date_iso: str | None = None) -> list[dict]:
+    """Fresh schedule from `cards` + a LIVE YouTube API verify (DB youtube fields go
+    stale after re-uploads). date_iso='YYYY-MM-DD' filters by KST slot date; None =
+    upcoming. Each item: slot/kst_date/lane/video_id/title/privacy."""
+    import sqlite3 as _sql
+    KST = dt.timezone(dt.timedelta(hours=9))
+    con = _sql.connect(str(ROOT / "data" / "agent.db")); con.row_factory = _sql.Row
+    try:
+        rows = con.execute(
+            "SELECT render_style, theme, youtube_video_id, youtube_publish_at "
+            "FROM cards WHERE uploaded=1 AND youtube_video_id IS NOT NULL "
+            "AND youtube_publish_at IS NOT NULL AND youtube_publish_at!='' "
+            "ORDER BY youtube_publish_at").fetchall()
+    finally:
+        con.close()
+    now = dt.datetime.now(dt.timezone.utc)
+    items, seen = [], set()
+    for r in rows:
+        try:
+            utc = dt.datetime.fromisoformat(r["youtube_publish_at"].replace("Z", "+00:00"))
+        except Exception:
+            continue
+        kst = utc.astimezone(KST)
+        if date_iso:
+            if kst.date().isoformat() != date_iso:
+                continue
+        elif utc < now - dt.timedelta(hours=6):
+            continue
+        key = (kst.isoformat(), r["youtube_video_id"])
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append({"slot": kst.strftime("%H:%M"), "kst_date": kst.date().isoformat(),
+                      "lane": r["render_style"], "video_id": r["youtube_video_id"],
+                      "title": r["theme"] or "", "privacy": None})
+    items.sort(key=lambda i: (i["kst_date"], i["slot"]))
+    try:
+        from youtube.oauth import get_youtube
+        svc = get_youtube()
+        ids = [i["video_id"] for i in items]
+        live = {}
+        for j in range(0, len(ids), 50):
+            chunk = ids[j:j + 50]
+            if not chunk:
+                break
+            resp = svc.videos().list(part="status", id=",".join(chunk)).execute()
+            for v in resp.get("items", []):
+                live[v["id"]] = v.get("status", {})
+        for i in items:
+            st = live.get(i["video_id"])
+            if st is None:
+                i["privacy"] = "삭제됨/없음"
+            else:
+                pv = st.get("privacyStatus", "?")
+                i["privacy"] = "예약됨" if (pv == "private" and st.get("publishAt")) else pv
+    except Exception as e:
+        log.warning("live schedule verify failed: %s", e)
+        for i in items:
+            if i["privacy"] is None:
+                i["privacy"] = "DB기준(미검증)"
+    return items
+
+
+def _fmt_schedule(date_iso: str | None) -> str:
+    items = [i for i in _live_schedule(date_iso) if i.get("privacy") != "삭제됨/없음"]
+    if not items:
+        return (f"`{date_iso}` 에 예약된 영상이 없어요 (YouTube 라이브 확인)." if date_iso
+                else "다가오는 예약 영상이 없어요 (YouTube 라이브 확인).")
+    head = f":calendar: *예약 현황{f' — {date_iso}' if date_iso else ''}* _(YouTube 라이브 확인)_"
+    out, cur = [head], None
+    for i in items:
+        if not date_iso and i["kst_date"] != cur:
+            cur = i["kst_date"]; out.append(f"*{cur}*")
+        lane = "AV" if i["lane"] == "ai_vtuber" else "RF"
+        out.append(f"  • `{i['slot']}` {lane} → `{i['video_id']}` · {i['privacy']} · {i['title'][:30]}")
+    return "\n".join(out)
+
+
+def _safe_db_query(sql: str) -> str:
+    """Read-only SELECT against agent.db so the agent can answer arbitrary data
+    questions without a hand-coded intent. SELECT/WITH only, single statement."""
+    import sqlite3 as _sql
+    s = (sql or "").strip().rstrip(";").strip()
+    low = s.lower()
+    if not (low.startswith("select") or low.startswith("with")):
+        return "[거부] 읽기전용 SELECT/WITH 만 허용돼요."
+    if ";" in s:
+        return "[거부] 한 번에 SELECT 하나만요."
+    if any(tok in f" {low} " for tok in (" insert ", " update ", " delete ", " drop ",
+                                         " alter ", " attach ", " create ", " replace ")):
+        return "[거부] 쓰기/DDL은 안 돼요."
+    con = _sql.connect(str(ROOT / "data" / "agent.db")); con.row_factory = _sql.Row
+    try:
+        cur = con.execute(s)
+        cols = [c[0] for c in (cur.description or [])]
+        rows = cur.fetchmany(40)
+    except Exception as e:
+        return f"[쿼리 오류] {e}"
+    finally:
+        con.close()
+    if not rows:
+        return "(결과 0행)"
+    def cell(v):
+        sv = str(v)
+        return sv[:60] + ("…" if len(sv) > 60 else "")
+    lines = [" | ".join(cols)]
+    for r in rows:
+        lines.append(" | ".join(cell(r[c]) for c in cols))
+    extra = "\n…(40행까지만)" if len(rows) == 40 else ""
+    return "\n".join(lines) + extra
+
+
+_LOGS = {"launch_out": "launch.out.log", "launch_err": "launch.err.log",
+         "batch_problems": "batch_problems.jsonl", "slack_err": "slack.err.log"}
+
+
+def _read_log(name: str, contains: str | None = None, lines: int = 40) -> str:
+    fn = _LOGS.get(name)
+    if not fn:
+        return f"[unknown log: {name}] 가능: {', '.join(_LOGS)}"
+    p = ROOT / "data" / "logs" / fn
+    if not p.exists():
+        return f"({fn} 없음)"
+    try:
+        tail = p.read_text(errors="ignore").splitlines()[-1500:]
+    except Exception as e:
+        return f"[읽기 오류] {e}"
+    if contains:
+        tail = [ln for ln in tail if contains in ln]
+    tail = tail[-max(1, min(int(lines or 40), 80)):]
+    return "\n".join(tail) or "(해당 라인 없음)"
+
+
+# ── tool registry + agent loop ───────────────────────────────────────────────
+# READ-ONLY/cheap tools run inline in the loop; COSTLY tools (veto/render) are
+# returned to handle_board_message as a confirm-pending instead of executing.
+def _run_tool(name: str, args: dict, *, db, user: str, channel: str, thread_ts: str) -> str:
+    a = args or {}
+    if name == "youtube_schedule":
+        return _fmt_schedule((a.get("date") or "").strip() or None)
+    if name == "get_status":
+        return _act_status(db)
+    if name == "db_query":
+        return _safe_db_query(a.get("sql", ""))
+    if name == "read_log":
+        return _read_log(a.get("name", ""), a.get("contains") or None, int(a.get("lines", 40) or 40))
+    if name == "list_knowledge":
+        return _act_knowledge_list(db)
+    if name == "set_concept":
+        return _act_concept(a, db)
+    if name == "answer_knowledge":
+        return _act_knowledge_answer(a)
+    if name == "escalate":
+        return _act_escalate(a.get("summary") or "", a, db, user, channel=channel, thread_ts=thread_ts)
+    return f"[알 수 없는 툴: {name}]"
+
+
+_AGENT_MAX_STEPS = 5
+
+
+def _agent_answer(text: str, *, db, user: str, channel: str, thread_ts: str) -> dict:
+    """Tool-using agent. Returns {'text': str} for a final answer, or
+    {'costly': d} where d={'intent','params','reply'} to route through the
+    confirm flow. The LLM calls live tools and composes the answer itself —
+    no per-question intent hand-coding."""
+    today = dt.date.today().isoformat()
+    transcript = f"오늘은 {today} (KST) 입니다.\nPD 메시지: {text}\n"
+    for _ in range(_AGENT_MAX_STEPS):
+        raw = _board_llm(_SYS, transcript, max_tokens=900).strip()
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw)
+        m = re.search(r"\{.*\}", raw, re.S)        # tolerate prose around the JSON
+        try:
+            d = json.loads(m.group(0) if m else raw)
+        except Exception:
+            fm = re.search(r'"final"\s*:\s*"(.*?)"\s*[}\n]', raw, re.S)
+            if fm:                                  # broken JSON but a final string is in there
+                return {"text": fm.group(1).replace("\\n", "\n").replace('\\"', '"').strip()}
+            return {"text": raw or "네! 🐾"}        # model answered in plain prose — pass through
+        if not isinstance(d, dict):
+            return {"text": str(d)}
+        if "final" in d:
+            return {"text": str(d["final"]).strip() or "네! 🐾"}
+        tool = d.get("tool")
+        if tool in COSTLY:                          # veto / render → confirm first
+            return {"costly": {"intent": tool, "params": d.get("args") or {},
+                               "reply": d.get("reply") or ""}}
+        try:
+            result = _run_tool(tool, d.get("args") or {}, db=db, user=user,
+                               channel=channel, thread_ts=thread_ts)
+        except Exception as e:
+            log.warning("board tool %s failed: %s", tool, e)
+            result = f"[툴 실행 오류: {e}]"
+        transcript += (f"\n[너의 호출] {json.dumps(d, ensure_ascii=False)[:300]}\n"
+                       f"[결과]\n{result}\n\n위 결과를 보고, 더 확인할 게 있으면 툴을 또 부르고 "
+                       f"충분하면 {{\"final\":\"…\"}} 로 답하세요.\n")
+    return {"text": "확인할 게 많아 정리가 길어졌어요. 좀 더 좁혀서 다시 물어봐 주세요 🐾"}
+
+
 def _confirm_preview(d: dict) -> str:
     """One-line description of a costly action awaiting confirmation."""
     intent = d.get("intent"); p = d.get("params") or {}
@@ -503,38 +709,27 @@ def handle_board_message(client, event, *, db, do_veto):
             with _PENDING_LOCK:
                 _PENDING.pop(thread_ts, None)
 
-    # 2) Fresh request — parse intent.
+    # 2) Fresh request — tool-using agent. The LLM calls live tools (youtube_schedule,
+    #    db_query, read_log, get_status, …) and composes the answer itself, so novel
+    #    questions don't need a new hand-coded intent. Costly tools (veto/render) come
+    #    back as a confirm-pending instead of executing.
     reply_thread = thread_ts or ts
     try:
-        d = _parse(text)
+        res = _agent_answer(text, db=db, user=user, channel=channel, thread_ts=reply_thread)
     except Exception as e:
-        log.warning("board parse failed: %s", e)
+        log.exception("board agent failed")
         _post(client, channel, reply_thread,
-              ":thinking_face: 잘 못 알아들었어요. `도움말` 이라고 하면 예시를 보여드릴게요.")
+              f":x: 처리 중 문제가 생겼어요: {str(e)[:200]}")
         return
-
-    intent = d.get("intent")
-    # 3) Costly → confirm first.
-    if intent in COSTLY:
+    if res.get("costly"):
+        d = res["costly"]
         with _PENDING_LOCK:
             _PENDING[reply_thread] = {"d": d, "text": text, "ts": time.time()}
         _post(client, channel, reply_thread,
               f":pause_button: *{_confirm_preview(d)}* 할까요?\n"
               f"_`응`/`yes` 면 실행, `취소` 면 취소 (3분 후 자동 만료)._")
         return
-
-    # 4) Read-only / cheap → run now. Lead with the LLM's friendly reply, then
-    #    the action result.
-    try:
-        out = _dispatch(d, text=text, db=db, do_veto=do_veto, user=user,
-                        channel=channel, thread_ts=reply_thread)
-    except Exception as e:
-        log.exception("board action failed")
-        out = f":x: 처리 실패: {str(e)[:300]}"
-    lead = (d.get("reply") or "").strip()
-    if lead and intent not in ("chat", "help") and not out.startswith(lead[:12]):
-        out = f"{lead}\n{out}"
-    _post(client, channel, reply_thread, out)
+    _post(client, channel, reply_thread, res.get("text") or "네! 🐾")
 
 
 def _post(client, channel, thread_ts, text):
