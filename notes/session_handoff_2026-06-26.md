@@ -4,7 +4,7 @@ PD reviewed the 6/27 batch and had me fix all four slots + fix two systemic bugs
 (Ryani harness-ring ref leak, board bot whack-a-mole). Network about to go down —
 this captures the IN-FLIGHT render and exactly how to finish it.
 
-## ✅ DONE: 18:00 AV = Plan ABC (`MAYV6YH2Yns`, scheduled 09:00Z)
+## ✅ DONE: 18:00 AV = Plan ABC (`PKSzHTlPg0c`, scheduled 09:00Z)
 
 The render failed TWICE on transient network timeouts (cut2, then cut5), but cut1–4
 survived; I rendered cut5 single (`animate_seedance_i2v.py`), assembled all 5 via
@@ -64,7 +64,7 @@ PY
 |---|---|---|---|---|
 | 08:00 | AV | `QlgbeyqkpDI` | 할머니 뽀뽀 (원근+캡션 fix, v3) | private 예약 |
 | 12:30 | RF | `jfyqT-7SqAU` | 잠자리 찾기 (reframe) + 레오 자는 썸네일 | private 예약 |
-| 18:00 | AV | `MAYV6YH2Yns` | Plan ABC (여름 에어컨 밈 HOOK) — replaced self-intro | private 예약 ✅ |
+| 18:00 | AV | `PKSzHTlPg0c` | Plan ABC (여름 에어컨 밈 HOOK) — replaced self-intro | private 예약 ✅ |
 | 21:00 | RF | `E3KbD76D4Fc` | 피자 겨울 집밥 (unchanged) | private 예약 |
 
 ## Shipped this session
