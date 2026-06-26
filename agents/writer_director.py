@@ -2673,7 +2673,7 @@ def _build_wink_cut(subject: str, prev_cut: dict, other: str | None = None) -> d
             f"smile. A BEAT LATER, {names.get(subject, subject)} turns to the camera and "
             "gives the FINAL slow, deliberate happy WINK (the closing sign-off), one eye "
             "closed with a smug satisfied smile. Each pet winks ONCE, in TURN (NOT at the "
-            "same time). HOLD on both, lingering, for the remaining time. Casual iPhone "
+            "same time). A brief hold after the final wink, then the clip ends — NO long lingering. Casual iPhone "
             "snapshot, natural fur strands, no studio polish. Completely bare-furred — NO "
             "clothing, NO collar, NO accessories. Keep each pet's exact markings (Ryani has NO tail)."
         )
@@ -2693,14 +2693,17 @@ def _build_wink_cut(subject: str, prev_cut: dict, other: str | None = None) -> d
             "directly into the camera and holds steady, warm eye contact for a clear "
             "beat. Then a slow, deliberate, playful WINK — one eye closes for a "
             "noticeable moment while the other stays wide open on the camera — with "
-            "a subtle smug satisfied smile, mouth corner slightly raised. HOLD that "
-            "close-up wink and smile, lingering, for the remaining time. "
+            "a subtle smug satisfied smile, mouth corner slightly raised. Hold the "
+            "close-up wink and smile briefly, then the clip ends — NO long lingering. "
             "Casual iPhone snapshot, natural fur strands visible at this close "
             "distance, no studio polish. Completely bare-furred — NO clothing, "
             "NO collar, NO accessories."
         )
         who = subject
         action = f"{subject} winks at camera"
+    # Tight closer duration (retention: no long linger). Two-pet exchange needs one
+    # beat more for the sequential turn; the caption lands AFTER the wink, last ~2.4s.
+    _wd = 6 if (other and other != subject) else 5
     return {
         "tag": "cut_wink_ending",
         "beat": "wink_ending",
@@ -2708,8 +2711,10 @@ def _build_wink_cut(subject: str, prev_cut: dict, other: str | None = None) -> d
         "function": "wink_ending",
         "action": action,
         "description": action,
-        # PD 2026-06-06: 5s felt too short/abrupt — 7s so the wink lingers.
-        "duration_seconds": 7,
+        # PD 2026-06-26 (retention): the closer is a TIGHT button, NOT a 7s linger — a long
+        # slow wink was the back-half sag (viewers bleed ~15s onward). Enough for the ~2s
+        # push-in + wink + caption to read, no more. Solo 5s; two-pet exchange 6s (see _wd).
+        "duration_seconds": _wd,
         "seedance_mode": "i2v",
         "chain_from_prev": True,
         "motion_prompt": motion,
@@ -2718,7 +2723,7 @@ def _build_wink_cut(subject: str, prev_cut: dict, other: str | None = None) -> d
         # Caption appears once the wink has landed (after the push-in + wink),
         # held through the lingering tail.
         "captions": [{
-            "start": 5.0, "end": 7.0,
+            "start": round(_wd - 2.4, 1), "end": round(_wd - 0.1, 1),
             "ko": "오늘도 햅삐 ♥",
             "en": "Happy as ever ♥",
         }],

@@ -104,8 +104,9 @@ to a single cut.
 
 - **`short`** (~25-30s): keep the Writer's cut count — it follows the story's beats (up
   to ~8 video cuts; readability floor ~2.5s per captioned video cut). Set each cut's
-  `duration_seconds` to fit its action (2.5-6s — quick beats short, the kick/closer
-  longer for 여운). `tempo_factor` = 1.0 on any cut carrying a burned caption.
+  `duration_seconds` to fit its action (2.5-6s — quick beats short, the kick gets the
+  beats its payoff needs; the closer stays a TIGHT 3-5s button, never padded — see "Last
+  cut = a TIGHT close"). `tempo_factor` = 1.0 on any cut carrying a burned caption.
 - **`mid`** (~50-60s): the SAME arc with longer per-cut holds + face-to-face cross-cuts.
   Vary `duration_seconds` (3-4s action cross-cuts, 6-8s emotional/caption beats); tempo
   up to 1.3 on pure-action cuts, back to 1.0 on captioned cuts. Bridge bg changes between
@@ -183,7 +184,7 @@ For any cut where a pet's face fills > 30% of the frame (ECU / CU / MCU on the f
 - `"Low-angle close-up of Ryani's face. Soft natural daylight from screen-left illuminates her muzzle and eyes; the side opposite to the window stays in gentle shadow but not pitch black."`
 - `"...her face is lit by warm late-afternoon light bouncing off the laminate floor, giving a soft fill from below. Eyes catch the light."`
 
-Specifically for **last-cut emotional close-ups** (the 결 / closer beat): the face MUST be lit so eye-line and expression are readable. Pair `"face lit by natural daylight, eyes visible"` with `tempo_factor 0.7-0.8` + `duration_seconds 7-8` for proper 여운.
+Specifically for **last-cut emotional close-ups** (the 결 / closer beat): the face MUST be lit so eye-line and expression are readable. Pair `"face lit by natural daylight, eyes visible"` with `tempo_factor 1.0` + `duration_seconds 3-5` — a tight readable button, NOT a slow-mo linger (see "Last cut = a TIGHT close").
 
 ### First-cut anti-AI-look (NON-NEGOTIABLE)
 Seedance's first cut tends to render as "AI-too-perfect": airbrushed fur, glassy eyes, symmetric pose. Two-layer fix:
@@ -210,16 +211,27 @@ Rules:
   - Slow body twist / lying down / sitting down = ~2s
   - Static reaction hold (intentional 여운) = up to 2s
 - Set `duration_seconds` = sum of action time + 0.5-1s tail.
-- For the **last cut (결)** specifically, 2-3s of HELD final-pose tail is *desired* for 여운. Other cuts max tail = 1s.
+- The **last cut (결)** lands its wink + caption then ends — held tail ≤ ~1s, like the others. Do NOT pad it with a long held-pose linger (that drawn-out tail is the back-half sag — see "Last cut = a TIGHT close").
 - If your action_beats describe < 3s of motion in a 6s cut, EXTEND the motion_beats with secondary actions (ear flick, eye blink, slight head tilt, paw shuffle) OR shorten duration.
 
-### Last-cut 여운 (emotional closer beat)
-The final cut of any episode is the 결 — the emotional residue. Director MUST:
-- Set `duration_seconds`: **7-8s** for short format, **8-10s** for mid (longer than other cuts).
-- Set `tempo_factor`: **0.7-0.8** (slow-mo for emotional weight).
-- `motion_prompt` should describe a held pose or gradual settling action — NOT a beat with new motion introduced at the end.
-- Camera move = `static` or `pull_out_very_slow` (~3% over the clip). NO push-ins, no pans.
+### Last cut = a TIGHT close, not a long linger
+The final cut is the 결 — the emotional button. The retention curve is decisive here:
+viewers are won early but LEAK in the back half (~15s onward, below the average Short),
+while the opening holds fine. A long slow 여운 IS that sag — a 7-8s slow-mo closer drags
+the tail viewers are already leaving during, and the warmth it's protecting lands too late
+to matter. So land the warmth FAST and end:
+- `duration_seconds`: **3-5s** short, **5-6s** mid — enough for the wink + its caption to
+  appear and read, no more. Do NOT pad to 7-8s.
+- `tempo_factor`: **1.0** — the wink carries a burned caption and must read at real time;
+  no slow-mo (0.7-0.8 is what made the ending drag).
+- Camera: the signature **gentle `push_in` toward the winking face IS the close** (PD: "가까이
+  하면서 윙크") — one subject at the very end, little background left to wobble, so the push-in
+  is safe here. Push in over the clip and land on the wink. (Supersedes any "no push-ins on
+  the closer" — that was the old long-static-여운 model.)
+- Held tail ≤ ~1s; no dead air after the wink lands.
 - If pet faces are visible, see "Facial lighting in close-ups" — face MUST be lit.
+- Protect anatomy: the wink is a relaxed one-eye close in a comfortable pose, never a
+  "turn head around to wink" (Seedance resolves that into an impossible neck twist).
 
 ### Floor plan = ground truth (NON-NEGOTIABLE)
 If `set_library[set_anchor].room_layout_3d.ground_truth_floor_plan` is present, that path points to a PD hand-drawn 2D floor plan that is THE final authority for room geometry. Walk it before designing any cut:
