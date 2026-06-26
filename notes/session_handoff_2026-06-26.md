@@ -4,18 +4,33 @@ PD reviewed the 6/27 batch and had me fix all four slots + fix two systemic bugs
 (Ryani harness-ring ref leak, board bot whack-a-mole). Network about to go down —
 this captures the IN-FLIGHT render and exactly how to finish it.
 
-## ⚠️ IN-FLIGHT (finish this first): 18:00 AV = Plan ABC render
+## ✅ DONE: 18:00 AV = Plan ABC (`MAYV6YH2Yns`, scheduled 09:00Z)
+
+The render failed TWICE on transient network timeouts (cut2, then cut5), but cut1–4
+survived; I rendered cut5 single (`animate_seedance_i2v.py`), assembled all 5 via
+`recaption_finish` (BGM `cocosmusic-funshine-groove`, Plan A/B/C labels explicit,
+cut1 opens on the hook not a clock), verified (no Ryani ring, sharp/stable bg, full
+arc, Leo wink held), deleted the old self-intro `SvG-b87PxnQ`, and uploaded Plan ABC
+to 18:00. Final mp4: `data/output/episodes/episode_av_planabc_20260626.mp4`. The
+section below is retained as the recipe if a re-render is ever needed.
+
+## (recipe, no longer needed) 18:00 AV = Plan ABC render
 
 The 18:00 slot currently holds the OLD Leo self-intro (`SvG-b87PxnQ`) but PD killed
 that concept (a "첫인사" is awkward this late + the batch had two no-hook AVs + its
 cut3+ backgrounds were mushy from ref-mode). Replacing it with **Plan ABC** (여름
 에어컨 밈, a HOOK): "우리집 댕냥 Plan A·B·C — 결국 승자는 에어컨". Validator-approved 8/10.
 
-- **Render was RUNNING** at handoff: `produce_and_render([plan_abc_concept], 2026-06-27)`,
-  work dir `data/tmp/cameraman_13d4e7b1_20260626_155300/` (regen-stills phase, no
-  animated cuts yet). Output will land at `data/output/episodes/episode_av_20260626_<ts>.mp4`.
+- **STATUS: render FAILED on a network timeout** (Seedance i2v cut2_develop →
+  "The read operation timed out", rc=3; `RENDER_OUTS: []`). This was the network
+  going down that PD warned about — NOT a logic bug. Nothing was produced. Work dir
+  `data/tmp/cameraman_13d4e7b1_20260626_155300/` has partial cuts (cut1 only).
+- **The 18:00 slot is NOT empty** — it still holds the valid self-intro `SvG-b87PxnQ`
+  as a fallback. So nothing is broken; just re-run when the network is stable.
 - The concept is **forced all-cuts i2v + locked bg** (NOT ref mode — that was the
   background-mush cause). Persistent copy: `data/output/handoff_0626/plan_abc_concept.json`.
+- **NEXT SESSION: just re-run the resume command below when network is back**, then
+  do the verify + swap. If it keeps timing out, the Seedance API / network is still flaky.
 
 **If the render finished:** find the newest `episode_av_2026062*_*.mp4`, extract frames
 (`ffmpeg -i EP -vf fps=1,scale=170:-1,tile=7x4 sheet.jpg`), CHECK: (a) Ryani has NO chest
@@ -49,7 +64,7 @@ PY
 |---|---|---|---|---|
 | 08:00 | AV | `QlgbeyqkpDI` | 할머니 뽀뽀 (원근+캡션 fix, v3) | private 예약 |
 | 12:30 | RF | `jfyqT-7SqAU` | 잠자리 찾기 (reframe) + 레오 자는 썸네일 | private 예약 |
-| 18:00 | AV | `SvG-b87PxnQ` → **replace w/ Plan ABC** | self-intro → 여름 에어컨 밈 | render in-flight |
+| 18:00 | AV | `MAYV6YH2Yns` | Plan ABC (여름 에어컨 밈 HOOK) — replaced self-intro | private 예약 ✅ |
 | 21:00 | RF | `E3KbD76D4Fc` | 피자 겨울 집밥 (unchanged) | private 예약 |
 
 ## Shipped this session
@@ -85,8 +100,19 @@ the confirm flow. Tested offline ("6/27 예약 video id 슬롯" now answers with
 
 ## Open / NEXT
 
-1. **Finish the Plan ABC swap** (section 1) — the only unfinished content task.
-2. **Re-apply the Ryani ref on any fresh checkout/restore** (gitignored; keep `_withring`
+1. **6/27 batch is COMPLETE** (all 4 slots scheduled — see table). Verify they go public
+   at their slots (live API, [[verify_youtube_state_via_api]]).
+2. **STRATEGY (under discussion, not yet built) — YouTube analytics:** 87.3% of views come
+   from the Shorts feed, only 2.8% search/suggested. Implications PD & I aligned on:
+   (A) the first ~3s hook + retention is ~90% of growth → tighten Giri to score a "3-second
+   hook" (cut1 must open on the hook, not a slow setup) [giri-update/review-learning];
+   (B) packaging (channel_manager.make_packaging) should weave searchable KO keywords into
+   titles/descriptions/tags for the search/suggested 2.8%. **Open question PD was chewing on:**
+   the **intro bumper burns the first ~1.5s on branding in the swipe-decision window** — likely
+   a retention tax. Proposal: drop/shorten the intro bumper, keep the outro (CTA), move the
+   signature to a corner watermark (@ryani_n_loe) + the characters themselves; A/B-verify
+   retention via youtube/analytics. NOT decided yet — resume here.
+3. **Re-apply the Ryani ref on any fresh checkout/restore** (gitignored; keep `_withring`
    backup if you ever need to revert).
 3. **Stale `launch_threads`**: `reupload_episode` / `_auto_upload_episode` update `cards` but
    not `launch_threads` (veto in app.py reads it). The board bot now sidesteps this by reading
