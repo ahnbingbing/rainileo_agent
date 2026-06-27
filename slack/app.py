@@ -55,7 +55,60 @@ BOARD_PD_USER = os.getenv("SLACK_PD_USER_ID", "U0B166M9C9F")
 
 # Global stop flag — set by "중지/stop" command, checked by all background work
 import threading
+import time as _time
+from collections import deque
 _stop_flag = threading.Event()
+
+
+# --- Socket-Mode wedge watchdog -------------------------------------------
+# After a network/DNS blip, slack_bolt's Socket Mode can get permanently stuck:
+# it keeps establishing new WebSocket sessions, but every send fails with
+# [Errno 32] Broken pipe, and it never self-recovers. The process stays ALIVE
+# (just looping), so launchd KeepAlive — which only restarts on exit — can't
+# rescue it, and the bot goes silent until a manual restart. This watchdog
+# detects the wedge (a burst of BrokenPipe errors in a short window) and hard-
+# exits, letting launchd bring up a fresh, healthy process.
+#
+# Keyed specifically on BrokenPipe (not URLError/TimeoutError): those signal the
+# network is genuinely down, where exiting would just cause a restart storm.
+# BrokenPipe is the *post-recovery wedged* state — a transient drop produces
+# only a handful and self-heals; the wedge produces them unboundedly.
+_BROKENPIPE_WINDOW_S = 300      # rolling window
+_BROKENPIPE_THRESHOLD = 40      # this many BrokenPipe within the window == wedged
+
+
+class _WedgeWatchdog(logging.Handler):
+    def __init__(self, pidfile: "Path | None" = None):
+        super().__init__(level=logging.ERROR)
+        self._hits: "deque[float]" = deque()
+        self._lock = threading.Lock()
+        self._pidfile = pidfile
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return
+        if "BrokenPipeError" not in msg and "Broken pipe" not in msg:
+            return
+        now = _time.monotonic()
+        with self._lock:
+            self._hits.append(now)
+            while self._hits and now - self._hits[0] > _BROKENPIPE_WINDOW_S:
+                self._hits.popleft()
+            n = len(self._hits)
+        if n >= _BROKENPIPE_THRESHOLD:
+            logging.critical(
+                "Socket-Mode wedge detected: %d BrokenPipe errors in %ds — "
+                "exiting so launchd restarts a fresh process.",
+                n, _BROKENPIPE_WINDOW_S,
+            )
+            try:
+                if self._pidfile is not None:
+                    self._pidfile.unlink(missing_ok=True)
+            except Exception:
+                pass
+            os._exit(1)
 # Serialize board agent runs (one claude session at a time) + persist session id.
 _board_lock = threading.Lock()
 _BOARD_SESSION_FILE = ROOT / "data" / "board_session.txt"
@@ -475,6 +528,55 @@ def bgm_fix_cmd(ack, body, respond):
         except Exception as e:  # noqa: BLE001
             log.exception("bgm-fix failed for %s", ident)
             respond(f":x: BGM 교체 실패 ({ident}): {str(e)[:400]}")
+
+    import threading
+    threading.Thread(target=_work, daemon=True).start()
+
+
+# ──────────────────────────────────────────────────────────────────────
+# /bgm-claim <video_id...> — Content-ID 클레임 원장 동기화 (PD 2026-06-27).
+#   YouTube Data API는 일반(비-MCN) 채널의 Content-ID 클레임을 노출하지 않는다
+#   (youtubePartner는 403). 그래서 PD가 Studio "콘텐츠→저작권"에서 클레임된
+#   영상 id를 보면 여기로 넘겨주면, 그 회차의 메인 BGM을 원장(bgm_claimed.json)에
+#   기록 → picker가 다시 안 고른다. (영상은 건드리지 않음. 교체+재업로드는 /bgm-fix.)
+#   인자 없이 호출하면 --auto 스캔(클레임으로 차단된 업로드만 자동 탐지)도 같이 돈다.
+#   /bgm-claim                     → auto 스캔만
+#   /bgm-claim QlgbeyqkpDI jfyqT-7SqAU  → 해당 영상들 BGM 원장 등록(+auto 스캔)
+# ──────────────────────────────────────────────────────────────────────
+@app.command("/bgm-claim")
+def bgm_claim_cmd(ack, body, respond):
+    ack()
+    vids = [p.strip("`<>") for p in (body.get("text") or "").strip().split() if p.strip()]
+    respond(":mag: BGM 클레임 동기화 중… (영상은 안 건드리고 원장만 기록)")
+
+    def _work():
+        import importlib
+        try:
+            sc = importlib.import_module("scripts.sync_bgm_claims")
+            auto = sc.auto_detect_blocked()
+            for v in auto:
+                if v not in vids:
+                    vids.append(v)
+            if not vids:
+                respond(":information_source: 클레임으로 *차단된* 업로드 없음. "
+                        "공개 상태로 남은 false-AdRev 클레임은 API로 안 보이니 "
+                        "Studio에서 본 video_id를 `/bgm-claim <id>`로 넘겨주세요.")
+                return
+            res = sc.sync_claims_from_videos(vids)
+            lines = [f":white_check_mark: BGM 클레임 동기화 완료 (원장 {res['claimed_total']}곡)"]
+            if auto:
+                lines.append(f"  • auto 차단탐지: `{auto}`")
+            if res["newly_claimed"]:
+                lines.append(f"  • 새로 등록(재선택 차단): `{res['newly_claimed']}`")
+            else:
+                lines.append("  • 새로 등록된 트랙 없음 (이미 원장에 있거나 중복)")
+            if res["unresolved"]:
+                lines.append(f"  • :warning: BGM 미해결: `{res['unresolved']}` "
+                             "(과거 업로드라 트랙 기록이 없음 — 트랙명을 알려주면 직접 등록)")
+            respond("\n".join(lines))
+        except Exception as e:  # noqa: BLE001
+            log.exception("bgm-claim failed")
+            respond(f":x: BGM 클레임 동기화 실패: {str(e)[:400]}")
 
     import threading
     threading.Thread(target=_work, daemon=True).start()
@@ -1890,6 +1992,9 @@ def main() -> None:
     pidfile.write_text(str(os.getpid()))
     signal.signal(signal.SIGTERM, _cleanup)
     signal.signal(signal.SIGINT, _cleanup)
+
+    # Watchdog: detect the BrokenPipe wedge loop and exit so launchd restarts us.
+    logging.getLogger("slack_bolt.App").addHandler(_WedgeWatchdog(pidfile))
 
     try:
         handler = SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"])

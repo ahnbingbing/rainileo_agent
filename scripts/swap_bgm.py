@@ -233,6 +233,18 @@ def reupload(card_prefix: str, new_bgm: str | None = None,
     con.commit()
     con.close()
 
+    # snapshot the NEW (clean) track under the new video_id so the durable
+    # video→bgm map stays correct if this one ever gets re-claimed.
+    try:
+        from scripts.sync_bgm_claims import _load_bgm_by_video, BGM_BY_VIDEO_PATH
+        if new_bgm:
+            m = _load_bgm_by_video()
+            m[new_vid] = Path(new_bgm).name
+            BGM_BY_VIDEO_PATH.write_text(
+                json.dumps(m, ensure_ascii=False, indent=2, sort_keys=True))
+    except Exception:
+        pass
+
     summary["new_video_id"] = new_vid
     return summary
 

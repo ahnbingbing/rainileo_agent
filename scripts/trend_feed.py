@@ -40,8 +40,10 @@ DB_PATH = ROOT / "data" / "agent.db"
 # BEFORE the start to begin surfacing it. `angles` = distinct sub-concepts to rotate.
 # `hint` = how to deliver the theme visually (props only — NO clothing/anthropomorph).
 EVENTS: list[dict] = [
+    # PD 2026-06-27: 월드컵은 지금 한국 분위기가 안 좋아 시의성 훅에서 비활성화한다(window 무효화 +
+    # fit 0). 분위기가 회복되면 window를 ("2026-06-11","2026-07-19"), fit을 0.95로 되돌릴 것.
     {"key": "worldcup2026", "title": "2026 북중미 월드컵 (FIFA)", "category": "sports",
-     "window": ("2026-06-11", "2026-07-19"), "lead_days": 3, "fit": 0.95,
+     "window": ("2099-01-01", "2099-01-02"), "lead_days": 3, "fit": 0.0,
      "match": ["월드컵", "축구", "world cup"],
      "angles": ["거실 결승 랴니 vs 레오 대결", "온 가족 응원모드(응원봉/머플러 prop, 옷 금지)",
                 "골 세리머니 챌린지", "하프타임 간식 쟁탈전", "승부차기 긴장 클로즈업",

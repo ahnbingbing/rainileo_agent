@@ -3773,6 +3773,14 @@ def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.dat
                 progress_cb(f":frame_with_picture: 썸네일 자동 설정 — {_pk.get('reason','')[:60]}")
         except Exception as _te:
             log.warning("thumbnail set failed for %s (non-fatal): %s", vid, _te)
+        # PD 2026-06-27: durably snapshot this video's main BGM while the
+        # cameraman scratch dir (render_meta) is still warm, so a later
+        # Content-ID claim-sync can always resolve the track. Best-effort.
+        try:
+            from scripts.sync_bgm_claims import record_bgm_for_video
+            record_bgm_for_video(vid, card_id)
+        except Exception as _be:
+            log.warning("bgm snapshot failed for %s (non-fatal): %s", vid, _be)
     except Exception as e:
         log.warning("auto-upload failed for %s: %s", card_id[:8], e)
         if progress_cb:

@@ -80,14 +80,24 @@ def veto_video(video_id: str, delete: bool = False) -> str:
         yt.videos().delete(id=video_id).execute()
         log.info("veto: deleted %s", video_id)
         return "deleted"
-    # set private + clear any pending publishAt so it never auto-goes-public
-    yt.videos().update(
-        part="status",
-        body={"id": video_id,
-              "status": {"privacyStatus": "private", "selfDeclaredMadeForKids": False}},
-    ).execute()
-    log.info("veto: set private %s", video_id)
-    return "private"
+    # set private + clear any pending publishAt so it never auto-goes-public.
+    # Sending status WITHOUT publishAt clears the schedule, but the API is
+    # eventually-consistent — one observed video kept its publishAt after the
+    # first update, which would let it auto-publish anyway. So VERIFY publishAt
+    # is gone and retry once; a private video that still carries publishAt is the
+    # dangerous half-state we must not return silently.
+    body = {"id": video_id,
+            "status": {"privacyStatus": "private", "selfDeclaredMadeForKids": False}}
+    for attempt in range(2):
+        yt.videos().update(part="status", body=body).execute()
+        st = yt.videos().list(part="status", id=video_id).execute()["items"][0]["status"]
+        if not st.get("publishAt"):
+            log.info("veto: set private %s (publishAt cleared)", video_id)
+            return "private"
+        log.warning("veto: %s still has publishAt after attempt %d — retrying",
+                    video_id, attempt + 1)
+    log.error("veto: %s publishAt persisted after retry — STILL SCHEDULED", video_id)
+    return "private(publishAt 잔존 — 확인 필요)"
 
 
 if __name__ == "__main__":

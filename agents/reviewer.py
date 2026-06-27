@@ -103,9 +103,21 @@ looks. These are CAPS (a ceiling), not soft notes:
   ("○년 전" / "아기 땐" / "지금은"), that reads as confusing/disconnected — flag "시점
   미표기" and the score MUST NOT exceed 6 (verdict ≤ 수정 필요). Seamlessly connecting
   past+present with NO time anchor is a defect, never "smooth editing".
+- **era-mix 인과성 없음 (real_footage)**: a time anchor is necessary but NOT sufficient.
+  Even WITH "○년 전"/"지금은" captions, if two different-era clips are just stitched
+  together with no causal/story link — e.g. a recent 먹방 cut followed by an unrelated
+  8-years-ago 친구 만남 — the story breaks ("왜 이게 이어지지?"). A coherent episode is ONE
+  event/flow, or an era-mix bound by an explicit cause→effect / then-now memory-lane arc.
+  If the cuts read as unrelated clips from different times bolted together, flag
+  "인과성 없는 era-mix — 무관 클립 나열" and cap ≤6 (verdict ≤ 수정 필요), even if the
+  timeframe is captioned.
 - **배경/공간 드리프트 (ai_vtuber, single-space concepts)**: a single-space concept's room
   must stay the SAME across cuts. If the background unintentionally changes between cuts
   — especially the closer suddenly in a different room — flag "배경 드리프트", cap ≤6.
+  This includes **furniture morph**: a single piece (sofa, table) visibly stretching,
+  elongating, or warping between cuts — typically from a shot_size jump (one cut going
+  wider re-generates room area Seedance never saw, e.g. a sofa stretching past the couch
+  end). Same defect, same cap ≤6 → flag "가구/배경 morph".
   (EXCEPTION: a concept's INTENTIONAL space transition — 현실→상상→현실, a deliberate
   fantasy realm like 무릉도원 — is NOT drift; do not penalize a scripted scene change.)
 - **배경 흔들림 (ai_vtuber)**: distinct from drift. When the camera moves (panning / push-in /
@@ -167,10 +179,13 @@ IMPORTANT STYLE RULES:
   - **세면대 범람 → 서핑 = GOOD example, but the MECHANIC must be coherent (PD 2026-06-11)**: the correct, ALLOWED version is — a sink MOUNTED AT COUNTER HEIGHT overflows, the water cascades DOWN and floods the living-room floor, and Ryani/Leo surf on that flood. That is a great hook → reward it. The FORBIDDEN version is a glitch: the sink BASIN itself sitting ON THE FLOOR (grounded at floor level). Same scene, two outcomes: high sink + overflow + flood + surf = HOOK (allow); sink basin on the floor = DEFECT (penalize). Judge which one rendered.
   - This is DIFFERENT from a BROKEN RENDER (still a real defect, still penalize): geometry/anatomy that is GLITCHED rather than fantastical — a melted/orb/dissolving face, an extra or merged limb, a character half-fused into furniture, drift to a different breed, OR a fixture grounded incoherently (the floor-sink above). These look like the model malfunctioned, not like a deliberate fun image. Penalize those normally.
   - Rule of thumb: physics-defying-but-cleanly-drawn = HOOK (allow); incoherent/glitched/ugly = DEFECT (penalize).
-- **Caption quality — TV동물농장/세나개 나레이션 톤 필수**:
-  - Captions should read like TV동물농장 narration: "오늘도 어김없이 레오는...", "과연 참을 수 있을까요?", "아니나 다를까..."
-  - Or 세나개 style: explaining WHY the pet does something: "이건 사냥 본능이에요", "놀자는 신호입니다"
-  - PENALIZE HEAVILY: bland descriptive captions like "소파에 앉아있다", "레오의 반응", "놀자 신호를 보냈습니다"
+- **Caption tone — 기본은 발랄, 도사체는 결함 (cap ≤6)**:
+  - 채널 캡션의 기본 에너지는 **발랄·생기** — 친구가 옆에서 신나게 중계하는 톤. 화면이 활발하면 캐주얼+느낌표("또 시작이네!", "이건 못 참지"), 진짜 조용한 컷(잠·멍때림)만 나직하게. 동물농장식 관찰 위트는 OK지만 그것도 *발랄하게*, 점잖게가 아니다.
+  - **도사·시인·잠언·설교·이력서체 = 결함.** 다음이 보이면 `개선점`에 flag + **점수 ≤6, 판정 "수정 필요"**:
+    - 잠언/관조 시구: "여유란 이런 것", "인생이란…", "두 마음은 삐끗 어긋난 자리", "~하는 법", "이건 사냥 본능이에요" 식 설교·설명체
+    - 이력서/연륜 라벨 남발: "N년 경력", "N년차 ~", "베테랑 프로토콜", "~ 모드 ON"을 한 영상에서 반복 (랴니 연륜 언급은 1회까지만 OK)
+    - 점잖은 여운으로 전체가 무겁게 깔림 — 모든 줄이 "~인가 봐요/~한 모양입니다/~듯합니다"면 도사체다 (추측형은 차분한 컷의 *양념*일 뿐, 전 컷 디폴트면 감점)
+  - 여전히 PENALIZE: 밋밋한 묘사 캡션("소파에 앉아있다", "레오의 반응", "놀자 신호를 보냈습니다") — 묘사는 화면이 한다.
   - All captions in sequence must form ONE coherent story — no random disconnected captions
   - Korean REQUIRED, English REQUIRED below Korean. No parentheses. No emojis. No script notes.
   - "랴니엄마" = Leo's affectionate name for Ryani (NOT a separate human owner). Used in Leo-POV captions to refer to Ryani. Never mapped to a human body part. The actual human owner, when shown via hands/feet, is "사람" or unnamed.
@@ -737,6 +752,71 @@ def _temporal_grounding_gate(concept: dict | None, report: dict) -> None:
              report.get("판정"), report.get("점수"))
 
 
+# Deterministic 도사체(잠언·설교·이력서) caption patterns — high-confidence only.
+# These phrasings almost always signal the preachy/sage register PD rejects, so we
+# bias toward PRECISION (a short list of near-certain hits) over recall: a good
+# playful caption must never trip it. Fuzzy/poetic cases ("두 마음은 삐끗 어긋난
+# 자리") are left to the LLM 발랄 cap in CHECK 0 — this gate is the guarantee for
+# the unambiguous ones.
+_PREACHY_PATTERNS = (
+    # 잠언/관조 "X란 ~" 정의체
+    "여유란", "인생이란", "삶이란", "사랑이란", "행복이란", "산다는 건", "산다는 것",
+    # 설교/교본체
+    "하는 법", "사는 법", "의 미학",
+    # 이력서/연륜 라벨
+    "년 경력", "베테랑 프로토콜",
+    # EN
+    "the art of", "years of experience", "veteran protocol", "the meaning of",
+    "a lesson in",
+)
+
+
+def _preachy_caption_gate(concept: dict | None, report: dict) -> None:
+    """Deterministic 도사체(preachy/sage) caption gate (PD 2026-06-27).
+
+    PD repeatedly rejects captions that drift into a 도사·시인·잠언·이력서 register
+    ("여유란 이런 것", "7년 경력") — the channel voice is 발랄, not a wise elder. The
+    generator prompts now guard it, but Giri rubber-stamped such captions as
+    "동물농장 톤 충족". A handful of these phrasings are unambiguous, so we detect
+    them in CODE and cap the verdict; the LLM rubric covers the fuzzier poetic
+    cases. High-confidence patterns only → no false fail on a good playful line."""
+    if not concept:
+        return
+    cuts = concept.get("cuts") or []
+    blob = []
+    for c in cuts:
+        caps = c.get("captions") or []
+        if isinstance(caps, list):
+            for sc in caps:
+                if isinstance(sc, dict):
+                    blob.append(str(sc.get("ko", "")))
+                    blob.append(str(sc.get("en", "")))
+                else:
+                    blob.append(str(sc))
+        for k in ("ko", "en", "caption"):
+            if c.get(k):
+                blob.append(str(c[k]))
+    text = " ".join(blob).lower()
+    hits = sorted({p for p in _PREACHY_PATTERNS if p.lower() in text})
+    if not hits:
+        return
+    note = (f"도사체 캡션(결정론적 게이트): {', '.join(hits)} — 잠언·설교·이력서체는 "
+            f"채널 보이스가 아니다. 발랄·캐주얼하게 다시 써라 "
+            f"(예: '여유란 이런 것'→'여기 완전 편하지', '7년 경력'→'역시 우리 랴니').")
+    prev = report.get("가장_큰_문제", "") or ""
+    report["가장_큰_문제"] = note if (not prev or "없" in prev[:6]) else f"{note} / {prev}"
+    try:
+        report["점수"] = min(int(report.get("점수", 10)), 6)
+    except Exception:
+        report["점수"] = 6
+    if report.get("판정", "") in ("업로드", "즉시 업로드", "소폭 수정 후 업로드", ""):
+        report["판정"] = "수정 필요"
+    report["최종_결정"] = report.get("판정", "수정 필요")
+    report["_preachy_gate_override"] = note
+    log.info("preachy gate FIRED: %s → 판정=%s 점수=%s", hits,
+             report.get("판정"), report.get("점수"))
+
+
 def _pd_groundtruth_block(concept: dict | None) -> str:
     """PD per-clip ground-truth → Giri (PD 2026-06-23).
 
@@ -991,6 +1071,13 @@ def review(video: Path, storyboard: list[dict] | None = None,
         _temporal_grounding_gate(concept, report)
     except Exception as e:
         log.warning("Temporal grounding gate failed: %s", e)
+
+    # Deterministic 도사체 gate (PD 2026-06-27): catches unambiguous preachy/sage/
+    # résumé captions ("여유란 이런 것", "7년 경력") the LLM rubber-stamps as on-brand.
+    try:
+        _preachy_caption_gate(concept, report)
+    except Exception as e:
+        log.warning("Preachy caption gate failed: %s", e)
 
     # Cleanup
     for f in frames:

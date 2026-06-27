@@ -61,6 +61,13 @@ def reupload_episode(card_prefix: str, video_path: str, dry_run: bool = False) -
         (new_vid, str(video_path), datetime.now(timezone.utc).isoformat(), row["card_id"]))
     con.commit()
     con.close()
+    # keep the durable video→bgm map correct across the video_id change so a
+    # future Content-ID claim-sync can resolve this episode's track.
+    try:
+        from scripts.sync_bgm_claims import record_bgm_for_video
+        record_bgm_for_video(new_vid, row["card_id"])
+    except Exception:
+        pass
     summary["new_video_id"] = new_vid
     return summary
 

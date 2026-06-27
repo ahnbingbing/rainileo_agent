@@ -267,15 +267,17 @@ def launch_pipeline(target: dt.date, *,
     # batch_used_assets only blocks reusing the same CLIP, and the macro reviewer judges
     # freshness vs PAST public uploads, not vs the sibling slot. So accumulate each
     # slot's concept descriptor and feed it forward as exclude_concepts. Seed from any
-    # sibling ALREADY scheduled/live for this date (state!=archived, has a video_id) so a
-    # single-slot re-render / self-heal round also avoids the day's other concepts.
+    # sibling ALREADY scheduled/live for this date AND from recently-published episodes
+    # (last 14 days) so we avoid not just the day's other concepts but a near-repeat of a
+    # past public episode (PD 2026-06-27: an AV 낮잠 shipped that duplicated a prior 낮잠
+    # upload — same-date dedup alone never caught it). state!=archived, has a video_id.
     batch_concepts: list = []
     try:
         with _db() as _con:
             for _r in _con.execute(
-                "SELECT theme FROM cards WHERE date=? AND youtube_video_id IS NOT NULL "
-                "AND state!='archived' AND theme IS NOT NULL",
-                (target.isoformat(),)).fetchall():
+                "SELECT theme FROM cards WHERE date >= ? AND youtube_video_id IS NOT NULL "
+                "AND state!='archived' AND theme IS NOT NULL ORDER BY date DESC LIMIT 40",
+                ((target - dt.timedelta(days=14)).isoformat(),)).fetchall():
                 if _r[0]:
                     batch_concepts.append({"theme": _r[0]})
     except Exception as e:

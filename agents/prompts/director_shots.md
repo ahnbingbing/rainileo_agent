@@ -71,11 +71,22 @@ and the reviewer marks it down for style — so make the intent visible two ways
   do not let the haze flatten it into a dull desaturated scene. A wonder-fantasy (a paradise,
   a magical world) should look lush and luminous, not like a faded low-res memory.
 
-- **Show the theme, or don't promise it.** Seedance renders pets and rooms, not graphic
-  flourishes — jackpot signs, fireworks, neon, scoreboards. So a themed concept either
-  expresses its theme through what Seedance CAN render (props, set, the pets' action) or adds
-  the flourish after render as an `overlay_fx`. Never leave a theme as caption-only text over
-  plain footage.
+- **Show the theme through ACTION + props — staging is YOUR job, not Seedance's limit.**
+  Seedance can render almost any pet ACTION if you actually stage it: a dog dribbling and
+  batting a ball into a goal, two pets doing the same victory wiggle, a belly-rub, lapping a
+  츄르 stick. When that action doesn't appear on screen, the cause is **never** "Seedance
+  can't" — it's that the action was left in the CAPTION while the still and motion_prompt
+  stayed empty. (Worked failure: a "월드컵 골!/둘이 세리머니 따라하기" concept whose stills had
+  no ball or goal and whose motion_prompt never described the kick or the synced move →
+  Seedance rendered two pets just sitting, "골!" floating over them = 캡션만 붕 뜸. PD: "시댄스는
+  다 그릴 수 있어, B(연출)의 문제야".) So for the concept's KEY action you MUST do both:
+  ① **stage the still** — put the needed props + composition into `regen_prompt` (the ball at
+  the pet's feet, the goal behind; the 츄르 stick in frame; the belly exposed). ② **spell out
+  the steps in `motion_prompt`** as concrete Seedance beats ("the dog nudges the ball forward,
+  then bats it between the green posts"; "both pets flop and wiggle their rumps in unison").
+  Only a pure GRAPHIC flourish that is NOT a pet action — jackpot marquee, fireworks, neon,
+  scoreboard, floating score numbers — goes through `overlay_fx` after render. **Never leave a
+  theme or its key action as caption-only text over plain footage.**
 
 - **For `overlay_fx`, give the full spec and let the tool do the craft.** The Cameraman
   composites overlays with `scripts/overlay_fx.py`, which already handles the mechanics —
@@ -119,6 +130,15 @@ So default EVERY action/body cut to a locked, static camera AND a static backgro
 get the life from clear pet motion. The thing that actually flattens a cut is NOT the lock
 — it's letting the quieter/darker pet (Ryani) freeze into a prop while only the cat moves.
 The fix for flatness is to MOVE THE PETS, never to move the camera.
+
+**Hold shot_size constant across a single-space episode.** Jumping one cut to a wider (or
+tighter) framing is as destabilizing as moving the camera: the wider frame reveals room area
+Seedance never saw, so it INVENTS it — furniture stretches, a sofa elongates, a wall bends.
+(낮잠 ep: every cut was a tight locked frame except one that went `wide` → the sofa visibly
+stretched past the couch end, and the chained next cut inherited the warped sofa.) Pick ONE
+framing for the room and keep the same shot_size on every body cut; get variety from pet
+motion and beat, not from zoom level. A `chain_from_prev` cut MUST match the previous cut's
+shot_size exactly — a sharp shot_size change breaks the chain and propagates the drift.
 
 - **Default — all action / calm / dance / twist beats: camera HOLDS.** First sentence of
   `motion_prompt` = `"Camera POV-A, pet eye-level, locked static framing — no panning, no

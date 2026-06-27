@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  BGM Content-ID claim sync (PD 2026-06-27 — "당근 해야 하는" 근본 방어책).
+
+  Scans recent uploads for a Content-ID/copyright BLOCK (the only claim signal
+  the YouTube Data API exposes; non-MCN channels have no claim API) and records
+  any blocked video's main BGM into data/bgm_claimed.json so the picker never
+  reuses it. Common false-AdRev claims leave the video public and produce NO API
+  signal — those still need a human: PD passes the claimed video_id from YouTube
+  Studio via Slack `/bgm-claim <video_id...>` or
+  `python -m scripts.sync_bgm_claims --videos <id...>`.
+
+  Runs daily at 07:00 KST (after icloud-sync 06:00 / bandit-collect 06:30).
+
+  Install (load is intentionally left to PD — this only writes the ledger,
+  never touches any video):
+      cp launchd/com.rianileo.bgm-claim-sync.plist ~/Library/LaunchAgents/
+      launchctl unload ~/Library/LaunchAgents/com.rianileo.bgm-claim-sync.plist 2>/dev/null
+      launchctl load   ~/Library/LaunchAgents/com.rianileo.bgm-claim-sync.plist
+
+  Replace 'ahnbingbing' with your macOS username if different (whoami).
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key><string>com.rianileo.bgm-claim-sync</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/Users/ahnbingbing/code/rianileo-agent/.venv/bin/python</string>
+      <string>-m</string>
+      <string>scripts.sync_bgm_claims</string>
+      <string>--auto</string>
+      <string>-v</string>
+    </array>
+
+    <key>WorkingDirectory</key><string>/Users/ahnbingbing/code/rianileo-agent</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>TZ</key><string>Asia/Seoul</string>
+      <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+      <key>LOG_LEVEL</key><string>INFO</string>
+    </dict>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+      <key>Hour</key><integer>7</integer>
+      <key>Minute</key><integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key><string>/Users/ahnbingbing/code/rianileo-agent/data/logs/bgm-claim-sync.out.log</string>
+    <key>StandardErrorPath</key><string>/Users/ahnbingbing/code/rianileo-agent/data/logs/bgm-claim-sync.err.log</string>
+
+    <key>RunAtLoad</key><false/>
+    <key>ProcessType</key><string>Background</string>
+    <key>Nice</key><integer>10</integer>
+  </dict>
+</plist>

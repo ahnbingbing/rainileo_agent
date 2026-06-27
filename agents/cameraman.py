@@ -2009,14 +2009,15 @@ def _rf_caption_punchup(work_dir: Path, manifests: dict, anim_dir: Path,
     sys = (
         "너는 'Ryani & Leo' 펫 숏츠의 캡션 말맛 전문가다. 아래 자막들은 이미 화면과 사실이 맞게 "
         "쓰여 있다(grounded). 네 일은 **사실은 그대로 두고 '말맛'만 끌어올리는 것** — 단순 묘사체를 "
-        "캐릭터 속마음·위트·반전·잔잔한 정서 한 끗으로 바꿔라. 시청자가 '읽는 맛'이 있어야 한다.\n"
+        "캐릭터 속마음·위트·반전·발랄한 한 끗으로 바꿔라. 시청자가 '읽는 맛'이 있어야 한다.\n"
         "★ 위트는 한 스푼이지 한 그릇이 아니다. 그리고 ★ 에너지는 화면(footage)에 맞춰라 — "
         "베이스 톤은 '잔잔' 고정이 아니라 **그 컷 영상의 에너지**다. 활발한 footage(물놀이·공놀이·"
         "줌이·장난)는 **깨발랄·캐주얼·느낌표**('바다? 당연히 풍덩각!', '그 쫄보 어디 갔니'); 진짜 "
-        "조용한 footage(잠·멍때림)만 차분히. **도사/명상/잠언/문어체 절대 금지** — '~을 만났습니다', "
-        "'조용히 단단하게 앞으로', '누구나 잠깐 멈추죠' 같은 엄숙·시적 내레이션은 펫 vlog를 명상 "
-        "영상으로 만든다. (예외: 의도된 긴 원테이크의 마지막 한 줄을 관조적으로 닫는 건 '드문 킥'으로 "
-        "OK — 정말 가끔, 기본 톤이 아니라 그 한 순간만.) 위트는 컷마다 *다른 결*로. 너는 전체 자막을 한꺼번에 보므로 **같은 장치가 "
+        "조용한 footage(잠·멍때림)만 차분히 — 그래도 도사체는 아니다. **도사/명상/잠언/문어체/관조체 "
+        "절대 금지(예외 없음)** — '~을 만났습니다', '조용히 단단하게 앞으로', '급할 것 하나 없는 눈빛', "
+        "'여유 한 스푼', '예의는 잊지 않아요', '누구나 잠깐 멈추죠' 같은 엄숙·시적·관조 내레이션은 발랄한 "
+        "펫 vlog를 명상 영상으로 만든다(PD가 가장 싫어함). '긴 원테이크니 마지막을 관조적으로 닫자'는 "
+        "유혹도 버려라 — 그게 도사체로 새는 구멍이다; 잔잔한 클립도 발랄·따뜻하게 닫아라. 위트는 컷마다 *다른 결*로. 너는 전체 자막을 한꺼번에 보므로 **같은 장치가 "
         "겹치지 않게 분배**하라. 특히 반복 "
         "페르소나 라벨('인생 N년', 'N년차 ~', '~ 모드 ON', '체크리스트 N번', '베테랑 프로토콜')을 "
         "한 영상에서 두 번 이상 쓰지 마라 — 펫이 사람 이력서처럼 늙고 상투어가 된다. 연륜/베테랑 "
@@ -4352,6 +4353,17 @@ def _prune_missing_cuts(manifests: dict, anim_dir: Path,
     # episode that loses most of its cuts is broken; fail the slot (junk 금지) so it stays
     # empty / self-heals, instead of shipping the remnant. Keep ≥ half the cuts (min 2).
     _orig = len(remaining) + len(dropped)
+    # Earlier stages (prefetch / grounding gate / editor-plan) can silently drop
+    # cuts BEFORE this guard, shrinking the picture so a GUTTED slot looks like a
+    # small concept and slips through (카페 ep 5컷 → 2컷 shipped: the 3 prefetch-
+    # failed cuts were already gone here, so _orig read as 2 and the floor never
+    # fired). Honor the LARGEST original cut count still visible anywhere in the
+    # manifests so the floor reflects the real concept, not the gutted remnant.
+    for _src in (manifests.get("concept_cuts"),
+                 (manifests.get("concept") or {}).get("cuts"),
+                 (manifests.get("payload") or {}).get("cuts")):
+        if isinstance(_src, list):
+            _orig = max(_orig, len(_src))
     _floor = max(2, (_orig + 1) // 2)
     if len(remaining) < _floor:
         raise RuntimeError(
