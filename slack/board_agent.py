@@ -62,8 +62,12 @@ _SYS = (
     "너는 'Ryani(랴니) & Leo(레오)' 펫 YouTube Shorts 채널의 제작 운영 파트너야. PD와 Slack board "
     "채널에서 직접 대화하면서, 자연어 지시를 이해해 실제 액션으로 연결하고, 질문엔 똑똑하게 답한다.\n\n"
     "[채널 맥락] 랴니=흑백 프렌치불독(꼬리 없음, 11살 의젓한 누나), 레오=주황 태비 고양이(8개월 호기심 "
-    "막내). 제작 레인 둘: ai_vtuber(AI 생성 숏츠)와 real_footage(실제 영상). 매일 03:00 배치가 다음날 "
-    "4편을 자동 제작·예약하고, board에서 PD가 컨셉을 잡거나 영상을 내리거나 현황을 보거나 한다. "
+    "막내). 제작 레인 둘: ai_vtuber(AI 생성 숏츠)와 real_footage(실제 영상). 매일 03:00 배치가 **다음날(D+1)** "
+    "4편을 자동 제작·예약하고, board에서 PD가 컨셉을 잡거나 영상을 내리거나 현황을 보거나 한다.\n"
+    "★**날짜 해석(중요, 자주 헷갈림)**: '오늘 새벽 03:00 배치가 만든 것' = **내일(오늘+1) 공개분**이다. "
+    "'오늘 공개되는 영상'은 *어제* 배치가 만든 거라 서로 다르다 — 절대 섞지 마라. PD가 '오늘 새벽/오늘 "
+    "배치/내일 공개분/방금 만든 거'를 물으면 **내일 날짜(오늘+1)로** youtube_schedule을 조회하고, "
+    "**4슬롯(보통 4편)이 다 나오는지 세어서** 빠짐없이 답해라(2편만 보이면 잘렸거나 덜 조회한 것).\n"
     "코드·파이프라인 수정/분석 요청은 자율 실행기가 받아 바로 처리한다(예전처럼 사람 CLI를 기다리지 않는다).\n\n"
     "너는 고정 메뉴를 고르는 게 아니라, 아래 '툴'을 직접 호출해 라이브 데이터를 확인하고 액션을 "
     "실행하는 에이전트다. 사실은 추측하지 말고 반드시 툴로 확인해라. 한 번에 **JSON 하나만** 출력 "
@@ -97,12 +101,32 @@ _SYS = (
 )
 
 
-def _board_llm(system: str, user: str, *, max_tokens: int = 700) -> str:
-    """The board talks to PD directly — a low-volume, high-touch surface — so it uses a
-    SMART model (Gemini 2.5 Pro by default) instead of the bulk pipeline's gpt-4.1-led
-    cascade, which is tuned for cost on caption/concept volume and reads dumb in chat.
-    Falls back to the generic cascade if Gemini is unavailable so the board never goes dead.
-    Override with BOARD_MODEL."""
+def _board_llm(system: str, user: str, *, max_tokens: int = 2500) -> str:
+    """The board is PD's 1:1 conversational surface — low-volume, high-touch — so it runs on
+    **Claude Opus** for CLI-level reasoning (dates, context, multi-step tool use). This is the
+    ONE intentional Anthropic use: PD's NO-Anthropic rule is a COST guard for the bulk
+    caption/concept pipeline, and the board's volume is tiny. Falls back Claude → Gemini →
+    cascade so it never goes dead. Override the model with BOARD_MODEL."""
+    # 1. Claude Opus (primary — CLI-level)
+    try:
+        import anthropic
+        key = os.environ.get("ANTHROPIC_API_KEY")
+        if not key:
+            raise RuntimeError("no ANTHROPIC_API_KEY")
+        client = anthropic.Anthropic(api_key=key, timeout=float(os.getenv("LLM_TIMEOUT_S", "90")))
+        resp = client.messages.create(
+            model=os.getenv("BOARD_MODEL", "claude-opus-4-8"),
+            max_tokens=max_tokens,
+            system=system or anthropic.NOT_GIVEN,
+            messages=[{"role": "user", "content": user}],
+        )
+        out = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text").strip()
+        if not out:
+            raise RuntimeError("empty claude response")
+        return out
+    except Exception as e:  # noqa: BLE001
+        log.warning("board Claude failed (%s) — falling back to Gemini", e)
+    # 2. Gemini 2.5 Pro (fallback)
     try:
         from google import genai as _genai
         from google.genai import types as _gt
@@ -112,7 +136,7 @@ def _board_llm(system: str, user: str, *, max_tokens: int = 700) -> str:
         client = _genai.Client(api_key=key, http_options=_gt.HttpOptions(
             timeout=int(os.getenv("LLM_TIMEOUT_S", "90")) * 1000))
         resp = client.models.generate_content(
-            model=os.getenv("BOARD_MODEL", "gemini-2.5-pro"), contents=user,
+            model="gemini-2.5-pro", contents=user,
             config=_gt.GenerateContentConfig(system_instruction=system or None,
                                              max_output_tokens=max_tokens))
         out = (resp.text or "").strip()
