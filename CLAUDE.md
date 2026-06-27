@@ -29,6 +29,14 @@
 > report the blast radius. A change is done when both lanes agree — not when one file
 > is edited.
 
+> **🔁 board↔CLI 공유 루프 RULE:** board(슬랙 봇 + 자율 executor)와 CLI(너)는 `notes/progress_log.md`
+> 공용 진행 로그로 소통한다 — 따로 놀지 말고 같은 맥락에서 이어가라. **세션 시작 시** 그 로그 최근
+> (`from agents.progress_log import recent_progress; recent_progress(15)`) + `board_escalations` 큐를
+> 읽어 board가 한 일 위에서 시작하라. **의미 있는 작업(수정/배포/예약/결정)을 끝낼 때** 한 줄 남겨라:
+> `from agents.progress_log import log_progress; log_progress('CLI', '<한 일 한 줄>')`. board executor도
+> 작업 후 같은 로그에 `[board]`로 남기고, board 봇은 답하기 전 이 로그를 컨텍스트로 읽는다 — 그래서
+> 둘이 서로 무엇을 했는지 알고 진행한다.
+
 ---
 
 ## The channel

@@ -239,6 +239,7 @@ def _process_one(con: sqlite3.Connection, row: sqlite3.Row) -> None:
     summary = _run_claude_exec(req, env, read_only=read_only)
 
     committed = ""
+    sha = ""
     if not read_only and not _git_clean():
         ok, detail = _smoke_ok(env)
         if not ok:
@@ -270,6 +271,14 @@ def _process_one(con: sqlite3.Connection, row: sqlite3.Row) -> None:
     _post_board(final, channel=channel, thread_ts=thread_ts)
     con.execute("UPDATE board_escalations SET handled=1, result=? WHERE id=?",
                 (final[:4000], eid)); con.commit()
+    # Share with CLI: one-line trace in the board↔CLI progress log so the next
+    # CLI session (Claude Code) sees what board did, and vice versa.
+    try:
+        from agents.progress_log import log_progress
+        log_progress("board", f"escalation #{eid} '{(row['summary'] or req)[:55]}' — "
+                     + (f"코드수정 커밋 {sha}" if committed else "분석/응답만"))
+    except Exception:
+        pass
 
 
 def main() -> int:

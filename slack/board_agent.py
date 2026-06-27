@@ -201,6 +201,12 @@ def _act_concept(params: dict, db) -> str:
                  "무시하고 평소대로 제작하라.")
     with db() as con:
         arc.set_concept_directive(con, d.isoformat(), text)
+    try:
+        from agents.progress_log import log_progress
+        log_progress("board", f"PD 컨셉 예약 {d.isoformat()}"
+                     f"{f'({lane})' if lane else ''}: {text[:50]}")
+    except Exception:
+        pass
     return (f":white_check_mark: `{d.isoformat()}` 컨셉 예약 완료{note}\n  → {text[:240]}"
             f"{'…' if len(text) > 240 else ''}\n_그날 03:00 배치가 이 방향을 최우선으로 만듭니다._")
 
@@ -648,7 +654,15 @@ def _agent_answer(text: str, *, db, user: str, channel: str, thread_ts: str) -> 
     confirm flow. The LLM calls live tools and composes the answer itself —
     no per-question intent hand-coding."""
     today = dt.date.today().isoformat()
-    transcript = f"오늘은 {today} (KST) 입니다.\nPD 메시지: {text}\n"
+    try:
+        from agents.progress_log import recent_progress
+        _prog = recent_progress(12)
+    except Exception:
+        _prog = "(진행 로그 없음)"
+    transcript = (f"오늘은 {today} (KST) 입니다.\n"
+                  f"[최근 진행 로그 — board(너)와 CLI(Claude Code)가 함께 한 일. 이 맥락 위에서 이어가라]\n"
+                  f"{_prog}\n\n"
+                  f"PD 메시지: {text}\n")
     for _ in range(_AGENT_MAX_STEPS):
         raw = _board_llm(_SYS, transcript, max_tokens=2500).strip()
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
