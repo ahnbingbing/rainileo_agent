@@ -626,17 +626,27 @@ def _agent_answer(text: str, *, db, user: str, channel: str, thread_ts: str) -> 
     today = dt.date.today().isoformat()
     transcript = f"오늘은 {today} (KST) 입니다.\nPD 메시지: {text}\n"
     for _ in range(_AGENT_MAX_STEPS):
-        raw = _board_llm(_SYS, transcript, max_tokens=900).strip()
+        raw = _board_llm(_SYS, transcript, max_tokens=2500).strip()
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
         raw = re.sub(r"\s*```$", "", raw)
         m = re.search(r"\{.*\}", raw, re.S)        # tolerate prose around the JSON
         try:
             d = json.loads(m.group(0) if m else raw)
         except Exception:
-            fm = re.search(r'"final"\s*:\s*"(.*?)"\s*[}\n]', raw, re.S)
-            if fm:                                  # broken JSON but a final string is in there
-                return {"text": fm.group(1).replace("\\n", "\n").replace('\\"', '"').strip()}
-            return {"text": raw or "네! 🐾"}        # model answered in plain prose — pass through
+            # Broken/truncated JSON (a long list cut off at max_tokens, etc). Recover the
+            # final string EVEN when its closing quote/brace got chopped off, and NEVER dump
+            # raw {"final": ...} JSON to the PD (that leak is what made the bot look broken).
+            fm = (re.search(r'"final"\s*:\s*"(.*?)"\s*[}\n]', raw, re.S)
+                  or re.search(r'"final"\s*:\s*"(.+)$', raw, re.S))   # truncated final
+            if fm:
+                txt = (fm.group(1).rstrip().rstrip('"').rstrip("}")
+                       .replace("\\n", "\n").replace('\\"', '"').strip())
+                if not raw.rstrip().endswith("}"):
+                    txt += "\n_(답변이 길어 일부 잘렸어요 — 더 필요하면 한 번 더 물어봐 주세요)_"
+                return {"text": txt or "네! 🐾"}
+            if raw.lstrip().startswith("{"):        # broken JSON, no usable final → don't leak it
+                return {"text": "앗, 답변 형식이 잠깐 꼬였어요 🙏 한 번만 다시 물어봐 주세요."}
+            return {"text": raw or "네! 🐾"}        # genuine plain-prose answer — pass through
         if not isinstance(d, dict):
             return {"text": str(d)}
         if "final" in d:
