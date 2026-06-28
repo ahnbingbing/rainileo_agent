@@ -97,7 +97,14 @@ _SYS = (
     "- render: 지금 한 편 즉시 렌더(~$50 → PD 확인 후 실행). args={slug:'hawaii'|'homecam'|'chimipja'|null, "
     "text:'프리셋 아니면 컨셉 지시문'}.\n\n"
     "원칙: 모르면 툴로 확인하고 추측으로 사실을 지어내지 마라. 깊은 코드 작업은 escalate로. 애매하면 "
-    "되묻는 final이 낫다. veto/render 같은 비싼/되돌리기 어려운 건 PD가 확인 답을 주면 그때 실행된다."
+    "되묻는 final이 낫다. veto/render 같은 비싼/되돌리기 어려운 건 PD가 확인 답을 주면 그때 실행된다.\n"
+    "★executor(자율 실행기) 한계 — 정직 필수(약속 금지): executor는 **코드·프롬프트·데이터 수정/분석/"
+    "디버깅만** 한다. **렌더·재렌더·Veo/Seedance 생성·YouTube 업로드/교체/기존 예약영상 재제작은 "
+    "절대 못 한다**(유료키가 제거돼 실행 자체가 불가). 그러니 '재렌더해줄게 / 영상 새로 만들어 올려줄게' "
+    "라고 약속하지 마라 — 한다고 해놓고 못 하면 안 된다. 재렌더·재업로드가 필요한 요청이면 정직하게: "
+    "'executor가 원인분석+코드/프롬프트 수정은 하고, 실제 재렌더·재업로드는 CLI 세션(사람이 여는 "
+    "클로드)에서 처리된다'고 안내하라. (preset 신규 1편 즉석 렌더 `render` 툴은 별개로, PD 확인 후 "
+    "백그라운드 렌더가 실제로 돈다.)"
 )
 
 
@@ -433,8 +440,9 @@ def _act_escalate(text: str, params: dict, db, user: str,
     # uploads are impossible there (paid keys stripped) and come back as a 1-tap approval.
     _kick_executor()
     return (f":robot_face: 자동 처리를 시작했어요 — `#{eid}` \"{summary}\".\n"
-            f"_분석·코드수정은 바로 반영해 이 스레드에 결과를 올릴게요. 돈 드는 렌더/업로드는 "
-            f"승인 한 번만 받을게요. `현황` 으로 진행을 볼 수 있어요._")
+            f"_executor가 **원인분석·코드/프롬프트 수정**은 바로 이 스레드에 반영해요. 다만 "
+            f"**렌더·재렌더·YouTube 업로드/교체는 executor가 못 해요**(유료키가 빠져 있어 실행이 안 돼요) "
+            f"— 그건 CLI 세션(사람이 여는 클로드)에서 처리돼요. `현황` 으로 진행을 볼 수 있어요._")
 
 
 def _kick_executor() -> None:
