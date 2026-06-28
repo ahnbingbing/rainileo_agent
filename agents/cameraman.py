@@ -165,6 +165,53 @@ def _resolve_ref(name: str) -> Path | None:
     return pair if pair.exists() else None
 
 
+# ── Fix 2 (PD 2026-06-28): PRECISE STILL for AV ───────────────────────────────
+# Compose each locked-space cut's still from the CLEAN scene_ref (the literal room) +
+# character refs placed per the cut — instead of letting Seedance freelance the room in
+# ref mode (the Leo-teleport / background-junk class). The still IS the room, so i2v then
+# animates a faithful frame and the background can't drift. Flag-gated: AV_PRECISE_STILL=1.
+def _compose_av_still(scene_ref: Path, char_refs: list, prompt: str, out: Path) -> bool:
+    try:
+        from scripts.gen_still_multiref import generate as _gen
+        key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+        if not key:
+            log.warning("AV_PRECISE_STILL: GOOGLE_API_KEY missing — skipping precise still")
+            return False
+        refs = [Path(r) for r in char_refs if r and Path(r).exists()]
+        _gen(Path(scene_ref), refs, prompt, Path(out), key)
+        return out.exists() and out.stat().st_size > 10_000
+    except Exception as e:  # noqa: BLE001
+        log.warning("precise still compose failed (%s): %s", out, e)
+        return False
+
+
+def _cut_char_refs(cc: dict) -> list:
+    """Resolve the character-ref image paths for a cut — Director's `references` list first,
+    else inferred from who the prompt is about."""
+    paths = [p for p in (_resolve_ref(n) for n in (cc.get("references") or [])) if p]
+    if not paths:
+        who, _ = _who_and_emph((cc.get("motion_prompt") or "") + " " + (cc.get("action") or ""))
+        if who == "both":
+            paths = [p for p in (_resolve_ref("ryani_solo"), _resolve_ref("leo_solo")) if p]
+        elif who:
+            paths = [p for p in (_resolve_ref(f"{who}_solo"),) if p]
+    return paths
+
+
+def _av_still_compose_prompt(cc: dict) -> str:
+    """Build the composition prompt for a precise still: anchor the room to the provided
+    photo, place the pets per the cut, ban any extra/cloned animal in the background."""
+    base = (cc.get("regen_prompt") or cc.get("action") or cc.get("motion_prompt") or "").strip()
+    _who, emph = _who_and_emph(base)
+    return (
+        "Use the PROVIDED ROOM PHOTO as the EXACT background — keep it pixel-identical, do "
+        "NOT redraw, relocate, or re-light the room. Compose a photoreal iPhone-snapshot "
+        "still placing the pet(s) clearly in the frame exactly as described below. Each named "
+        "pet appears EXACTLY ONCE; place NO other animals anywhere — no extra or cloned cat/"
+        "dog on any bed, shelf, scratcher, sofa, or in the background. 9:16 vertical, "
+        "eye-level, natural available room light.\n\n" + base + ("\n" + emph if emph else ""))
+
+
 # PD 2026-06-14: real casual-phone LO-FI look, baked into the prompt (not post-process).
 LOFI_REALISM_DIRECTIVE = (
     "LO-FI RESOLUTION — render at the VISUAL QUALITY of a real, slightly LOW-RESOLUTION "
@@ -6103,10 +6150,43 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
             origin = "library" if "scene_refs" in str(scene_ref_path) else "fallback (GPT)"
             progress_cb(f":white_check_mark: scene_ref ready ({origin}) → {scene_ref_path.name}")
 
+    # Fix 2 (PD 2026-06-28): PRECISE STILL — recompose each locked-space cut's still with the
+    # clean scene_ref as the literal background so i2v animates a faithful frame (no Seedance
+    # background freelancing / pet teleport). Flag-gated for safe rollout (AV_PRECISE_STILL=1);
+    # default OFF leaves the existing ref-mode path untouched.
+    _av_precise = (os.getenv("AV_PRECISE_STILL", "0") == "1" and not dry_run
+                   and scene_ref_path and _lock_scene
+                   and (card.get("render_style") or "").lower() == "ai_vtuber")
+    _precise_tags: set = set()
+    if _av_precise:
+        for i, item in enumerate(cuts):
+            cc = concept_cuts[i] if i < len(concept_cuts) else {}
+            tag = item["tag"]
+            # Leave the wink close-up (own chain i2v) and fantasy beats to their own path.
+            if "wink" in (tag or "").lower() or "wink" in (cc.get("beat") or "").lower() \
+                    or _cut_is_fantasy(cc):
+                continue
+            refs = _cut_char_refs(cc)
+            if not refs:
+                continue
+            if _compose_av_still(scene_ref_path, refs,
+                                 _av_still_compose_prompt(cc), regen_dir / f"{tag}.png"):
+                _precise_tags.add(tag)
+        if progress_cb:
+            progress_cb(f":dart: 정밀 스틸 재합성 {len(_precise_tags)}컷 "
+                        "(scene_ref bg + 캐릭터ref → i2v 충실)")
+        log.info("AV_PRECISE_STILL: recomposed %d cut still(s) from scene_ref %s",
+                 len(_precise_tags), scene_ref_path.name)
+
     for i, item in enumerate(cuts):
         tag = item["tag"]
         cc = concept_cuts[i] if i < len(concept_cuts) else {}
         mode = cc.get("seedance_mode", "i2v")
+        # Fix 2: a cut whose still we recomposed from the scene_ref → drive it via i2v from
+        # that precise still (override the Director's ref default; the still carries the room).
+        if tag in _precise_tags:
+            mode = "i2v"
+            cc["seedance_mode"] = "i2v"
         # PD 2026-06-28 (관찰왕 vs 매복러 "하비 등장" 컷 배경 붕괴): in a locked single-space
         # AV episode, an in-space cut MUST stay in `ref` mode. `i2v` drops the scene_ref
         # background anchor (BytePlus can't mix first_frame + reference_*), so any cut whose
@@ -6121,9 +6201,12 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
             and "wink" not in (cc.get("beat") or "").lower()
         # A cut deliberately anchored to a real photo (first_frame_asset_id) keeps its i2v —
         # that still IS its background anchor and the real-photo grounding reduces AI-look.
+        # AV_PRECISE_STILL (Fix 2): the still was recomposed from the clean scene_ref, so it
+        # already carries the room — KEEP i2v (it animates that faithful frame). The i2v→ref
+        # coercion below exists only for the OLD path where i2v had no room-anchored still.
         if (_is_av and _lock_scene and scene_ref_path and mode == "i2v"
                 and _in_locked_space and not cc.get("first_frame_asset_id")
-                and not _cut_is_fantasy(cc)):
+                and not _cut_is_fantasy(cc) and not _av_precise):
             mode = "ref"
             cc["seedance_mode"] = "ref"
             if progress_cb:
