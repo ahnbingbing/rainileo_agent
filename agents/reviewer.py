@@ -120,6 +120,24 @@ looks. These are CAPS (a ceiling), not soft notes:
   end). Same defect, same cap ≤6 → flag "가구/배경 morph".
   (EXCEPTION: a concept's INTENTIONAL space transition — 현실→상상→현실, a deliberate
   fantasy realm like 무릉도원 — is NOT drift; do not penalize a scripted scene change.)
+- **펫 순간이동 / 위치 불일치 (ai_vtuber)**: distinct from background drift (that's the
+  ROOM). Here a PET jumps to an unexplained new position cut-to-cut — at the door in one
+  cut, asleep on a scratcher in the background of the next, back at the door in a third —
+  with no shown move. A viewer reads it as the pet teleporting. If a pet's location changes
+  cut-to-cut without a cut that shows the move, flag "펫 순간이동/위치 불일치", cap ≤6.
+- **Off-cast 펫 (ai_vtuber)**: a cut centered on ONE pet (a solo close-up) must not show the
+  OTHER pet — especially drifting/resting in the background. The other pet appearing unbidden
+  in a single-subject cut is an off-cast defect (관찰왕: a Ryani-only close-up with Leo asleep
+  on a scratcher behind her). Flag "off-cast 펫(단독 컷에 다른 펫)", cap ≤6. (A cut that
+  legitimately features BOTH pets is fine — judge against what the cut is about.)
+- **빌드업 후 페이오프 미발생 (both — structural)**: the episode spends its cuts building
+  toward a climax (someone arrives, the treat is served, the chase connects) but the payoff
+  never visibly HAPPENS on screen — it cuts from the tension straight to the wink/closer, so
+  it "builds up and then nothing happens" (관찰왕: footsteps-tension → wink, the 하비 greeting
+  reunion was never a cut). The payoff is the point; if the buildup has no on-screen payoff
+  cut, flag "페이오프 미발생 — 빌드업만" and cap ≤6 (verdict ≤ 수정 필요). This is structural,
+  separate from the caption-promised-kick check (CHECK 0): there a single caption's action is
+  faked; here the whole arc's payoff beat is missing.
 - **배경 흔들림 (ai_vtuber)**: distinct from drift. When the camera moves (panning / push-in /
   handheld sway) under big subject motion, Seedance makes the BACKGROUND wobble, warp or
   shake WITHIN a cut — which reads worse than a dead-still frame. The channel standard is a

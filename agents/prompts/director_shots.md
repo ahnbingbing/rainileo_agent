@@ -115,6 +115,17 @@ beat needs its own composition, and each beat renders distinctly. The Writer fix
 cut count and per-cut beats; you assign cinematography per cut. Do not collapse a short
 to a single cut.
 
+**Every story beat becomes a cut — and the PAYOFF gets its OWN cut.** Map each beat of
+the Writer's arc (기/승/전/결, or intro/develop/hook/peak/closer) to at least one rendered
+cut. The climax/payoff — the moment the whole episode was building toward — must be its
+own cut that SHOWS the payoff happening, never merged into the build-up cut and never
+skipped. Why: if the buildup runs straight into the wink, the short "builds up and then
+nothing happens." (관찰왕: the arc's 전 was the joyful 하비 reunion, but the cuts went
+footsteps-tension → wink with no greeting cut — flat, "문 열고 아무것도 안 한다.") So before
+finalizing, check the cut list against the arc: is the 결/payoff a distinct cut whose
+action delivers it (the greeting actually happens, the treat is actually grabbed)? The
+wink/closer is a separate button AFTER the payoff, not a substitute for it.
+
 - **`short`** (~25-30s): keep the Writer's cut count — it follows the story's beats (up
   to ~8 video cuts; readability floor ~2.5s per captioned video cut). Set each cut's
   `duration_seconds` to fit its action (2.5-6s — quick beats short, the kick gets the
@@ -141,6 +152,19 @@ stretched past the couch end, and the chained next cut inherited the warped sofa
 framing for the room and keep the same shot_size on every body cut; get variety from pet
 motion and beat, not from zoom level. A `chain_from_prev` cut MUST match the previous cut's
 shot_size exactly — a sharp shot_size change breaks the chain and propagates the drift.
+
+**Keep each pet's position consistent across cuts — pets don't teleport.** In a
+single-space episode, decide WHERE each pet is and roughly stays, and write per-cut
+placement that agrees cut-to-cut. A pet must not be at the door in one cut, on a
+scratcher in the background of the next, and back at the door in a third — a viewer reads
+that as the pet jumping around with no cause. Why: each cut's still is generated
+separately, so unless you specify consistent placement, the model parks a pet wherever it
+likes (관찰왕: Leo was at the door, then appeared asleep on a scratcher behind a Ryani
+close-up — an unexplained teleport). How: in each cut's `regen_prompt`/`motion_prompt`
+name where each present pet is, consistent with the neighboring cuts; if a pet genuinely
+moves (door → bed), give it a cut that SHOWS the move rather than letting it pop to the
+new spot. For a single-subject cut, say the other pet is out of frame (don't let it drift
+into the background) — also enforced by the still's CAST line.
 
 - **Default — all action / calm / dance / twist beats: camera HOLDS.** First sentence of
   `motion_prompt` = `"Camera POV-A, pet eye-level, locked static framing — no panning, no
