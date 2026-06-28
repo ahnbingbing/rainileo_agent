@@ -209,6 +209,53 @@ def _cut_is_fantasy(cc: dict | None) -> bool:
     return any(h.lower() in blob for h in _AV_FANTASY_HINTS)
 
 
+_SCENE_CLEAN_CACHE = ROOT / "data" / "scene_ref_clean_cache.json"
+
+
+def _scene_ref_is_clean(path: Path) -> bool:
+    """A scene_ref MUST be an empty room — NO live animals, NO people. A pet baked into the
+    reference photo bleeds into EVERY cut that uses it (PD 2026-06-28: 거실 scene_ref에 레오가
+    자고 있어 모든 컷 배경에 '스크래치 위 레오'가 따라붙었다). VLM-verify once per file (cached by
+    path+mtime); a dirty library ref is then rejected so resolution falls through to the clean
+    empty-room fallback (its prompt already forbids animals/people). Fail-OPEN on VLM error
+    (don't block renders — the library is curated). Disable with SCENE_REF_CLEAN_CHECK=0."""
+    if os.getenv("SCENE_REF_CLEAN_CHECK", "1") != "1":
+        return True
+    try:
+        ck = f"{path}:{int(path.stat().st_mtime)}"
+    except Exception:
+        return True
+    try:
+        cache = json.loads(_SCENE_CLEAN_CACHE.read_text(encoding="utf-8"))
+    except Exception:
+        cache = {}
+    if ck in cache:
+        return bool(cache[ck])
+    try:
+        from agents.cameraman_brain import _call_gemini
+        r = _call_gemini(
+            "Is there any LIVE animal (cat/dog/pet) or any person/human visible in this room "
+            "photo? A teddy bear or toy is NOT a live animal. Answer JSON only: "
+            '{"animal": true or false, "person": true or false}',
+            images=[path])
+        if isinstance(r, str):
+            r = json.loads(re.sub(r"^```(?:json)?|```$", "", r.strip()))
+        clean = not (r.get("animal") or r.get("person"))
+    except Exception as e:  # noqa: BLE001
+        log.warning("scene_ref clean-check failed (%s) — allowing %s", e, path.name)
+        return True
+    cache[ck] = clean
+    try:
+        _SCENE_CLEAN_CACHE.write_text(json.dumps(cache, ensure_ascii=False, indent=2),
+                                      encoding="utf-8")
+    except Exception:
+        pass
+    if not clean:
+        log.warning("scene_ref %s has a live animal/person — rejecting (clean fallback instead)",
+                    path.name)
+    return clean
+
+
 def _resolve_scene_ref(set_anchor: str | None, set_description: str,
                        fallback_out_path: Path,
                        dry_run: bool = False) -> Path | None:
@@ -236,6 +283,9 @@ def _resolve_scene_ref(set_anchor: str | None, set_description: str,
         if not op.is_absolute():
             op = ROOT / op
         if op.exists() and op.stat().st_size > 10_000:
+            if not _scene_ref_is_clean(op):
+                log.warning("SCENE_REF_OVERRIDE %s contains a live animal/person "
+                            "(honoring explicit pin, but it will bleed into every cut)", op.name)
             log.info("scene_ref OVERRIDE → %s", op.name)
             return op
         log.warning("SCENE_REF_OVERRIDE set but file missing: %s", op)
@@ -247,8 +297,12 @@ def _resolve_scene_ref(set_anchor: str | None, set_description: str,
             if entry and entry.get("scene_ref"):
                 lib_path = ROOT / entry["scene_ref"]
                 if lib_path.exists() and lib_path.stat().st_size > 10_000:
-                    log.info("scene_ref from library: %s → %s", set_anchor, lib_path.name)
-                    return lib_path
+                    if _scene_ref_is_clean(lib_path):
+                        log.info("scene_ref from library: %s → %s", set_anchor, lib_path.name)
+                        return lib_path
+                    log.warning("library scene_ref %s for %s is not a clean empty room — "
+                                "falling back to a generated empty room",
+                                lib_path.name, set_anchor)
                 else:
                     log.warning("scene_ref %s referenced but file missing: %s",
                                 set_anchor, lib_path)
