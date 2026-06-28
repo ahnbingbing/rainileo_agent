@@ -5267,6 +5267,26 @@ def _cut_character_ok(mp4_path: Path, who: str = "both", n_frames: int = 3,
                  "visible; not-visible/thin = false.")
             ) if ask_blaze else ""
             blaze_field = ",\"blaze_too_thick\":true|false" if ask_blaze else ""
+            # PD 2026-06-28 (삼계탕 재발): Seedance keeps hallucinating a white spot/patch on
+            # Ryani's NAPE (back of neck) / spine — that is 삐용이's tuxedo marking bleeding
+            # over; Ryani's nape/back/spine is PURE BLACK. The blaze check only looked at her
+            # face, so nape-white sailed through render-time and only Giri caught it (forcing
+            # a full re-render). Add a nape check against the SAME clean ryani_solo.png ref.
+            ask_nape = w in ("ryani", "both")
+            nape_q = (
+                (" The reference (LAST image) shows Ryani's nape, the BACK of her neck, "
+                 "spine and back as SOLID BLACK. Set nape_white=true if the rendered Ryani "
+                 "has ANY white spot, dot, patch, stripe or line on the BACK of the neck "
+                 "(nape), spine or back — that is wrong. Her FRONT-of-throat/chin/chest "
+                 "white is CORRECT — do NOT set nape_white for that. If her back/nape isn't "
+                 "clearly visible, set false."
+                 if blaze_ref else
+                 " SEPARATELY judge Ryani's NAPE: her nape (back of neck), spine and back "
+                 "are PURE BLACK; nape_white=true if any white spot/dot/patch/stripe appears "
+                 "on the back of the neck/spine/back (front-of-throat/chest white is correct "
+                 "— do not flag it); not-visible = false.")
+            ) if ask_nape else ""
+            nape_field = ",\"nape_white\":true|false" if ask_nape else ""
             prompt = (
                 "These frames are from ONE rendered cut. Judge the pet CHARACTER "
                 "fidelity for: " + " ".join(specs) + " IMPORTANT: a side profile or "
@@ -5274,9 +5294,9 @@ def _cut_character_ok(mp4_path: Path, who: str = "both", n_frames: int = 3,
                 "defect. Flag a character problem ONLY when a pet is frontal/clearly "
                 "visible AND its markings/features are clearly wrong, OR a pet looks "
                 "obviously AI-distorted (warped face, melted/extra features, wrong "
-                "proportions, plastic/fake look)." + blaze_q +
+                "proportions, plastic/fake look)." + blaze_q + nape_q +
                 " Return ONLY JSON: {\"clear\":true|false,\"character_ok\":true|false"
-                + blaze_field + "}.")
+                + blaze_field + nape_field + "}.")
             contents = list(parts) + [prompt]
             resp = client.models.generate_content(
                 model=os.getenv("VLM_MODEL", "gemini-2.5-flash"),
@@ -5289,9 +5309,11 @@ def _cut_character_ok(mp4_path: Path, who: str = "both", n_frames: int = 3,
             clear = bool(d.get("clear", d.get("frontal")))
             ok = bool(d.get("character_ok", d.get("markings_ok")))
             blaze_bad = bool(d.get("blaze_too_thick")) if ask_blaze else False
-            bad = (clear and not ok) or blaze_bad
+            nape_bad = bool(d.get("nape_white")) if ask_nape else False
+            bad = (clear and not ok) or blaze_bad or nape_bad
             if bad:
-                why = "BLAZE-too-thick" if blaze_bad else "drift/generative"
+                why = ("nape-white(삐용이 마킹)" if nape_bad
+                       else "BLAZE-too-thick" if blaze_bad else "drift/generative")
                 log.info("cut character gate: %s %s in %s", w, why, Path(mp4_path).name)
             return not bad
     except Exception as e:
@@ -5645,7 +5667,13 @@ def _gate_and_heal(out_mp4, prompt, who, emph, regen, progress_cb, dry_run,
                 prompt + " IMPORTANT: the animal must CLEARLY and fully PERFORM the "
                 "described dynamic action (actually surfing on / swimming through / "
                 "leaping into the water), the motion filling the frame — it must NOT "
-                "be sitting, standing, or lying still on a dry floor. " + emph)
+                "be sitting, standing, or lying still on a dry floor. "
+                # PD 2026-06-28: re-emphasizing the action made Seedance REGENERATE the
+                # whole room (the 관찰왕 background-collapse: 하비 등장 컷이 다른 방으로
+                # 튐). The room must be held pixel-identical — only the pet's body moves.
+                "The room and background stay PIXEL-IDENTICAL to the input frame — do "
+                "NOT regenerate, relocate, redraw, or re-light the room, furniture, "
+                "walls, or window; ONLY the pet's body performs the action. " + emph)
         elif reason == "feeding":
             heal_prompt = (
                 prompt + " IMPORTANT: a human HAND holds the treat (a long paste tube / "
@@ -6025,6 +6053,29 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         tag = item["tag"]
         cc = concept_cuts[i] if i < len(concept_cuts) else {}
         mode = cc.get("seedance_mode", "i2v")
+        # PD 2026-06-28 (관찰왕 vs 매복러 "하비 등장" 컷 배경 붕괴): in a locked single-space
+        # AV episode, an in-space cut MUST stay in `ref` mode. `i2v` drops the scene_ref
+        # background anchor (BytePlus can't mix first_frame + reference_*), so any cut whose
+        # prompt says "문이 열리는 순간 / 누군가 들어온다 / 하비 등장" makes Seedance regenerate the
+        # whole room from scratch → 배경 붕괴. A human entrant is the worst case: humans have
+        # NO character ref, so without the scene anchor the entire frame is unconstrained.
+        # ref mode renders the same action (jump/pounce refs stay in `references[]`) while
+        # keeping the room. Coerce only real in-room cuts — never the wink close-up
+        # (space=None, deliberate i2v continuation) or a fantasy/dreamscape beat.
+        _is_av = (card.get("render_style") or "").lower() == "ai_vtuber"
+        _in_locked_space = bool(cc.get("space")) and "wink" not in (tag or "").lower() \
+            and "wink" not in (cc.get("beat") or "").lower()
+        # A cut deliberately anchored to a real photo (first_frame_asset_id) keeps its i2v —
+        # that still IS its background anchor and the real-photo grounding reduces AI-look.
+        if (_is_av and _lock_scene and scene_ref_path and mode == "i2v"
+                and _in_locked_space and not cc.get("first_frame_asset_id")
+                and not _cut_is_fantasy(cc)):
+            mode = "ref"
+            cc["seedance_mode"] = "ref"
+            if progress_cb:
+                progress_cb(f":lock: {tag} 단일공간 락 컷 — i2v→ref 강제(배경 앵커 유지, 붕괴 방지)")
+            log.info("seedance_mode coerced i2v→ref for locked-space AV cut %s "
+                     "(scene_ref anchor preserved)", tag)
         out_mp4 = anim_dir / f"{tag}.mp4"
         asset_id = item["asset"].get("asset_id", "")
 
