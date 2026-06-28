@@ -60,6 +60,12 @@ FLOORS (a candidate failing any of these is disqualified — never pick it):
    pet is NOT a defect — the channel has two pets (an orange cat + a black no-tail
    Frenchie), and a scene may legitimately include both. Forbid only a DUPLICATE of
    the SAME animal, not a genuinely different second pet.
+   ALSO — CAST MATCH (PD 2026-06-28): compare against "Subjects" in the cut intent above.
+   If the cut's Subjects names a SINGLE pet (e.g. only Ryani, or only Leo) but the OTHER
+   pet ALSO appears in the frame — even just resting in the background on a bed/scratcher/
+   sofa — that pet is OFF-CAST for this cut and the candidate is DISQUALIFIED (the 관찰왕
+   "Leo on a scratcher behind a Ryani-only close-up" class). Only a cut whose Subjects
+   names BOTH pets may legitimately show both.
 1. Character fidelity — markings/age/eyes/breed must match canon. Ryani: petite
    black Frenchie, NO tail, thin blaze + white chin/chest/toes (markings THIN, never
    thick/heavy). Leo: orange tabby, ~8mo lean young-adult, yellow-green eyes (NOT

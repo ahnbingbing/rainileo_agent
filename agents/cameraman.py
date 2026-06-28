@@ -200,16 +200,31 @@ def _cut_char_refs(cc: dict) -> list:
 
 def _av_still_compose_prompt(cc: dict) -> str:
     """Build the composition prompt for a precise still: anchor the room to the provided
-    photo, place the pets per the cut, ban any extra/cloned animal in the background."""
+    photo, place the pets per the cut, and be CAST-EXPLICIT — a single-subject cut must say
+    the OTHER pet is NOT in the shot, so the model can't slip it into the background (the
+    관찰왕 cut2 'Leo on a scratcher behind Ryani' class). Fix 3 (PD 2026-06-28)."""
     base = (cc.get("regen_prompt") or cc.get("action") or cc.get("motion_prompt") or "").strip()
-    _who, emph = _who_and_emph(base)
+    who, emph = _who_and_emph(base)
+    # Cast directive: name exactly who is in frame; for a solo cut, exclude the other pet.
+    if who == "ryani":
+        cast = ("CAST: ONLY Ryani (the black no-tail French Bulldog) is in this shot. Leo (the "
+                "orange tabby cat) is NOT present anywhere in this frame — not in the background, "
+                "not on any bed/scratcher/sofa.")
+    elif who == "leo":
+        cast = ("CAST: ONLY Leo (the orange tabby cat) is in this shot. Ryani (the black French "
+                "Bulldog) is NOT present anywhere in this frame.")
+    elif who == "both":
+        cast = ("CAST: BOTH pets — Ryani (black no-tail Frenchie) and Leo (orange tabby) — each "
+                "appears EXACTLY ONCE. No third animal, no duplicate/clone of either.")
+    else:
+        cast = "Each named pet appears EXACTLY ONCE; no duplicate/clone of any animal."
     return (
         "Use the PROVIDED ROOM PHOTO as the EXACT background — keep it pixel-identical, do "
         "NOT redraw, relocate, or re-light the room. Compose a photoreal iPhone-snapshot "
-        "still placing the pet(s) clearly in the frame exactly as described below. Each named "
-        "pet appears EXACTLY ONCE; place NO other animals anywhere — no extra or cloned cat/"
-        "dog on any bed, shelf, scratcher, sofa, or in the background. 9:16 vertical, "
-        "eye-level, natural available room light.\n\n" + base + ("\n" + emph if emph else ""))
+        "still placing the pet(s) clearly in the frame exactly as described below. " + cast +
+        " Place NO other/extra animals anywhere (no stray or cloned cat/dog on any bed, shelf, "
+        "scratcher, sofa, or in the background). 9:16 vertical, eye-level, natural room light."
+        "\n\n" + base + ("\n" + emph if emph else ""))
 
 
 # PD 2026-06-14: real casual-phone LO-FI look, baked into the prompt (not post-process).
