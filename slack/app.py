@@ -69,8 +69,12 @@ _stop_flag = threading.Event()
 # network is genuinely down, where exiting would just cause a restart storm.
 # BrokenPipe is the *post-recovery wedged* state — a transient drop produces
 # only a handful and self-heals; the wedge produces them unboundedly.
-_BROKENPIPE_WINDOW_S = 300      # rolling window
-_BROKENPIPE_THRESHOLD = 40      # this many BrokenPipe within the window == wedged
+# PD 2026-06-28: 40/300s was far too lax — 19,470 BrokenPipes accumulated while the
+# bot sat WEDGED and silent (grandma got no replies). A wedge that emits ~1 BrokenPipe
+# per 10s never reached 40-in-300s, so it never self-restarted. Tightened so a genuine
+# wedge auto-recovers within ~2 min. A healthy bot emits ~0, so false trips are unlikely.
+_BROKENPIPE_WINDOW_S = 120      # rolling window
+_BROKENPIPE_THRESHOLD = 12      # this many BrokenPipe within the window == wedged
 
 
 class _WedgeWatchdog(logging.Handler):
