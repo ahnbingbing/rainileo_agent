@@ -6078,6 +6078,46 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         _lock_scene = not _concept_is_multi_location(payload)
     if not _lock_scene and progress_cb:
         progress_cb(":world_map: 멀티장소 컨셉 — 단일 concept/scene ref 해제, 컷별로 자기 공간 생성")
+
+    # Fix 2 (PD 2026-06-28, default ON; AV_PRECISE_STILL=0 to disable): PRECISE STILL.
+    # Compose each locked-space cut's still from the CLEAN scene_ref (literal room) + character
+    # refs BEFORE generate_batch, then SKIP those cuts in generate_batch — the Gemini compose IS
+    # the still, so the slow gpt-image baseline isn't wasted on cuts we'd overwrite. The still
+    # carries the room → i2v animates a faithful frame (no Seedance bg-freelancing / pet teleport).
+    scene_ref_path: Path | None = None
+    _precise_tags: set = set()
+    _concept_cuts_e = manifests.get("concept_cuts", []) or []
+    _concept_obj_e = manifests.get("concept", {}) or {}
+    _av_precise = (os.getenv("AV_PRECISE_STILL", "1") == "1" and not dry_run and _lock_scene
+                   and bool(os.environ.get("BYTEPLUS_API_KEY", ""))
+                   and (card.get("render_style") or "").lower() == "ai_vtuber")
+    if _av_precise:
+        _set_desc_e = (_concept_obj_e.get("set_description") or "").strip()
+        if not _set_desc_e and _concept_cuts_e and _concept_cuts_e[0].get("space"):
+            _set_desc_e = f"Scene takes place in {_concept_cuts_e[0]['space']}."
+        scene_ref_path = _resolve_scene_ref(_concept_obj_e.get("set_anchor"), _set_desc_e,
+                                            work_dir / "scene_ref.png", dry_run=dry_run)
+        if scene_ref_path:
+            regen_dir.mkdir(parents=True, exist_ok=True)
+            if progress_cb:
+                progress_cb(f":white_check_mark: scene_ref ready → {scene_ref_path.name}")
+            for i, item in enumerate(cuts):
+                cc = _concept_cuts_e[i] if i < len(_concept_cuts_e) else {}
+                tag = item["tag"]
+                if "wink" in (tag or "").lower() or "wink" in (cc.get("beat") or "").lower() \
+                        or _cut_is_fantasy(cc):
+                    continue
+                refs = _cut_char_refs(cc)
+                if not refs:
+                    continue
+                if _compose_av_still(scene_ref_path, refs, _av_still_compose_prompt(cc),
+                                     regen_dir / f"{tag}.png"):
+                    _precise_tags.add(tag)
+            if progress_cb:
+                progress_cb(f":dart: 정밀 스틸 {len(_precise_tags)}컷 합성 (gpt-image 생략, i2v 충실)")
+            log.info("AV_PRECISE_STILL: pre-composed %d still(s) from %s; skipped in generate_batch",
+                     len(_precise_tags), scene_ref_path.name)
+
     if not dry_run:
         from scripts.generate_character_scene import generate_batch
         # Single concept-grounded character ref pins every cut to ONE scene → ONLY when
@@ -6085,26 +6125,37 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         concept_ref = None
         if _lock_scene and os.getenv("AV_CONCEPT_REF", "1") != "0":
             concept_ref = _build_concept_char_ref(payload, regen_dir, progress_cb)
-        failures = generate_batch(
-            Path(manifests["regen_prompts"]),
-            input_dir if input_dir.exists() else None,
-            regen_dir,
-            api_key=os.environ.get("OPENAI_API_KEY", ""),
-            progress_cb=progress_cb,
-            reference_override=concept_ref,
-            lock_scene=_lock_scene,
-            # PD 2026-06-17: pass concept + per-cut metadata so the best-of-N still
-            # selector (REGEN_BEST_OF) judges candidates against this cut's intent.
-            concept=payload,
-            cuts_by_tag={c.get("tag"): c for c in (payload.get("cuts") or []) if c.get("tag")},
-        )
-        if failures:
-            total = len([k for k in json.loads(Path(manifests["regen_prompts"]).read_text()).keys() if not k.startswith("_")])
-            success = total - failures
-            min_required = max(4, int(total * 0.75))
-            if success < min_required:
-                raise RuntimeError(f"AI 캐릭터 생성 {failures}/{total}건 실패 (최소 {min_required}컷 필요)")
-            log.warning("AI 캐릭터 생성 %d/%d 실패 — 성공한 %d컷으로 진행", failures, total, success)
+        # Precise-composed cuts are excluded from the (slow gpt-image) generate_batch.
+        _regen_manifest = Path(manifests["regen_prompts"])
+        if _precise_tags:
+            _full = json.loads(_regen_manifest.read_text())
+            _rest = {k: v for k, v in _full.items() if k.startswith("_") or k not in _precise_tags}
+            if any(not k.startswith("_") for k in _rest):
+                _regen_manifest = work_dir / "regen_prompts_rest.json"
+                _regen_manifest.write_text(json.dumps(_rest, ensure_ascii=False), encoding="utf-8")
+            else:
+                _regen_manifest = None  # every cut precise-composed → nothing left for gpt-image
+        if _regen_manifest is not None:
+            failures = generate_batch(
+                _regen_manifest,
+                input_dir if input_dir.exists() else None,
+                regen_dir,
+                api_key=os.environ.get("OPENAI_API_KEY", ""),
+                progress_cb=progress_cb,
+                reference_override=concept_ref,
+                lock_scene=_lock_scene,
+                # PD 2026-06-17: pass concept + per-cut metadata so the best-of-N still
+                # selector (REGEN_BEST_OF) judges candidates against this cut's intent.
+                concept=payload,
+                cuts_by_tag={c.get("tag"): c for c in (payload.get("cuts") or []) if c.get("tag")},
+            )
+            if failures:
+                total = len([k for k in json.loads(_regen_manifest.read_text()).keys() if not k.startswith("_")])
+                success = total - failures
+                min_required = max(4, int(total * 0.75)) if not _precise_tags else max(1, int(total * 0.5))
+                if success < min_required:
+                    raise RuntimeError(f"AI 캐릭터 생성 {failures}/{total}건 실패 (최소 {min_required}컷 필요)")
+                log.warning("AI 캐릭터 생성 %d/%d 실패 — 성공한 %d컷으로 진행", failures, total, success)
     else:
         log.info("[dry-run] would generate character scenes")
 
@@ -6133,12 +6184,12 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
     # Resolution: (1) canonical library `assets/scene_refs/<set_anchor>.png`
     # shared across all episodes that use the same set, (2) per-render
     # GPT-generated fallback for unknown / special-concept sets.
-    scene_ref_path: Path | None = None
     # Single empty-room scene_ref anchors EVERY Seedance cut to ONE room — only when the
     # scene is locked (single-space). Multi-location → None, so each cut keeps the space
     # its own still already established (else the lone home_livingroom ref drags every
-    # cut back to the living room, re-collapsing the journey).
-    if use_seedance and _lock_scene:
+    # cut back to the living room, re-collapsing the journey). NOTE: when AV_PRECISE_STILL
+    # already resolved scene_ref above, reuse it (don't re-resolve).
+    if use_seedance and _lock_scene and scene_ref_path is None:
         set_anchor = concept_obj.get("set_anchor")
         fallback_path = work_dir / "scene_ref.png"
         if progress_cb and set_anchor:
@@ -6150,34 +6201,7 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
             origin = "library" if "scene_refs" in str(scene_ref_path) else "fallback (GPT)"
             progress_cb(f":white_check_mark: scene_ref ready ({origin}) → {scene_ref_path.name}")
 
-    # Fix 2 (PD 2026-06-28): PRECISE STILL — recompose each locked-space cut's still with the
-    # clean scene_ref as the literal background so i2v animates a faithful frame (no Seedance
-    # background freelancing / pet teleport). Flag-gated for safe rollout (AV_PRECISE_STILL=1);
-    # default OFF leaves the existing ref-mode path untouched.
-    _av_precise = (os.getenv("AV_PRECISE_STILL", "0") == "1" and not dry_run
-                   and scene_ref_path and _lock_scene
-                   and (card.get("render_style") or "").lower() == "ai_vtuber")
-    _precise_tags: set = set()
-    if _av_precise:
-        for i, item in enumerate(cuts):
-            cc = concept_cuts[i] if i < len(concept_cuts) else {}
-            tag = item["tag"]
-            # Leave the wink close-up (own chain i2v) and fantasy beats to their own path.
-            if "wink" in (tag or "").lower() or "wink" in (cc.get("beat") or "").lower() \
-                    or _cut_is_fantasy(cc):
-                continue
-            refs = _cut_char_refs(cc)
-            if not refs:
-                continue
-            if _compose_av_still(scene_ref_path, refs,
-                                 _av_still_compose_prompt(cc), regen_dir / f"{tag}.png"):
-                _precise_tags.add(tag)
-        if progress_cb:
-            progress_cb(f":dart: 정밀 스틸 재합성 {len(_precise_tags)}컷 "
-                        "(scene_ref bg + 캐릭터ref → i2v 충실)")
-        log.info("AV_PRECISE_STILL: recomposed %d cut still(s) from scene_ref %s",
-                 len(_precise_tags), scene_ref_path.name)
-
+    # (Precise stills + _precise_tags were composed earlier, before generate_batch.)
     for i, item in enumerate(cuts):
         tag = item["tag"]
         cc = concept_cuts[i] if i < len(concept_cuts) else {}
