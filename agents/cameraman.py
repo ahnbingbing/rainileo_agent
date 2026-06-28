@@ -6189,8 +6189,8 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
     # its own still already established (else the lone home_livingroom ref drags every
     # cut back to the living room, re-collapsing the journey). NOTE: when AV_PRECISE_STILL
     # already resolved scene_ref above, reuse it (don't re-resolve).
+    set_anchor = concept_obj.get("set_anchor")  # always defined (used later in dispatch)
     if use_seedance and _lock_scene and scene_ref_path is None:
-        set_anchor = concept_obj.get("set_anchor")
         fallback_path = work_dir / "scene_ref.png"
         if progress_cb and set_anchor:
             progress_cb(f":frame_with_picture: scene_ref resolving (set_anchor={set_anchor})")
