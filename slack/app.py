@@ -69,12 +69,13 @@ _stop_flag = threading.Event()
 # network is genuinely down, where exiting would just cause a restart storm.
 # BrokenPipe is the *post-recovery wedged* state — a transient drop produces
 # only a handful and self-heals; the wedge produces them unboundedly.
-# PD 2026-06-28: 40/300s was far too lax — 19,470 BrokenPipes accumulated while the
-# bot sat WEDGED and silent (grandma got no replies). A wedge that emits ~1 BrokenPipe
-# per 10s never reached 40-in-300s, so it never self-restarted. Tightened so a genuine
-# wedge auto-recovers within ~2 min. A healthy bot emits ~0, so false trips are unlikely.
+# PD 2026-06-28: even 12/120s missed it — the wedge emits only ~1 BrokenPipe per
+# reconnect cycle (~15-30s), so 12-in-120s was never reached and the bot stayed silent
+# (하미 got no replies, twice). A HEALTHY bot emits ZERO BrokenPipes, and a process
+# restart is cheap+harmless (fresh socket), so go aggressive: any 4 in 120s == wedged.
+# A single transient drop self-heals in 1-2; 4+ means it is NOT recovering → restart.
 _BROKENPIPE_WINDOW_S = 120      # rolling window
-_BROKENPIPE_THRESHOLD = 12      # this many BrokenPipe within the window == wedged
+_BROKENPIPE_THRESHOLD = 4       # this many BrokenPipe within the window == wedged
 
 
 class _WedgeWatchdog(logging.Handler):
@@ -1508,7 +1509,7 @@ def _grandma_catchup(client) -> None:
     cutoff = _time.time() - 15
     pending = []
     for m in msgs:
-        if m.get("bot_id") or m.get("subtype"):
+        if m.get("bot_id") or m.get("subtype") in ("channel_join", "channel_leave", "bot_message"):
             continue
         try:
             ts = float(m.get("ts", 0))
@@ -1517,16 +1518,25 @@ def _grandma_catchup(client) -> None:
         if ts <= last_bot_ts or ts > cutoff:
             continue
         text = (m.get("text") or "").strip()
-        if text:
-            pending.append((m, text))
+        has_files = bool(m.get("files"))
+        # Process unanswered TEXT messages AND file uploads (a video/photo with no reply is
+        # exactly the "할머니가 영상 올렸는데 반응 없네" case — file_share carries a subtype so
+        # it must NOT be skipped above).
+        if text or has_files:
+            pending.append((m, text, has_files))
     if not pending:
         return
     log.info("grandma catchup: %d unanswered message(s) since last reply — processing",
              len(pending))
-    for m, text in pending:
+    for m, text, has_files in pending:
         try:
-            _grandma_converse(client, ch, m.get("user", ""), text,
-                              m.get("thread_ts") or m.get("ts"), asset_id=None)
+            if text:
+                _grandma_converse(client, ch, m.get("user", ""), text,
+                                  m.get("thread_ts") or m.get("ts"), asset_id=None)
+            elif has_files:
+                # File upload with no caption → warm in-channel acknowledgment (the file was
+                # already ingested live or by slack_sync; we just owe a reply).
+                client.chat_postMessage(channel=ch, text=GRANDMA_THANKS)
         except Exception as e:
             log.warning("grandma catchup process failed: %s", e)
 
