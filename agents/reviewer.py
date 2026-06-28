@@ -817,6 +817,72 @@ def _preachy_caption_gate(concept: dict | None, report: dict) -> None:
              report.get("판정"), report.get("점수"))
 
 
+# False "first swim/water" framing about Ryani (PD 2026-06-28). Ryani is a lifelong
+# water-maniac / strong swimmer (canon), so any caption that frames a swim/water beat
+# as her FIRST is a factual lie — even on genuine 2016 baby footage (that era she was
+# briefly clumsy, not afraid, and never "first"). The correct angle is the progression
+# "처음엔 서툴렀는데 이젠 완벽 적응 / 물에서 안 나오려 함". Patterns are multiword + water-
+# specific so the progression phrasing ("처음엔 서툴렀는데") never trips this gate.
+_FALSE_FIRST_WATER_PATTERNS = (
+    "첫 수영", "첫 수영장", "첫 물놀이", "첫 풍덩", "첫 입수", "첫 물", "첫 다이빙",
+    "물에 처음", "처음 물에", "처음 만나는 수영", "처음 만나는 물", "생애 첫 수영",
+    "인생 첫 풍덩", "인생 첫 수영",
+    "first swim", "first splash", "first dip", "first pool",
+    "first time in the water", "first time swimming", "first plunge",
+)
+
+
+def _false_first_water_gate(concept: dict | None, report: dict) -> None:
+    """Deterministic gate: RF captions must not call a Ryani swim/water beat her FIRST.
+
+    Canon (agents/canon.py) establishes Ryani as a veteran '펠프스급' swimmer, so a
+    '첫 수영/인생 첫 풍덩' hook is a lie the Writer keeps inventing for old (2016) pool
+    footage. The generator prompts + canon now forbid it, but Giri rubber-stamped it as
+    a cute memory-lane hook, so we cap it in code. Scoped to real_footage (the lane PD
+    flagged); high-precision multiword water phrases only, so the canon-correct
+    progression wording ('처음엔 서툴렀는데 이젠 완벽') is never falsely failed."""
+    if not concept:
+        return
+    if (concept.get("render_style") or "") != "real_footage":
+        return
+    cuts = concept.get("cuts") or []
+    blob = []
+    for c in cuts:
+        caps = c.get("captions") or []
+        if isinstance(caps, list):
+            for sc in caps:
+                if isinstance(sc, dict):
+                    blob.append(str(sc.get("ko", "")))
+                    blob.append(str(sc.get("en", "")))
+                else:
+                    blob.append(str(sc))
+        for k in ("ko", "en", "caption"):
+            if c.get(k):
+                blob.append(str(c[k]))
+    for k in ("title", "narrative_oneliner"):
+        if concept.get(k):
+            blob.append(str(concept[k]))
+    text = " ".join(blob).lower()
+    hits = sorted({p for p in _FALSE_FIRST_WATER_PATTERNS if p.lower() in text})
+    if not hits:
+        return
+    note = (f"랴니 '첫 수영/첫 물' 거짓 프레이밍(결정론적 게이트): {', '.join(hits)} — 랴니는 "
+            f"평생 물 매니아·펠프스급 수영선수라 '첫 수영'은 사실이 아니다(옛 2016 클립도 마찬가지). "
+            f"'처음엔 서툴렀는데 이젠 완벽 적응 / 물에서 안 나오려 함' 진행형으로 다시 써라.")
+    prev = report.get("가장_큰_문제", "") or ""
+    report["가장_큰_문제"] = note if (not prev or "없" in prev[:6]) else f"{note} / {prev}"
+    try:
+        report["점수"] = min(int(report.get("점수", 10)), 5)
+    except Exception:
+        report["점수"] = 5
+    if report.get("판정", "") in ("업로드", "즉시 업로드", "소폭 수정 후 업로드", ""):
+        report["판정"] = "수정 필요"
+    report["최종_결정"] = report.get("판정", "수정 필요")
+    report["_false_first_water_override"] = note
+    log.info("false-first-water gate FIRED: %s → 판정=%s 점수=%s", hits,
+             report.get("판정"), report.get("점수"))
+
+
 def _pd_groundtruth_block(concept: dict | None) -> str:
     """PD per-clip ground-truth → Giri (PD 2026-06-23).
 
@@ -1078,6 +1144,13 @@ def review(video: Path, storyboard: list[dict] | None = None,
         _preachy_caption_gate(concept, report)
     except Exception as e:
         log.warning("Preachy caption gate failed: %s", e)
+
+    # False "first swim/water" framing about Ryani (PD 2026-06-28): she is a lifelong
+    # swimmer, so a '첫 수영/인생 첫 풍덩' hook on old pool footage is a lie. RF-scoped.
+    try:
+        _false_first_water_gate(concept, report)
+    except Exception as e:
+        log.warning("False-first-water gate failed: %s", e)
 
     # Cleanup
     for f in frames:

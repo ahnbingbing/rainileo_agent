@@ -2081,14 +2081,56 @@ def _rf_temporal_coherence(concept: dict, target_year: int) -> list[str]:
     Clip year comes from asset_id (the date is encoded), so it works even when the
     Writer drops years_ago from the cut payload."""
     cuts = concept.get("cuts") or []
+    out: list[str] = []
+    from agents import canon as _canon_e
+
+    def _cut_date(aid):
+        m = re.match(r"med_(\d{4})_(\d{2})_(\d{2})", aid or "")
+        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else None
+
+    # E) PD 2026-06-28 (카페편 "2024년 신참 탐험가 레오"): a cut whose clip PREDATES a pet's
+    #    existence must not name that pet. Leo was born 2025-09, so a 2024 clip captioned
+    #    "레오" is a factual lie — the tabby in pre-Leo footage is a different cat, and that
+    #    era's footage is Ryani-only or a pre-Leo stray. canon.pet_exists_on is the single
+    #    existence boundary (the same one the VLM tagger + subject grounding use). Runs even
+    #    on a single-era episode (one 2024 clip mislabeled "레오" is still wrong), so it sits
+    #    ABOVE the multi-year span checks below.
+    _pet_names = (("leo", ("레오", "leo")), ("ryani", ("랴니", "ryani")))
+    for i, c in enumerate(cuts):
+        cdate = _cut_date(c.get("asset_id"))
+        if not cdate:
+            continue
+        cap = (c.get("title") or "") + " " + " ".join(
+            ((s.get("ko") or "") + " " + (s.get("en") or ""))
+            for s in (c.get("captions") or []) if isinstance(s, dict))
+        capl = cap.lower()
+        for pet, names in _pet_names:
+            if any(n in capl for n in names) and not _canon_e.pet_exists_on(pet, cdate):
+                out.append(
+                    f"cut{i+1}: {cdate} 클립인데 캡션이 '{pet}'를 부른다 — 그 시점엔 아직 "
+                    f"존재하지 않았다(레오 2025-09 출생). 그 시절 클립의 동물은 다른 개체이거나 "
+                    f"랴니 단독이다. 그 펫 이름을 빼고 실제 촬영 시점에 맞게 다시 써라.")
+                break
+    # F) Title declares an explicit year while naming a pet that didn't exist then
+    #    ("2024년 … 레오의 첫 미션") — the episode-level era claim itself is the lie.
+    _title = concept.get("title") or ""
+    _ty = re.search(r"(20\d{2})\s*년", _title)
+    if _ty:
+        _ty_iso = f"{_ty.group(1)}-06-01"
+        for pet, names in _pet_names:
+            if any(n in _title.lower() for n in names) and not _canon_e.pet_exists_on(pet, _ty_iso):
+                out.append(
+                    f"제목이 '{_ty.group(1)}년'을 말하며 '{pet}'를 등장시키는데 그 해엔 아직 "
+                    f"태어나지 않았다(레오 2025-09 출생) — 제목의 연도나 등장 펫을 실제와 맞춰라.")
+                break
+
     years = [y for y in (_rf_clip_year(c.get("asset_id")) for c in cuts) if y]
     if len(years) < 2:
-        return []
+        return out
     archival = [y for y in years if target_year - y >= 1]
     text = (concept.get("title") or "") + " " + " ".join(
         (cap.get("ko") or "")
         for c in cuts for cap in (c.get("captions") or []) if isinstance(cap, dict))
-    out: list[str] = []
     if len(archival) >= 2:
         hit = next((t for t in _RF_PRESENT_AGE_TOKENS if t in text), None)
         if hit:
@@ -2136,7 +2178,9 @@ def _rf_temporal_coherence(concept: dict, target_year: int) -> list[str]:
     #    phrases appear. (Same-day multi-location transitions use span<2, so no conflict.)
     if max(years) - min(years) >= 2:
         _ev = next((p for p in ("문이 열리자", "문 앞", "1초 전", "만남", "이제 곧",
-                                "곧이어", "그날 저녁", "그날 밤", "그날 아침", "방금")
+                                "곧이어", "그날 저녁", "그날 밤", "그날 아침", "방금",
+                                "이윽고", "마침내", "한 테이블", "한자리에", "한 자리에",
+                                "둘이 모였", "함께 모였", "다 같이")
                     if p in text), None)
         if _ev:
             out.append(
@@ -2620,6 +2664,38 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
                    "마라. 시점이 뒤섞이면 첫·끝 컷에 시점 앵커를 넣어 '같은 날'인 척하지 마라:\n"
                    + "\n".join(_tcon)
                    + (("\n\n[이전 피드백]\n" + prior_feedback) if prior_feedback else ""))
+            return _propose_realfootage_singlepass(target, context, progress_cb,
+                                                   prior_feedback=_fb)
+    # PD 2026-06-28: false-first-water gate, PRE-RENDER. Ryani is a lifelong water-maniac
+    # (canon), so a '첫 수영/첫 입수/물 매니아의 시작' hook on old pool footage is a lie the
+    # Writer keeps inventing despite the canon prohibition. The same patterns are also
+    # enforced post-render in reviewer._false_first_water_gate, but catching it BEFORE the
+    # render avoids burning a Seedance/assemble pass on a script we already know is wrong.
+    # Reuse the reviewer's pattern list (single source of truth) + force one rewrite toward
+    # the canon-correct progression ('처음엔 서툴렀는데 이젠 완벽 적응'). "[물첫경험]" bounds it.
+    if "[물첫경험]" not in prior_feedback:
+        try:
+            from agents.reviewer import _FALSE_FIRST_WATER_PATTERNS as _wpat
+            _whits: set = set()
+            for c in concepts:
+                _blob = [(c.get("title") or ""), (c.get("narrative_oneliner") or "")]
+                for cc in (c.get("cuts") or []):
+                    for s in (cc.get("captions") or []):
+                        if isinstance(s, dict):
+                            _blob += [str(s.get("ko", "")), str(s.get("en", ""))]
+                _btext = " ".join(_blob).lower()
+                _whits |= {p for p in _wpat if p.lower() in _btext}
+        except Exception as e:
+            log.warning("RF false-first-water pre-gate failed: %s", e)
+            _whits = set()
+        if _whits:
+            if progress_cb:
+                progress_cb(f":ocean: 물첫경험 검증 — '첫 수영' 거짓 프레이밍 {len(_whits)}건 → 재작성")
+            _fb = ("[물첫경험] 캡션/제목이 랴니의 물놀이를 '첫/처음'으로 단정한다("
+                   + ", ".join(sorted(_whits)) + "). 랴니는 평생 물 매니아·펠프스급 수영선수라 "
+                   "'첫 수영/첫 입수'는 사실이 아니다(옛 2016 클립도 마찬가지). '처음엔 서툴렀는데 "
+                   "이젠 완벽 적응 / 물에서 안 나오려 함' 진행형으로 다시 써라:\n"
+                   + (("\n[이전 피드백]\n" + prior_feedback) if prior_feedback else ""))
             return _propose_realfootage_singlepass(target, context, progress_cb,
                                                    prior_feedback=_fb)
     # PD 2026-06-14: SEGMENT-reuse gate (singlepass parity with the one-take path).
