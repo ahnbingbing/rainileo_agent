@@ -1479,6 +1479,58 @@ def _grandma_converse(client, channel, user, text, thread_ts, asset_id=None):
         pass
 
 
+def _grandma_catchup(client) -> None:
+    """PD 2026-06-28: the Mac's flaky network keeps wedging Socket Mode, and Slack does
+    NOT replay events that arrived while we were disconnected — so 할머니·할아버지 messages
+    sent during the gap are silently lost (the bot never replies). On (re)start, read the
+    channel's recent history and process every FAMILY message that came AFTER our last bot
+    reply (i.e. we never answered it), so a brief outage self-heals on reconnect.
+
+    Heuristic: anything newer than our last bot message is unanswered. Skip the most-recent
+    ~15s so a message arriving exactly at startup is left to the live event path (no
+    double-reply)."""
+    ch = GRANDMOMPAPA_CHANNEL
+    if not ch:
+        return
+    try:
+        resp = client.conversations_history(channel=ch, limit=30)
+    except Exception as e:
+        log.warning("grandma catchup history failed: %s", e)
+        return
+    msgs = list(reversed(resp.get("messages", [])))  # oldest → newest
+    last_bot_ts = 0.0
+    for m in msgs:
+        if m.get("bot_id"):
+            try:
+                last_bot_ts = max(last_bot_ts, float(m.get("ts", 0)))
+            except Exception:
+                pass
+    cutoff = _time.time() - 15
+    pending = []
+    for m in msgs:
+        if m.get("bot_id") or m.get("subtype"):
+            continue
+        try:
+            ts = float(m.get("ts", 0))
+        except Exception:
+            continue
+        if ts <= last_bot_ts or ts > cutoff:
+            continue
+        text = (m.get("text") or "").strip()
+        if text:
+            pending.append((m, text))
+    if not pending:
+        return
+    log.info("grandma catchup: %d unanswered message(s) since last reply — processing",
+             len(pending))
+    for m, text in pending:
+        try:
+            _grandma_converse(client, ch, m.get("user", ""), text,
+                              m.get("thread_ts") or m.get("ts"), asset_id=None)
+        except Exception as e:
+            log.warning("grandma catchup process failed: %s", e)
+
+
 @app.event("file_shared")
 def handle_file_shared(event, client, say):
     file_id = event.get("file_id")
@@ -2019,6 +2071,18 @@ def main() -> None:
 
     # Watchdog: detect the BrokenPipe wedge loop and exit so launchd restarts us.
     logging.getLogger("slack_bolt.App").addHandler(_WedgeWatchdog(pidfile))
+
+    # Catch up on grandma messages missed while disconnected (network-wedge recovery):
+    # Slack doesn't replay events from the offline gap, so on startup we backfill any
+    # family message that arrived after our last reply. Runs off-thread after the socket
+    # has had a few seconds to connect.
+    def _catchup_later():
+        _time.sleep(8)
+        try:
+            _grandma_catchup(app.client)
+        except Exception as e:
+            log.warning("grandma catchup thread failed: %s", e)
+    threading.Thread(target=_catchup_later, daemon=True).start()
 
     try:
         handler = SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"])
