@@ -43,11 +43,7 @@ REFERENCES_CHANNEL = os.getenv("SLACK_REFERENCES_CHANNEL", "C0B60EC81NX")
 # 메시지는 따뜻하고 단순하게(asset_id 같은 용어 금지).
 GRANDMOMPAPA_CHANNEL = os.getenv("SLACK_GRANDMOMPAPA_CHANNEL", "C0BASN221UL")
 # 할머니·할아버지용 따뜻한 확인 문구 (subject 태깅 요청을 쉬운 말로).
-GRANDMA_THANKS = (
-    "💛 할머니·할아버지, 감사합니다! 잘 받았어요 🐾\n"
-    "어떤 장면인지(누구인지, 뭐 하고 있는지) 이 글에 한 줄 적어주시면 "
-    "영상 만들 때 딱 맞게 쓸게요 😊"
-)
+GRANDMA_THANKS = "💛 잘 받았어요! 무슨 영상이에요? 🐾"
 # PD 2026-06-12: live agent channel — PD chats here and a headless Claude Code
 # (`claude -p`) runs against the repo with full tools and replies (full perms).
 BOARD_CHANNEL = os.getenv("SLACK_BOARD_CHANNEL")
@@ -1409,9 +1405,12 @@ def _grandma_converse(client, channel, user, text, thread_ts, asset_id=None):
             "(아침이면 상쾌한 아침 인사, 점심때면 식사, 저녁/밤이면 그에 맞는 따뜻한 인사·마무리). "
             "시각을 추측·환각하지 말고 위 실제 시각만 기준으로 삼아라. 단 매 답을 시간 얘기로 시작하거나 "
             "끼니·취침을 반복해 잔소리하진 마라 — 시각은 분위기를 맞추는 양념이고, 중심은 가족이 한 말이다.\n"
-            "JSON만 답하라: {\"reply\": 정감있는 한국어 존댓말 — **아주 짧게, 딱 1~2문장**. "
-            "할머니·할아버지가 큰 글씨 폰트로 읽으셔서 길면 읽기 힘드시다. 한 문장이면 더 좋다. "
-            "장황한 설명·여러 질문 나열 금지(맥락 이어가기 + 따뜻함 + 가끔 가벼운 후속 질문 하나, 이모지 약간), "
+            "★분류 시키지 마라: '랴니예요? 레오예요? 둘 다예요?'처럼 누가 나왔는지 골라 달라고 "
+            "절대 묻지 마라(어르신껜 어렵다). 영상 얘기를 더 듣고 싶으면 '무슨 영상이에요?' '뭐 하는 "
+            "모습이에요?'처럼 **내용(무슨 일이 일어나는지)**을 물어라. 누가 나왔는지는 네가 알아서 짐작한다.\n"
+            "JSON만 답하라: {\"reply\": 정감있는 한국어 존댓말 — **딱 한 문장, 아주 짧게**(할머니·할아버지가 "
+            "큰 글씨로 읽으셔서 길면 못 읽으신다). 두 문장 이상·장황한 설명·여러 질문 나열 절대 금지. "
+            "한 문장 안에 따뜻한 맞장구 + (필요하면) 가벼운 후속 질문 하나, 이모지는 한 개 정도. "
             "\"intent\": \"request\"(영상 제작 요청)|\"story\"(펫 일화·설명)|\"chat\"(인사·안부·잡담), "
             "\"subjects\": \"ryani\"|\"leo\"|\"ryani,leo\"|\"\", "
             "\"concept\": 대화에서 건질 만한 펫 영상 컨셉이 있으면 한 줄로(없으면 \"\"), "
@@ -1579,9 +1578,7 @@ def handle_file_share_message(event, client):
                 # Don't ask them to reply-in-thread either; just warmly acknowledge in-channel.
                 try:
                     client.chat_postMessage(
-                        channel=channel,
-                        text=(f"💛 할머니·할아버지, 감사합니다! {n_ok}개 잘 받았어요 🐾\n"
-                              "어떤 모습인지 한 줄만 적어주시면 영상에 꼭 담을게요 😊"))
+                        channel=channel, text="💛 잘 받았어요! 무슨 영상이에요? 🐾")
                 except Exception:
                     pass
 

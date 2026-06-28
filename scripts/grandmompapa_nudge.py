@@ -17,9 +17,14 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import os
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+# launchd runs this as `scripts/grandmompapa_nudge.py` with no PYTHONPATH, so
+# `from agents...` raised ModuleNotFoundError → morning/evening both crashed.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 def _kst_now() -> dt.datetime:
@@ -66,13 +71,14 @@ def _recent_bot_nudges(client, channel, limit=4) -> list[str]:
     return out
 
 
-def _family_posted_today(client, channel) -> bool:
+def _media_posted_today(client, channel) -> bool:
+    """Did the family upload any video/photo today? (PD 2026-06-28: the 7pm nudge fires
+    when no FOOTAGE came in — text-only chatter doesn't count, since the point is to get
+    a video for the channel.)"""
     for m in _today_messages(client, channel):
         if m.get("bot_id"):
             continue
-        if m.get("subtype") in ("channel_join", "channel_leave"):
-            continue
-        if (m.get("text") or "").strip() or m.get("files"):
+        if m.get("files"):
             return True
     return False
 
@@ -84,12 +90,13 @@ def _gen(kind: str, recent: list[str]) -> str:
     weekday = "월화수목금토일"[now.weekday()] + "요일"
     when = f"{now.strftime('%Y년 %m월 %d일')} {weekday} {now.hour}시"
     if kind == "morning":
-        goal = ("아침 인사를 건네며, 오늘 랴니(강아지)와 레오(고양이), 그리고 가족의 재밌고 귀여운 "
-                "순간을 '영상이나 사진으로 찍어서 이 채널에 올려달라'고 다정하게 부탁하는 메시지.")
+        goal = ("따뜻한 아침 인사를 건네며, 오늘 랴니(강아지)와 레오(고양이)의 귀여운 순간을 "
+                "'영상으로 찍어서 이 채널에 올려달라'고 다정하게 부탁하는 메시지.")
     else:
-        goal = ("저녁 안부 인사. 오늘 이 채널에 아무 소식이 없어서 가볍게 안부를 묻는 메시지 — "
-                "'오늘은 별일 없으셨어요? 랴니랑 레오는 잘 지냈나요? 재밌는 순간 있으면 들려주세요' "
-                "정도로 따뜻하게. 절대 다그치거나 부담 주지 말 것.")
+        goal = ("저녁 인사. 오늘 이 채널에 영상이 하나도 안 올라왔다. 자기 전에 랴니·레오 짧은 영상 "
+                "하나라도 꼭 올려달라고 **약간의 가벼운 압박**을 담아 다정하게 재촉하는 메시지 "
+                "('오늘 랴니·레오 영상 아직 못 봤어요~ 자기 전에 하나만 꼭 보여주세요!' 정도로 살짝 "
+                "보채듯). 다그치거나 혼내진 말되, 그냥 안부만 묻고 끝내지 말고 영상 올려달라고 분명히 청할 것.")
     avoid = ("\n최근에 이미 이렇게 보냈으니 표현·문장을 확실히 다르게 써라(반복 금지):\n- "
              + "\n- ".join(recent)) if recent else ""
     sys_p = (
@@ -105,8 +112,8 @@ def run(kind: str, dry_run: bool = False) -> str | None:
     from dotenv import load_dotenv
     load_dotenv(str(ROOT / ".env"))
     client, channel = _client(), _channel()
-    if kind == "evening" and _family_posted_today(client, channel):
-        return None  # something was posted today → no check-in needed
+    if kind == "evening" and _media_posted_today(client, channel):
+        return None  # a video/photo already came in today → no nudge needed
     msg = _gen(kind, _recent_bot_nudges(client, channel))
     if not dry_run:
         client.chat_postMessage(channel=channel, text=msg)
