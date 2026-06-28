@@ -1098,10 +1098,15 @@ def _ingest_file(file_info: dict, client) -> dict | None:
     # Check if already ingested
     with db() as con:
         existing = con.execute(
-            "SELECT asset_id FROM assets WHERE asset_id = ?", (asset_id,)
+            "SELECT asset_id, file_path, kind FROM assets WHERE asset_id = ?", (asset_id,)
         ).fetchone()
         if existing:
-            return None
+            # A re-post of the same file is NOT an error — return the existing asset so
+            # the caller still proceeds. (The grandmompapa bot was going SILENT on
+            # duplicate uploads because this returned None → n_ok=0 → reply gate skipped.)
+            return {"asset_id": existing[0], "kind": existing[2] or kind,
+                    "file_path": existing[1], "width": None, "height": None,
+                    "duration_sec": None, "already_ingested": True}
 
     # Destination path
     year = ts.strftime("%Y")
@@ -1159,19 +1164,27 @@ def _ingest_file(file_info: dict, client) -> dict | None:
     except Exception as e:
         log.warning("Metadata extraction failed for %s: %s", asset_id, e)
 
-    # Insert into DB
+    # Insert into DB. Use INSERT OR IGNORE + tolerate IntegrityError: the slack_sync
+    # cron can ingest the same file in the gap between the existing-check above and
+    # this insert (the "UNIQUE constraint failed: assets.asset_id" seen in logs).
+    # That race must NOT make the caller think ingest failed — the file is on disk and
+    # in the DB either way, so we still return the asset (else grandma goes silent).
     captured_iso = ts.isoformat()
-    with db() as con:
-        con.execute(
-            """
-            INSERT INTO assets
-                (asset_id, source, kind, file_path, captured_iso,
-                 duration_sec, width, height, phash, subjects_csv)
-            VALUES (?, 'slack', ?, ?, ?, ?, ?, ?, ?, NULL)
-            """,
-            (asset_id, kind, str(dest), captured_iso,
-             duration, width, height, phash),
-        )
+    try:
+        with db() as con:
+            con.execute(
+                """
+                INSERT OR IGNORE INTO assets
+                    (asset_id, source, kind, file_path, captured_iso,
+                     duration_sec, width, height, phash, subjects_csv)
+                VALUES (?, 'slack', ?, ?, ?, ?, ?, ?, ?, NULL)
+                """,
+                (asset_id, kind, str(dest), captured_iso,
+                 duration, width, height, phash),
+            )
+    except sqlite3.IntegrityError as e:
+        log.info("asset %s already present (concurrent ingest race) — reusing: %s",
+                 asset_id, e)
 
     return {
         "asset_id": asset_id, "kind": kind, "file_path": str(dest),
@@ -1546,7 +1559,10 @@ def handle_file_share_message(event, client):
                 except Exception as e:
                     log.warning("file_share ingest failed: %s", e)
         # 할머니·할아버지: 함께 적은 설명이 있으면 LLM이 이해+대화(+에셋 연결), 없으면 따뜻한 확인.
-        if channel == GRANDMOMPAPA_CHANNEL and n_ok:
+        # NEVER stay silent: respond whenever they posted a file OR a comment. (Going
+        # silent on a duplicate/already-ingested upload is exactly the "답이 없는데?"
+        # complaint — duplicates now return an asset so n_ok>0, but keep the OR as a belt.)
+        if channel == GRANDMOMPAPA_CHANNEL and (n_ok or (event.get("text") or "").strip()):
             ts = event.get("ts") or event.get("event_ts", "")
             comment = (event.get("text") or "").strip()
             try:
@@ -1557,7 +1573,7 @@ def handle_file_share_message(event, client):
             if comment:
                 _grandma_converse(client, channel, event.get("user", ""), comment,
                                   ts, asset_id=last_asset_id)
-            else:
+            elif n_ok:
                 try:
                     client.chat_postMessage(
                         channel=channel, thread_ts=ts,
