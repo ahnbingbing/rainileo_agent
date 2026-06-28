@@ -1574,12 +1574,14 @@ def handle_file_share_message(event, client):
                 _grandma_converse(client, channel, event.get("user", ""), comment,
                                   ts, asset_id=last_asset_id)
             elif n_ok:
+                # Reply in the MAIN channel, NEVER in a thread (PD 2026-06-28: 어르신들이
+                # 쓰레드를 헷갈려 함 — grandmompapa 대화는 전부 채널 top-level이어야 한다).
+                # Don't ask them to reply-in-thread either; just warmly acknowledge in-channel.
                 try:
                     client.chat_postMessage(
-                        channel=channel, thread_ts=ts,
+                        channel=channel,
                         text=(f"💛 할머니·할아버지, 감사합니다! {n_ok}개 잘 받았어요 🐾\n"
-                              "랴니예요, 레오예요, 둘 다예요? 답글로 "
-                              "`랴니` / `레오` / `랴니레오` 만 적어주시면 돼요 😊"))
+                              "어떤 모습인지 한 줄만 적어주시면 영상에 꼭 담을게요 😊"))
                 except Exception:
                     pass
 
