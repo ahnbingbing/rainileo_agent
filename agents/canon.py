@@ -64,6 +64,37 @@ def pet_exists_on(pet: str, captured_iso: "str | None") -> bool:
     ef = {"ryani": RYANI, "leo": LEO}.get((pet or "").strip().lower(), {}).get("exists_from")
     return True if not ef else str(captured_iso)[:10] >= ef
 
+
+def age_era_at(pet: str, captured_iso: str) -> str:
+    """The pet's life-era when `captured_iso` was filmed, as an ENDEARING caption hook —
+    "아기" (baby) / "어린" (young) / "" (adult, no special label). Derived from the canon
+    birth date (exists_from). PD 2026-06-30: a memory-lane opener must lead with the pet's
+    young era ("반년 전, 아기 레오!") — the youth is the hook — not generic season/weather.
+    Thresholds differ by species (a cat matures faster): cat 아기<6mo·어린<12mo;
+    dog 아기<8mo·어린<18mo. Returns "" on missing data (never invent a baby label)."""
+    if not pet or not captured_iso:
+        return ""
+    key = pet.strip().lower()
+    rec = {"ryani": RYANI, "leo": LEO}.get(key)
+    if not rec or not rec.get("exists_from"):
+        return ""
+    try:
+        import datetime as _dt
+        born = _dt.date.fromisoformat(rec["exists_from"][:10])
+        shot = _dt.date.fromisoformat(str(captured_iso)[:10])
+        months = (shot - born).days / 30.44
+    except Exception:
+        return ""
+    if months < 0:
+        return ""
+    is_cat = key == "leo"
+    baby_max, young_max = (6, 12) if is_cat else (8, 18)
+    if months < baby_max:
+        return "아기"
+    if months < young_max:
+        return "어린"
+    return ""
+
 # ──────────────────────────────────────────────────────────────────────
 # Rendered blocks — authoritative text. Edit HERE; consumers import these.
 # ──────────────────────────────────────────────────────────────────────
@@ -230,7 +261,7 @@ CHARACTER_FACTS = (
 # Universal pet-rendering guardrails (injected into image/video prompts).
 GUARD_NO_CLOTHING = (
     "Pets are bare-furred — NO clothing/hanbok/costumes (unless the scene "
-    "explicitly says a harness).")
+    "explicitly specifies a harness or a sanctioned episode costume).")
 GUARD_NO_TEXT = (
     "Do NOT add any text, captions, watermarks, or logos to the image.")
 GUARD_BG_STILLNESS = (

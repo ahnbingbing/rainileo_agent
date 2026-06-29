@@ -942,6 +942,20 @@ def _stamp_years_ago(concepts: list[dict]) -> None:
                     _days = (tgt - d0).days
                     cut["years_ago"] = round(_days / 365.25, 1)
                     cut["time_ago_phrase"] = _years_ago_phrase(_days)
+                    # PD 2026-06-30: stamp the subject's life-era at capture so a
+                    # memory-lane opener leads with the endearing young era ("아기 레오")
+                    # instead of generic season/weather. Deterministic from canon birth.
+                    try:
+                        from agents import canon as _canon
+                        who = (cut.get("who") or "").lower()
+                        pet = "leo" if "leo" in who and "ryani" not in who else (
+                            "ryani" if "ryani" in who and "leo" not in who else "")
+                        era = _canon.age_era_at(pet, str(row[0])) if pet else ""
+                        if era:
+                            cut["subject_era"] = era
+                            cut["subject_era_label"] = f"{era} {'레오' if pet=='leo' else '랴니'}"
+                    except Exception:
+                        pass
                 except Exception:
                     continue
     finally:
@@ -1188,10 +1202,11 @@ def _validate_korean_characters(c: dict) -> None:
 
 
 def _enforce_min_caption_display(c: dict) -> None:
-    """Every body caption scene must display for ≥ 2.5 seconds. PD
-    2026-06-02: shorter than that = viewer can't read KO+EN. If a scene is
-    too short, extend its end (clamp to next scene's start or cut duration)."""
-    MIN_DISPLAY = 2.5
+    """Every body caption scene must display for ≥ 2.7 seconds. PD
+    2026-06-02: shorter than that = viewer can't read KO+EN. PD 2026-06-30:
+    bumped 2.5→2.7 (captions still flashing past before readable). If a scene
+    is too short, extend its end (clamp to next scene's start or cut duration)."""
+    MIN_DISPLAY = 2.7
     for cut in c.get("cuts") or []:
         if cut.get("function") == "wink_ending":
             continue  # wink has its own 1.5s rule

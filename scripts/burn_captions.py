@@ -131,6 +131,76 @@ def _font_paths_for_tag_and_text(tag: str, text: str) -> tuple[Path, Path]:
         return MODERN_FONT_KO, MODERN_FONT_EN
     return KO_FONT_PATH, EN_FONT_PATH
 
+
+# PD 2026-06-30: drawtext fonts (Pretendard / NanumPenScript) carry NO emoji or
+# pictograph glyphs, so a stray 🐾 / ☕ / 😹 / ♪ renders as a □ tofu box. Captions
+# are LLM-generated and a late recaption/salvage pass can reintroduce one even
+# though every caption prompt says "no emoji" — so the only reliable fix is a
+# deterministic strip HERE, the last point before ffmpeg reads the textfile,
+# downstream of every caption source (writer, director, VLM-rewrite, salvage).
+# The heart ♥/♡ is the channel's single sanctioned pictograph (the AV wink
+# closer); Pretendard has its glyph and the font auto-switches for it, so it is
+# the one thing preserved.
+_CAPTION_KEEP_PICTO = set("♥♡❤❥")  # sanctioned wink hearts (font-switched to Pretendard)
+
+
+def _strip_unrenderable(text: str) -> str:
+    """Drop emoji / pictographs / symbols the caption fonts can't render (→ □),
+    keeping the sanctioned wink hearts. Idempotent; safe on already-clean text."""
+    if not text:
+        return text
+    out = []
+    for ch in text:
+        if ch in _CAPTION_KEEP_PICTO:
+            out.append(ch)
+            continue
+        o = ord(ch)
+        if (
+            0x1F000 <= o <= 0x1FAFF        # emoji: emoticons, pictographs, symbols & more
+            or 0x2600 <= o <= 0x27BF       # misc symbols + dingbats (☕ ♪ ♫ ✂ ★ …)
+            or 0x2B00 <= o <= 0x2BFF       # misc symbols & arrows
+            or 0x1F1E6 <= o <= 0x1F1FF     # regional-indicator flag letters
+            or o in (0x200D, 0xFE0E, 0xFE0F)  # ZWJ + emoji/text variation selectors
+        ):
+            continue
+        out.append(ch)
+    # collapse any double space a removal left behind
+    return " ".join("".join(out).split())
+
+
+# PD 2026-06-30: memory-lane captions must phrase elapsed time in NATURAL Korean
+# ("반년 전", "8개월 전", "8년 전") — never a decimal year. A real bug shipped:
+# "0.5년 전, 겨울의 어느 날" / "Half a year ago". The deterministic formatters
+# (_years_ago_phrase) already produce decimal-free phrases, but the raw `years_ago`
+# float still leaks to the caption LLM, which occasionally writes "0.5년 전" verbatim
+# despite the prompt forbidding it. This is the deterministic last-line guard: rewrite
+# any decimal-year token that reaches the burn stage, in BOTH KO and EN, every lane.
+import re as _re_caps
+_DECIMAL_YEAR_KO = _re_caps.compile(r"(\d+)\.(\d+)\s*년")
+_DECIMAL_YEAR_EN = _re_caps.compile(r"(\d+)\.(\d+)\s*years?")
+
+
+def _naturalize_decimal_year(text: str) -> str:
+    if not text or ("." not in text):
+        return text
+
+    def _ko(m):
+        v = float(f"{m.group(1)}.{m.group(2)}")
+        if v < 1.0:
+            months = max(1, round(v * 12))
+            return "반년" if months == 6 else f"{months}개월"
+        return f"{round(v)}년"
+
+    def _en(m):
+        v = float(f"{m.group(1)}.{m.group(2)}")
+        if v < 1.0:
+            months = max(1, round(v * 12))
+            return "half a year" if months == 6 else f"{months} months"
+        y = round(v)
+        return f"{y} year" if y == 1 else f"{y} years"
+
+    return _DECIMAL_YEAR_EN.sub(_en, _DECIMAL_YEAR_KO.sub(_ko, text))
+
 KO_SIZE_DEFAULT = 72  # px — Pretendard default (PD 2026-06-02: shrunk from 84 when switching to sans-serif which reads tighter)
 EN_SIZE_DEFAULT = 48  # px — EN sub line (shrunk from 56)
 PADDING_X = 60        # px left/right padding from screen edge
@@ -358,8 +428,8 @@ def build_vf_multi(scenes: list[dict], tag: str, duration: float,
 
     filters = []
     for i, sc in enumerate(scenes):
-        ko = sc.get("ko", "").strip()
-        en = sc.get("en", "").strip()
+        ko = _naturalize_decimal_year(_strip_unrenderable(sc.get("ko", "").strip()))
+        en = _naturalize_decimal_year(_strip_unrenderable(sc.get("en", "").strip()))
         if not ko and not en:
             continue
         start = float(sc.get("start", 0.2))
@@ -596,11 +666,11 @@ def main() -> int:
             # Single caption (legacy or scenes[0] only)
             if scenes:
                 first = scenes[0]
-                ko = first.get("ko", "").strip()
-                en = first.get("en", "").strip()
+                ko = _naturalize_decimal_year(_strip_unrenderable(first.get("ko", "").strip()))
+                en = _naturalize_decimal_year(_strip_unrenderable(first.get("en", "").strip()))
             else:
-                ko = entry.get("ko", "").strip()
-                en = entry.get("en", "").strip()
+                ko = _naturalize_decimal_year(_strip_unrenderable(entry.get("ko", "").strip()))
+                en = _naturalize_decimal_year(_strip_unrenderable(entry.get("en", "").strip()))
             if not ko and not en:
                 print(f"  ! {tag} has empty ko/en; skipping", file=sys.stderr)
                 skipped += 1

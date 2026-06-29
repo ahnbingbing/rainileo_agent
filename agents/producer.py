@@ -201,6 +201,14 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
             v = n.get(k)
             if v:
                 out[k] = v
+        # PD 2026-06-30: the grandmompapa-channel content description (what the owner
+        # actually narrated about the clip — WHO does WHAT) is the most accurate ground
+        # truth for pet identity + action. It caught a Ryani/Leo mix-up the frame-guess
+        # missed (RF18: '랴니가 손가락 핥고 레오는 옆에서 본다'). Surface it authoritatively.
+        if n.get("suggested_caption_ko"):
+            out["content_desc"] = n["suggested_caption_ko"]
+        if n.get("suggested_motion_prompt"):
+            out["observed_motion"] = n["suggested_motion_prompt"]
         return out
 
     # PD 2026-06-13: diversity-sample photos too (was recent/quality LIMIT 70, so the

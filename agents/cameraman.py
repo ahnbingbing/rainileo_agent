@@ -271,6 +271,53 @@ def _cut_is_fantasy(cc: dict | None) -> bool:
     return any(h.lower() in blob for h in _AV_FANTASY_HINTS)
 
 
+def _resolve_costume_for_cut(cc: dict | None, manifests: dict | None) -> dict | None:
+    """PD 2026-06-30 — sanctioned costume whitelist. When an episode's whole premise
+    IS an outfit (우비 패션쇼 등), the Director sets a concept-level `costume_prop`
+    {"wearer": ryani|leo|both, "item": "..."} (a bare string is treated as Ryani's).
+    Returns the costume dict ONLY for cuts where the wearer is actually present, so the
+    garment rides setup→climax consistently while other cuts stay bare-furred. This is
+    a per-episode concept field (NOT a per-set flag like requires_harness), and it is
+    NOT suppressed for ai_vtuber — a costume concept is an AV concept by definition."""
+    if not isinstance(cc, dict):
+        return None
+    cp = (cc.get("costume_prop")
+          or ((manifests or {}).get("concept") or {}).get("costume_prop")
+          or (cc.get("background_plan") or {}).get("costume_prop"))
+    if isinstance(cp, str) and cp.strip():
+        cp = {"wearer": "ryani", "item": cp.strip()}
+    if not (isinstance(cp, dict) and (cp.get("item") or "").strip()):
+        return None
+    wearer = (cp.get("wearer") or "ryani").lower()
+    who = (cc.get("who") or "").lower()
+    if wearer == "both" or wearer in who or (not who and wearer in ("ryani", "leo")):
+        return {"wearer": wearer, "item": cp["item"].strip()}
+    return None
+
+
+def _costume_inject_text(costume: dict) -> str:
+    """The prompt fragment that puts (and keeps) the sanctioned garment on the wearer
+    while keeping everything else bare-furred. Shared by the still and motion paths so
+    setup and climax describe the costume identically."""
+    w, item = costume["wearer"], costume["item"]
+    if w == "both":
+        worn = f"Both Ryani and Leo wear {item}"
+    elif w == "leo":
+        worn = (f"Leo (the orange tabby cat) wears {item}; "
+                "Ryani stays completely bare-furred")
+    else:
+        worn = (f"Ryani (the tailless black French bulldog) wears {item}; "
+                "Leo stays completely bare-furred")
+    return (
+        worn + ". This one garment is intentional to the episode concept and MUST "
+        "appear consistently — same color, shape and fit — in every cut where the "
+        "wearer is shown, including the climax. It is worn over the natural pet body "
+        "(four-legged, not a human pose). Aside from this one sanctioned garment the "
+        "pets wear NO other clothing, NO hanbok, NO collars, NO bandanas, NO additional "
+        "costumes."
+    )
+
+
 _SCENE_CLEAN_CACHE = ROOT / "data" / "scene_ref_clean_cache.json"
 
 
@@ -1704,6 +1751,11 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
                 full_prompt = f"{overall_style}. {_scene_lock_prefix}{per_cut_prompt}. " \
                               f"Featuring {subjects}. {preserve}"
             full_prompt = _ensure_sink_height_lock(full_prompt)  # floor-sink guard
+            # Sanctioned costume (PD 2026-06-30): keep the episode's premise garment on
+            # the wearer in the still too, so an i2v cut's first frame matches the motion.
+            _costume = _resolve_costume_for_cut(cc, {"concept": concept})
+            if _costume:
+                full_prompt = full_prompt + " " + _costume_inject_text(_costume)
             regen[tag] = full_prompt
 
         regen_path = work_dir / "regen_prompts.json"
@@ -2456,7 +2508,7 @@ def _caption_read_time(text: str) -> float:
     t = (text or "").replace("\n", " ").strip()
     base = float(os.getenv("CAPTION_READ_BASE_SEC", "0.9"))
     per = float(os.getenv("CAPTION_READ_PER_CHAR", "0.13"))
-    floor = float(os.getenv("CAPTION_MIN_SEC", "2.5"))
+    floor = float(os.getenv("CAPTION_MIN_SEC", "2.7"))  # PD 2026-06-30: 2.5→2.7, captions flashing too fast to read
     cap = float(os.getenv("CAPTION_READ_MAX_SEC", "7.0"))
     return max(floor, min(cap, base + per * len(t)))
 
@@ -6310,6 +6362,16 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         except Exception:
             pass
 
+        # Sanctioned costume (PD 2026-06-30): when an episode's whole premise IS an
+        # outfit (e.g. 우비 패션쇼 = raincoat fashion show), the garment is the payoff,
+        # not anthropomorphization — so the bare-furred default must NOT strip it.
+        # The Director sets a concept-level `costume_prop` {"wearer","item"}; we inject
+        # that item on every cut where the wearer appears and keep the OTHER pet (and
+        # the rest of the wearer's coverage) bare-furred. Sourced from the concept/cut
+        # manifest like set_anchor (it is per-episode, not per-set), and — unlike
+        # requires_harness — it is NOT killed for ai_vtuber (a costume concept IS AV).
+        costume = _resolve_costume_for_cut(cc, manifests)
+
         # Conditional clothing rule (PD 2026-06-01 PM): default bare-furred,
         # EXCEPT for set_anchors with `requires_harness: true` (cafe, outdoor,
         # vet, etc.) — there pets MUST wear harnesses for realism.
@@ -6331,7 +6393,11 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         if requires_harness and _rstyle == "ai_vtuber" \
                 and os.getenv("AV_FORCE_HARNESS", "0") != "1":
             requires_harness = False
-        if requires_harness:
+        if costume:
+            costume_inject = _costume_inject_text(costume)
+            if costume_inject not in prompt:
+                prompt = prompt + " " + costume_inject
+        elif requires_harness:
             harness = (
                 "Ryani wears a soft dark-grey nylon chest harness (no straps "
                 "around the neck — chest-style, no buckles visible from this "

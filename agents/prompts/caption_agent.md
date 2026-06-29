@@ -69,7 +69,7 @@ A JSON array, one object per cut, in the same cut order:
 
 ### Timing (UPDATED PD 2026-06-02)
 1. **Body cuts: first caption `start ≥ 2.0s`** (was 1.5s — PD: "캡션이 액션보다 먼저 나옴, 다시 밀어"). Seedance needs ~2s to ESTABLISH the visual action before narrator speaks. Action first, narrator after.
-2. **Scene-setter (when `episode_time` present)**: cut 1 gets a context caption at `start=0.0, end=2.0` like `"지금은 새벽 5시"`. Then body captions on cut 1 shift to `start ≥ 3.0`.
+2. **Scene-setter — NOT a default opener (PD 2026-06-30).** A time-of-day caption ("지금은 새벽 5시", "비 오는 아침 8시 반", "오후 ○시") is a CRUTCH if it opens every episode — PD: "이게 매번 시작일 필요는 없잖아." Use a "지금은 ○시" opener ONLY when the clock is itself the hook (새벽/심야 등 비일상적 시각이 갈고리이거나, 여러 시각을 cross-cut으로 압축할 때 — 아래 시간 캡션 룰 참고). Otherwise the FIRST caption leads with the real hook (컨셉/주체/어린 시절/사건의 반전), and time-of-day is dropped or folded into a later body caption only if it matters. When you DO use a scene-setter, place it at `start=0.0, end=2.0` and shift cut-1 body captions to `start ≥ 3.0`; when you don't, cut-1's first caption follows the normal `start ≥ 2.0` rule.
 3. **Wink cut (function="wink_ending")**: handling depends on position.
    - **The LAST wink cut of the episode** (the final cut of the cuts array) gets the channel sign-off, occupying the LAST 0.5 SECONDS of the body before the outro bumper. For a 5s wink cut: `start=4.5, end=5.0` (PD 2026-06-02 rule).
      ```json
@@ -88,6 +88,12 @@ A JSON array, one object per cut, in the same cut order:
 - Caption must describe **specifically what THIS cut's action_beats / motion_prompt depicts**. Not the next beat, not the previous beat, not the overall arc.
 - If motion_prompt says "Leo enters from right and sniffs the bowl", the caption shouldn't say "레오가 사료를 먹어요" (he isn't eating yet — he's sniffing).
 - Pull a key verb from action_beats[i] to anchor the caption literal-truth. If action says "approaches", caption uses "다가가요" / "가까이 가네요" — not "먹어요".
+- **일반 채움말(filler) 금지 — 화면의 구체 행동을 적어라 (PD 2026-06-30).** 컷이 무엇을 보여주는지
+  애매하면 "세상 구경/세상 관찰", "낮잠 타임", "멍때리는 중", "여유 만끽" 같은 **두루뭉술한 디폴트
+  활동**으로 때우지 마라 — 십중팔구 화면과 안 맞는다. PD case(아기 레오 겨울방): 고양이가 구석에서
+  **사람(랴니 엄마)을 빼꼼 쳐다보는** 컷에 "세상 관찰 중"(엉뚱)을, **간식 먹는** 컷 끝에 "낮잠
+  타임"(엉뚱)을 깔았다. 무엇을 쳐다보는지(랴니 엄마/그릇), 무엇을 하는지(빼꼼/냠냠/핥기)를 그대로
+  적어라. 'looking'이면 **무엇을** 보는지, 'resting'으로 보이면 진짜 그 컷이 쉬는 footage일 때만.
 
 ### ★ 등장/나타남 거짓 금지 (PD 2026-06-08 — 욕실편 "레오 등장" 오류)
 A character who is **present/visible the whole time** must NOT be narrated as newly appearing. PD case: Leo was sitting in the background through the entire one-take, but captions said "그때, 랴니의 시야에 들어온 누군가" / treated Leo as a surprise arrival. That's a lie about the footage.
@@ -95,6 +101,12 @@ A character who is **present/visible the whole time** must NOT be narrated as ne
 - ✅ Only use appearance/entrance language ("등장", "나타나다", "들어오다", "고개를 내밀다") when `vlm_actual_action` / action_beats explicitly say the character ENTERS frame in that cut (was off-screen before).
 - If a character is continuously present, narrate what they DO or THINK ("뒤에서 지켜보던 레오", "레오는 아까부터 노리고 있었죠"), not that they appear.
 - Check the prior cut's subjects: if the character was already in frame, an "appears" caption is a CONTINUITY LIE — rewrite it.
+
+### ★ 촬영 상황과 모순되는 행위 서술 금지 (PD 2026-06-30 — 카시트편 "운전 중" 오류)
+캡션은 footage가 보여주는 상황을 넘어선 행위를, **특히 보호자(촬영자)가 동시에 할 수 없는 행위**를 사실로 깔면 안 된다. PD case: 보호자가 직접 든 폰으로 찍은 **정지 차량 안 카시트에 앉은 아기 랴니** 클립인데 캡션이 "첫 장거리 드라이브 시작!·드라이브 달인·목적지는 멀어도·다음 풍경은 어디" 식으로 **운전 진행 중**처럼 서술했다 — 촬영자가 운전 중이면 폰 촬영이 불가능/위험하므로 모순이자 부적절하다.
+- ❌ 차 안 클립에 "운전 중", "드라이브 시작/진행", "달리는 중", "목적지까지", "지나가는 풍경/창밖이 휙휙" 등 **이동(motion) 진행**을 단정 — 영상이 정지 상태(보호자가 핸드폰으로 촬영)면 거짓.
+- ✅ 차 안 클립은 펫의 **정지 상태**를 프레이밍하라: 카시트에 앉아·기다리는·궁금해하는·외출 채비·의젓한 모범생. 이동 자체가 화면에 명백히 보일 때(밖이 빠르게 흐르고 동승자 시점이 분명)만 여행/이동 톤 허용.
+- 일반 원칙: 캡션이 단정하는 상황은 **촬영 가능한 현실**이어야 한다 — 촬영자가 그 순간 물리적으로 할 수 없는 일(운전·수영 중 셀카 등)을 배경으로 깔지 마라.
 
 ### Tone diversity — vary the register across cuts (six to draw from)
 One register per cut, different cut to cut. If every caption is the same tone the viewer
@@ -209,6 +221,12 @@ cut에 `years_ago` 필드가 있고 값이 ≥ 1이면 그 클립은 **과거 fo
   말고 현재형으로 써라.
 - 시점 명시 없이 과거·현재를 섞으면 시청자가 혼란(갑툭튀) → 위 시간 캡션 출력 금지 룰의 예외다:
   과거 클립이 섞이면 시점 캡션은 **의무**.
+- **★ 메모리레인 오프닝은 '어린 시절'을 후크로 박아라 (PD 2026-06-30 — 겨울방편 오류).** 그
+  클립이 펫의 어린 시절이면 첫 캡션은 **누구의 어느 시절**을 못박아 애틋함을 살려라 — "반년 전,
+  아기 레오!" / "10년 전, 아기 랴니". cut의 `subject_era` 값('아기'/'어린')이 있으면 그걸 그대로
+  쓰고, 없으면 성견/성묘니 나이 라벨을 붙이지 마라(랴니가 2025 클립이면 성견 — '아기 랴니' 금지).
+  ❌ 첫 캡션을 **날씨·계절 분위기**로 낭비("반년 전, 겨울 느낌 한가득!") — viewer가 끌리는 건 어린
+  레오지 겨울이 아니다. 계절은 부차 양념이지 후크가 아니다. ✅ "반년 전, 아기 레오!".
 - **앵커는 처음·끝에, 매 컷이 아니다.** 시점 명시가 필요한 건 viewer가 "같은 날인 줄" 헷갈릴
   **점프**를 막기 위함이다. 여러 과거 클립이 하나의 through-line(예: 해마다 이어진 산책) 아래
   흐르는 메모리레인 몽타주라면, 첫 컷에서 출발점("N년 전/아기 땐")·마지막 컷에서 도착점("지금도/

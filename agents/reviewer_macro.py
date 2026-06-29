@@ -79,6 +79,100 @@ def motif_overlap(drafts: list, ctx: dict) -> dict:
             if len(shared) > len(best["shared"]):
                 best = {"shared": shared, "episode": ep_title}
     return best
+
+
+# PD 2026-06-30: freshness vs PUBLISHED-only (above) deliberately ignores unreleased
+# renders so we don't reject a concept no viewer has seen. But a DISTINCTIVE signature
+# gimmick (a specific named prop like 곶감꼭지) shipped twice within two weeks reads as a
+# re-run even before the first is public — PD flagged exactly this (a 4th 곶감꼭지 episode
+# passed because the earlier ones weren't public). This is the narrow refinement: for
+# STRONG distinctive signals only, also dedup against recently RENDERED/SCHEDULED cards.
+# Substring-aware so 곶감 ⊂ 곶감꼭지 matches (plain token sets miss it).
+def _recent_rendered_signatures(con, days: int) -> list[tuple]:
+    try:
+        cutoff = con.execute(
+            "SELECT strftime('%Y-%m-%dT%H:%M:%SZ','now', ?)", (f"-{days} days",)).fetchone()[0]
+        rows = con.execute(
+            "SELECT payload_json, theme FROM cards "
+            "WHERE state IN ('rendered','approved','published') "
+            "AND COALESCE(updated_at, created_at) >= ? "
+            "ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 80", (cutoff,)).fetchall()
+    except Exception:
+        return []
+    out = []
+    for pj, theme in rows:
+        try:
+            pl = json.loads(pj or "{}")
+        except Exception:
+            pl = {}
+        title = pl.get("title") or theme or ""
+        if isinstance(title, dict):
+            title = title.get("ko") or ""
+        # TITLE-only (PD 2026-06-30): the title names the episode's TOPIC, where a
+        # distinctive prop (곶감꼭지/제습기) lives. The action/oneliner fields are full of
+        # generic pet-video vocabulary (엉덩이/카메라/실룩이며) shared by EVERY episode →
+        # they made this a false-positive machine. Title-only keeps the signal clean.
+        toks = _motif_tokens(title)
+        if toks and title:
+            out.append((title, toks))
+    return out
+
+
+_SIG_MIN_LEN = 4         # distinctive compound noun; 3-char tokens (패션쇼/레오가) too generic
+_SIG_NAME_FRAG = ("레오", "랴니", "leo", "ryani")
+
+
+def _sig_eligible(t: str) -> bool:
+    """A signature token must be a distinctive HANGUL compound ≥4 chars with no pet
+    name. Hangul-only deliberately excludes English structural/beat words (develop,
+    intro, hook…) and generic English — distinctive props on this channel are Korean
+    nouns (곶감꼭지, 제습기, 삼계탕). 'develop' (every card's beat) and conjugated verbs from
+    the action field (올라간다·기다린다) were false-positives — so also drop tokens ending in
+    다 (verb/adjective forms). A signature is a PROP NOUN, not a verb or a beat name."""
+    return (len(t) >= _SIG_MIN_LEN
+            and all("가" <= ch <= "힣" for ch in t)
+            and not t.endswith("다")
+            and not any(n in t for n in _SIG_NAME_FRAG))
+
+
+def _signature_overlap(cand: set, hist: set) -> set:
+    """Distinctive tokens shared by candidate & a history entry, counting substring
+    overlap (곶감 ⊂ 곶감꼭지). Only eligible Hangul compounds count (see _sig_eligible)."""
+    hits = set()
+    for c in cand:
+        if not _sig_eligible(c):
+            continue
+        for h in hist:
+            if not _sig_eligible(h):
+                continue
+            if c == h or c in h or h in c:
+                hits.add(c if len(c) <= len(h) else h)
+                break
+    return hits
+
+
+def signature_repeat(drafts: list, days: int) -> dict:
+    """Best distinctive-signature overlap between any candidate and a recently RENDERED
+    card. Opens its own short-lived DB connection (the caller's may be closed by here).
+    Returns {token:str, episode:str} for the strongest match, else empty."""
+    if not drafts:
+        return {"token": "", "episode": ""}
+    con = sqlite3.connect(str(DB_PATH), timeout=30)
+    try:
+        hist = _recent_rendered_signatures(con, days)
+    finally:
+        con.close()
+    if not hist:
+        return {"token": "", "episode": ""}
+    for c in drafts:
+        t = c.get("title")
+        t = t.get("ko") if isinstance(t, dict) else (t or "")
+        cand = _motif_tokens(t)  # title-only, see _recent_rendered_signatures
+        for ep_title, toks in hist:
+            hit = _signature_overlap(cand, toks)
+            if hit:
+                return {"token": sorted(hit, key=len, reverse=True)[0], "episode": ep_title}
+    return {"token": "", "episode": ""}
 DB_PATH = Path(os.getenv("DB_PATH", str(ROOT / "data" / "agent.db"))).resolve()
 
 _CACHE: dict = {}  # keyed by (date, days) so a launch run fetches once
@@ -557,6 +651,27 @@ def run_reviewer(drafts: list, ctx: dict, lane: str, progress_cb=None) -> dict:
                 verdict["macro_notes"] = (verdict.get("macro_notes") or "") + " [motif-override:fail]"
                 log.info("reviewer motif override → fail (shared=%s ep=%s)",
                          shared, mo["episode"])
+        # PD 2026-06-30: signature-prop dedup vs recently RENDERED cards (not just
+        # public). Catches a distinctive gimmick (곶감꼭지 등) re-run that the public-only
+        # motif gate misses because the earlier episode isn't public yet, and that token
+        # sets miss because 곶감 ⊄ 곶감꼭지 as equal tokens. Strong signal → independent fail.
+        if verdict["pass"] and os.getenv("REVIEWER_SIGNATURE_DEDUP", "1") != "0":
+            try:
+                sig = signature_repeat(drafts, int(os.getenv("REVIEWER_SIGNATURE_DAYS", "30")))
+            except Exception as e:
+                sig = {"token": "", "episode": ""}
+                log.info("signature dedup skipped: %s", e)
+            if sig.get("token"):
+                # ADVISORY, not a hard fail (PD 2026-06-30). A title-token signature is a
+                # useful dejavu signal but too fuzzy to AUTO-FAIL a concept in the launch
+                # pipeline — a false positive would silently degrade/empty a slot. So we
+                # surface it (note + log) for PD/visibility and let the LLM verdict +
+                # motif gate decide. Hard blocking needs a real distinctive-token model
+                # (TF-IDF over the corpus / curated prop vocab) — tracked as follow-up.
+                verdict["macro_notes"] = ((verdict.get("macro_notes") or "")
+                                          + f" [signature-dejavu:{sig['token']}~{sig['episode'][:16]}]")
+                log.info("reviewer signature dejavu (advisory, token=%s ep=%s)",
+                         sig["token"], sig["episode"])
         if progress_cb:
             extra = ""
             if vo["comparable"]:
