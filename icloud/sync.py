@@ -297,6 +297,20 @@ def _osxphotos_cli() -> str | None:
     return None
 
 
+def _osxphotos_available() -> bool:
+    """True ONLY where osxphotos can actually run: macOS + the CLI present.
+
+    On the cloud VM (Linux) this is False. The render path (agents/cameraman.py)
+    checks this before any Photos-library pull so that off-Mac it stays GCS-only —
+    the GCS mirror is ~100% complete, and any rare miss is handled by the per-cut
+    swap/drop gate instead of attempting an osxphotos export that can't work there.
+    """
+    import sys as _sys
+    if _sys.platform != "darwin":
+        return False
+    return _osxphotos_cli() is not None
+
+
 def _osxphotos_healthy(probe_timeout: float = 45.0) -> bool:
     """Quick probe: is the Photos library opening at normal speed right now?
 

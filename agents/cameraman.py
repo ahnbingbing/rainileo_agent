@@ -3813,7 +3813,11 @@ def _ensure_local(file_path: str, source_uuid: str | None, *, force: bool = Fals
             return None
         if not source_uuid:
             return file_path  # nothing we can do — let caller handle missing
-        from icloud.sync import download_asset_by_uuid
+        from icloud.sync import _osxphotos_available, download_asset_by_uuid
+        if not _osxphotos_available():
+            # Cloud VM / non-Mac: no Photos library to pull from. GCS was already tried
+            # above; if the asset wasn't there, treat it as missing (caller drops/swaps).
+            return file_path
         import time as _time
         dest = Path(file_path).parent if file_path else (ROOT / "data" / "assets" / "clips")
         # PD 2026-06-10: under the concurrent launch batch (an RF cut and an AV cut
@@ -7239,6 +7243,14 @@ def _prestage_concept_assets(concept: dict | None, card: dict | None,
             return
     except Exception as _e:
         log.warning("gcs bulk prefetch failed, falling back to osxphotos: %s", _e)
+    # Cloud VM / non-Mac: osxphotos can't run here (no Photos library). Whatever GCS
+    # didn't have stays in `need`; the per-cut gate swaps/drops it. The mirror is ~100%
+    # complete, so a miss is rare — this keeps the render path GCS-only off the Mac.
+    from icloud.sync import _osxphotos_available
+    if not _osxphotos_available():
+        if need and progress_cb:
+            progress_cb(f":cloud: GCS-only 모드 — osxphotos 미가용, 미러 누락 {len(need)}개는 컷 게이트가 처리")
+        return
     # PD 2026-06-16: download iCloud-only originals UPFRONT in ONE bulk osxphotos
     # export (a single --uuid-from-file call = one library scan for the whole set),
     # then place each {uuid}.ext at its expected file_path. The old per-photo loop

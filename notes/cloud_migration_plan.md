@@ -1,5 +1,11 @@
 # 봇·배치 잡 클라우드 이전 설계 (PD 2026-06-25: "봇·배치 다 GCP에서. 아니면 깃 액션")
 
+> ⚠️ **SUPERSEDED → [gcp_migration_plan.md](gcp_migration_plan.md) (CANONICAL).**
+> 이 문서(맥미니 단일노드 권장)의 분석은 옳지만, 결론은 PD가 인입 경로를 **Slack-primary**로
+> 재정의(2026-06-28)하면서 바뀌었다 — osxphotos가 새벽 백필로 강등되어 "Mac 24/7 필요"
+> 반론이 무너지고, 클라우드 VM(봇·DB·렌더·cron) + Mac 새벽스윕이 canonical이 됨.
+> 아래는 provenance(이슈 #12 분석 원본)로 보존.
+
 ## 결론 먼저
 이건 plist 한 줄 바꾸는 일이 아니라 **재아키텍처**다. 지금 시스템은 세 가지로
 이 Mac에 물려 있다 — 이 셋을 풀지 않으면 어떤 잡도 안전하게 못 떠난다.

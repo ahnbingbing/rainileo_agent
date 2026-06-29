@@ -1187,6 +1187,18 @@ def _ingest_file(file_info: dict, client) -> dict | None:
         log.info("asset %s already present (concurrent ingest race) — reusing: %s",
                  asset_id, e)
 
+    # Mirror to GCS so the cloud VM (or any other node) can fetch this asset for
+    # render, and as a durable backup of the local-only single point. Slack uploads
+    # are becoming the PRIMARY ingestion path (osxphotos → dawn backfill only), so the
+    # render path must see them in GCS just like osxphotos-ingested originals.
+    # Best-effort + outside the DB lock: gcs.upload self-guards (disabled / not under
+    # data/assets / already-mirrored / any error → returns False, never raises).
+    try:
+        from icloud import gcs
+        gcs.upload(str(dest))
+    except Exception as e:
+        log.debug("GCS mirror skipped for %s: %s", asset_id, e)
+
     return {
         "asset_id": asset_id, "kind": kind, "file_path": str(dest),
         "width": width, "height": height, "duration_sec": duration,
