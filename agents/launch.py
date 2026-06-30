@@ -239,6 +239,30 @@ def launch_pipeline(target: dt.date, *,
                          for ln, hh in assignments)
         progress_cb(f":rocket: 런칭 4슬롯 — {target.isoformat()}\n  {plan}")
 
+    # PD 2026-06-30: drain untagged clips BEFORE building the clip pool. Slack-synced
+    # grandmompapa clips ingest continuously (every 15 min) but only get VLM-tagged by the
+    # 01:30 daily pass — so clips that arrive in the evening are still vlm_analyzed_at IS NULL
+    # when this overnight batch selects, and best_videos (which requires VLM analysis) silently
+    # skips them → the batch reuses OLD footage and ignores fresh grandmompapa content (PD:
+    # "새로운게 많은데 왜 주입이 안된거야"). Tag them now so this batch sees them. Bounded +
+    # best-effort; a tagging failure never blocks the batch.
+    if os.getenv("LAUNCH_PREBATCH_VLM", "1") != "0":
+        try:
+            n_untagged = con.execute(
+                "SELECT COUNT(*) FROM assets WHERE vlm_analyzed_at IS NULL "
+                "AND kind IN ('video','photo')").fetchone()[0]
+            if n_untagged:
+                if progress_cb:
+                    progress_cb(f":mag: 배치 전 VLM 태깅 — 미태깅 {n_untagged}개(신선 클립 확보)…")
+                import subprocess as _sp
+                import sys as _sys
+                _root = str(Path(__file__).resolve().parent.parent)
+                _sp.run([_sys.executable, "-m", "scripts.tag_assets_vlm", "--limit", "80"],
+                        cwd=_root, env={**os.environ, "PYTHONPATH": _root},
+                        timeout=int(os.getenv("LAUNCH_PREBATCH_VLM_TIMEOUT", "1200")))
+        except Exception as e:
+            log.warning("pre-batch VLM drain skipped: %s", e)
+
     context = _gather_context(con, target)
     # WAL so parallel slots (each its own connection) don't lock each other.
     try:

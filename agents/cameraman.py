@@ -220,10 +220,23 @@ def _av_still_compose_prompt(cc: dict) -> str:
         cast = "Each named pet appears EXACTLY ONCE; no duplicate/clone of any animal."
     return (
         "Use the PROVIDED ROOM PHOTO as the EXACT background — keep it pixel-identical, do "
-        "NOT redraw, relocate, or re-light the room. Compose a photoreal iPhone-snapshot "
-        "still placing the pet(s) clearly in the frame exactly as described below. " + cast +
+        "NOT redraw, relocate, or re-light the room. Compose a still placing the pet(s) clearly "
+        "in the frame exactly as described below. " + cast +
         " Place NO other/extra animals anywhere (no stray or cloned cat/dog on any bed, shelf, "
-        "scratcher, sofa, or in the background). 9:16 vertical, eye-level, natural room light."
+        "scratcher, sofa, or in the background)."
+        # PD 2026-06-30: the composite was rendering pets ANIMATED/illustrated and at broken
+        # scale (oversized, pasted flat in the foreground, ignoring the room's perspective).
+        # Enforce photographic realism + correct depth/scale explicitly.
+        " PHOTOREALISM: output a REAL PHOTOGRAPH (a candid iPhone snapshot) — absolutely NOT an "
+        "illustration, cartoon, anime, painting, 3D-render or CGI. The pet(s) must match the "
+        "photographic realism, fur texture, grain and lighting of the provided room photo and "
+        "the pet reference photos — same camera, same real-world look."
+        " PERSPECTIVE & SCALE: place each pet at REALISTIC SCALE for where it stands in the room "
+        "— sized correctly for its distance from the camera, paws/body planted firmly on the "
+        "floor plane with correct ground contact and a soft contact shadow, aligned to the room's "
+        "perspective and floor lines. Do NOT oversize the pet, do NOT paste it flat in the "
+        "foreground, do NOT let it float; a real animal photographed standing in this room."
+        " 9:16 vertical, pet eye-level, natural room light."
         "\n\n" + base + ("\n" + emph if emph else ""))
 
 
