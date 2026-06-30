@@ -1,0 +1,14 @@
+# Fire the deployer every 2 minutes (and 1 min after boot). "git push = deploy"
+# lands within ~2 min. Install: /etc/systemd/system/rianileo-deploy.timer
+# Enable: systemctl enable --now rianileo-deploy.timer
+[Unit]
+Description=Poll main and deploy every 2 minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+AccuracySec=15s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

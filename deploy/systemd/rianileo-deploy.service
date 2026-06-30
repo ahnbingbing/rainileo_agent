@@ -1,0 +1,16 @@
+# One-shot: poll origin/main and deploy if it moved (smoke-gated). Triggered by
+# rianileo-deploy.timer. Install: /etc/systemd/system/rianileo-deploy.service
+[Unit]
+Description=Rianileo git-push deployer (poll main, smoke, restart bot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=rianileo
+WorkingDirectory=/home/rianileo/rianileo-agent
+Environment=TZ=Asia/Seoul
+ExecStart=/usr/bin/env bash /home/rianileo/rianileo-agent/deploy/pull_deploy.sh /etc/rianileo/deploy.env
+# pull_deploy restarts rianileo-bot via systemctl — allow it.
+# (Runs as the rianileo user; grant the restart with a polkit rule or run the timer
+#  as root. See deploy/README.md "deployer permissions".)

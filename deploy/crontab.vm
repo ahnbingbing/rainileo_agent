@@ -1,0 +1,36 @@
+# deploy/crontab.vm — periodic jobs ported 1:1 from launchd (KST; VM tz=Asia/Seoul).
+# Install:  crontab -u rianileo deploy/crontab.vm
+#
+# NOT here (by design):
+#   slack        → always-on daemon → rianileo-bot.service (systemd)
+#   deploy poll  → rianileo-deploy.timer (systemd)
+#   icloud-sync  → STAYS ON THE MAC (dawn osxphotos delta; see gcp_migration_plan.md)
+#   writer       → daemon? ambiguous in launchd — VERIFY before enabling (see README)
+SHELL=/bin/bash
+TZ=Asia/Seoul
+J=/home/rianileo/rianileo-agent/deploy/run_job.sh
+LOG=/home/rianileo/rianileo-agent/data/logs
+
+# ── short-interval ───────────────────────────────────────────────
+*/5  * * * *  $J -m scripts.process_board_escalations            >> $LOG/cron.board_esc.log 2>&1
+*/15 * * * *  $J scripts/slack_sync.py                           >> $LOG/cron.slack_sync.log 2>&1
+*/30 * * * *  $J -m agents.reviewer_macro --sync-cache           >> $LOG/cron.ytcache.log 2>&1
+
+# ── daily (KST) ──────────────────────────────────────────────────
+0   3 * * *   $J -m agents.launch_selfheal                       >> $LOG/cron.launch.log 2>&1
+30  6 * * *   $J -m agents.bandit --collect                      >> $LOG/cron.bandit.log 2>&1
+0   7 * * *   $J -m scripts.sync_bgm_claims --auto -v            >> $LOG/cron.bgm.log 2>&1
+0   7 * * *   $J scripts/petlabels_chunked.sh                    >> $LOG/cron.petlabel.log 2>&1
+0   9 * * *   $J -m agents.bandit --collect --daily --slack      >> $LOG/cron.daily_metrics.log 2>&1
+9   9 * * *   $J scripts/grandmompapa_nudge.py morning           >> $LOG/cron.gmp_morning.log 2>&1
+10  8 * * *   $J -m scripts.api_cost_report --post               >> $LOG/cron.api_cost.log 2>&1
+0  18 * * *   $J -m agents.producer                              >> $LOG/cron.producer.log 2>&1
+0  19 * * *   $J scripts/grandmompapa_nudge.py evening           >> $LOG/cron.gmp_evening.log 2>&1
+0   6,12,18 * * *  $J -m agents.producer --remind                >> $LOG/cron.remind.log 2>&1
+
+# ── weekly / multi-day ───────────────────────────────────────────
+0  10 * * 1   $J -m agents.bandit --collect --slack              >> $LOG/cron.bandit_report.log 2>&1   # Mon
+0   3 */3 * * $J scripts/giri_weekly_update.sh                   >> $LOG/cron.giri.log 2>&1            # ~every 3 days (launchd was 259200s)
+
+# ── one-shot historical backfills (likely DONE — leave commented unless re-needed) ──
+# 10 7 * * *  $J scripts/revlm_pre2025_oneshot.sh                >> $LOG/cron.revlm.log 2>&1

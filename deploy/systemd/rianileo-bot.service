@@ -1,0 +1,29 @@
+# The always-on Slack bot — the BrokenPipe fix. On a datacenter VM (wired, never
+# sleeps, no App Nap, not starved by render batches) the socket-mode wedge that
+# plagues the home Mac largely disappears; systemd Restart= is the safety net for
+# the residual. Install: /etc/systemd/system/rianileo-bot.service
+[Unit]
+Description=Rianileo Slack bot (socket-mode, always-on)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rianileo
+WorkingDirectory=/home/rianileo/rianileo-agent
+EnvironmentFile=/etc/rianileo/env
+Environment=TZ=Asia/Seoul
+ExecStart=/home/rianileo/rianileo-agent/.venv/bin/python -m slack.app
+# Always come back. The in-app BrokenPipe watchdog still exits on a wedge; systemd
+# then restarts a fresh process within seconds.
+Restart=always
+RestartSec=3
+# Don't let a hard crash-loop hammer Slack: cap restarts, then back off.
+StartLimitIntervalSec=120
+StartLimitBurst=10
+# Heavy render batches run as separate units/cron — keep the bot responsive so the
+# websocket heartbeat is never starved (the other BrokenPipe trigger).
+Nice=-5
+
+[Install]
+WantedBy=multi-user.target
