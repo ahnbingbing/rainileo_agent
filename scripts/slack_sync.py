@@ -325,10 +325,16 @@ def ingest_media(con: sqlite3.Connection, client, msg: dict,
             rel = local.relative_to(ROOT)
         except ValueError:
             rel = local
+        # PD 2026-06-30: CAPTURE the message text the owner posted WITH the clip — it's
+        # the grandmompapa human description of WHAT this is ("하비가 터그 놀이 하는 거야").
+        # Dropping it (as before) left only the VLM's guess, which mis-tagged a grandpa-tug
+        # clip as "강아지가 돌아다니는 중" → the caption was wrong. Stored in pd_notes and
+        # treated as the TOP content-grounding authority (producer._extra_vlm), above the VLM.
+        human_desc = (msg.get("text") or "").strip()
         con.execute(
             "INSERT INTO assets (asset_id, source, kind, file_path, captured_iso, "
-            "ingested_iso) VALUES (?, 'slack', ?, ?, ?, datetime('now'))",
-            (asset_id, kind, str(rel), captured.isoformat()),
+            "ingested_iso, pd_notes) VALUES (?, 'slack', ?, ?, ?, datetime('now'), ?)",
+            (asset_id, kind, str(rel), captured.isoformat(), human_desc or None),
         )
         inserted += 1
     if not dry_run:

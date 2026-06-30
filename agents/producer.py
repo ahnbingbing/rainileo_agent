@@ -201,12 +201,19 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
             v = n.get(k)
             if v:
                 out[k] = v
-        # PD 2026-06-30: the grandmompapa-channel content description (what the owner
-        # actually narrated about the clip — WHO does WHAT) is the most accurate ground
-        # truth for pet identity + action. It caught a Ryani/Leo mix-up the frame-guess
-        # missed (RF18: '랴니가 손가락 핥고 레오는 옆에서 본다'). Surface it authoritatively.
-        if n.get("suggested_caption_ko"):
+        # PD 2026-06-30: content_desc = the grandmompapa description of WHAT this clip is
+        # (WHO does WHAT). Two tiers, human first:
+        #   1) pd_notes — the message the OWNER posted WITH the clip ("하비가 터그 놀이").
+        #      This is ground truth; the VLM can't see it's grandpa-tug and mis-guessed
+        #      "강아지가 돌아다니는 중" → wrong caption. The human description WINS.
+        #   2) suggested_caption_ko — the VLM's guess, used only when no human note exists.
+        human = (r["pd_notes"] or "").strip() if "pd_notes" in r.keys() else ""
+        if human:
+            out["content_desc"] = human
+            out["content_desc_source"] = "owner"
+        elif n.get("suggested_caption_ko"):
             out["content_desc"] = n["suggested_caption_ko"]
+            out["content_desc_source"] = "vlm"
         if n.get("suggested_motion_prompt"):
             out["observed_motion"] = n["suggested_motion_prompt"]
         return out
