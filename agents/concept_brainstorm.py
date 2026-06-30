@@ -46,10 +46,35 @@ def _real_material(limit_stories: int = 12, limit_clips: int = 12) -> str:
     bits: list[str] = []
     try:
         con = sqlite3.connect(str(ROOT / "data" / "agent.db"))
+        # PD 2026-06-30: use grandmompapa content MORE BROADLY (RF AND AV). The owner's
+        # EXPLICIT episode ideas/requests and the descriptions they post WITH each clip are
+        # the truest seeds — surface them FIRST, above generic VLM scenes.
+        try:  # 1) owner's explicit [컨셉]/[요청] — highest-priority narrative seeds
+            rows = con.execute(
+                "SELECT text FROM episode_stories WHERE (text LIKE '[컨셉]%' OR text LIKE '[요청]%') "
+                "ORDER BY rowid DESC LIMIT 10").fetchall()
+            want = [r[0].strip().replace("\n", " ")[:140] for r in rows if r[0]]
+            if want:
+                bits.append("★보호자가 직접 원한 컨셉/요청 (최우선 반영 — 후보 중 최소 1개는 "
+                            "이걸로 짜라):\n- " + "\n- ".join(want))
+        except Exception:
+            pass
+        try:  # 2) recent owner clip descriptions (what the NEW grandmompapa footage actually is)
+            rows = con.execute(
+                "SELECT DISTINCT pd_notes FROM assets WHERE pd_notes IS NOT NULL "
+                "AND length(pd_notes) > 12 AND pd_notes NOT LIKE '[BRANDING]%' "
+                "ORDER BY ingested_iso DESC LIMIT 12").fetchall()
+            owner = [r[0].strip().replace("\n", " ")[:140] for r in rows if r[0]]
+            if owner:
+                bits.append("최근 보호자가 직접 설명한 실제 클립(grandmompapa — 이 일들을 컨셉으로):\n- "
+                            + "\n- ".join(owner))
+        except Exception:
+            pass
         try:
             rows = con.execute(
                 "SELECT text FROM episode_stories WHERE author NOT LIKE '%참여%' "
-                "AND length(text) > 25 ORDER BY rowid DESC LIMIT ?", (limit_stories,)).fetchall()
+                "AND text NOT LIKE '[%' AND length(text) > 25 ORDER BY rowid DESC LIMIT ?",
+                (limit_stories,)).fetchall()
             real = [r[0].strip().replace("\n", " ")[:140] for r in rows if r[0]]
             if real:
                 bits.append("실제 있었던 일(보호자 기록):\n- " + "\n- ".join(real))
@@ -214,6 +239,10 @@ def brainstorm(style: str, brief: str, n: int = 5, *, context: dict | None = Non
         f"캐릭터(고정): {facts}\n구조: {structure}\n"
         + (f"\n★실제 재료(이걸 창의적으로 '조합·변주'해서 컨셉을 짜라 — 실제 있었던 일/실제 영상이 "
            f"가장 진짜 같고 공감된다. 무에서 지어내지 말고 아래를 비틀어라):\n{material}\n"
+           "★위 '보호자가 직접 원한 컨셉/요청'과 '보호자가 설명한 실제 클립(grandmompapa)'은 "
+           "소유자의 실제 의도/사실이다 — 후보 중 **최소 1개는 반드시 그 내용으로** 짜고, 그 사실이 "
+           "말하지 않은 설정(시간대·사건·드라마)을 덧붙여 날조하지 마라. (PD: grandmompapa 내용을 "
+           "RF·AV 양쪽에 폭넓게 써라.)\n"
            if material else "")
         + "\n다양성·참신성 필수: 후보마다 다른 실제 소재 + 다른 상상 축을 써라. 실제 영상/일화 "
           "한 장면을 '상상의 도약 씨앗'으로 삼아 비틀어라(예: 아기 시절 클립 → '그때 둘이 만났다면'). "
