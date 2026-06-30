@@ -4996,7 +4996,7 @@ def run_cartoon_sticker_pipeline(manifests: dict, card: dict, work_dir: Path,
         # Single concept-grounded character ref pins every cut to ONE scene → ONLY when
         # the scene is locked (single-space). Multi-location → None (per-cut own space).
         concept_ref = None
-        if _lock_scene and os.getenv("AV_CONCEPT_REF", "1") != "0":
+        if _lock_scene and os.getenv("AV_CONCEPT_REF", "0") != "0":
             concept_ref = _build_concept_char_ref(payload, regen_dir, progress_cb)
         failures = generate_batch(
             Path(manifests["regen_prompts"]),
@@ -6163,16 +6163,18 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
     if not _lock_scene and progress_cb:
         progress_cb(":world_map: 멀티장소 컨셉 — 단일 concept/scene ref 해제, 컷별로 자기 공간 생성")
 
-    # Fix 2 (PD 2026-06-28, default ON; AV_PRECISE_STILL=0 to disable): PRECISE STILL.
-    # Compose each locked-space cut's still from the CLEAN scene_ref (literal room) + character
-    # refs BEFORE generate_batch, then SKIP those cuts in generate_batch — the Gemini compose IS
-    # the still, so the slow gpt-image baseline isn't wasted on cuts we'd overwrite. The still
-    # carries the room → i2v animates a faithful frame (no Seedance bg-freelancing / pet teleport).
+    # PRECISE STILL — Fix 2 (PD 2026-06-28). DEFAULT OFF since 2026-06-30 (AV_PRECISE_STILL=1
+    # to re-enable). It composed cuts from the scene_ref + char refs via Gemini, but that flat
+    # composite had NO depth → pets oversized/pasted-flat (원근 깨짐) and looked illustrated/2D,
+    # and locking every cut to ONE AI concept_ref propagated that. PD: "원근 다 무시, 2d 느낌,
+    # 파이프라인 망가졌어." Reverting to per-cut gpt-image stills → Seedance i2v restored
+    # perspective + photorealism (PD accepts the background-shake tradeoff: "배경 흔들림은 어쩔
+    # 수 없다"). AV_CONCEPT_REF likewise default OFF. Compose-then-skip is kept behind the flag.
     scene_ref_path: Path | None = None
     _precise_tags: set = set()
     _concept_cuts_e = manifests.get("concept_cuts", []) or []
     _concept_obj_e = manifests.get("concept", {}) or {}
-    _av_precise = (os.getenv("AV_PRECISE_STILL", "1") == "1" and not dry_run and _lock_scene
+    _av_precise = (os.getenv("AV_PRECISE_STILL", "0") == "1" and not dry_run and _lock_scene
                    and bool(os.environ.get("BYTEPLUS_API_KEY", ""))
                    and (card.get("render_style") or "").lower() == "ai_vtuber")
     if _av_precise:
@@ -6207,7 +6209,7 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         # Single concept-grounded character ref pins every cut to ONE scene → ONLY when
         # the scene is locked (single-space). Multi-location → None (per-cut own space).
         concept_ref = None
-        if _lock_scene and os.getenv("AV_CONCEPT_REF", "1") != "0":
+        if _lock_scene and os.getenv("AV_CONCEPT_REF", "0") != "0":
             concept_ref = _build_concept_char_ref(payload, regen_dir, progress_cb)
         # Precise-composed cuts are excluded from the (slow gpt-image) generate_batch.
         _regen_manifest = Path(manifests["regen_prompts"])
