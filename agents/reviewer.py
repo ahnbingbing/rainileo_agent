@@ -124,7 +124,11 @@ looks. These are CAPS (a ceiling), not soft notes:
   ROOM). Here a PET jumps to an unexplained new position cut-to-cut — at the door in one
   cut, asleep on a scratcher in the background of the next, back at the door in a third —
   with no shown move. A viewer reads it as the pet teleporting. If a pet's location changes
-  cut-to-cut without a cut that shows the move, flag "펫 순간이동/위치 불일치", cap ≤6.
+  cut-to-cut without a cut that shows the move, flag "펫 순간이동/위치 불일치", cap ≤6. This
+  INCLUDES being ON a surface then gone from it: a pet on the sofa/bench/piano in one cut must
+  still be there (or be shown getting down) in the next — e.g. Leo on the sofa behind, then
+  Leo simply not on the sofa when Ryani is in front (PD 2026-06-30). Check each pet's perch
+  across consecutive cuts, not just the floor position.
 - **Off-cast 펫 (ai_vtuber)**: a cut centered on ONE pet (a solo close-up) must not show the
   OTHER pet — especially drifting/resting in the background. The other pet appearing unbidden
   in a single-subject cut is an off-cast defect (관찰왕: a Ryani-only close-up with Leo asleep
@@ -167,6 +171,16 @@ looks. These are CAPS (a ceiling), not soft notes:
   there the SCREEN lacks the theme; here the CAPTIONS fail to name it — a concept needs both
   (named in the opening caption AND shown on screen). An episode shipped 8/10 with a
   `댄스 챌린지` concept whose captions never said "댄스 챌린지" — exactly this miss.
+- **AV가 자기 레인을 정당화 못함 — 무훅·RF같음 (ai_vtuber, PD 2026-06-30, 강함)**: ai_vtuber는
+  RF(실사)가 못 하는 걸 해야 존재 이유가 있다 — 상상/판타지, 물리적으로 불가능한 갸그, 강한 named
+  컨셉/포맷, 또렷한 반전·payoff 중 **적어도 하나**. 화면이 그냥 **평범한 일상 펫 행동**(창밖 보기,
+  방 안 어슬렁, 나란히 누움/쉼, 서로 쳐다봄, 장난감 깨작)뿐이고 끝까지 볼 **훅·반전·payoff·상상
+  요소가 하나도 없으면**, 그건 RF로 찍었어야 할 저자극 영상을 비싸게 AI로 만든 실패작 → flag
+  "AV 무훅 — RF로 충분(레인 미정당화)", **cap ≤5, verdict ≤ 수정 필요(업로드 불가)**. 판단 기준:
+  (a) theme/narrative_oneliner의 컨셉이 화면에서 실제로 펼쳐지며 '왜 이걸 끝까지 봐야 하나'에
+  답을 주는가, (b) 그 답이 RF로는 못 만드는 것인가. "둘이 귀엽게 있다"는 답이 아니다. (PD: "이게
+  뭔 내용이야. 이럴거면 RF 쓰지 이걸 왜 AV로 만든거야? hook이 없잖아.") 이 cap은 무훅을 못 잡고
+  러버스탬프하던 구멍을 막는다 — 애매하면 통과가 아니라 cap 쪽으로.
 - **상상 컷이 상상으로 안 읽힘 (ai_vtuber)**: a beat meant as a daydream/상상 (the caption says
   so, or the action is impossible-on-purpose) must READ as imagination — a dreamy look
   (misty haze OR a vivid, luminous, magical dreamscape — a wonder-fantasy SHOULD look lush
