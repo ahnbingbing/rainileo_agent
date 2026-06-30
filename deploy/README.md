@@ -61,8 +61,8 @@ done
 
 ## 검증/주의 (코드 들어가기 전 확인)
 
-- **C-writer.** launchd `writer`가 데몬인지 18:00 cron인지 plist가 모호 → 포팅 전 확인.
-  데몬이면 `rianileo-writer.service`, cron이면 `crontab.vm`에 1줄 추가.
+- **C-writer.** ✅ 해결 — `writer` plist는 KeepAlive=false + Cal 18:00 = **cron 잡**(데몬 아님).
+  `crontab.vm`에 18:00 라인 추가됨.
 - **C-ingest.** 새벽 델타 등록(`ingest_register`, 작업2)은 아직 미구현 → Mac 매니페스트를
   소비하는 VM 타이머는 작업2 완료 후 추가.
 - **C-deps.** `requirements.txt`에 osxphotos가 있으나 VM에선 import 안 함(함수 내부 lazy,

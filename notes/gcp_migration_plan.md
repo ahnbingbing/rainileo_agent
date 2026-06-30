@@ -4,9 +4,17 @@
 > **이 문서가 `notes/cloud_migration_plan.md`(board executor, 이슈 #12)와 이전
 > `gcp_migration_plan.md`를 통합·대체한다.** 두 분석이 엇갈렸던 지점은 §1에서 해소.
 >
-> **진행현황 (2026-06-28):** Mac-탈피 선행작업 §7 ①② **DONE**(GCS 커버리지 100% · 렌더
-> GCS-only 가드), ③ 선택 잔여. 코드 변경 **미커밋**(브랜치 세션충돌 주의). **다음 = VM
-> 프로비저닝(P1, 결제 게이트)** — 그 전까진 로컬에서 더 할 $0 작업 없음(③ 선택 제외).
+> **진행현황 (2026-06-30) — 프로비저닝 전 $0 작업 전부 DONE·main 커밋·push 완료:**
+> - ✅ **GCS 커버리지 100%** (16,626/16,626; 769 백필 + 패치前 slack영상 5 업로드).
+> - ✅ **렌더 GCS-only 가드** (`_osxphotos_available()`, cameraman 양 폴백; Mac=무변경/VM=스킵).
+> - ✅ **인입 GCS 보장** (`_ingest_file` GCS 푸시).
+> - ✅ **브랜치 main 통합** — 활성 브랜치 main 전환, board/CLI/세션 커밋 전부 main=배포로.
+> - ✅ **P1 배포 스캐폴딩** (`deploy/`, fe56982, origin/main): **git push=main 자동배포**
+>   (smoke 게이트) + `rianileo-bot.service`(상시봇=BrokenPipe해결) + deploy.timer(2분) +
+>   crontab.vm(17잡 KST, writer 포함) + bootstrap(멱등) + smoke.
+> - **다음 = VM 프로비저닝(결제 게이트)** → `bootstrap.sh` 1회 → P2a 봇 shadow(BrokenPipe 소멸
+>   검증) → 1주 패리티 → 원자 컷오버. 프로비저닝 후 코드 잔여 = `ingest_register` 새벽 델타
+>   (작업2 축소판) + 최종 DB 동기화. **로컬은 컷오버까지 그대로 라이브.**
 
 ---
 
@@ -97,9 +105,9 @@ Mac (PD 기존 개인 Mac, 새벽 1회 비크리티컬):
 
 PD 단순화(GCS 95%→실측) 후 원래 4모듈 분리는 **과설계로 판명.** 실작업은 셋으로 축소:
 
-1. ✅ **GCS 미러 완성** — `_ingest_file` GCS 푸시(작업1a) + 누락 769 백필(735 osxphotos→GCS +
-   34 Slack 직접) → **커버리지 100% (16,602/16,602)**. 일회성 launchd로 osxphotos TCC 권한
-   확보(셸 nohup은 인증 실패). (2026-06-28)
+1. ✅ **GCS 미러 완성** — `_ingest_file` GCS 푸시(작업1a) + 누락 769 백필(735 osxphotos→GCS,
+   일회성 launchd로 TCC 권한 확보) + 패치前 slack영상 5 업로드 → **커버리지 100% (16,626/16,626)**.
+   (2026-06-28~30)
 2. ✅ **VM 렌더 = GCS-only** — `icloud/sync._osxphotos_available()`(darwin+CLI 게이트) +
    cameraman `_ensure_local`/`_prefetch` 폴백 가드. **Mac=동작 0변경**, Linux VM=osxphotos 스킵
    →GCS-only(누락은 per-cut 게이트). py_compile + Mac=True/Linux=False 검증. (2026-06-28)

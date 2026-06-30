@@ -5,7 +5,7 @@
 #   slack        → always-on daemon → rianileo-bot.service (systemd)
 #   deploy poll  → rianileo-deploy.timer (systemd)
 #   icloud-sync  → STAYS ON THE MAC (dawn osxphotos delta; see gcp_migration_plan.md)
-#   writer       → daemon? ambiguous in launchd — VERIFY before enabling (see README)
+#   (writer is NOT a daemon — KeepAlive=false + Cal 18:00 → cron job, listed below)
 SHELL=/bin/bash
 TZ=Asia/Seoul
 J=/home/rianileo/rianileo-agent/deploy/run_job.sh
@@ -25,6 +25,7 @@ LOG=/home/rianileo/rianileo-agent/data/logs
 9   9 * * *   $J scripts/grandmompapa_nudge.py morning           >> $LOG/cron.gmp_morning.log 2>&1
 10  8 * * *   $J -m scripts.api_cost_report --post               >> $LOG/cron.api_cost.log 2>&1
 0  18 * * *   $J -m agents.producer                              >> $LOG/cron.producer.log 2>&1
+0  18 * * *   $J -m agents.writer                                >> $LOG/cron.writer.log 2>&1
 0  19 * * *   $J scripts/grandmompapa_nudge.py evening           >> $LOG/cron.gmp_evening.log 2>&1
 0   6,12,18 * * *  $J -m agents.producer --remind                >> $LOG/cron.remind.log 2>&1
 
