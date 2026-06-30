@@ -164,8 +164,12 @@ def _strip_unrenderable(text: str) -> str:
         ):
             continue
         out.append(ch)
-    # collapse any double space a removal left behind
-    return " ".join("".join(out).split())
+    # Collapse any double space a removal left behind — but PRESERVE NEWLINES.
+    # AV stacks the KO+EN sign-off into one block as "오늘도 햅삐\nHappy as ever";
+    # a blanket "".join(text.split()) flattened the \n into a space and the two
+    # lines rendered CONNECTED on one line (PD 2026-07-01). Normalize spaces
+    # per-line and rejoin on \n so the line break survives.
+    return "\n".join(" ".join(line.split()) for line in "".join(out).split("\n"))
 
 
 # PD 2026-06-30: memory-lane captions must phrase elapsed time in NATURAL Korean

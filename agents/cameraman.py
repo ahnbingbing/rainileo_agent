@@ -6654,26 +6654,44 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                 ref_names = [r for n in ref_names
                              for r in (["ryani_solo", "leo_solo"] if n == "pair" else [n])
                              if not (r in _seen or _seen.add(r))]
-            # PD 2026-06-11 (b): age-aware Ryani reference. A cut framed as PAST /
-            # young Ryani (memory-lane "9년전", "어린/아기/강아지", years_ago≥3) must use
-            # the YOUNG reference (black face, NO grey muzzle) — the senior ryani_solo
-            # made "어린 랴니" captions clash with an aged render. Detect from the cut's
-            # text + years_ago and swap ryani_solo → ryani_young for that cut only.
+            # PD 2026-06-11 (b) / 2026-07-01: age-aware Ryani reference. A cut framed
+            # as PAST / young Ryani (memory-lane "9년전", "어린/아기", years_ago≥7) uses
+            # the YOUNG reference (black face, NO grey muzzle); a present-day cut keeps
+            # the senior ryani_solo.
+            # ★DECOUPLE THE CUE-SHEET FROM THE CAPTION (PD 2026-07-01, 봉준호 콘티 원칙):
+            # the visual we render is driven by the PRODUCTION cue-sheet (the Director's
+            # shot/era fields), NOT by the caption text. Captions are a SEPARATE narration
+            # layer laid on top and are NOT 1:1 with the picture. Reading the caption to
+            # pick a reference is the bug that made a present-day "나 2015년생인데~" self-
+            # intro pull the 2015 PUPPY ref (the year in the caption was misread as 2015-
+            # era footage). So: scan ONLY visual/era fields below — never `captions`.
+            _era = str(cc.get("subject_era") or "").strip()      # cue-sheet life-era (canon, asset-dated)
             _blob = " ".join(str(cc.get(k, "")) for k in
                              ("motion_prompt", "regen_prompt", "beat", "function",
-                              "action", "description")) + " " + json.dumps(
-                cc.get("captions") or [], ensure_ascii=False)
-            _ya = cc.get("years_ago")
-            # PD 2026-06-12: "3년 전"(=2023, Ryani 8살)은 애기가 아니다 — 회색 주둥이 있는
-            # senior 그대로여야 한다. 예전 로직이 generic "N년전"·years_ago≥3·"과거/옛날"을
-            # 전부 young으로 처리해 '3년 전' 스토리에 2015 애기 레퍼런스를 끼워넣었다(버그).
-            # 이제: 진짜 강아지 시절(2015~2018, 7년+ 전) 또는 명시적 강아지 단어일 때만 young.
+                              "action", "description", "subject_era", "subject_era_label"))
+            _ya = cc.get("years_ago")                            # cue-sheet field (asset captured date)
             _m = re.search(r"(\d+)\s*년\s*전", _blob)
             _years_back = (int(_m.group(1)) if _m
                            else (int(_ya) if isinstance(_ya, (int, float)) and _ya else 0))
-            _young = (bool(re.search(r"아기|강아지|새끼|퍼피|puppy|2015|2016|2017",
-                                     _blob, re.IGNORECASE))
-                      or _years_back >= 7)
+            # young ⟺ the CUE-SHEET says past-puppy RYANI. The swap only ever replaces
+            # ryani_solo → ryani_young, so the puppy signal must be about RYANI, never Leo.
+            # ★PET-SCOPE the loose keyword/year match (PD 2026-07-01): a present-day TWO-SHOT
+            # whose prose says "아기 레오"(baby cat) must NOT puppify the senior Ryani beside
+            # him. So the ambiguous 아기/강아지/footage-year words only count on a RYANI-SOLO
+            # cut; for both-pet or Leo cuts, rely on the unambiguous structural signals —
+            # a Ryani-stamped young subject_era, or a genuine 7+yr footage gap. The Director's
+            # prose may name a footage year (2015년 겨울 …) but a stated birth-year (2015년생,
+            # present age) is excluded — it is NOT a footage-era signal.
+            _who = (cc.get("who") or "").lower()
+            _ryani_solo_cut = ("ryani" in _who and "leo" not in _who)
+            _era_label = str(cc.get("subject_era_label") or "")
+            _young = (
+                (_era in ("아기", "어린") and "랴니" in _era_label)   # cue-sheet: RYANI's young era
+                or _years_back >= 7                                  # genuine memory-lane gap
+                or (_ryani_solo_cut and (
+                    bool(re.search(r"아기|강아지|새끼|퍼피|puppy", _blob, re.IGNORECASE))
+                    or bool(re.search(r"(?<!\d)(2015|2016|2017)(?!\s*년?\s*생)", _blob))))
+            )
             if _young:
                 ref_names = ["ryani_young" if n == "ryani_solo" else n for n in ref_names]
                 if progress_cb:
