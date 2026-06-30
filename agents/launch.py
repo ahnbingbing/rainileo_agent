@@ -215,6 +215,23 @@ def launch_pipeline(target: dt.date, *,
             if progress_cb:
                 progress_cb(f":satellite: 시의성 훅 갱신 — 캘린더 {res['calendar_active']} / "
                             f"발견 {res['discovered']}")
+            # PD 2026-07-01: a frozen trend feed = the AV engine keeps re-using the same memes
+            # (Plan ABC 재탕). Live discovery silently returns 0 on a key/network failure, so a
+            # stale feed used to be invisible. WARN loudly when nothing fresh landed AND the
+            # newest live trend is already days old — so a non-learning feed is caught, not
+            # silently riding week-old memes.
+            try:
+                newest = con.execute(
+                    "SELECT MAX(discovered_at) FROM trends WHERE source='discovery'").fetchone()[0]
+                stale = bool(newest) and str(newest)[:10] < (target - dt.timedelta(days=2)).isoformat()
+                if res["discovered"] == 0 and stale:
+                    msg = (f":rotating_light: 시의성 피드 STALE — 새 트렌드 0개, 최신이 {str(newest)[:10]} "
+                           "(라이브 학습 실패 의심: GOOGLE_API_KEY/네트워크). AV가 같은 밈 재탕 위험.")
+                    log.warning(msg)
+                    if progress_cb:
+                        progress_cb(msg)
+            except Exception:
+                pass
         except Exception as _e:
             log.warning("trend_feed refresh failed (non-fatal): %s", _e)
     assignments = day_assignments(target)

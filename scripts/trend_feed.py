@@ -138,8 +138,12 @@ def _upsert(con: sqlite3.Connection, trend_id: str, source: str, category: str,
     con.execute(
         "INSERT INTO trends (trend_id, source, category, title, fit_score, expiry_date, "
         "discovered_at, notes) VALUES (?,?,?,?,?,?,datetime('now'),?) "
+        # PD 2026-07-01: refresh discovered_at on re-discovery too — a meme still trending
+        # TODAY should count as fresh, not keep its first-seen date (else the feed looks
+        # frozen and the stale-feed warning misfires).
         "ON CONFLICT(trend_id) DO UPDATE SET fit_score=excluded.fit_score, "
-        "expiry_date=excluded.expiry_date, title=excluded.title, notes=excluded.notes",
+        "expiry_date=excluded.expiry_date, title=excluded.title, notes=excluded.notes, "
+        "discovered_at=datetime('now')",
         (trend_id, source, category, title, fit, expiry,
          json.dumps(notes, ensure_ascii=False)))
 
@@ -202,11 +206,19 @@ def discover_live(con: sqlite3.Connection, today: dt.date) -> int:
                 break
         except Exception:
             items = []
+    # PD 2026-07-01: live discovery must respect the SAME vetoes as the calendar. A disabled
+    # event (fit=0, e.g. 월드컵 — "한국 분위기가 안 좋아") kept leaking back in because Gemini
+    # re-surfaced it and discover_live didn't check. Skip any discovered item matching a
+    # vetoed event's keywords.
+    _veto_terms = [m.lower() for ev in EVENTS if float(ev.get("fit", 1)) == 0.0
+                   for m in (ev.get("match") or [])]
     n = 0
     for it in items if isinstance(items, list) else []:
         title = (it.get("title") or "").strip()
         if not title:
             continue
+        if any(term in title.lower() for term in _veto_terms):
+            continue  # vetoed topic (e.g. 월드컵) — do not re-introduce
         days = int(it.get("expires_in_days", 14) or 14)
         expiry = (today + dt.timedelta(days=max(3, min(days, 45)))).isoformat()
         tid = "disc_" + hashlib.sha1(title.encode("utf-8")).hexdigest()[:10]
