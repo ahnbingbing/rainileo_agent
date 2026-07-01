@@ -37,6 +37,7 @@ RYANI = {
     "tail": "NO tail",               # French Bulldog — never render a tail
     "blaze": "THIN narrow white blaze (a fine pencil-width line)",  # a fine line, NOT a wide splash
     "ears": "large UPRIGHT bat ears (erect, pointed up — NOT folded rose ears)",  # PD 2026-06-10
+    "muzzle": "short brachycephalic muzzle with characteristic wrinkles (nose-rope fold over the nose bridge + cheek/brow folds) — NOT a smooth snout",  # PD 2026-07-01
     "exists_from": "2015-05-05",     # born — cannot appear in footage before this
 }
 LEO = {
@@ -105,10 +106,18 @@ RYANI_MARKING = (
     " CRITICAL — Ryani the black French Bulldog must keep her exact markings every "
     "frame: a THIN narrow white blaze (a fine pencil-width line up the muzzle, between "
     "the eyes, to the forehead — NOT a wide splash, do NOT enlarge it) from nose up the "
-    "forehead, silver-grey aged muzzle, "
+    "forehead, silver-grey aged muzzle. She is a BRACHYCEPHALIC French Bulldog: keep her "
+    "short flat muzzle with its CHARACTERISTIC WRINKLES — soft folds of skin across the "
+    "nose bridge and above the black nose (the 'nose rope') plus gentle cheek/brow folds. "
+    "Her snout is NOT smooth or featureless; those muzzle wrinkles are part of her face and "
+    "must read in every close shot. "
     "white chin, white chest patch, large UPRIGHT "
     "bat ears (erect/pointed up, NOT folded rose ears), NO "
-    "tail. Her white is ONLY: the forehead blaze, chin, the FRONT of the throat (the "
+    "tail. ★NO TAIL IN ANY POSE — her rear is completely bare and tailless even when her "
+    "rump is RAISED (play-bow, butt-up), when she TURNS AWAY, or is seen FROM BEHIND; do NOT "
+    "sprout a tail, tail-nub or stub on a raised/rear-facing rump (Seedance tends to add one "
+    "there — that is WRONG). Her joy is a tailless BUTT-WIGGLE, never a wagging tail. "
+    "Her white is ONLY: the forehead blaze, chin, the FRONT of the throat (the "
     "chin-white flows down the FRONT of the neck into the chest patch — that "
     "front-of-throat white is CORRECT, keep it), and toes. Her BACK, the NAPE (back "
     "of the neck / behind the head) and spine are SOLID BLACK — NO white spot, dot, "
@@ -150,7 +159,11 @@ RYANI_IMAGE_CANON = (
     "Ryani — REAL black French Bulldog, SPAYED FEMALE (she/her, 11-year-old "
     "senior; clearly female, NO male anatomy). Markings (keep EXACTLY, do not "
     "redraw): a THIN NARROW white blaze (a fine pencil-width line from nose up "
-    "the forehead — NOT a wide splash, do NOT enlarge it), silver-grey aged muzzle, "
+    "the forehead — NOT a wide splash, do NOT enlarge it), silver-grey aged muzzle. "
+    "She is BRACHYCEPHALIC: keep her short flat French-Bulldog muzzle with its "
+    "characteristic WRINKLES — soft skin folds across the nose bridge and above the black "
+    "nose (the 'nose rope') plus gentle cheek/brow folds; her snout is NOT smooth or "
+    "featureless. "
     "white chin, white chest patch, white toes, a FAINT subtle eyebrow-like white mark "
     "above each eye (small/thin, brow-like — NOT a bold round dot), "
     "large UPRIGHT bat ears (erect/pointed up, NOT folded rose ears), ABSOLUTELY NO "

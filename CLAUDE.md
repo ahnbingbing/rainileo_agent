@@ -46,7 +46,7 @@
   - **Ryani** — small black French bulldog, **no tail** (brachycephalic
     Frenchie). Mostly black BUT has **white markings on chin/muzzle, chest,
     and toes/paws** that MUST be preserved in any regen.
-- **Channel handle**: `@ryani_n_loe`
+- **Channel handle**: `@ryani_n_leo`
 - **Format**: YouTube Shorts, 9:16 vertical, ~20s, KO + EN burned-in captions
 
 ## Three content-style lanes
@@ -348,7 +348,7 @@ python3 scripts/build_bumpers.py \
   --intro-music assets/bgm/redproductions-whistling-bright-kids-education-positive-claps-music-187833.mp3 \
   --outro-music assets/bgm/redproductions-whistling-bright-kids-education-positive-claps-music-187833.mp3
 # Defaults bake in:
-#   handle    = @ryani_n_loe
+#   handle    = @ryani_n_leo
 #   KO CTA    = 구독 좋아요
 #   EN CTA    = Like & Subscribe
 #   Hearts ♥ wrap each CTA line in hot-pink (#FF6B9D).

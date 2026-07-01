@@ -45,6 +45,7 @@ WRITER_REALFOOTAGE_PROMPT = PROMPTS_DIR / "writer_realfootage.md"
 WRITER_CRITIQUE_PROMPT = PROMPTS_DIR / "writer_critique.md"
 WRITER_REVISE_PROMPT = PROMPTS_DIR / "writer_revise.md"
 DIRECTOR_SHOTS_PROMPT = PROMPTS_DIR / "director_shots.md"
+CONTE_CUESHEET_PROMPT = PROMPTS_DIR / "conte_cuesheet.md"
 CAPTION_AGENT_PROMPT = PROMPTS_DIR / "caption_agent.md"
 CAMERAMAN_VALIDATOR_PROMPT = PROMPTS_DIR / "cameraman_validator.md"
 
@@ -59,6 +60,15 @@ PROVEN_MOTION_PROMPTS = ROOT / "notes" / "proven_motion_prompts.json"
 
 WRITER_MODEL = os.getenv("WRITER_MODEL", _models.ANTHROPIC_TEXT)
 DIRECTOR_MODEL = os.getenv("DIRECTOR_MODEL", _models.ANTHROPIC_TEXT)
+# 콘티 (cue-sheet) agent — an editor-perspective shot-design pass that runs BEFORE the
+# Director assembles prompts (AV only). PD 2026-07-01: the Director's weak spot is shot
+# design — it flattened every cut to the same locked medium-shot (the maltese monotony a
+# 3-model jury flagged). The 콘티 agent designs varied coverage (framing/blocking/eyelines/
+# start→end per cut) and the Director then REALIZES that cue-sheet in prompts. Default ON
+# (verified 2026-07-01: 3-model shadow-jury win + component test); best-effort, so on any 콘티
+# failure the Director designs shots as before and a batch can't break. Kill switch:
+# CONTE_AGENT=0. notes/av_firstlast_frame_architecture_design.md.
+CONTE_AGENT = os.getenv("CONTE_AGENT", "1") == "1"
 
 # Few-shot threshold
 GIRI_FEWSHOT_MIN = float(os.getenv("GIRI_FEWSHOT_MIN", "8.0"))
@@ -580,10 +590,76 @@ def _build_director_user_prompt(story_concepts: list[dict],
             "`face cropped by foreground`). Never invent appearance stereotypes; "
             "if a character has no character_knowledge yet, write a very generic "
             "body description and lean on the face-hiding angle. "
+            "**If a cut carries a `cuesheet` field (from the 콘티/editor pass: shot_size, "
+            "angle, camera, blocking, start_frame, end_frame, depth), that cue-sheet is the "
+            "AUTHORITATIVE shot design — assemble that cut's regen_prompt/motion_prompt to "
+            "REALIZE exactly its framing, blocking (each pet's left/right screen position + "
+            "eyelines), camera and start→end pose. Vary framing cut-to-cut per the cue-sheet; "
+            "never collapse every cut to the same locked medium-shot. Honor the concept-level "
+            "`coverage_note`. Copy shot_size/camera_move/angle from the cue-sheet.** "
             "Also add concept-level regen_direction and set_anchor."
         ),
     }
     return json.dumps(body, ensure_ascii=False, default=str)
+
+
+def _conte_story_slice(concept: dict) -> dict:
+    """The Writer-story slice the 콘티 agent sees — beats + caption INTENT, no render prompts."""
+    cuts = []
+    for c in concept.get("cuts", []):
+        cap = c.get("captions") or c.get("caption") or []
+        intent = " / ".join(s.get("ko", "") for s in cap) if isinstance(cap, list) else str(cap)
+        cuts.append({"tag": c.get("tag") or c.get("beat"), "beat": c.get("beat"),
+                     "who": c.get("who"), "caption_intent": intent})
+    return {"story_seed": concept.get("story_seed"), "story_arc": concept.get("story_arc"),
+            "set": {"anchor": concept.get("set_anchor"),
+                    "description": concept.get("set_description")},
+            "subjects": concept.get("subjects"), "cuts": cuts}
+
+
+def run_conte(story_concepts: list[dict], context: dict, progress_cb=None) -> list[dict]:
+    """AV-only 콘티 (cue-sheet) pass — design shot COVERAGE before the Director assembles
+    prompts. For each ai_vtuber concept, an editor-perspective agent authors a per-cut shot
+    design (shot_size/angle/camera/blocking/start_frame/end_frame/depth) + a concept-level
+    coverage note; we attach it to each cut as `cuesheet` so the Director REALIZES a varied,
+    deliberately-blocked cue-sheet instead of designing shots from scratch (its weak spot:
+    collapsing every cut to one locked medium-shot). RF concepts are left untouched — real
+    clips carry their own framing. Best-effort: on any failure the Director designs shots as
+    before. Mutates and returns story_concepts."""
+    try:
+        system = CONTE_CUESHEET_PROMPT.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return story_concepts
+    for concept in story_concepts:
+        style = (concept.get("render_style") or concept.get("style")
+                 or context.get("style_filter") or "").lower()
+        if style and style != "ai_vtuber":
+            continue
+        try:
+            story = _conte_story_slice(concept)
+            out = _call_anthropic(
+                system,
+                "STORY (design the visual cue-sheet):\n"
+                + json.dumps(story, ensure_ascii=False, indent=2),
+                model=DIRECTOR_MODEL, max_tokens=int(os.getenv("CONTE_MAX_TOKENS", "4000")))
+            cue = _parse_json_loose(out)
+        except Exception as e:  # noqa: BLE001
+            log.warning("conte pass failed (%s) — Director will design shots itself", e)
+            continue
+        by_tag = {c.get("tag"): c for c in (cue.get("cuts") or []) if c.get("tag")}
+        n = 0
+        for cut in concept.get("cuts", []):
+            cs = by_tag.get(cut.get("tag") or cut.get("beat"))
+            if cs:
+                cut["cuesheet"] = {k: cs.get(k) for k in (
+                    "shot_size", "angle", "camera", "blocking",
+                    "start_frame", "end_frame", "depth", "why") if cs.get(k)}
+                n += 1
+        if cue.get("coverage"):
+            concept["coverage_note"] = cue["coverage"]
+        if progress_cb and n:
+            progress_cb(f":clapper: 콘티 — {n}컷 샷 설계 (편집자 큐시트, Director가 실현)")
+    return story_concepts
 
 
 def run_director(story_concepts: list[dict], context: dict,
@@ -715,6 +791,12 @@ def propose_concepts_v2(target_date: dt.date, context: dict, *,
             progress_cb=progress_cb,
         )
 
+        # 콘티 (cue-sheet) pass — editor-perspective shot design before the Director
+        # assembles prompts (AV only, flag-gated). Fixes the Director's shot-design weak
+        # spot (every cut the same locked MCU) by handing it a varied, blocked cue-sheet.
+        if CONTE_AGENT:
+            context.setdefault("style_filter", style_filter)
+            story = run_conte(story, context, progress_cb=progress_cb)
         directed = run_director(story, context, progress_cb=progress_cb)
         # Caption Agent (2026-06-02, PD-driven): specialized narrator-script
         # pass between Director and Polisher. Takes Director's cuts (with
@@ -1698,6 +1780,11 @@ def _retry_blocked_concepts(concepts: list[dict], target_date, context,
                 log.warning("Writer revision returned empty — keeping blocked")
                 out.append(c)
                 continue
+            if CONTE_AGENT:
+                ctx_with_feedback.setdefault(
+                    "style_filter", c.get("render_style") or style_filter)
+                revised_story = run_conte(revised_story, ctx_with_feedback,
+                                          progress_cb=progress_cb)
             revised_directed = run_director(revised_story, context,
                                              progress_cb=progress_cb)
             revised_captioned = run_caption_agent(revised_directed,

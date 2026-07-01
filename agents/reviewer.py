@@ -142,6 +142,13 @@ looks. These are CAPS (a ceiling), not soft notes:
   cut, flag "페이오프 미발생 — 빌드업만" and cap ≤6 (verdict ≤ 수정 필요). This is structural,
   separate from the caption-promised-kick check (CHECK 0): there a single caption's action is
   faked; here the whole arc's payoff beat is missing.
+- **사건 무마 / 전제 부정 (both — closer defuses the payoff)**: the reverse of the above — the
+  payoff DID happen on screen, but the captions SOOTHE it away or NEGATE the premise. When the
+  footage shows a reaction or event (a treat taken/gone, a toy stolen, a startle, one pet reacting
+  while the other plays innocent), the closer must LAND that reaction, not re-label it as calm
+  ("둘만의 평온한 리듬", "껌딱지 모드") and never negate the very thing that drove the scene ("먹거리만이
+  답은 아니죠" when the snack IS the plot). A closer that defuses the reaction or contradicts the
+  driving event kills the gag → flag "사건 무마/전제 부정 — 반응을 재워버림", cap ≤6 (verdict ≤ 수정 필요).
 - **배경 흔들림 (ai_vtuber)**: distinct from drift. When the camera moves (panning / push-in /
   handheld sway) under big subject motion, Seedance makes the BACKGROUND wobble, warp or
   shake WITHIN a cut — which reads worse than a dead-still frame. The channel standard is a

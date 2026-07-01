@@ -144,14 +144,19 @@ get the life from clear pet motion. The thing that actually flattens a cut is NO
 — it's letting the quieter/darker pet (Ryani) freeze into a prop while only the cat moves.
 The fix for flatness is to MOVE THE PETS, never to move the camera.
 
-**Hold shot_size constant across a single-space episode.** Jumping one cut to a wider (or
-tighter) framing is as destabilizing as moving the camera: the wider frame reveals room area
-Seedance never saw, so it INVENTS it — furniture stretches, a sofa elongates, a wall bends.
-(낮잠 ep: every cut was a tight locked frame except one that went `wide` → the sofa visibly
-stretched past the couch end, and the chained next cut inherited the warped sofa.) Pick ONE
-framing for the room and keep the same shot_size on every body cut; get variety from pet
-motion and beat, not from zoom level. A `chain_from_prev` cut MUST match the previous cut's
-shot_size exactly — a sharp shot_size change breaks the chain and propagates the drift.
+**Framing: hold constant WITHIN a chained take, VARY across a montage.** The failure mode is
+specific to chaining. A `chain_from_prev` cut MUST match the previous cut's shot_size exactly:
+in a chained continuous take, jumping to a wider frame reveals room area Seedance never saw, so
+it INVENTS it — furniture stretches, a wall bends — and the next chained cut inherits the warp
+(낮잠 ep: one `wide` cut stretched the sofa past the couch end). So within a chained single-take,
+pick ONE framing and hold it. A MONTAGE is the opposite case, and the more common one: different
+beats/subjects per cut with chain OFF, where each cut renders from ITS OWN framing-specific still —
+so a wider or tighter cut gets a still that actually shows that framing, and nothing warps.
+There, varying shot_size/angle/blocking per cut is not just safe but REQUIRED — four identical
+medium-shots read as one frozen photo with swapped captions (the maltese monotony a 3-model jury
+flagged). When a cut carries a `cuesheet` (the 콘티/editor pass), REALIZE its per-cut
+shot_size/angle/camera/blocking; get energy from varied coverage AND pet motion. The camera still
+holds LOCKED within each cut — vary framing BETWEEN cuts, never sweep the camera inside one.
 
 **Keep each pet's position consistent across cuts — pets don't teleport.** In a
 single-space episode, decide WHERE each pet is and roughly stays, and write per-cut

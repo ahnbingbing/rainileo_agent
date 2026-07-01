@@ -80,30 +80,56 @@ _BGM_MOOD_MAP: dict[str, list[str]] = {
 }
 
 
-def _pick_bgm_track(bgm_mood: str, seed_key: str) -> str:
-    """Deterministic-but-varied BGM filename for a mood: hash(seed_key) indexes
-    into the mood's candidates so repeated renders of one episode are stable but
-    different episodes vary even within a mood. Falls back to a cute default."""
-    import hashlib as _h
-    candidates = _BGM_MOOD_MAP.get(
-        bgm_mood, ["backgroundmusicforvideos-cute-cheerful-whistle-cute-music-249653.mp3"])
-    # PD 2026-06-24 (BGM 저작권 재발 방지): never pick a YouTube-Content-ID-claimed
-    # track or a track sharing a claimed track's label (claims are often catalog-wide).
-    # Ledger written by scripts/swap_bgm.py on a takedown.
+def _recent_bgm_tracks(n: int = 16) -> list[str]:
+    """The last `n` BGM tracks actually used, most-recent last. `bgm_by_video.json` is
+    written at upload time (record_bgm_for_video) as an insertion-ordered dict video→track,
+    so its last n values are the freshest picks. Used to AVOID replaying recent songs."""
     import json as _json
+    try:
+        d = _json.loads((ROOT / "data" / "bgm_by_video.json").read_text(encoding="utf-8"))
+        return list(d.values())[-n:]
+    except Exception:
+        return []
+
+
+def _pick_bgm_track(bgm_mood: str, seed_key: str) -> str:
+    """Pick a BGM filename for a mood — biased HARD toward variety (PD 2026-07-01: "노래 좀
+    다양하게"). Two repetition sources are fixed: (1) thin moods (some have only 1-2 tracks) →
+    when the mood pool is small, widen to the FULL curated library so every episode has a deep
+    pool; (2) no recency memory → EXCLUDE the last ~16 used tracks so consecutive episodes never
+    replay the same song. Within the resulting fresh pool the choice is still hash(seed_key)-
+    deterministic, so re-rendering one episode (before it uploads) stays stable."""
+    import hashlib as _h
+    import json as _json
+    candidates = list(_BGM_MOOD_MAP.get(
+        bgm_mood, ["backgroundmusicforvideos-cute-cheerful-whistle-cute-music-249653.mp3"]))
+    all_tracks = sorted({t for v in _BGM_MOOD_MAP.values() for t in v})
+    # PD 2026-06-24 (BGM 저작권 재발 방지): never pick a Content-ID-claimed track or one sharing
+    # a claimed track's label (claims are often catalog-wide). Ledger from scripts/swap_bgm.py.
     try:
         _claimed = set(_json.loads((ROOT / "data" / "bgm_claimed.json").read_text(encoding="utf-8")))
     except Exception:
         _claimed = set()
-    if _claimed:
-        def _lbl(fn: str) -> str:
-            t = fn.rsplit(".", 1)[0].split("-")
-            return "lp-studio" if t[:2] == ["lp", "studio"] else (t[0] if t else fn)
-        _bad = {_lbl(c) for c in _claimed}
-        _safe = [c for c in candidates if c not in _claimed and _lbl(c) not in _bad]
-        candidates = _safe or [c for c in candidates if c not in _claimed] or candidates
+
+    def _lbl(fn: str) -> str:
+        t = fn.rsplit(".", 1)[0].split("-")
+        return "lp-studio" if t[:2] == ["lp", "studio"] else (t[0] if t else fn)
+    _bad = {_lbl(c) for c in _claimed}
+
+    def _ok(fn: str) -> bool:
+        return fn not in _claimed and _lbl(fn) not in _bad
+
+    recent = set(_recent_bgm_tracks())
+    mood_ok = [c for c in candidates if _ok(c)]
+    # Prefer mood tracks not played recently; if the mood is thin/exhausted, widen to the whole
+    # claim-safe library (still avoiding recent) so variety never collapses to one song.
+    pool = [c for c in mood_ok if c not in recent]
+    if len(pool) < 3:
+        widened = [t for t in all_tracks if _ok(t) and t not in recent and t not in pool]
+        pool = pool + widened
+    pool = pool or mood_ok or [c for c in candidates if _ok(c)] or candidates
     seed = int(_h.sha1((seed_key or "default").encode("utf-8")).hexdigest()[:8], 16)
-    return candidates[seed % len(candidates)]
+    return pool[seed % len(pool)]
 BUMPER_MUSIC = ROOT / os.getenv(
     "BUMPER_MUSIC",
     "assets/bgm/redproductions-whistling-bright-kids-education-positive-claps-music-187833.mp3",

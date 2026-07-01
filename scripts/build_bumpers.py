@@ -74,7 +74,7 @@ DEFAULT_OUTRO_KO = "행복한 부처님 오신날!"
 DEFAULT_OUTRO_EN = "Have a blessed Buddha's Day!"
 
 # Default outro CTA — channel-wide subscribe/like prompt
-DEFAULT_OUTRO_HANDLE = "@ryani_n_loe"
+DEFAULT_OUTRO_HANDLE = "@ryani_n_leo"
 DEFAULT_OUTRO_CTA_KO = "구독 좋아요"
 DEFAULT_OUTRO_CTA_EN = "Like & Subscribe"
 
