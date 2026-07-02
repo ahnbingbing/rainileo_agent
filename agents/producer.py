@@ -2633,6 +2633,38 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         # PD 2026-06-08: do NOT force finale=video. A photo_i2v finale / Ryani
         # zoom is fine WHEN the quality (marking accuracy) is good — the quality
         # gate decides, not a blanket rule. (Earlier blanket auto-swap removed.)
+    # PD 2026-07-02: deterministic CONCEPT-DEDUP gate. exclude_concepts (sibling slots +
+    # last-14d public uploads, seeded by launch) is injected into the Writer prompt as a
+    # "diverge from these" note (_exclude_block) — but that is LLM-advisory and the Writer
+    # re-treaded it anyway: a '단단한 간식 앞에서, 랴니의 분투' RF shipped that duplicated a
+    # 6-days-prior upload of the SAME premise (footage-freshness passed because the clips
+    # differed; there was no concept-vs-past-upload check). Deterministically reject a
+    # concept sharing an excluded episode's core content nouns and re-propose ONCE.
+    # "[재탕검증]" bounds the retry. RF_DEDUP_GATE=0 reverts.
+    if (os.getenv("RF_DEDUP_GATE", "1") == "1"
+            and "[재탕검증]" not in prior_feedback):
+        _excl = (context or {}).get("exclude_concepts") or []
+        _dups: list = []
+        if _excl:
+            try:
+                from agents import concept_brainstorm as _cbd
+                for c in concepts:
+                    v = _cbd._concept_lexical_collision(c, _excl)
+                    if v.get("collision"):
+                        _dups.append((c.get("title", ""), v))
+            except Exception as e:
+                log.warning("RF concept-dedup check failed: %s", e)
+        if _dups:
+            if progress_cb:
+                progress_cb(f":recycle: 재탕검증 — 최근 회차와 컨셉 재탕 {len(_dups)}건 → 재작성")
+            _vs = "; ".join(f"'{t}' ↔ 기존 '{v['vs']}' (공유 소재: {', '.join(v['shared'])})"
+                            for t, v in _dups)
+            _fb = ("[재탕검증] 아래 컨셉이 최근 공개된 회차와 사실상 같은 이야기(핵심 소재·사건이 "
+                   "겹침)다. 장소·클립만 바꾼 재탕은 금지 — 겹친 소재 자체를 피하고 완전히 다른 "
+                   "사건·활동·앵글로 새로 짜라:\n" + _vs
+                   + (("\n\n[이전 피드백]\n" + prior_feedback) if prior_feedback else ""))
+            return _propose_realfootage_singlepass(target, context, progress_cb,
+                                                   prior_feedback=_fb)
     # PD 2026-06-12: deterministic location-CONTRADICTION gate. Use each clip's
     # location_type to catch captions that contradict the clip (a cafe/home clip
     # captioned as a "산책/그늘" outdoor walk — episode 193447). This is NOT a

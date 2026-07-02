@@ -325,6 +325,63 @@ def rank_by_audience(candidates: list[dict], style: str) -> list[dict]:
     return sorted(candidates, key=lambda c: -c.get("audience_score", 0))
 
 
+# Generic, non-distinctive words — shared between two concepts they say NOTHING about
+# whether the STORY is the same (both mention 랴니/여름/하루). Stripped before comparing.
+_DEDUP_STOP = {
+    "랴니", "레오", "ryani", "leo", "우리", "그리고", "함께", "같이", "나란히", "서로",
+    "오늘", "하루", "일상", "순간", "시간", "이야기", "그때", "지금", "매일", "다시",
+    "여름", "봄", "가을", "겨울", "아침", "저녁", "오후", "낮", "밤", "계절",
+    "친구", "남매", "누나", "동생", "막내", "아기", "우리집", "집사", "반려동물",
+    "그", "이", "저", "것", "너와", "그리고", "shorts", "숏츠", "vlog", "브이로그",
+}
+# Surface variants that mean the same thing — normalized so "딱딱한" collides with "단단한".
+_DEDUP_SYN = {"딱딱": "단단", "딱딱한": "단단", "단단한": "단단",
+             "강아지간식": "간식", "먹방": "간식", "간식들": "간식"}
+# Common Korean trailing particles — stripped so 간식/간식을/간식이 count as one token.
+_DEDUP_PARTICLES = ("에서", "으로", "에게", "까지", "부터", "처럼", "이랑", "하고",
+                    "을", "를", "이", "가", "은", "는", "의", "에", "도", "만", "과", "와", "랑")
+
+
+def _dedup_tokens(*texts: str) -> set[str]:
+    """Distinctive content tokens of a concept's text (title/theme + logline). Hangul
+    words ≥2 chars (particles stripped) + English words ≥3 chars, minus the generic
+    stoplist. Two concepts sharing several of these describe the SAME episode."""
+    toks: set[str] = set()
+    for text in texts:
+        for raw in re.findall(r"[가-힣]{2,}|[a-z0-9]{3,}", (text or "").lower()):
+            t = raw
+            if re.fullmatch(r"[가-힣]+", t):
+                for p in _DEDUP_PARTICLES:
+                    if t.endswith(p) and len(t) - len(p) >= 2:
+                        t = t[: -len(p)]; break
+            t = _DEDUP_SYN.get(t, t)
+            if t and t not in _DEDUP_STOP:
+                toks.add(t)
+    return toks
+
+
+def _concept_lexical_collision(cand: dict, exclude: list[dict], *, min_shared: int = 2) -> dict:
+    """DETERMINISTIC concept-dedup — the guarantee the LLM 'diverge from these' prompt
+    is not. `exclude` = sibling slots + recently-published episodes (last ~14d). If the
+    candidate shares ≥`min_shared` distinctive content tokens with ANY of them, it is a
+    re-tread (e.g. '단단한 간식 앞에서 랴니의 분투' vs '6년 전 랴니의 분투기 — 단단한 간식').
+    Returns {collision, vs, shared}. Cheap; no LLM. Feed its verdict to the caller —
+    do NOT rely on the model to notice it re-treaded."""
+    if not cand or not exclude:
+        return {"collision": False}
+    ct = _dedup_tokens(cand.get("title") or cand.get("theme") or "", cand.get("logline") or "")
+    if not ct:
+        return {"collision": False}
+    for c in exclude:
+        et = _dedup_tokens(c.get("title") or c.get("theme") or "", c.get("logline") or "")
+        shared = ct & et
+        if len(shared) >= min_shared:
+            return {"collision": True,
+                    "vs": (c.get("title") or c.get("theme") or "").strip(),
+                    "shared": sorted(shared)}
+    return {"collision": False}
+
+
 def _is_redundant_vs_batch(cand: dict, exclude: list[dict]) -> dict:
     """Same-batch concept-dedup gate: is `cand` substantially the SAME episode as a
     sibling already locked into today's batch? Substance = premise/motif/set/punchline,
@@ -373,6 +430,13 @@ def best(style: str, brief: str, n: int = 5, *, context: dict | None = None) -> 
     if exclude and ranked:
         winner = None
         for c in ranked:
+            # Deterministic first — a shared-core-noun collision is a re-tread the LLM
+            # 'diverge' check keeps missing; don't rely on the model to notice it.
+            lc = _concept_lexical_collision(c, exclude)
+            if lc.get("collision"):
+                c["_batch_redundant"] = {"redundant": True, "vs": lc.get("vs"),
+                                         "reason": f"핵심 소재 겹침: {', '.join(lc.get('shared', []))}"}
+                continue
             v = _is_redundant_vs_batch(c, exclude)
             if v.get("redundant"):
                 c["_batch_redundant"] = v
