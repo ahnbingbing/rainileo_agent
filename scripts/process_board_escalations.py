@@ -11,13 +11,17 @@ lets it investigate AND implement the fix, smoke-tests the result, commits it to
 live branch, pushes, and posts a Korean summary back to the board THREAD. No CLI.
 
 How money/destruction stays safe WITHOUT a human gate — by construction, not by trust:
-  • The subprocess env has every paid-API key STRIPPED (OpenAI / Google-Veo / BytePlus-
-    Seedance / GCP) and the YouTube write creds removed. A render or upload literally
-    cannot authenticate, so an autonomous run can NEVER incur a Seedance/Veo/OpenAI
-    charge or upload/take-down a video. Code fixes & analysis need none of those keys.
-  • Anything that genuinely needs spend or is irreversible → the agent is instructed to
-    NOT do it and emit `[APPROVAL] <한 줄 제안>`; the worker posts that as a one-tap
-    proposal to the board (PD approves in Slack — still no CLI).
+  • By default the subprocess env has every paid-API key STRIPPED (OpenAI / Google-Veo /
+    BytePlus-Seedance / GCP) and the YouTube write creds removed. A render or upload
+    literally cannot authenticate, so an autonomous run can NEVER incur a charge or alter
+    the channel. Code fixes & analysis need none of those keys.
+  • EXCEPTION (PD 2026-07-04): a PD-AUTHORED escalation gets a render-capable env (keys kept)
+    so the executor can re-render/re-upload autonomously — but bounded by a hard
+    SEEDANCE_MAX_CALLS ceiling (~2 slots), the 25-min timeout, single-flight lock, and a
+    kill switch (BOARD_EXEC_RENDER=0). A non-PD author still gets the stripped env. This is
+    the ONLY path to autonomous spend, and it requires the escalation to come from PD.
+  • Anything beyond that (bigger spend than the cap, or a non-PD author needing a render)
+    → the agent emits `[APPROVAL] <한 줄 제안>`; the worker posts it as a one-tap proposal.
   • Smoke gate: changed .py are byte-compiled + key modules re-imported. If that breaks,
     the change is reverted (git checkout) and the failure is reported — main never ends
     up in a broken state from an autonomous edit.
@@ -57,6 +61,18 @@ EXEC_AUTHOR_ALLOWLIST = {
     u.strip() for u in os.getenv("BOARD_EXEC_AUTHORS", "").split(",") if u.strip()
 }
 AUTO_PUSH = os.getenv("BOARD_AUTO_PUSH", "1") == "1"
+
+# Render capability (PD 2026-07-04, "board=최상위 어드민"): the autonomous executor MAY run
+# PAID renders/re-renders/re-uploads — but ONLY for PD-authored escalations, and only with a
+# hard Seedance-call ceiling so a runaway loop can't drain the account. Everyone else stays
+# code-only (paid keys stripped, below). Layers that bound the blast radius:
+#   • author gate — render env is granted only when the escalation author is PD.
+#   • SEEDANCE_MAX_CALLS ceiling — cameraman refuses further Seedance past it (per process;
+#     the 25-min per-escalation timeout + single-flight lock bound how many can run).
+#   • smoke gate + kill switch (BOARD_EXEC_RENDER=0) + api_ledger visibility unchanged.
+PD_USER = os.getenv("SLACK_PD_USER_ID", "U0B166M9C9F")
+RENDER_ENABLED = os.getenv("BOARD_EXEC_RENDER", "1") == "1"
+RENDER_SEEDANCE_CAP = os.getenv("BOARD_EXEC_SEEDANCE_CAP", "12")  # ~2 slots' worth of cuts
 
 # Paid / destructive credentials stripped from the executor subprocess. This is the
 # hard money/destruction guard — without these the pipeline's render and YouTube-write
@@ -159,6 +175,17 @@ def _sanitized_env() -> dict:
     return env
 
 
+def _render_env() -> dict:
+    """Paid-capable env for a PD-authorized render escalation: KEEPS the media/YouTube keys
+    that _sanitized_env strips, but caps spend with a hard Seedance-call ceiling so an
+    autonomous loop can't run away. Only granted when the escalation author is PD."""
+    env = dict(os.environ)
+    env["SEEDANCE_MAX_CALLS"] = RENDER_SEEDANCE_CAP
+    env.pop("NO_PAID_APIS", None)
+    env.pop("DRY_RUN", None)
+    return env
+
+
 _PROMPT_EXEC = """\
 너는 'Ryani(랴니=프렌치불독, 꼬리 없음) × Leo(레오=주황 태비, 2025-09생)' 펫 YouTube Shorts
 파이프라인 레포의 자율 엔지니어다. PD가 Slack rayleo_board에서 아래를 요청했고 너에게 위임됐다.
@@ -186,8 +213,33 @@ _PROMPT_EXEC = """\
 마크다운 과하게 쓰지 마라."""
 
 
-def _run_claude_exec(request: str, env: dict, *, read_only: bool) -> str:
-    prompt = _PROMPT_EXEC.format(request=request[:1800])
+_PROMPT_EXEC_RENDER = """\
+너는 'Ryani(랴니=프렌치불독, 꼬리 없음) × Leo(레오=주황 태비, 2025-09생)' 펫 YouTube Shorts
+파이프라인 레포의 자율 엔지니어다. PD가 Slack rayleo_board에서 아래를 **직접** 요청했고, 이 요청은
+PD 승인분이라 **유료 렌더 권한**이 열려 있다. 사람이 CLI를 열어주길 기다리지 말고 끝까지 처리하라.
+
+요청:
+{request}
+
+작업 규칙:
+1) 먼저 CLAUDE.md와 관련 코드/데이터를 직접 읽어 원인을 정확히 파악하라(추측 금지).
+2) 코드/설정/데이터로 고칠 일이면 직접 수정하라(prompt-authoring·pipeline-change-impact 준수, 양 레인).
+3) **렌더/재렌더/재업로드가 필요하면 직접 실행해도 된다.** 한 슬롯 재렌더+예약영상 교체는
+   `python -m agents.launch_selfheal --date <YYYY-MM-DD> --lane <ai_vtuber|real_footage> --slot <HH:MM> --rounds 1`,
+   프리셋 1편은 `python -m scripts.render_av_one <slug>`. **단 Seedance 호출엔 `SEEDANCE_MAX_CALLS` 상한
+   (≈2슬롯)이 걸려 있다 — 그 안에서 처리하고, 상한을 넘겨야 하는 대규모 작업(예: 배치 전량 재제작)은
+   실행하지 말고 마지막 줄에 `[APPROVAL] <PD 한 줄 승인 제안>`을 남겨라.**
+4) 절대 하지 말 것: `git` 명령(커밋·푸시·브랜치 — 워커가 한다).
+5) 코드를 수정했다면 가벼운 sanity 체크(import/함수 실행)로 안 깨졌는지 확인하라.
+
+마지막에 한국어 존댓말, 12줄 이내로 Slack 요약: 결론 한 줄 / 원인·근거(file:line 또는 렌더 로그) /
+한 일(수정 파일 또는 실행한 렌더 — video_id·공개시각) 또는 [APPROVAL] 제안. 마크다운 과하게 쓰지 마라."""
+
+
+def _run_claude_exec(request: str, env: dict, *, read_only: bool,
+                     allow_render: bool = False) -> str:
+    tmpl = _PROMPT_EXEC_RENDER if (allow_render and not read_only) else _PROMPT_EXEC
+    prompt = tmpl.format(request=request[:1800])
     if read_only:
         cmd = [CLAUDE_BIN, "-p", prompt, "--allowedTools", "Read,Grep,Glob",
                "--output-format", "json"]
@@ -224,7 +276,13 @@ def _process_one(con: sqlite3.Connection, row: sqlite3.Row) -> None:
     # auto-exec only when globally enabled AND (no allowlist OR author is on it).
     read_only = (EXEC_MODE != "auto") or (
         bool(EXEC_AUTHOR_ALLOWLIST) and author not in EXEC_AUTHOR_ALLOWLIST)
-    env = _sanitized_env()
+    # Paid render is granted ONLY for PD-authored escalations (author gate), and only when
+    # globally enabled. Everyone else — and every read-only run — gets the stripped env.
+    is_pd = bool(author) and (author == PD_USER or author in EXEC_AUTHOR_ALLOWLIST)
+    allow_render = (not read_only) and RENDER_ENABLED and is_pd
+    env = _render_env() if allow_render else _sanitized_env()
+    if allow_render:
+        print(f"    render-capable (PD-authored, SEEDANCE_MAX_CALLS={RENDER_SEEDANCE_CAP})")
 
     # Refuse to run on a dirty tree (don't entangle our commit with unrelated edits).
     if not read_only and not _git_clean():
@@ -236,7 +294,7 @@ def _process_one(con: sqlite3.Connection, row: sqlite3.Row) -> None:
                     (analysis[:4000], eid)); con.commit()
         return
 
-    summary = _run_claude_exec(req, env, read_only=read_only)
+    summary = _run_claude_exec(req, env, read_only=read_only, allow_render=allow_render)
 
     committed = ""
     sha = ""
