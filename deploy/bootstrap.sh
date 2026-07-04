@@ -23,17 +23,22 @@ apt-get install -y -qq git python3 python3-venv python3-pip ffmpeg \
     fonts-nanum fontconfig curl jq
 
 echo "== 2. fonts (Pretendard + Nanum Pen for burned captions) =="
-install -d /usr/share/fonts/rianileo
-# Nanum comes from fonts-nanum; Pretendard fetched once. (Caption tofu fix = full path
-# fontfile=, same as the Mac — see CLAUDE.md gotcha #1.)
-if [ ! -f /usr/share/fonts/rianileo/Pretendard-Bold.otf ]; then
-  curl -fsSL -o /tmp/pretendard.zip \
-    https://github.com/orioncactus/pretendard/releases/latest/download/Pretendard.zip || true
-  if [ -f /tmp/pretendard.zip ]; then
-    (cd /tmp && rm -rf pretendard && mkdir pretendard && cd pretendard && \
-     unzip -oq /tmp/pretendard.zip && find . -name '*.otf' -exec cp {} /usr/share/fonts/rianileo/ \;) || true
-  fi
-fi
+# The pipeline burns captions with an explicit `fontfile=` at ~/Library/Fonts/… (macOS
+# layout, hardcoded in cameraman.py / burn_captions.py / build_bumpers.py — CLAUDE.md
+# gotcha #1). So on Linux we install into that SAME path, not /usr/share/fonts — otherwise
+# every caption renders tofu (□□□). Individual raw files (the release-zip name is versioned,
+# so `…/latest/download/Pretendard.zip` 404s). Idempotent.
+FONT_DIR="/home/$RIANILEO_USER/Library/Fonts"
+mkdir -p "$FONT_DIR"
+_pre="https://github.com/orioncactus/pretendard/raw/main/packages/pretendard/dist/public/static"
+for f in Pretendard-Bold.otf Pretendard-Medium.otf Pretendard-ExtraBold.otf; do
+  [ -s "$FONT_DIR/$f" ] || curl -fsSL "$_pre/$f" -o "$FONT_DIR/$f" || echo "   !! font fetch failed: $f"
+done
+[ -s "$FONT_DIR/NanumPenScript-Regular.ttf" ] || curl -fsSL \
+  "https://github.com/google/fonts/raw/main/ofl/nanumpenscript/NanumPenScript-Regular.ttf" \
+  -o "$FONT_DIR/NanumPenScript-Regular.ttf" || echo "   !! font fetch failed: NanumPenScript"
+# chown once the user exists (step 3); world-readable regardless so ffmpeg can read them.
+chown -R "$RIANILEO_USER:$RIANILEO_USER" "/home/$RIANILEO_USER/Library" 2>/dev/null || true
 fc-cache -f >/dev/null 2>&1 || true
 
 echo "== 3. service user =="
