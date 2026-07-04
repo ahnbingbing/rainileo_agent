@@ -10,6 +10,10 @@ SHELL=/bin/bash
 TZ=Asia/Seoul
 J=/home/rianileo/rianileo-agent/deploy/run_job.sh
 LOG=/home/rianileo/rianileo-agent/data/logs
+# Autonomous board executor ON (PD 2026-07-04): auto = self-fix code + push + PD-authored
+# paid renders (Seedance-capped). cron exports this to every job; only the board picker
+# reads it. Kill: set BOARD_EXEC_MODE=analyze here and reinstall the crontab.
+BOARD_EXEC_MODE=auto
 
 # ── short-interval ───────────────────────────────────────────────
 */5  * * * *  $J -m scripts.process_board_escalations            >> $LOG/cron.board_esc.log 2>&1
