@@ -10,9 +10,12 @@
 4. **AV18 렌더결함 진단+재렌더** (task #8) — `7poBXMKiwJ4`(7/5 18:00). 레오 꼬리 잘림/튜브 겉핥기/물리·인과 붕괴. 근본 진단 후 $50 재렌더.
 5. **7/5 RF1230 재make** (task #9) — `VdaD-QH4WfU`(7/5 12:30) "집에서 각자 노는"=무사건 템플릿+6/29 재사용클립. 게이트는 이제 활성이나 예약분은 손 재make.
 6. **AV21 v2 검증+전달** (task #11) — `VtjEL9fwkZA` 교체용 얼음-adore 렌더 **in-flight**(`data/tmp/av21_adore.log`, pid `/tmp/av21_pid`). 완료 시 프레임검증→reupload.
-7. **durable 픽스 커밋 정리** (task #10) — 아래 SHIPPED 다수 미커밋. PD 승인 시 브랜치→main FF, `_*.py` 스크래치 제외.
+7. ~~durable 픽스 커밋 정리 (task #10)~~ — ✅ **완료** (`0163e21`→main FF). 아래 SHIPPED 참조.
 
-## SHIPPED 이번 세션 (미커밋 — main 반영 대기)
+## SHIPPED 이번 세션 (커밋 `0163e21` → main, + 앞선 `97b1478`)
+
+> durable 코드·프롬프트·문서 전부 **커밋·push 완료**(`0163e21`, FF). 스크래치 `_*.py`는 제외.
+> grandma 재매핑은 **DB에 적용**됨(툴 `_remap_grandma_desc.py`는 로컬, 재실행 가능).
 
 ### 파이프라인 근본 픽스
 - **쿨다운: 한 번이라도 쓴 클립 all-time 제외** (`agents/producer.py`, `RF_USED_CLIP_ALLTIME`). 기존은 최근 4편만 → 6/29 클립이 창 밖으로 빠져 7/5 재사용됨. 이제 업로드된 모든 회차 클립 제외 + **fresh<6일 때만 재사용 폴백**(정말 없을 때만). 검증: fresh 1015/1120.
