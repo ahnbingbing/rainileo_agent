@@ -364,7 +364,10 @@ def launch_pipeline(target: dt.date, *,
             _gcs = None
             try:
                 from icloud import gcs
-                _gcs = gcs.upload_episode(str(p))
+                # Communication-friendly name keyed on the upload SCHEDULE (PD 2026-07-04):
+                # YYMMDD_<LANE><HHMM> — e.g. 260705_RF2100 for the 7/5 21:00 real_footage slot.
+                _fname = f"{target.strftime('%y%m%d')}_{lane_lbl}{hhmm.replace(':', '')}"
+                _gcs = gcs.upload_episode(str(p), name=_fname)
             except Exception as e:
                 log.debug("episode GCS mirror skipped: %s", e)
             _note = (":movie_camera: 결과 — 취소하려면 이 쓰레드에 `veto` 라고 답글"

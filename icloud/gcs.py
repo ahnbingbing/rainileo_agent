@@ -137,23 +137,28 @@ def upload(file_path: str) -> bool:
 OUTPUT_ROOT = ROOT / "data" / "output"
 
 
-def upload_episode(file_path: str) -> str | None:
-    """Mirror a finished episode/output mp4 to gs://<bucket>/output/<relpath-under-data/output>
-    (PD 2026-07-04). After the GCP cutover the render runs on the VM, so its local disk is the
-    only copy of a produced video (YouTube is the PUBLISH target, not a browse UI, and Slack
-    sometimes drops the file). Mirroring every output to ONE GCS prefix gives PD (and any node)
-    a reliable place to review all produced episodes: `gs://<bucket>/output/episodes/`. Returns
-    the gs:// URI on success, None otherwise. Best-effort — never raises."""
+def upload_episode(file_path: str, name: str | None = None) -> str | None:
+    """Mirror a finished episode/output mp4 to gs://<bucket>/output/episodes/ (PD 2026-07-04).
+    After the GCP cutover the render runs on the VM, so its local disk is the only copy of a
+    produced video (YouTube is the PUBLISH target, not a browse UI, and Slack sometimes drops
+    the file). Mirroring every output to ONE GCS prefix gives PD a reliable place to review all
+    produced episodes.
+
+    `name` (no extension) sets a communication-friendly blob name — PD's convention is the
+    upload SCHEDULE: `YYMMDD_<LANE><HHMM>` (e.g. 260705_RF2100 = the 7/5 21:00 real_footage
+    slot). Without it, the local relpath is used. Returns the gs:// URI, None otherwise."""
     if not enabled():
         return None
     p = Path(file_path)
     if not p.exists():
         return None
-    try:
-        rel = p.resolve().relative_to(OUTPUT_ROOT.resolve())
-        name = f"output/{rel}"
-    except (ValueError, OSError):
-        name = f"output/episodes/{p.name}"
+    if name:
+        name = f"output/episodes/{name}{p.suffix}"
+    else:
+        try:
+            name = f"output/{p.resolve().relative_to(OUTPUT_ROOT.resolve())}"
+        except (ValueError, OSError):
+            name = f"output/episodes/{p.name}"
     try:
         blob = _bucket().blob(name)
         if blob.exists():
