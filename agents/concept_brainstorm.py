@@ -70,14 +70,21 @@ def _real_material(limit_stories: int = 12, limit_clips: int = 12) -> str:
                             + "\n- ".join(owner))
         except Exception:
             pass
-        try:
+        try:  # 3) CURATED discrete 소재 (scripts/_curate_episode_material.py distills the raw
+              # grandma-conversation dump into deduped trait/event/preference items). Prefer it —
+              # the raw episode_stories dump was conversational noise; fall back to raw if empty.
             rows = con.execute(
-                "SELECT text FROM episode_stories WHERE author NOT LIKE '%참여%' "
-                "AND text NOT LIKE '[%' AND length(text) > 25 ORDER BY rowid DESC LIMIT ?",
-                (limit_stories,)).fetchall()
-            real = [r[0].strip().replace("\n", " ")[:140] for r in rows if r[0]]
+                "SELECT kind, subjects, material FROM episode_material "
+                "ORDER BY use_count ASC, RANDOM() LIMIT ?", (limit_stories,)).fetchall()
+            real = [f"[{r[0]}/{r[1]}] {r[2].strip()}"[:150] for r in rows if r[2]]
+            if not real:  # fallback: raw dump (pre-curation)
+                rows = con.execute(
+                    "SELECT text FROM episode_stories WHERE author NOT LIKE '%참여%' "
+                    "AND text NOT LIKE '[%' AND length(text) > 25 ORDER BY rowid DESC LIMIT ?",
+                    (limit_stories,)).fetchall()
+                real = [r[0].strip().replace("\n", " ")[:140] for r in rows if r[0]]
             if real:
-                bits.append("실제 있었던 일(보호자 기록):\n- " + "\n- ".join(real))
+                bits.append("실제 있었던 일 — 소재(보호자 기록에서 추린 것):\n- " + "\n- ".join(real))
         except Exception:
             pass
         try:

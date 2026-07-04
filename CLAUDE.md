@@ -29,6 +29,14 @@
 > report the blast radius. A change is done when both lanes agree — not when one file
 > is edited.
 
+> **📓 MERGE-RETROSPECTIVE RULE:** After you MERGE work to main (commit/push a shipped
+> unit of durable change — a fix, gate, schema change, or rollback), invoke the
+> **`merge-retrospective`** skill BEFORE calling it done. Record what this merge SHIPPED
+> and, more importantly, what it TAUGHT (the failure→root-cause→fix spine, any rollback)
+> into `notes/retrospective_2026-05_to_07.md` — synthesized principle-first into the right
+> existing section, NOT a dated changelog dump. The retrospective is the project's living
+> memory ("지운 실패는 반복된다"); a merge that leaves no trace of its lesson is half-done.
+
 > **🔁 board↔CLI 공유 루프 RULE:** board(슬랙 봇 + 자율 executor)와 CLI(너)는 `notes/progress_log.md`
 > 공용 진행 로그로 소통한다 — 따로 놀지 말고 같은 맥락에서 이어가라. **세션 시작 시** 그 로그 최근
 > (`from agents.progress_log import recent_progress; recent_progress(15)`) + `board_escalations` 큐를

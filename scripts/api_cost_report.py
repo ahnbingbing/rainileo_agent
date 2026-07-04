@@ -123,9 +123,10 @@ def build_report(day: dt.date) -> str:
         lines.append(f":receipt: {real}")
     else:
         lines.append("")
-        lines.append("_참고: $는 우리 호출수×단가 **추정**. OpenAI 실제 청구는 admin 키"
-                     "(`OPENAI_ADMIN_KEY`) 넣으면 Costs API로 실값 조회. Google/BytePlus는 "
-                     "키 기반 billing API가 없어 추정만._")
+        lines.append("_참고: $는 우리 호출수×단가 **추정**(2026-07-04 영수증으로 재보정: Seedance "
+                     "~$0.90/콜, 텍스트는 토큰 기반). 실제 청구가 authoritative — OpenAI는 admin 키"
+                     "(`OPENAI_ADMIN_KEY`)로 Costs API 조회, BytePlus/Google은 billing API가 없어 "
+                     "추정만. 기준: Seedance ≈ $50/일·풀렌더 ≈ $50 (notes/case_study_8_weeks_ko.md)._")
     return "\n".join(lines)
 
 

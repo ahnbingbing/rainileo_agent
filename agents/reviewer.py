@@ -179,16 +179,18 @@ looks. These are CAPS (a ceiling), not soft notes:
   there the SCREEN lacks the theme; here the CAPTIONS fail to name it — a concept needs both
   (named in the opening caption AND shown on screen). An episode shipped 8/10 with a
   `댄스 챌린지` concept whose captions never said "댄스 챌린지" — exactly this miss.
-- **AV가 자기 레인을 정당화 못함 — 무훅·RF같음 (ai_vtuber, PD 2026-06-30, 강함)**: ai_vtuber는
-  RF(실사)가 못 하는 걸 해야 존재 이유가 있다 — 상상/판타지, 물리적으로 불가능한 갸그, 강한 named
-  컨셉/포맷, 또렷한 반전·payoff 중 **적어도 하나**. 화면이 그냥 **평범한 일상 펫 행동**(창밖 보기,
-  방 안 어슬렁, 나란히 누움/쉼, 서로 쳐다봄, 장난감 깨작)뿐이고 끝까지 볼 **훅·반전·payoff·상상
-  요소가 하나도 없으면**, 그건 RF로 찍었어야 할 저자극 영상을 비싸게 AI로 만든 실패작 → flag
-  "AV 무훅 — RF로 충분(레인 미정당화)", **cap ≤5, verdict ≤ 수정 필요(업로드 불가)**. 판단 기준:
-  (a) theme/narrative_oneliner의 컨셉이 화면에서 실제로 펼쳐지며 '왜 이걸 끝까지 봐야 하나'에
-  답을 주는가, (b) 그 답이 RF로는 못 만드는 것인가. "둘이 귀엽게 있다"는 답이 아니다. (PD: "이게
-  뭔 내용이야. 이럴거면 RF 쓰지 이걸 왜 AV로 만든거야? hook이 없잖아.") 이 cap은 무훅을 못 잡고
-  러버스탬프하던 구멍을 막는다 — 애매하면 통과가 아니라 cap 쪽으로.
+- **AV가 자기 레인을 정당화 못함 — 무훅·무사건 (ai_vtuber, PD 2026-06-30 / 재범위화 2026-07-04)**:
+  이건 **CONTENT(스토리) 결함**이지 LOOK(실사 여부) 결함이 절대 아니다. ★혼동 금지: ai_vtuber가
+  photoreal·실사처럼·real_footage처럼 보이는 것, 일상 소재인 것은 **감점 사유가 아니다**(오히려 정상 —
+  아래 STYLE RULES 참조, PD가 lo-fi 퀄리티로 결정). 이 규칙이 잡는 건 오직 **끝까지 볼 이유가 없는
+  저자극 '무사건 나열'** — 원인→행동→결과→리액션도, 대비도, 반전·payoff도 하나 없이 그냥 평범한 펫
+  행동(창밖 보기, 어슬렁, 나란히 쉼, 서로 쳐다봄, 장난감 깨작)만 훑고 끝나는 경우. 그럴 때만 flag
+  "AV 무훅 — 스토리·payoff 없음", **cap ≤5, verdict ≤ 수정 필요**. 판단 기준 = theme/oneliner의 컨셉이
+  화면에서 실제로 **아크(설정→전개→payoff)**로 펼쳐지며 '왜 끝까지 봐야 하나'에 답을 주는가. 답을
+  주면 **소재가 일상이어도, 실사처럼 보여도 통과**한다(예: 고양이가 도도하게 세수 vs 강아지가 놀자고
+  조름 → 결국 부비며 화해 = 명확한 대비+payoff = 통과). 상상/판타지·불가능 갸그는 훅을 만드는 **한 방법일
+  뿐 필수가 아니다**. (PD 2026-06-30: "hook이 없잖아" = 이야기가 없다는 뜻이지 실사처럼 보인다는 뜻이
+  아니었다.) 이 cap은 무-스토리를 못 잡고 러버스탬프하던 구멍만 막는다 — 실사 LOOK을 잡는 게 아니다.
 - **상상 컷이 상상으로 안 읽힘 (ai_vtuber)**: a beat meant as a daydream/상상 (the caption says
   so, or the action is impossible-on-purpose) must READ as imagination — a dreamy look
   (misty haze OR a vivid, luminous, magical dreamscape — a wonder-fantasy SHOULD look lush
@@ -210,7 +212,14 @@ IMPORTANT STYLE RULES:
   - 인과관계 있는 스토리 전개 필수 (원인→행동→결과→리액션)
   - 컷 수/길이/캡션 개수는 Writer가 결정 — 고정 포맷 아님
   - 같은 날짜+장소 클립이 자연스럽게 이어져야 함
-- For BOTH styles: Do NOT reject images just because they look AI-generated or photorealistic. The channel's style IS photorealistic AI generation. Text-to-video output may look slightly different from real photos — this is expected and OK.
+- **사실적으로 보이는 건 절대 감점 사유가 아니다 — 오히려 정상 (양 레인, PD 2026-07-04, 절대)**: 채널의
+  ai_vtuber 룩은 **의도적으로 photoreal lo-fi**다 — 실제 폰으로 찍은 실사처럼 보이게 만들어 real_footage
+  레인과 자연스럽게 섞이도록 한 것(PD가 lo-fi 퀄리티로 결정). 따라서 **ai_vtuber 결과물이 "너무 실사 같다 /
+  real_footage처럼 보인다 / AI 티가 안 난다 / 요청한 툴 체인/스타일과 불일치"는 결함이 아니며, visual_style
+  점수나 판정을 이 이유로 절대 낮추지 마라.** 이는 리뷰어의 흔한 오판이다(실제로 AV18 아침루틴을 "고품질
+  실사라 ai_vtuber 스타일 불일치"로 style 2/10 주고 reject → 렌더는 정상인데 슬롯이 빌 뻔한 사고). "ai_vtuber"
+  라벨은 **제작 방식**(프레임을 생성)이지 결과가 인공적으로 보여야 한다는 요구가 아니다. AI 생성이든
+  photoreal이든 **룩만으로는 절대 거부·감점하지 마라** — 캐릭터/테마/스토리로만 판단하라.
 - Only reject if: wrong characters, wrong theme, content from a different episode, or completely off-topic.
 - **BGM**: Must match the concept's mood. Cozy concept = gentle/lofi BGM. Fun concept = playful/upbeat BGM. Do NOT use epic/cinematic/orchestral BGM for cute pet content.
 - **Cut repetition**: If multiple cuts show the same pose/scene/background, that is a MAJOR issue. Every cut must be visually distinct. Penalize heavily for repeated scenes.
@@ -857,6 +866,58 @@ def _preachy_caption_gate(concept: dict | None, report: dict) -> None:
              report.get("판정"), report.get("점수"))
 
 
+# Deterministic 호칭/나이 canon violations — high-confidence only (precision over recall).
+# Canon: 랴니=11살 여자(누나/엄마, '랴니엄마') · 레오=8개월 남자 막내(랴니를 엄마로 여김). 등장인물이
+# 이 둘뿐이라 연상 남자('오빠/형')는 존재하지 않는다 → 캡션의 '오빠/형아/형님'은 항상 관계 역전.
+_HONORIFIC_VIOLATIONS = (
+    (r"오빠|형아|형님", "'오빠/형' 호칭 — 연상 남자 캐릭터가 없음 (레오=막내 남, 랴니=여자 누나/엄마)"),
+    (r"레오(?:는|가|은|이|도|만)?\s*(?:베테랑|시니어|노령|senior|맏이)|(?:베테랑|시니어|노령|senior|맏이)\s*레오",
+     "레오를 연장자/시니어로 — 레오는 8개월 막내"),
+    (r"랴니(?:는|가|은|이|도|만)?\s*(?:막내|아기|신참|꼬맹이)|(?:막내|아기|신참|꼬맹이)\s*랴니",
+     "랴니를 막내/아기로 — 랴니는 11살 누나/엄마"),
+)
+
+
+def _canon_honorific_gate(concept: "dict | None", report: dict) -> None:
+    """Deterministic canon honorific/age gate (PD 2026-07-04, AV18 '랴니가 막내 레오를 오빠라 부름').
+
+    caption_agent.md already states the rule (랴니 POV의 레오='막내/레오', 레오 POV의 랴니='랴니엄마';
+    랴니=senior, never 막내/아기) — but the LLM ignored it and wrote "오빠, 나랑 놀자!" (Ryani, the
+    11yr elder, calling the 8mo youngest 오빠), and Giri never checked honorifics → it shipped 9/10.
+    So enforce in CODE. High-confidence patterns only so a good caption never trips it."""
+    if not concept:
+        return
+    cuts = concept.get("cuts") or []
+    blob = []
+    for c in cuts:
+        caps = c.get("captions") or []
+        if isinstance(caps, list):
+            for sc in caps:
+                blob.append(str(sc.get("ko", "")) if isinstance(sc, dict) else str(sc))
+        for k in ("ko", "en", "caption"):
+            if c.get(k):
+                blob.append(str(c[k]))
+    text = " ".join(blob)
+    hits = [msg for pat, msg in _HONORIFIC_VIOLATIONS if re.search(pat, text)]
+    if not hits:
+        return
+    note = ("호칭/나이 canon 역전(결정론적 게이트): " + " / ".join(hits) +
+            ". 등장인물은 랴니(11살 여자 누나·엄마, '랴니엄마')와 레오(8개월 남자 막내)뿐 — '오빠/형'은 "
+            "존재하지 않는다. 레오→랴니='랴니엄마/누나', 랴니→레오='막내/레오'로 고쳐라.")
+    prev = report.get("가장_큰_문제", "") or ""
+    report["가장_큰_문제"] = note if (not prev or "없" in prev[:6]) else f"{note} / {prev}"
+    try:
+        report["점수"] = min(int(report.get("점수", 10)), 5)
+    except Exception:
+        report["점수"] = 5
+    if report.get("판정", "") in ("업로드", "즉시 업로드", "소폭 수정 후 업로드", ""):
+        report["판정"] = "수정 필요"
+    report["최종_결정"] = report.get("판정", "수정 필요")
+    report["_honorific_gate_override"] = note
+    log.info("honorific gate FIRED: %s → 판정=%s 점수=%s", hits,
+             report.get("판정"), report.get("점수"))
+
+
 # False "first swim/water" framing about Ryani (PD 2026-06-28). Ryani is a lifelong
 # water-maniac / strong swimmer (canon), so any caption that frames a swim/water beat
 # as her FIRST is a factual lie — even on genuine 2016 baby footage (that era she was
@@ -1184,6 +1245,13 @@ def review(video: Path, storyboard: list[dict] | None = None,
         _preachy_caption_gate(concept, report)
     except Exception as e:
         log.warning("Preachy caption gate failed: %s", e)
+
+    # Deterministic 호칭/나이 canon gate (PD 2026-07-04): catches age/relationship inversions
+    # ("오빠, 나랑 놀자!" — 랴니가 막내 레오를 오빠라 부름) the LLM writes despite the caption prompt.
+    try:
+        _canon_honorific_gate(concept, report)
+    except Exception as e:
+        log.warning("Honorific canon gate failed: %s", e)
 
     # False "first swim/water" framing about Ryani (PD 2026-06-28): she is a lifelong
     # swimmer, so a '첫 수영/인생 첫 풍덩' hook on old pool footage is a lie. RF-scoped.

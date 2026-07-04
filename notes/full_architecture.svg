@@ -1,0 +1,147 @@
+<svg viewBox="0 0 1600 742" xmlns="http://www.w3.org/2000/svg">
+  <rect x="0" y="0" width="1600" height="742" fill="#FFFFFF"/>
+  <rect x="16" y="16" width="1568" height="710" rx="14" fill="#FFFFFF" stroke="#D6DBE0" stroke-width="1.5"/>
+
+  <defs>
+    <marker id="arw" markerWidth="10" markerHeight="10" refX="6.5" refY="5" orient="auto"><path d="M0,0 L9,5 L0,10 z" fill="#B0492A"/></marker>
+    <marker id="arwb" markerWidth="10" markerHeight="10" refX="6.5" refY="5" orient="auto"><path d="M0,0 L9,5 L0,10 z" fill="#4E7A9B"/></marker>
+  </defs>
+
+  <!-- title -->
+  <text x="44" y="56" font-family="DejaVu Serif" font-size="27" font-weight="bold" fill="#1F2933">Ryani &#215; Leo &#8212; The Studio: the full pipeline</text>
+  <text x="46" y="82" font-family="DejaVu Sans" font-size="15" fill="#6B7280">two lanes &#183; 8 pipeline stages &#183; human-in-the-loop review &#183; a closed feedback loop that steers the next batch</text>
+
+  <!-- foundations -->
+  <rect x="44" y="100" width="740" height="78" rx="8" fill="#F3F4F6"/>
+  <text x="64" y="129" font-family="DejaVu Sans" font-size="17" font-weight="bold" fill="#1F2933">Concept directive <tspan font-size="12" font-weight="normal" fill="#9AA3AD">— what each episode is about</tspan></text>
+  <text x="64" y="153" font-family="DejaVu Sans" font-size="13" fill="#454B52">PD <tspan font-weight="bold">/concept</tspan>  &#8594;  launch intro  &#8594;  <tspan font-weight="bold">arc season-plan</tspan> — season &#183; holiday &#183; trend</text>
+  <text x="64" y="171" font-family="DejaVu Sans" font-size="12" font-style="italic" fill="#9AA3AD">arc = the timely / seasonal proposer &#183; a PD directive overrides everything</text>
+
+  <rect x="820" y="100" width="740" height="78" rx="8" fill="#F3F4F6"/>
+  <text x="840" y="129" font-family="DejaVu Sans" font-size="17" font-weight="bold" fill="#1F2933">Character Canon &#183; Knowledge v2 <tspan font-size="12" font-weight="normal" fill="#9AA3AD">— anti-hallucination</tspan></text>
+  <text x="840" y="153" font-family="DejaVu Sans" font-size="13" fill="#454B52">VLM observation  &#183;  PD-authored facts  &#183;  ask-when-unknown</text>
+  <text x="840" y="171" font-family="DejaVu Sans" font-size="12" font-style="italic" fill="#9AA3AD">grounded, never invented &#183; change once &#8594; every agent inherits it</text>
+
+  <text x="802" y="199" text-anchor="middle" font-family="DejaVu Sans" font-size="12" fill="#9AA3AD">&#8595; both ground every stage below</text>
+
+  <!-- section bands -->
+  <g font-family="DejaVu Sans" font-size="12" font-weight="bold" letter-spacing="2" fill="#9AA3AD" text-anchor="middle">
+    <rect x="44"   y="214" width="550" height="24" rx="6" fill="#EEF0F2"/><text x="319"  y="230">GENERATE</text>
+    <rect x="617"  y="214" width="550" height="24" rx="6" fill="#EEF0F2"/><text x="892"  y="230">RENDER</text>
+    <rect x="1190" y="214" width="168" height="24" rx="6" fill="#EEF0F2"/><text x="1274" y="230">REVIEW</text>
+    <rect x="1381" y="214" width="168" height="24" rx="6" fill="#EEF0F2"/><text x="1465" y="230">LAUNCH</text>
+  </g>
+
+  <!-- pipeline cards (y=248 h=116) -->
+  <rect x="44" y="248" width="168" height="116" rx="8" fill="#FFFFFF" stroke="#D6DBE0" stroke-width="1.5"/>
+  <text x="128" y="292" text-anchor="middle" font-family="DejaVu Sans" font-size="17" font-weight="bold" fill="#1F2933">Writer</text>
+  <text x="128" y="316" text-anchor="middle" font-family="DejaVu Sans" font-size="12" fill="#454B52">Opus &#183; 3-pass</text>
+  <text x="128" y="336" text-anchor="middle" font-family="DejaVu Sans" font-size="12" font-style="italic" fill="#9AA3AD">story + captions</text>
+
+  <rect x="235" y="248" width="168" height="116" rx="8" fill="#FFFFFF" stroke="#D6DBE0" stroke-width="1.5"/>
+  <text x="319" y="292" text-anchor="middle" font-family="DejaVu Sans" font-size="17" font-weight="bold" fill="#1F2933">Conte</text>
+  <text x="319" y="316" text-anchor="middle" font-family="DejaVu Sans" font-size="12" fill="#454B52">cue-sheet</text>
+  <text x="319" y="336" text-anchor="middle" font-family="DejaVu Sans" font-size="12" font-style="italic" fill="#9AA3AD">shot design only</text>
+
+  <rect x="426" y="248" width="168" height="116" rx="8" fill="#FFFFFF" stroke="#D6DBE0" stroke-width="1.5"/>
+  <text x="510" y="292" text-anchor="middle" font-family="DejaVu Sans" font-size="17" font-weight="bold" fill="#1F2933">Director</text>
+  <text x="510" y="316" text-anchor="middle" font-family="DejaVu Sans" font-size="12" fill="#454B52">prompt + mode</text>
+  <text x="510" y="336" text-anchor="middle" font-family="DejaVu Sans" font-size="12" font-style="italic" fill="#9AA3AD">per-cut seedance</text>
+
+  <rect x="617" y="248" width="168" height="116" rx="8" fill="#FFFFFF" stroke="#D6DBE0" stroke-width="1.5"/>
+  <text x="701" y="292" text-anchor="middle" font-family="DejaVu Sans" font-size="16" font-weight="bold" fill="#1F2933">Cameraman</text>
+  <text x="701" y="316" text-anchor="middle" font-family="DejaVu Sans" font-size="12" fill="#454B52">= Editor</text>
+  <text x="701" y="336" text-anchor="middle" font-family="DejaVu Sans" font-size="12" font-style="italic" fill="#9AA3AD">AV still&#8594;i2v / RF trim</text>
+
+  <rect x="808" y="248" width="168" height="116" rx="8" fill="#F9EEE8" stroke="#C06A48" stroke-width="2.5"/>
+  <text x="892" y="292" text-anchor="middle" font-family="DejaVu Sans" font-size="15" font-weight="bold" fill="#B0492A">Seedance 2.0</text>
+  <text x="892" y="316" text-anchor="middle" font-family="DejaVu Sans" font-size="12" fill="#454B52">i2v &#183; interp &#183; ref</text>
+  <text x="892" y="336" text-anchor="middle" font-family="DejaVu Sans" font-size="12" font-style="italic" fill="#9A6B55">best-of-5 &#183; ~$50/render</text>
+
+  <rect x="999" y="248" width="168" height="116" rx="8" fill="#FFFFFF" stroke="#D6DBE0" stroke-width="1.5"/>
+  <text x="1083" y="292" text-anchor="middle" font-family="DejaVu Sans" font-size="16" font-weight="bold" fill="#1F2933">Assemble</text>
+  <text x="1083" y="316" text-anchor="middle" font-family="DejaVu Sans" font-size="12" fill="#454B52">caption burn-in</text>
+  <text x="1083" y="336" text-anchor="middle" font-family="DejaVu Sans" font-size="12" font-style="italic" fill="#9AA3AD">bumpers + BGM</text>
+
+  <rect x="1190" y="248" width="168" height="116" rx="8" fill="#FFFFFF" stroke="#D6DBE0" stroke-width="1.5"/>
+  <rect x="1288" y="260" width="60" height="20" rx="10" fill="#B0492A"/><text x="1318" y="274" text-anchor="middle" font-family="DejaVu Sans" font-size="10" font-weight="bold" letter-spacing="1" fill="#fff">HUMAN</text>
+  <text x="1274" y="302" text-anchor="middle" font-family="DejaVu Sans" font-size="17" font-weight="bold" fill="#1F2933">Giri</text>
+  <text x="1274" y="324" text-anchor="middle" font-family="DejaVu Sans" font-size="12" fill="#454B52">review gate</text>
+  <text x="1274" y="344" text-anchor="middle" font-family="DejaVu Sans" font-size="12" font-style="italic" fill="#9AA3AD">upload/revise/discard</text>
+
+  <rect x="1381" y="248" width="168" height="116" rx="8" fill="#FFFFFF" stroke="#D6DBE0" stroke-width="1.5"/>
+  <rect x="1479" y="260" width="60" height="20" rx="10" fill="#B0492A"/><text x="1509" y="274" text-anchor="middle" font-family="DejaVu Sans" font-size="10" font-weight="bold" letter-spacing="1" fill="#fff">HUMAN</text>
+  <text x="1465" y="302" text-anchor="middle" font-family="DejaVu Sans" font-size="16" font-weight="bold" fill="#1F2933">Schedule</text>
+  <text x="1465" y="324" text-anchor="middle" font-family="DejaVu Sans" font-size="12" fill="#454B52">2 AV + 2 RF slot</text>
+  <text x="1465" y="344" text-anchor="middle" font-family="DejaVu Sans" font-size="12" font-style="italic" fill="#9AA3AD">auto-schedule / veto</text>
+
+  <!-- badges -->
+  <g font-family="DejaVu Sans" font-size="13" font-weight="bold" text-anchor="middle">
+    <circle cx="68" cy="272" r="13" fill="#B0492A"/><text x="68" y="277" fill="#fff">1</text>
+    <circle cx="259" cy="272" r="13" fill="#B0492A"/><text x="259" y="277" fill="#fff">2</text>
+    <circle cx="450" cy="272" r="13" fill="#B0492A"/><text x="450" y="277" fill="#fff">3</text>
+    <circle cx="641" cy="272" r="13" fill="#B0492A"/><text x="641" y="277" fill="#fff">4</text>
+    <circle cx="832" cy="272" r="13" fill="#B0492A"/><text x="832" y="277" fill="#fff">5</text>
+    <circle cx="1023" cy="272" r="13" fill="#B0492A"/><text x="1023" y="277" fill="#fff">6</text>
+    <circle cx="1214" cy="272" r="13" fill="#B0492A"/><text x="1214" y="277" fill="#fff">7</text>
+    <circle cx="1405" cy="272" r="13" fill="#B0492A"/><text x="1405" y="277" fill="#fff">8</text>
+  </g>
+
+  <!-- forward arrows -->
+  <g stroke="#B0492A" stroke-width="2.2">
+    <line x1="214" y1="306" x2="233" y2="306" marker-end="url(#arw)"/>
+    <line x1="405" y1="306" x2="424" y2="306" marker-end="url(#arw)"/>
+    <line x1="596" y1="306" x2="615" y2="306" marker-end="url(#arw)"/>
+    <line x1="787" y1="306" x2="806" y2="306" marker-end="url(#arw)"/>
+    <line x1="978" y1="306" x2="997" y2="306" marker-end="url(#arw)"/>
+    <line x1="1169" y1="306" x2="1188" y2="306" marker-end="url(#arw)"/>
+    <line x1="1360" y1="306" x2="1379" y2="306" marker-end="url(#arw)"/>
+  </g>
+
+  <!-- two lanes + deterministic gates -->
+  <rect x="44" y="380" width="1123" height="50" rx="8" fill="#F3F4F6"/>
+  <text x="64" y="402" font-family="DejaVu Sans" font-size="14" font-weight="bold" fill="#1F2933">Two lanes in parallel</text>
+  <text x="64" y="421" font-family="DejaVu Sans" font-size="13" fill="#454B52"><tspan font-weight="bold">AV</tspan> — AI-generated (still &#8594; Seedance i2v, best-of-5)  &#160;&#183;&#160;  <tspan font-weight="bold">RF</tspan> — real footage (clip trim + interp gap-fill)</text>
+
+  <rect x="1190" y="380" width="359" height="50" rx="8" fill="#F9EEE8" stroke="#E3C6B8" stroke-width="1.2"/>
+  <text x="1206" y="401" font-family="DejaVu Sans" font-size="13" font-weight="bold" fill="#B0492A">Deterministic gates</text>
+  <text x="1206" y="420" font-family="DejaVu Sans" font-size="11.5" fill="#7A6357">code-computed booleans: temporal &#183; preachy &#183; era &#183; markings</text>
+
+  <!-- ===== feedback loop (counter-clockwise) ===== -->
+  <rect x="36" y="446" width="1521" height="96" rx="10" fill="#F6F9FB" stroke="#DCE6EC" stroke-width="1.2"/>
+  <text x="52" y="470" font-family="DejaVu Sans" font-size="13" font-weight="bold" letter-spacing="1" fill="#4E7A9B">FEEDBACK LOOP <tspan font-weight="normal" fill="#8FA6B4">— every publish steers tomorrow's batch; Macro Reviewer flags cross-episode freshness</tspan></text>
+
+  <!-- Publish/Analytics (right) -->
+  <rect x="1149" y="480" width="400" height="52" rx="8" fill="#FFFFFF" stroke="#B9CCd8" stroke-width="1.4"/>
+  <text x="1169" y="503" font-family="DejaVu Sans" font-size="14" font-weight="bold" fill="#1F2933">Publish &#8594; Analytics</text>
+  <text x="1169" y="522" font-family="DejaVu Sans" font-size="12" fill="#5E7280">48h views + retention</text>
+
+  <!-- Bandit (middle) -->
+  <rect x="699" y="480" width="400" height="52" rx="8" fill="#FFFFFF" stroke="#B9CCD8" stroke-width="1.4"/>
+  <text x="719" y="503" font-family="DejaVu Sans" font-size="14" font-weight="bold" fill="#1F2933">Thompson bandit</text>
+  <text x="719" y="522" font-family="DejaVu Sans" font-size="12" fill="#5E7280">lane / slot / lane&#215;slot &#183; P(best)</text>
+
+  <!-- Channel Manager (left, end of loop) -->
+  <rect x="52" y="480" width="600" height="52" rx="8" fill="#FFFFFF" stroke="#4E7A9B" stroke-width="2"/>
+  <text x="72" y="502" font-family="DejaVu Sans" font-size="14" font-weight="bold" fill="#2F5A78">Channel Manager</text>
+  <text x="72" y="522" font-family="DejaVu Sans" font-size="11.5" fill="#5E7280">title/tag A/B packaging &#183; slot allocation (bandit) &#183; portfolio feedback: which themes win</text>
+
+  <!-- leftward arrows along the loop -->
+  <g stroke="#4E7A9B" stroke-width="2.2">
+    <line x1="1147" y1="506" x2="1101" y2="506" marker-end="url(#arwb)"/>
+    <line x1="697" y1="506" x2="654" y2="506" marker-end="url(#arwb)"/>
+  </g>
+  <!-- return arrow up into Concept directive -->
+  <path d="M60,480 L60,180" fill="none" stroke="#4E7A9B" stroke-width="2.2" stroke-dasharray="6,5" marker-end="url(#arwb)"/>
+  <text x="52" y="330" font-family="DejaVu Sans" font-size="11" fill="#4E7A9B" transform="rotate(-90 52 330)" text-anchor="middle">feeds tomorrow's concept directive</text>
+
+  <!-- Board Executor (orthogonal dev agent) -->
+  <rect x="44" y="558" width="1505" height="52" rx="8" fill="#FBFBFC" stroke="#D6DBE0" stroke-width="1.5" stroke-dasharray="3,4"/>
+  <text x="64" y="580" font-family="DejaVu Sans" font-size="14" font-weight="bold" fill="#1F2933">Board Executor <tspan font-size="12" font-weight="normal" fill="#9AA3AD">— orthogonal: autonomous dev agent, not in the content flow</tspan></text>
+  <text x="64" y="599" font-family="DejaVu Sans" font-size="12.5" fill="#5E7280">Slack coding agent that edits the pipeline's own code &#183; commits &#183; pushes  &#160;(smoke gates &#183; kill switch &#183; shared progress log with the CLI)</text>
+
+  <!-- through-line -->
+  <line x1="44" y1="630" x2="1549" y2="630" stroke="#E3E6E9" stroke-width="1.5"/>
+  <text x="44" y="658" font-family="DejaVu Sans" font-size="15" fill="#454B52"><tspan font-weight="bold" fill="#1F2933">The through-line:</tspan> the bottleneck is orchestration — the seams between agents. A fix only &#8220;sticks&#8221; when both lanes and the reviewer agree.</text>
+  <text x="44" y="684" font-family="DejaVu Sans" font-size="13.5" fill="#6B7280">Human (PD) in the loop at: the <tspan font-weight="bold" fill="#B0492A">concept directive</tspan> &#183; <tspan font-weight="bold" fill="#B0492A">Giri</tspan> spot-check &#183; <tspan font-weight="bold" fill="#B0492A">/veto</tspan> &#183; answering knowledge questions.</text>
+</svg>

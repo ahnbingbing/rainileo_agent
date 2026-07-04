@@ -1334,7 +1334,13 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
             # a hardcoded 4.0s ceiling. Episode bodies came out ~16s for
             # 4×6s storyboards. Now: trim_dur = writer's duration_seconds,
             # capped by source clip's actual duration_sec when known.
-            ts = float(a.get("trim_start") or 0.0)
+            # PD 2026-07-04: honor the CONCEPT CUT's trim_start (a pinned re-make selects a
+            # specific segment of a long clip — e.g. the 삼계탕 EATING window at 40s, skipping
+            # the human face at 18s). It was read only from the asset dict `a` (always NULL for
+            # a DB-looked-up clip) → every pinned trim_start silently became 0.0 and the episode
+            # played the clip head. Prefer the cut's explicit request, fall back to the asset.
+            ts = float(cc.get("trim_start") if cc.get("trim_start") is not None
+                       else (a.get("trim_start") or 0.0))
             writer_dur = float(cc.get("duration_seconds") or 0.0)
             te = a.get("trim_end")
             if te is not None:
@@ -6374,11 +6380,31 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
             or motion_map.get(asset_id)
             or "gentle natural motion, slow blink, slight head movement, soft breathing"
         )
-        # Prepend the verbatim set_description for cross-cut visual consistency.
-        # Director's per-cut motion_prompt now focuses on character action; the
-        # background / furniture / window / wallpaper details come from the
-        # set anchor, identical for every cut in this concept.
-        if set_description and not cut_prompt.startswith(set_description[:40]):
+        # ★GROUND EACH CUT TO ITS OWN SITUATION/SPACE (PD 2026-07-04, AV21 v2 cut3 flicker):
+        # the reality set — its set_description prefix + scene_ref image + omni room photos —
+        # belongs ONLY to cuts that actually take place IN that locked room. Blanket-applying
+        # it to a cut whose situation is a DIFFERENT space (a fantasy dreamscape, or another
+        # location) injects the wrong room and makes Seedance oscillate between the two (cut3's
+        # flower path kept flickering back to the empty living room). A cut is "in the reality
+        # set" when it is NOT a fantasy beat AND its space matches the episode's set anchor (or
+        # it declares no distinct space, e.g. the wink close-up). Cuts in another space take
+        # their scene from their OWN prompt; character refs still anchor identity below.
+        _cut_space = str(cc.get("space") or cc.get("set_anchor") or "").strip().lower()
+        _ep_set = str(set_anchor or "").strip().lower()
+        _in_reality_set = (not _cut_is_fantasy(cc)) and (
+            not _cut_space or not _ep_set or _cut_space == _ep_set)
+        # ★WINK CLOSE-UP is exempt too (PD 2026-07-04, AV18 '햅삐에 배경이 생성돼'): the wink cut is
+        # an i2v tight two-shot animated FROM its own still — that still IS the background anchor.
+        # Prepending the full room description makes Seedance drift the cozy close-up INTO the
+        # described living room mid-clip (the couch/rug morphs into bench+piano+console+window).
+        # Its own still + a hold-background prompt is enough; the room text only fights it.
+        _is_wink = ("wink" in (tag or "").lower()
+                    or (cc.get("beat") or "").lower() == "wink_ending"
+                    or (cc.get("function") or "").lower() == "wink_ending")
+        # Prepend the verbatim set_description ONLY for cuts in that reality set (the Director's
+        # per-cut motion_prompt carries the character action; the room comes from the anchor).
+        if set_description and _in_reality_set and not _is_wink \
+                and not cut_prompt.startswith(set_description[:40]):
             prompt = f"{set_description} {cut_prompt}"
         else:
             prompt = cut_prompt
@@ -6521,7 +6547,7 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         # background doesn't drift. Skip on fantasy cuts: a dreamscape is a NEW world, not
         # the locked living room, so anchoring it to home furniture would fight the fantasy.
         try:
-            if sa_for_anti and lib_data and not _fantasy:
+            if sa_for_anti and lib_data and not _fantasy and not _is_wink:  # wink holds its still, not the room furniture
                 set_entry = lib_data.get(sa_for_anti) or {}
                 pb = set_entry.get("persistent_background") or {}
                 anchor_lines = []
@@ -6729,14 +6755,20 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                 mode = "i2v"
             else:
                 # Add scene_ref as ADDITIONAL anchor (BytePlus allows up to 9 refs).
-                # Character refs anchor identity; scene ref anchors the room.
+                # Character refs anchor identity; scene ref anchors the room — but ONLY for a
+                # cut whose situation IS that reality room. A fantasy/other-space cut must NOT
+                # carry the reality scene_ref image or the empty living room bleeds into the
+                # dreamscape (AV21 v2 cut3 flicker, PD 2026-07-04). Same _in_reality_set gate
+                # as the set_description prefix above — grounding follows the cut's own space.
                 full_refs = list(ref_paths)
-                if scene_ref_path and scene_ref_path.exists():
+                if scene_ref_path and scene_ref_path.exists() and _in_reality_set:
                     full_refs.append(scene_ref_path)
                 # Omni reference (2026-05-31, PD request): pull `scene_ref_extras`
                 # from set_library — extra PD-real-photos of the same room from
                 # different POVs. Seedance learns the room from multi-photo
-                # evidence instead of one scene_ref + text description.
+                # evidence instead of one scene_ref + text description. Same situation gate:
+                # these are REALITY-room photos, so skip them on a fantasy/other-space cut
+                # (they bleed the living room into the dreamscape — AV21 v2 cut3, PD 2026-07-04).
                 extras_added = 0
                 try:
                     concept_obj = manifests.get("concept") or {}
@@ -6747,7 +6779,7 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                         or (concept_obj.get("background_plan") or {}).get("set_anchor")
                         or (concept_cuts[0].get("set_anchor") if concept_cuts else None)
                     )
-                    if set_anchor:
+                    if set_anchor and _in_reality_set:
                         lib_path = ROOT / "data" / "set_library.json"
                         if lib_path.exists():
                             lib_data = json.loads(lib_path.read_text(encoding="utf-8"))
@@ -6767,6 +6799,29 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                         log.warning("omni ref: no set_anchor found in cut/concept/cuts[0]")
                 except Exception as ex:
                     log.warning("omni ref load failed: %s", ex)
+                # PD 2026-07-04: inject the REAL photo of any named prop this cut mentions
+                # (곶감꼭지 등) as a Seedance reference. object_refs is otherwise text-only, and
+                # text can't teach Seedance a prop's shape (image beats text — same as the A7
+                # character-ref lesson). 하비 uploaded real 곶감꼭지 photos to the grandma channel
+                # BECAUSE AV kept inventing the wrong object; feeding that photo here is what
+                # actually makes the render match the real thing. Bounded by the 9-ref cap.
+                try:
+                    _cut_text = ((prompt or "") + " " + str(cc.get("motion_prompt") or "")
+                                 + " " + str(cc.get("description") or "")).lower()
+                    with _db() as _con:
+                        _props = _con.execute(
+                            "SELECT name, file_path FROM object_refs "
+                            "WHERE file_path IS NOT NULL AND TRIM(name)!=''").fetchall()
+                    for _nm, _pth in _props:
+                        if len(full_refs) >= 9:
+                            break
+                        if _nm and _nm.strip().lower() in _cut_text:
+                            _pp = ROOT / _pth if not Path(_pth).is_absolute() else Path(_pth)
+                            if _pp.exists() and _pp not in full_refs:
+                                full_refs.append(_pp)
+                                log.info("prop ref added for %s: '%s' → %s", tag, _nm, _pp.name)
+                except Exception as ex:
+                    log.warning("prop ref load failed: %s", ex)
                 full_refs = full_refs[:9]
 
                 # Resolve optional reference_video URL once (set_library per anchor)

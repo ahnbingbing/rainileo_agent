@@ -1122,6 +1122,7 @@ def run_caption_agent(concepts: list[dict],
         _enforce_lane_tone(c, progress_cb=progress_cb)
         _enforce_min_caption_display(c)
         _rewrite_duplicate_captions(c, progress_cb=progress_cb)
+        _enforce_canon_honorifics(c, progress_cb=progress_cb)
     return concepts
 
 
@@ -1435,6 +1436,63 @@ def _enforce_wink_empty_captions(c: dict) -> None:
     if len(wink_idxs) > 1:
         log.info("wink dedupe: %d wink-like cuts → 1 closer (stripped %d embedded)",
                  len(wink_idxs), len(wink_idxs) - 1)
+
+
+# Canon honorific/age inversions — 랴니=11살 누나/엄마('랴니엄마'), 레오=8개월 막내. 등장인물이
+# 둘뿐이라 연상 남자('오빠/형')는 없다. (reviewer._canon_honorific_gate와 같은 패턴 — 생성단 예방.)
+_HONORIFIC_BAD = (
+    r"오빠|형아|형님",
+    r"레오(?:는|가|은|이|도|만)?\s*(?:베테랑|시니어|노령|senior|맏이)|(?:베테랑|시니어|노령|senior|맏이)\s*레오",
+    r"랴니(?:는|가|은|이|도|만)?\s*(?:막내|아기|신참|꼬맹이)|(?:막내|아기|신참|꼬맹이)\s*랴니",
+)
+
+
+def _enforce_canon_honorifics(c: dict, progress_cb=None) -> None:
+    """Fix canon honorific/age inversions at the CAPTION stage (PD 2026-07-04).
+
+    caption_agent.md states the rule (랴니 POV의 레오=막내, 레오 POV의 랴니=랴니엄마; 랴니=senior)
+    but the LLM ignored it and wrote "오빠, 나랑 놀자!". Giri's `_canon_honorific_gate` CATCHES it,
+    but catching only leaves the launch slot empty — so PREVENT here: LLM-rewrite the violating
+    captions canon-correct (레오→랴니='랴니엄마/누나', 랴니/narrator→레오='막내/레오'), keeping meaning
+    and tone. Only applies a rewrite that actually clears the violation. Same detection as Giri."""
+    flagged = []
+    for cut in c.get("cuts") or []:
+        for capi, cap in enumerate(cut.get("captions") or []):
+            ko = cap.get("ko") or ""
+            if any(re.search(p, ko) for p in _HONORIFIC_BAD):
+                flagged.append({"cut_tag": cut.get("tag", ""), "cap_index": capi,
+                                "ko": ko, "en": cap.get("en", "")})
+    if not flagged:
+        return
+    if progress_cb:
+        progress_cb(f":pencil2: 호칭 canon 위반 {len(flagged)}개 → 재작성 중...")
+    sysmsg = (
+        "You fix Korean pet-channel captions that broke the canon relationship. The ONLY two "
+        "characters are 랴니 (Ryani — an 11-year-old FEMALE, the elder 누나/엄마, whom Leo calls "
+        "'랴니엄마') and 레오 (Leo — an 8-month-old MALE, the youngest 막내). There is NO older "
+        "brother, so '오빠/형' must NEVER appear; 레오 is never senior/veteran; 랴니 is never "
+        "막내/아기. Rewrite each caption keeping its meaning and playful tone but fixing the "
+        "honorific/age: 레오 addressing 랴니 → '랴니엄마'(or 누나); 랴니/narrator addressing 레오 → "
+        "'막내/레오'. ≤16자 ko. Return ONLY a JSON array of {cut_tag, cap_index, ko, en}, same order.")
+    try:
+        out = _call_anthropic(sysmsg, json.dumps({"captions": flagged}, ensure_ascii=False),
+                              model=os.environ.get("CAPTION_AGENT_MODEL", _models.ANTHROPIC_LIGHT),
+                              max_tokens=800).strip()
+        out = re.sub(r"^```(?:json)?\s*", "", out); out = re.sub(r"\s*```$", "", out)
+        by = {(f.get("cut_tag"), f.get("cap_index")): f
+              for f in json.loads(out) if isinstance(f, dict)}
+        applied = 0
+        for cut in c.get("cuts") or []:
+            for capi, cap in enumerate(cut.get("captions") or []):
+                f = by.get((cut.get("tag", ""), capi))
+                if f and f.get("ko") and not any(re.search(p, f["ko"]) for p in _HONORIFIC_BAD):
+                    cap["ko"] = f["ko"]
+                    if f.get("en"):
+                        cap["en"] = f["en"]
+                    applied += 1
+        log.info("canon honorific fix: %d/%d captions rewritten", applied, len(flagged))
+    except Exception as e:
+        log.warning("canon honorific rewrite failed: %s", e)
 
 
 def _rewrite_duplicate_captions(concept: dict, progress_cb=None) -> None:
@@ -2404,6 +2462,103 @@ def _split_shot_markers_into_cuts(c: dict) -> None:
     c["cuts"] = new_cuts
 
 
+_WD_FANTASY_LOOKS = ("fantasy", "vivid", "imagination", "dream", "dreamscape", "판타지", "상상")
+_WD_FANTASY_KW = ("무릉도원", "근두운", "몽환", "초현실", "환상", "상상", "꿈", "paradise",
+                  "fantasy", "dreamscape", "dream world", "daydream")
+
+
+def _wd_cut_is_fantasy(cut: dict | None) -> bool:
+    """True when a cut is an imagination/fantasy beat (mirrors cameraman._cut_is_fantasy so
+    both stages agree on which cuts are dreamworld). Used by the closer-integrity gate to
+    tell a reality-return payoff from an unresolved imagination climax."""
+    if not cut:
+        return False
+    if str(cut.get("look") or "").strip().lower() in _WD_FANTASY_LOOKS:
+        return True
+    blob = " ".join(str(cut.get(k, "")) for k in
+                    ("space", "beat", "function", "set_anchor", "motion_prompt", "description"))
+    return any(k in blob.lower() for k in _WD_FANTASY_KW)
+
+
+def _resolution_caption(c: dict, wink_subject: str) -> dict:
+    """Author ONE reality-return payoff caption (ko/en) for the closer-integrity gate below.
+    Grounded in the concept so it resolves the daydream back to reality and bookends cut1;
+    an LLM writes it, with a safe on-brand fallback when the call fails (flaky network)."""
+    cuts = c.get("cuts") or []
+    title = c.get("title"); title = title.get("ko") if isinstance(title, dict) else (title or "")
+    cut1_cap = ""
+    for cap in ((cuts[0].get("captions") if cuts else None) or []):
+        cut1_cap = cap.get("ko") or ""
+        if cut1_cap:
+            break
+    fantasy_cap = ""
+    for cut in cuts:
+        if _wd_cut_is_fantasy(cut):
+            for cap in (cut.get("captions") or []):
+                fantasy_cap = cap.get("ko") or fantasy_cap
+    winner_ko = "레오" if wink_subject == "leo" else "랴니"
+    try:
+        sysmsg = (
+            "너는 펫 유튜브 숏츠의 카피라이터다. 상상(판타지) 장면 뒤 '현실로 돌아온' 마지막 결(payoff) "
+            "컷에 얹을 캡션 한 줄을 쓴다. 규칙: 한국어 한 문장, 아주 짧게(큰 자막), 괄호 없음, 화자 라벨 "
+            "없음, 상상이 끝나고 현실에서 둘이 함께인 따뜻한 마무리(상상↔현실 대비를 살짝), cut1의 관계를 "
+            "되받는 bookend 느낌, 끝에 ♥ 하나. 이건 마지막 윙크 사인오프('오늘도 햅삐') 바로 앞 컷이다 — "
+            "그러니 윙크 인사말이 아니라 '이야기의 결말'이어야 한다. JSON만: {\"ko\":..., \"en\":...}")
+        usr = (f"컨셉 제목: {title}\ncut1(도입) 캡션: {cut1_cap}\n상상 절정 캡션: {fantasy_cap}\n"
+               f"이야기의 승자(윙크 주체): {winner_ko}\n현실로 돌아온 결 캡션을 써라.")
+        raw = _call_anthropic(sysmsg, usr, model=DIRECTOR_MODEL, max_tokens=300).strip()
+        raw = re.sub(r"^```(?:json)?\s*", "", raw); raw = re.sub(r"\s*```$", "", raw)
+        d = json.loads(raw)
+        ko = (d.get("ko") or "").strip()
+        en = (d.get("en") or "").strip()
+        if ko:
+            return {"ko": ko, "en": en or "Dream or real, right here is best ♥"}
+    except Exception as e:
+        log.warning("resolution caption LLM failed (%s) — using fallback", e)
+    return {"ko": "상상도 좋지만, 역시 지금 이 순간이 최고 ♥",
+            "en": "Daydreams are sweet, but here and now is best ♥"}
+
+
+def _ensure_resolution_before_wink(c: dict, story_cuts: list, wink_cut: dict,
+                                   wink_subject: str) -> None:
+    """CLOSER-INTEGRITY GATE (PD 2026-07-04, AV21 v2 '마지막에 이야기 없이').
+
+    A 현실→상상→현실복귀 episode's payoff is the RETURN to reality — the 결 must be its own
+    captioned cut, and the wink is only the button AFTER it (director_shots.md says exactly
+    this). But the guidance is advisory, and the Writer ended AV21 on the 상상 climax (the
+    flower-path hook) with no reality-return cut → the auto-appended wink's deliberately-late
+    caption left the whole ending captionless = a story-less "그냥 끝". Prompt advice alone
+    didn't hold, so enforce it deterministically: when the last STORY cut is a fantasy beat
+    (and the episode has real reality cuts), the reality-return payoff is MISSING. Recover by
+    folding it into the wink cut — break its chain off the dreamworld so it renders a REALITY
+    sign-off, and give its lead-in a reality-return payoff caption (the 결) ahead of the 햅삐
+    button. The wink stays a button; it just carries the resolution the Writer dropped."""
+    if not story_cuts or not _wd_cut_is_fantasy(story_cuts[-1]):
+        return
+    if not any(not _wd_cut_is_fantasy(cc) for cc in story_cuts):
+        return  # a pure-dream episode legitimately ends in fantasy — nothing to return to
+    # 1) Don't let the wink continue the dreamworld — cut back to the real home.
+    wink_cut["chain_from_prev"] = False
+    _reality_prefix = (
+        "CUT BACK TO REALITY — the daydream is over: both pets are together again in the real "
+        "home living room now, NOT the dream world (no flowers, petals, butterflies or any "
+        "fantasy props/scenery from the imagination). Warm, cozy, ordinary home. ")
+    for k in ("motion_prompt", "veo_prompt"):
+        mp = wink_cut.get(k) or ""
+        if mp and "CUT BACK TO REALITY" not in mp:
+            wink_cut[k] = _reality_prefix + mp
+    # 2) Give the ending its story: a reality-return payoff caption BEFORE the wink sign-off.
+    _wd = int(wink_cut.get("duration_seconds") or 5)
+    payoff = _resolution_caption(c, wink_subject)
+    caps = list(wink_cut.get("captions") or [])
+    # keep the 햅삐 wink caption late; place the payoff on the reality-return lead-in.
+    payoff_cap = {"start": 0.4, "end": max(2.2, round(_wd - 2.6, 1)),
+                  "ko": payoff["ko"], "en": payoff["en"]}
+    wink_cut["captions"] = [payoff_cap] + caps
+    log.info("closer-integrity gate: story ended on a fantasy cut → folded reality-return "
+             "payoff caption into the wink (%s)", payoff["ko"][:40])
+
+
 def _consolidate_short_to_one_take(c: dict) -> None:
     """Mark single-space concepts as 'chained' short — multiple cuts dispatched
     sequentially, each using the previous cut's last frame as input.
@@ -2532,6 +2687,10 @@ def _consolidate_short_to_one_take(c: dict) -> None:
     _has_l = any(("leo" in s or "레오" in s) for s in _subs)
     _other = ("leo" if wink_subject == "ryani" else "ryani") if (_has_r and _has_l) else None
     wink_cut = _build_wink_cut(wink_subject, cuts[-1], other=_other)
+    # Closer-integrity gate: if the Writer ended the story on a fantasy/imagination climax
+    # with no reality-return payoff cut, fold that resolution into the wink so the ending
+    # isn't story-less (PD 2026-07-04). No-op when a real payoff cut already precedes it.
+    _ensure_resolution_before_wink(c, cuts, wink_cut, wink_subject)
     cuts.append(wink_cut)
     c["cuts"] = cuts
     log.info(

@@ -44,6 +44,14 @@ REFERENCES_CHANNEL = os.getenv("SLACK_REFERENCES_CHANNEL", "C0B60EC81NX")
 GRANDMOMPAPA_CHANNEL = os.getenv("SLACK_GRANDMOMPAPA_CHANNEL", "C0BASN221UL")
 # 할머니·할아버지용 따뜻한 확인 문구 (subject 태깅 요청을 쉬운 말로).
 GRANDMA_THANKS = "💛 잘 받았어요! 무슨 영상이에요? 🐾"
+
+# PD 2026-07-04: the 함미/하비 channel's verified flow is "파일 업로드(대개 캡션 없이) → 봇이
+# '무슨 영상이에요?' → 다음 텍스트 메시지(들)이 그 클립을 설명". Those follow-up descriptions
+# arrive with NO file attached, so they must be paired back to the most-recent upload and
+# written to that asset's pd_notes (= owner ground truth that producer reads). This holds the
+# last grandma upload per channel (real, dedup-resolved asset_id) so a later text can link.
+_GRANDMA_LAST_UPLOAD: dict[str, dict] = {}
+_GRANDMA_PENDING_TTL_S = 24 * 3600  # a description arriving >24h after the upload = just chat
 # PD 2026-06-12: live agent channel — PD chats here and a headless Claude Code
 # (`claude -p`) runs against the repo with full tools and replies (full perms).
 BOARD_CHANNEL = os.getenv("SLACK_BOARD_CHANNEL")
@@ -1382,6 +1390,128 @@ def _grandma_history(client, channel, limit=28):
     return out[-limit:]
 
 
+_GRANDMA_DESC_KW = ("랴니", "레오", "레요", "둘", "고기", "간식", "산책", "놀", "먹", "물",
+                    "뒹굴", "햇", "현관", "공", "잠", "삼계", "자", "뛰", "핥", "닭", "밥",
+                    "꼬리", "눈", "안", "코", "누워", "앉")
+
+
+def _grandma_looks_like_desc(text: str) -> bool:
+    """A grandma text that describes a clip (mentions a pet/action), vs a bare ack/greeting."""
+    t = (text or "").strip()
+    return len(t) >= 4 and any(k in t for k in _GRANDMA_DESC_KW)
+
+
+def _grandma_resolve_pending(client, channel, explicit_asset_id=None):
+    """Resolve WHICH grandma-uploaded asset an incoming description refers to.
+
+    Same-message uploads pass the asset_id directly. Follow-up description texts (the common
+    '파일→봇질문→설명' pattern) carry no file, so we pair them to the most-recent upload:
+    primary = the in-process cache set at ingest (dedup-safe — holds the REAL asset_id even
+    when a re-upload was content-deduped to an existing asset); fallback (after a bot restart
+    clears the cache) = walk live Slack history and recompute the deterministic asset_id from
+    the newest file message. Returns None when nothing recent is pending (so plain chat never
+    mutates an old clip's notes)."""
+    if explicit_asset_id:
+        return explicit_asset_id
+    ent = _GRANDMA_LAST_UPLOAD.get(channel)
+    if ent and (_time.time() - ent.get("epoch", 0)) <= _GRANDMA_PENDING_TTL_S:
+        return ent.get("asset_id")
+    try:
+        r = client.conversations_history(channel=channel, limit=40)  # newest-first
+        for m in r.get("messages", []):
+            if m.get("bot_id"):
+                continue
+            for f in (m.get("files") or []):
+                if not (f.get("mimetype", "") or "").startswith(("image/", "video/")):
+                    continue
+                cr, fid = f.get("created", 0), f.get("id")
+                if not (cr and fid):
+                    continue
+                if (_time.time() - cr) > _GRANDMA_PENDING_TTL_S:
+                    return None  # newest upload is stale → this text is just chat
+                ts = dt.datetime.fromtimestamp(cr, tz=dt.timezone.utc).strftime("%Y_%m_%d_%H%M%S")
+                aid = f"med_{ts}_slack_{hashlib.sha256(fid.encode()).hexdigest()[:8]}"
+                with db() as con:
+                    row = con.execute(
+                        "SELECT asset_id FROM assets WHERE asset_id=?", (aid,)).fetchone()
+                return row[0] if row else None  # dedup-miss → skip gracefully
+    except Exception as e:
+        log.warning("grandma pending resolve failed: %s", e)
+    return None
+
+
+def _route_grandma_photo(asset_id: str, owner_desc: str = "") -> str | None:
+    """DESCRIPTION-DRIVEN ROUTER (PD 2026-07-04): a grandma-uploaded PHOTO is remembered by its
+    owner description and routed to the AV grounding table that matches WHAT it is — PD's rule
+    is "그때그때 달라, 설명을 보고 판단". The concrete motivation: 곶감꼭지(dried-persimmon toy) kept
+    rendering WRONG in AV, so 하비 uploaded a real photo — that photo must become the PROP
+    REFERENCE so AV renders the real thing (text alone can't; image beats text, cf A7).
+
+    Reads the owner note (+ the VLM scene tag as fallback) and, per the note, files the photo as:
+      • prop  → object_refs   (name/category/description + file_path)   — 곶감꼭지, 장난감, 인형…
+      • space → background_refs(space_name + description + file_path)    — 거실/주방/소파…
+      • other → nothing extra (a pet/situation photo already feeds the brainstorm via pd_notes).
+    Returns the chosen route ('prop'|'space'|'other') or None. Idempotent by file_path."""
+    try:
+        with db() as con:
+            row = con.execute(
+                "SELECT file_path, kind, subjects_csv, scene_description, pd_notes "
+                "FROM assets WHERE asset_id=?", (asset_id,)).fetchone()
+        if not row or (row["kind"] or "") != "photo":
+            return None
+        fp = row["file_path"]
+        desc = (owner_desc or row["pd_notes"] or "").strip()
+        vlm = (row["scene_description"] or "").strip()
+        if not (desc or vlm):
+            return None
+        # Already routed? (idempotent)
+        with db() as con:
+            if con.execute("SELECT 1 FROM object_refs WHERE file_path=?", (fp,)).fetchone() \
+               or con.execute("SELECT 1 FROM background_refs WHERE file_path=?", (fp,)).fetchone():
+                return None
+        from agents.llm_cascade import call_text_cascade
+        import json as _json, re as _re
+        sysmsg = (
+            "너는 반려동물 AV(생성형) 파이프라인의 에셋 라우터다. 할머니·할아버지가 올린 사진 1장을, "
+            "**소유자가 적어준 설명**을 근거로 AV 제작에서 어떻게 쓸지 판단한다(고정 규칙 아님 — 설명을 보고 "
+            "그때그때 판단). 분류:\n"
+            "• prop = 특정 소품/물건이 주인공인 사진(예: 곶감꼭지, 공, 인형, 낚싯대, 특정 간식). AV가 그 "
+            "물건을 자꾸 엉뚱하게 그려서 실물을 올린 경우가 많다 → 실물 레퍼런스로 쓴다.\n"
+            "• space = 집의 공간/배경이 주인공인 사진(거실, 주방, 소파, 창가 등).\n"
+            "• other = 그 외(펫의 모습·상황·표정). 이미 다른 경로로 쓰이니 별도 분류 불필요.\n"
+            "설명이 물건을 콕 집으면 prop, 공간을 말하면 space, 펫의 행동/상황이면 other. JSON만: "
+            "{\"use\":\"prop|space|other\", \"name\":\"소품/공간 이름(한국어, 짧게)\", "
+            "\"category\":\"prop이면 toy|food|decor|furniture|tool 중 하나, 아니면 \\\"\\\"\", "
+            "\"description\":\"AV 렌더 프롬프트에 넣을 한 줄 묘사(무엇인지 또렷하게, 한국어)\"}")
+        usr = (f"소유자 설명: {desc or '(없음)'}\nVLM 장면 태그(보조): {vlm[:200]}")
+        raw = call_text_cascade(sysmsg, usr, max_tokens=300).strip()
+        raw = _re.sub(r"^```(?:json)?\s*", "", raw); raw = _re.sub(r"\s*```$", "", raw)
+        d = _json.loads(raw)
+        use = (d.get("use") or "other").strip().lower()
+        name = (d.get("name") or "").strip()
+        cat = (d.get("category") or "").strip()
+        rdesc = (d.get("description") or desc or vlm).strip()[:300]
+        if use == "prop" and name:
+            with db() as con:
+                con.execute(
+                    "INSERT INTO object_refs (file_path, name, description, category, subjects, slack_ts) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (fp, name, rdesc, cat or "prop", row["subjects_csv"] or "", ""))
+            log.info("grandma photo → object_refs (prop=%s): %s", name, fp)
+            return "prop"
+        if use == "space" and name:
+            with db() as con:
+                con.execute(
+                    "INSERT INTO background_refs (file_path, space_name, description, slack_ts) "
+                    "VALUES (?, ?, ?, ?)", (fp, name, rdesc, ""))
+            log.info("grandma photo → background_refs (space=%s): %s", name, fp)
+            return "space"
+        return "other"
+    except Exception as e:
+        log.warning("grandma photo route failed (%s): %s", asset_id, e)
+        return None
+
+
 def _grandma_converse(client, channel, user, text, thread_ts, asset_id=None):
     """할머니·할아버지와 '계속' 대화하는 따뜻한 가족 비서 (PD 2026-06-24): 영상 얘기든 일상
     잡담이든 이전 대화 맥락을 이어 자연스럽게 답한다. 대화 중 나온 펫 일화·영상 아이디어는
@@ -1477,14 +1607,6 @@ def _grandma_converse(client, channel, user, text, thread_ts, asset_id=None):
         log.warning("grandma LLM failed: %s", e)
         reply = "💛 감사합니다! 잘 받았어요. 영상 만들 때 꼭 참고할게요 🐾"
         subjects = ""
-    # 설명에서 펫을 알아냈고 함께 올린 에셋이 있으면 클릭 없이 자동 subject 태깅.
-    if asset_id and subjects in ("ryani", "leo", "ryani,leo"):
-        try:
-            with db() as con:
-                con.execute("UPDATE assets SET subjects_csv = ? WHERE asset_id LIKE ? || '%'",
-                            (subjects, asset_id[:30]))
-        except Exception as e:
-            log.warning("grandma subject tag failed: %s", e)
     # 일화/요청/대화에서 건진 컨셉 → episode_stories (브레인스토밍이 자동으로 읽음).
     #   요청=[요청] 태그(우선 가중), 잡담 중 떠오른 영상 아이디어=[컨셉] 태그로도 별도 저장.
     saved = []
@@ -1501,15 +1623,47 @@ def _grandma_converse(client, channel, user, text, thread_ts, asset_id=None):
             log.info("grandma saved (%s): %s", intent, store[:60])
         except Exception as e:
             log.warning("grandma story save failed: %s", e)
-    # 함께 올린 에셋이 있으면 설명을 그 에셋에 붙임(자막/소재에 활용).
-    if asset_id and intent != "chat":
+    # ── 클립 설명을 pd_notes(=owner ground truth)에 맥락까지 누적 (PD 2026-07-04) ──
+    # 백필(scripts/_remap_grandma_desc.py)과 같은 원리를 forward에 적용: '파일→봇질문→설명'의
+    # 후속 텍스트를 pending 업로드에 짝지어, 첫 설명은 owner 원문 그대로 저장하고 이어지는
+    # 후속 답(같은 클립에 대한 봇 후속질문의 답)은 [맥락]으로 붙인다 — 한 줄이 아니라 그 클립에
+    # 대해 채널에서 오간 내용을 맥락 맞춰 연결. producer._ground_truth_sc가 pd_notes를 자막/클립
+    # 선택의 진실로 읽으므로(280자 상한) 여기까지가 RF 내용정합의 근본. 옛 코드는 notes(JSON blob)에
+    # summary 1줄만 붙여 VLM 필드 JSON을 깨뜨리고 pd_notes엔 아무것도 안 남겼다(supersede).
+    target = _grandma_resolve_pending(client, channel, asset_id)
+    if target:
         try:
             with db() as con:
-                con.execute(
-                    "UPDATE assets SET notes = COALESCE(notes,'') || ? WHERE asset_id LIKE ? || '%'",
-                    (f" [할머니설명] {summary}", asset_id[:30]))
+                if subjects in ("ryani", "leo", "ryani,leo"):
+                    con.execute("UPDATE assets SET subjects_csv=? WHERE asset_id=?",
+                                (subjects, target))
+                row = con.execute(
+                    "SELECT pd_notes FROM assets WHERE asset_id=?", (target,)).fetchone()
+                cur = ((row[0] if row else "") or "").strip()
+                desc = (text or "").strip()
+                new = None
+                if not cur:
+                    # 첫 설명 — 내용처럼 보이면 owner 원문 그대로 ground truth로.
+                    if intent in ("request", "story") or _grandma_looks_like_desc(desc):
+                        new = desc[:280]
+                elif intent in ("request", "story") and desc and desc not in cur and len(cur) < 240:
+                    # 후속 맥락 — 같은 클립 얘기가 이어지는 동안 [맥락]으로 누적(중복/과다 방지).
+                    new = (cur + "  [맥락] " + desc)[:280]
+                if new and new != cur:
+                    con.execute("UPDATE assets SET pd_notes=? WHERE asset_id=?", (new, target))
+                    log.info("grandma pd_notes (%s): %s", target[-18:], new[:70])
+                    _routed_desc = new
+                else:
+                    _routed_desc = None
         except Exception as e:
-            log.warning("grandma asset note failed: %s", e)
+            log.warning("grandma asset link failed: %s", e)
+            _routed_desc = None
+        # PD 2026-07-04: a PHOTO with a fresh description → route it to the AV grounding table
+        # its description implies (prop→object_refs, space→background_refs). Photos of props
+        # like 곶감꼭지 become the real reference AV renders from. Runs off the pd_notes we just
+        # set; no-op for videos and for already-routed photos (idempotent).
+        if _routed_desc:
+            _route_grandma_photo(target, _routed_desc)
     # Reply in the main channel (not threaded) so it reads as a flowing conversation
     # (PD 2026-06-24: "계속 이야길 해야해"). Continuity comes from _grandma_history.
     try:
@@ -1669,6 +1823,10 @@ def handle_file_share_message(event, client):
         # NEVER stay silent: respond whenever they posted a file OR a comment. (Going
         # silent on a duplicate/already-ingested upload is exactly the "답이 없는데?"
         # complaint — duplicates now return an asset so n_ok>0, but keep the OR as a belt.)
+        # Remember this upload so a follow-up description text (no file attached) can pair
+        # back to it and write pd_notes (PD 2026-07-04). Real asset_id = dedup-safe.
+        if channel == GRANDMOMPAPA_CHANNEL and last_asset_id:
+            _GRANDMA_LAST_UPLOAD[channel] = {"asset_id": last_asset_id, "epoch": _time.time()}
         if channel == GRANDMOMPAPA_CHANNEL and (n_ok or (event.get("text") or "").strip()):
             ts = event.get("ts") or event.get("event_ts", "")
             comment = (event.get("text") or "").strip()

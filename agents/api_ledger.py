@@ -24,20 +24,34 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = Path(os.getenv("DB_PATH", str(ROOT / "data" / "agent.db"))).resolve()
 
-# Rough per-unit USD estimates. Counts are exact; these turn counts into $ guesses.
-# Override any via env API_PRICE_<KEY_UPPER> (e.g. API_PRICE_SEEDANCE_I2V=0.4).
-# Sources: CLAUDE.md (Veo lite $0.60, Gemini img $0.04), gen_still_multiref header,
-# cameraman cost-guard comments. Seedance unit is unpublished → conservative guess.
+# Per-unit USD estimates. Counts are exact; these turn counts into $ estimates.
+# Override any via env API_PRICE_<KEY_UPPER> (e.g. API_PRICE_SEEDANCE_FAST=0.9).
+# ★CALIBRATED to real provider receipts (notes/case_study_8_weeks_ko.md, 2026-07-04):
+# BytePlus (Seedance) June=$1,614 (~$54/day); over the ledger window 6/25–7/4 (~9 days,
+# 509 seedance calls) the real spend ≈ $460 → ~$0.90/call — the old $0.30–0.50 undercounted
+# ~2–3×, and since Seedance is ~84% of spend that alone skewed the whole report. OpenAI
+# (gpt-image + gpt-4.1) June=$640; text is now token-priced below (the Writer/Director calls
+# carry big prompts, so a flat per-call price was very wrong). AUTHORITATIVE $ = the provider
+# receipts / OpenAI Costs API; this map is a per-call ESTIMATE for the daily trend only.
 _DEFAULT_PRICES = {
-    "seedance_i2v": 0.50,        # BytePlus dreamina-seedance-2-0 per cut (estimate)
-    "seedance_fast": 0.30,       # -fast variant
-    "veo_gemini": 0.60,          # Veo 3 lite (Gemini API) per cut — CLAUDE.md
-    "veo_vertex": 1.20,          # Veo 3 standard (Vertex) per cut (estimate, richer)
+    "seedance_i2v": 1.20,        # BytePlus seedance-2-0 standard per cut (receipt-calibrated)
+    "seedance_fast": 0.90,       # -fast variant (the one actually used) — ~$0.90/call real
+    "veo_gemini": 0.60,          # Veo 3 lite (Gemini API) per cut — CLAUDE.md (mostly retired)
+    "veo_vertex": 1.20,          # Veo 3 standard (Vertex) per cut
     "gemini_image": 0.04,        # nano-banana / imagen still per image — CLAUDE.md
-    "gpt_image": 0.10,           # OpenAI gpt-image per image
-    "openai_text": 0.01,         # per gpt-4.1 text call (rough; small)
-    "gemini_text": 0.004,        # per Gemini text/vision call (rough; small)
-    "anthropic_text": 0.02,      # per Anthropic last-resort call (rough)
+    "gpt_image": 0.17,           # OpenAI gpt-image per image (calibrated)
+    "openai_text": 0.01,         # fallback ONLY when no token count (token-priced below)
+    "gemini_text": 0.004,        # fallback ONLY when no token count
+    "anthropic_text": 0.02,      # fallback ONLY when no token count
+}
+
+# Text is priced by TOKENS when a token count is present (the accurate way — a Writer/Director
+# call with a 25KB system prompt costs 50× a tiny cascade ping). Blended $/1M tokens per
+# provider (input+output, receipt-anchored): gpt-4.1 ~$4, Claude Opus ~$18, Gemini ~$0.5.
+_TEXT_RATE_PER_MTOK = {
+    "openai": 4.0,
+    "anthropic": 18.0,
+    "google": 0.5,
 }
 
 
@@ -79,19 +93,24 @@ def log_call(provider: str, service: str, *, price_key: str | None = None,
     price_key: key into the price map for $ estimate (falls back to est_cost or 0).
     """
     try:
+        # tokens: callers pass meta={"tokens": N} for text calls — mirror into a column so
+        # cost/token reports don't parse JSON, AND so text can be TOKEN-priced (accurate).
+        _tok = 0
+        if meta and isinstance(meta, dict):
+            try:
+                _tok = int(meta.get("tokens") or 0)
+            except (TypeError, ValueError):
+                _tok = 0
         if est_cost is None:
-            est_cost = _price(price_key or "") * max(1, units)
+            if (service or "").lower() == "text" and _tok > 0:
+                # token-priced: $/1M × tokens (falls back to flat per-call if provider unknown)
+                _rate = _TEXT_RATE_PER_MTOK.get((provider or "").lower())
+                est_cost = (_tok / 1_000_000.0) * _rate if _rate else _price(price_key or "") * max(1, units)
+            else:
+                est_cost = _price(price_key or "") * max(1, units)
         con = sqlite3.connect(DB_PATH, timeout=10)
         try:
             _ensure(con)
-            # tokens: callers already pass meta={"tokens": N} for text calls — mirror it
-            # into the first-class column so cost/token reports don't have to parse JSON.
-            _tok = 0
-            if meta and isinstance(meta, dict):
-                try:
-                    _tok = int(meta.get("tokens") or 0)
-                except (TypeError, ValueError):
-                    _tok = 0
             con.execute(
                 "INSERT INTO api_calls (provider, service, model, stage, units, "
                 "est_cost_usd, tokens, card_id, meta) VALUES (?,?,?,?,?,?,?,?,?)",
