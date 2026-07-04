@@ -357,14 +357,26 @@ def launch_pipeline(target: dt.date, *,
                 progress_cb(m)
 
         def sv(p):
+            # Mirror every produced episode to GCS first (PD 2026-07-04): after the GCP
+            # cutover the render runs on the VM, so its disk is the only local copy and Slack
+            # sometimes drops the file. `gs://<bucket>/output/episodes/` is the ONE reliable
+            # place PD reviews all outputs; include the URI in the Slack note as a fallback.
+            _gcs = None
+            try:
+                from icloud import gcs
+                _gcs = gcs.upload_episode(str(p))
+            except Exception as e:
+                log.debug("episode GCS mirror skipped: %s", e)
+            _note = (":movie_camera: 결과 — 취소하려면 이 쓰레드에 `veto` 라고 답글"
+                     if do_upload else
+                     ":movie_camera: 결과 (검수용 — 자동 공개 안 함, PD 확인 후 예약)")
+            if _gcs:
+                _note += f"\n:cloud: {_gcs}"
             if slack_client and slack_channel and slot_ts:
                 try:
                     slack_client.files_upload_v2(
                         channel=slack_channel, thread_ts=slot_ts, file=str(p),
-                        title=Path(p).name,
-                        initial_comment=(":movie_camera: 결과 — 취소하려면 이 쓰레드에 `veto` 라고 답글"
-                                         if do_upload else
-                                         ":movie_camera: 결과 (검수용 — 자동 공개 안 함, PD 확인 후 예약)"))
+                        title=Path(p).name, initial_comment=_note)
                     return
                 except Exception as e:
                     log.warning("slot video upload failed: %s", e)
