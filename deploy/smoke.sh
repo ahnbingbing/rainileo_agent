@@ -44,4 +44,22 @@ then
   echo "smoke: FAIL — import"; exit 1
 fi
 
+# 3) Runtime client init — deps must be mutually COMPATIBLE, not just importable. The
+#    anthropic SDK constructs an httpx.Client at Anthropic() init; anthropic 0.39 passes a
+#    `proxies` kwarg that httpx 0.28 removed → TypeError at init. Every module imports fine,
+#    so step 2 passes, but every LLM call (Writer/Director/Giri) dies → whole batch 0/4.
+#    Constructing the client makes NO network call (a dummy key never authenticates here).
+if ! "$PY" - <<'PYEOF'
+import sys
+try:
+    import anthropic
+    anthropic.Anthropic(api_key="smoke-not-a-real-key")  # builds httpx.Client; no network
+except Exception as e:
+    print(f"client init failed: {type(e).__name__}: {e}"); sys.exit(1)
+print("smoke: anthropic client init OK")
+PYEOF
+then
+  echo "smoke: FAIL — client init"; exit 1
+fi
+
 echo "smoke: PASS"

@@ -11,6 +11,11 @@ google-auth-httplib2==0.2.0
 
 # LLM (Writer Agent)
 anthropic==0.39.0
+# httpx 0.28 removed the `proxies` kwarg that anthropic/openai 0.39-era SDKs still pass to
+# httpx.Client → `Client.__init__() got an unexpected keyword argument 'proxies'` at client
+# init (NOT import — so the deploy smoke's import check misses it). Pin below 0.28. Unpinned,
+# a fresh venv (e.g. the GCP VM) pulls 0.28+ and every LLM call dies → whole batch 0/4.
+httpx==0.27.2
 
 # Validation
 jsonschema==4.23.0
