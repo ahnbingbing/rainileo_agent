@@ -1958,7 +1958,26 @@ def handle_thread_replies(message, client, context):
     # "veto delete" / "veto 삭제" to fully delete instead of unlist.
     veto_keywords = {"veto", "베토", "비토", "거부"}
     if text_lower.split()[0] in veto_keywords if text_lower.split() else False:
-        from agents.launch import video_id_for_thread
+        from agents.launch import video_id_for_thread, resolve_batch_veto
+        do_delete = any(w in text_lower for w in ("delete", "del", "삭제"))
+        # Batch-summary thread first: it holds ALL 4 videos, so a plain `veto` is ambiguous
+        # — the reply must name which (`veto 260705_RF2100`). resolve_batch_veto matches the
+        # label / lane+slot / video_id, and returns the roster if it can't disambiguate.
+        with db() as con:
+            batch_vid, roster = resolve_batch_veto(con, thread_ts, text)
+        if roster:
+            if not batch_vid:
+                opts = "  ·  ".join(f"`veto {v['fname']}`" for v in roster
+                                    if v.get("video_id"))
+                client.chat_postMessage(
+                    channel=channel, thread_ts=thread_ts,
+                    text=":question: 이 배치엔 영상이 여러 개예요 — 어느 걸 취소할지 "
+                         f"파일명으로 알려주세요:\n{opts}")
+                return
+            action = _do_veto(batch_vid, delete=do_delete)
+            client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=action)
+            return
+        # Legacy 1:1 per-slot thread.
         with db() as con:
             vid = video_id_for_thread(con, thread_ts)
         if not vid:
@@ -1968,7 +1987,6 @@ def handle_thread_replies(message, client, context):
                      "(아직 예약 전이거나 런칭 슬롯 쓰레드가 아님). 메인에서 "
                      "`/veto <video_id>` 로도 취소할 수 있어요.")
             return
-        do_delete = any(w in text_lower for w in ("delete", "del", "삭제"))
         action = _do_veto(vid, delete=do_delete)
         client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=action)
         return

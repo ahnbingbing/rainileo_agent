@@ -70,6 +70,68 @@ def video_id_for_thread(con, thread_ts: str) -> str | None:
         return None
 
 
+# Batch-summary review (PD 2026-07-04): the 4 result mp4s are consolidated into ONE
+# summary thread, so a thread↔video map (above, 1:1) can't disambiguate which video a
+# `veto` reply means. This map is (thread, label)→video, where label is the friendly
+# schedule name (260705_RF2100); an in-thread `veto <label>` resolves THAT video.
+def _ensure_batch_videos_table(con) -> None:
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS launch_batch_videos ("
+        " thread_ts TEXT, fname TEXT, channel TEXT, video_id TEXT, lane TEXT,"
+        " slot TEXT, target TEXT, publish_at TEXT, vetoed INTEGER DEFAULT 0,"
+        " PRIMARY KEY(thread_ts, fname))")
+    con.commit()
+
+
+def record_batch_video(con, *, thread_ts, fname, channel, video_id, lane, slot,
+                       target, publish_at) -> None:
+    _ensure_batch_videos_table(con)
+    con.execute(
+        "INSERT INTO launch_batch_videos (thread_ts, fname, channel, video_id, lane,"
+        " slot, target, publish_at, vetoed) VALUES (?,?,?,?,?,?,?,?,0) "
+        "ON CONFLICT(thread_ts, fname) DO UPDATE SET video_id=excluded.video_id",
+        (thread_ts, fname, channel, video_id, lane, slot, str(target), publish_at))
+    con.commit()
+
+
+def batch_videos_for_thread(con, thread_ts: str) -> list[dict]:
+    """All (label, video_id) pairs uploaded under a batch-summary thread."""
+    try:
+        _ensure_batch_videos_table(con)
+        rows = con.execute(
+            "SELECT fname, video_id, slot, lane FROM launch_batch_videos "
+            "WHERE thread_ts=? AND video_id IS NOT NULL", (thread_ts,)).fetchall()
+        return [{"fname": r[0], "video_id": r[1], "slot": r[2], "lane": r[3]} for r in rows]
+    except Exception:
+        return []
+
+
+def resolve_batch_veto(con, thread_ts: str, text: str) -> tuple[str | None, list[dict]]:
+    """Resolve which video a `veto <label>` reply in a batch-summary thread targets.
+    Returns (video_id, all_videos). video_id is None if the label is missing/ambiguous
+    (caller lists `all_videos` so PD can pick). Matches the friendly name (260705_RF2100),
+    the lane+slot token (RF2100 / rf 2100 / 2100), or a bare video_id."""
+    vids = batch_videos_for_thread(con, thread_ts)
+    if not vids:
+        return None, []
+    t = (text or "").lower().replace(":", "")
+    # bare video_id typed directly
+    for v in vids:
+        if v["video_id"] and v["video_id"].lower() in t:
+            return v["video_id"], vids
+    for v in vids:
+        fn = v["fname"].lower()
+        lane_lbl = ("av" if v["lane"] == "ai_vtuber" else "rf")
+        slot = v["slot"].replace(":", "")
+        # full name, "rf2100", or lane + slot appearing separately
+        if fn in t or f"{lane_lbl}{slot}" in t or (lane_lbl in t and slot in t):
+            return v["video_id"], vids
+    # single video in the thread → unambiguous even without a label
+    if len(vids) == 1:
+        return vids[0]["video_id"], vids
+    return None, vids
+
+
 def day_assignments(target: dt.date) -> list[tuple[str, str]]:
     """Return [(lane, "HH:MM"), ...] for the 4 daily slots, lane×timeslot
     counterbalanced via a 2-day Latin square.
@@ -195,7 +257,8 @@ def launch_pipeline(target: dt.date, *,
                     slack_channel: str | None = None,
                     lane_filter: str | None = None,
                     slot_filter: str | None = None,
-                    exclude_asset_ids: list | None = None) -> list[dict]:
+                    exclude_asset_ids: list | None = None,
+                    consolidate_videos: bool = False) -> list[dict]:
     """Produce the day's 4 launch episodes per the Latin-square assignment.
 
     Returns a list of slot result dicts: {lane, slot, output, video_id,
@@ -370,6 +433,22 @@ def launch_pipeline(target: dt.date, *,
                 _gcs = gcs.upload_episode(str(p), name=_fname)
             except Exception as e:
                 log.debug("episode GCS mirror skipped: %s", e)
+            # Consolidated review (PD 2026-07-04): don't scatter the 4 result mp4s across
+            # per-slot threads — the caller (self-heal) collects every slot's `output`
+            # path and uploads them all into ONE batch-summary thread, where PD reviews
+            # the whole day at a glance and vetoes by label. Here we only mirror to GCS
+            # and drop a one-line pointer in the slot thread.
+            if consolidate_videos:
+                if slack_client and slack_channel and slot_ts:
+                    try:
+                        _p = f":movie_camera: `{_fname}` 완성 — 영상은 오늘 배치 써머리 쓰레드에 모아 올려요."
+                        if _gcs:
+                            _p += f"\n:cloud: {_gcs}"
+                        slack_client.chat_postMessage(channel=slack_channel,
+                                                      thread_ts=slot_ts, text=_p)
+                    except Exception:
+                        pass
+                return
             _note = (":movie_camera: 결과 — 취소하려면 이 쓰레드에 `veto` 라고 답글"
                      if do_upload else
                      ":movie_camera: 결과 (검수용 — 자동 공개 안 함, PD 확인 후 예약)")
@@ -538,7 +617,8 @@ def launch_pipeline(target: dt.date, *,
                f"공개예정 {publish_at}. 취소: 이 쓰레드에 `veto` 답글 (또는 메인에서 "
                f"`/veto {vid}`)")
         return {"lane": lane, "slot": hhmm, "output": str(out),
-                "video_id": vid, "publish_at": publish_at, "thread_ts": slot_ts}
+                "video_id": vid, "publish_at": publish_at, "thread_ts": slot_ts,
+                "fname": f"{target.strftime('%y%m%d')}_{lane_lbl}{hhmm.replace(':', '')}"}
 
     results: list[dict] = []
     # PD 2026-06-08: run ONE pipeline PER LANE (rf ∥ av) in parallel, but slots

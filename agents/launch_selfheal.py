@@ -163,7 +163,8 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
                 res = launch_pipeline(target, progress_cb=lambda m: cap(m, buf),
                                       do_upload=do_upload, lane_filter=lane,
                                       slot_filter=slot, slack_client=slack_client,
-                                      slack_channel=slack_channel)
+                                      slack_channel=slack_channel,
+                                      consolidate_videos=True)
             except Exception as e:
                 log.exception("self-heal slot run failed (%s %s)", lane, slot)
                 res = []
@@ -222,7 +223,56 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
     if failed:
         lines.append("  → 자동 재작업(최대 %d회)으로 못 푼 슬롯이에요. 위 진단대로 코드 수정/재렌더 "
                      "필요" % max_rounds + (f" — 상세 {ap.name}" if ap else "") + ".")
-    cap("\n".join(lines))
+    if done:
+        lines.append("  ↳ 아래 이 쓰레드에 오늘 영상 전부 올려요. 리뷰는 여기서 — 취소는 "
+                     "`veto <파일명>` (예: `veto " + next(iter(done.values())).get("fname", "260705_RF2100")
+                     + "`).")
+    # Consolidated review thread (PD 2026-07-04): post the summary as the thread PARENT,
+    # then upload every produced mp4 as a reply under it — one place to review the whole
+    # day. Each upload is labelled with its schedule name and registered so an in-thread
+    # `veto <name>` cancels THAT video (multiple videos share this thread, so plain `veto`
+    # is ambiguous — the label disambiguates).
+    summary_ts = None
+    if slack_client and slack_channel:
+        try:
+            r = slack_client.chat_postMessage(channel=slack_channel, text="\n".join(lines))
+            summary_ts = r.get("ts")
+        except Exception as e:
+            log.warning("summary post failed: %s", e)
+            cap("\n".join(lines))
+    else:
+        cap("\n".join(lines))
+    if progress_cb:
+        progress_cb("\n".join(lines))
+    if summary_ts and slack_client and slack_channel:
+        from agents.launch import record_batch_video
+        from agents.producer import _db
+        for (l, h), v in done.items():
+            outp = v.get("output")
+            if not outp or not Path(outp).exists():
+                continue
+            fname = v.get("fname") or f"{target.strftime('%y%m%d')}_{_lbl(l)}{h.replace(':', '')}"
+            vid = v.get("video_id")
+            cmt = f":movie_camera: *{fname}* — 공개 {v.get('publish_at', '?')}"
+            if vid:
+                cmt += f" · `{vid}` · 취소: `veto {fname}`"
+            try:
+                slack_client.files_upload_v2(
+                    channel=slack_channel, thread_ts=summary_ts, file=str(outp),
+                    title=f"{fname}.mp4", initial_comment=cmt)
+            except Exception as e:
+                log.warning("summary video upload failed (%s): %s", fname, e)
+            # Register (batch thread, label) → video for in-thread veto-by-label.
+            if vid:
+                try:
+                    con = _db()
+                    record_batch_video(con, thread_ts=summary_ts, fname=fname,
+                                       channel=slack_channel, video_id=vid, lane=l,
+                                       slot=h, target=target,
+                                       publish_at=v.get("publish_at"))
+                    con.close()
+                except Exception as e:
+                    log.warning("record batch video failed (%s): %s", fname, e)
     return {
         "done": {f"{l}/{h}": v for (l, h), v in done.items()},
         "failed": [f"{h} {l}" for l, h in failed],
