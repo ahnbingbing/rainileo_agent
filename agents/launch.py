@@ -106,6 +106,19 @@ def batch_videos_for_thread(con, thread_ts: str) -> list[dict]:
         return []
 
 
+def video_id_for_fname(con, fname: str) -> str | None:
+    """The most recent scheduled video for a schedule name (260705_RF2100). Used to
+    unlist the currently-scheduled video when a slot is re-rendered (replace, not add)."""
+    try:
+        _ensure_batch_videos_table(con)
+        row = con.execute(
+            "SELECT video_id FROM launch_batch_videos WHERE fname=? AND video_id IS NOT NULL "
+            "ORDER BY rowid DESC LIMIT 1", (fname,)).fetchone()
+        return row[0] if row and row[0] else None
+    except Exception:
+        return None
+
+
 def resolve_batch_veto(con, thread_ts: str, text: str) -> tuple[str | None, list[dict]]:
     """Resolve which video a `veto <label>` reply in a batch-summary thread targets.
     Returns (video_id, all_videos). video_id is None if the label is missing/ambiguous

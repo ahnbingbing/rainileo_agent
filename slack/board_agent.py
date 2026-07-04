@@ -94,17 +94,18 @@ _SYS = (
     "넘긴 뒤엔 final로 무엇을 맡겼는지 알려라.\n"
     "- veto: 영상 내림(되돌리기 어려움 → PD 확인 후 실행). args={video_id:'...'|null, delete:true|false}. "
     "delete는 '완전삭제/영구삭제' 명시 때만 true.\n"
-    "- render: 지금 한 편 즉시 렌더(~$50 → PD 확인 후 실행). args={slug:'hawaii'|'homecam'|'chimipja'|null, "
-    "text:'프리셋 아니면 컨셉 지시문'}.\n\n"
-    "원칙: 모르면 툴로 확인하고 추측으로 사실을 지어내지 마라. 깊은 코드 작업은 escalate로. 애매하면 "
-    "되묻는 final이 낫다. veto/render 같은 비싼/되돌리기 어려운 건 PD가 확인 답을 주면 그때 실행된다.\n"
-    "★executor(자율 실행기) 한계 — 정직 필수(약속 금지): executor는 **코드·프롬프트·데이터 수정/분석/"
-    "디버깅만** 한다. **렌더·재렌더·Veo/Seedance 생성·YouTube 업로드/교체/기존 예약영상 재제작은 "
-    "절대 못 한다**(유료키가 제거돼 실행 자체가 불가). 그러니 '재렌더해줄게 / 영상 새로 만들어 올려줄게' "
-    "라고 약속하지 마라 — 한다고 해놓고 못 하면 안 된다. 재렌더·재업로드가 필요한 요청이면 정직하게: "
-    "'executor가 원인분석+코드/프롬프트 수정은 하고, 실제 재렌더·재업로드는 CLI 세션(사람이 여는 "
-    "클로드)에서 처리된다'고 안내하라. (preset 신규 1편 즉석 렌더 `render` 툴은 별개로, PD 확인 후 "
-    "백그라운드 렌더가 실제로 돈다.)"
+    "- render: 프리셋 1편 즉석 렌더(~$50 → PD 확인 후 실행). args={slug:'hawaii'|'homecam'|'chimipja'|null, "
+    "text:'프리셋 아니면 컨셉 지시문'}.\n"
+    "- rerender: 배치의 한 슬롯을 다시 만들고 예약영상을 교체(~$50). args={label:'260705_RF2100'} — "
+    "파일명(YYMMDD_<AV|RF>HHMM)으로 슬롯을 지목. PD가 리뷰 후 '260705_RF2100 다시 만들어 / 이 슬롯 재렌더' "
+    "류로 말하면 이걸 쓴다. 기존 예약영상을 비공개로 내리고 같은 시각에 새로 렌더·재예약하며, **확인 없이 "
+    "바로 실행**된다(board 봇=최상위 어드민).\n\n"
+    "원칙: 모르면 툴로 확인하고 추측으로 사실을 지어내지 마라. 애매하면 되묻는 final이 낫다.\n"
+    "★역할 분담 — board 봇은 최상위 어드민이라 **렌더·재렌더·재업로드/교체를 직접** 한다(render·rerender "
+    "툴이 실제로 돈다). 재렌더 요청이면 '재렌더해줄게'라고 약속해도 되고 rerender 툴로 실행하면 된다 — "
+    "CLI 세션으로 미루지 마라. escalate는 **코드·프롬프트·데이터의 수정/분석/디버깅** 같은 리포지토리 작업 "
+    "전용이다(자율 실행기는 안전상 유료키가 없어 렌더/업로드를 못 하고 코드만 고친다). 즉 버그·로직 수정은 "
+    "escalate, 영상 다시 만들기는 rerender — 섞지 마라."
 )
 
 
@@ -414,6 +415,59 @@ def _act_render(params: dict) -> str:
             f"로그: `{logp.name}`. 완료되면 알려드릴게요.")
 
 
+def _parse_fname(label: str):
+    """'260705_RF2100' → (date(2026,7,5), 'real_footage', '21:00'). None if unparseable.
+    Accepts spacing/underscore variants (RF 2100, 260705 rf 2100)."""
+    import re as _re
+    m = _re.search(r"(\d{6})\D*(AV|RF)\D*(\d{3,4})", (label or "").upper())
+    if not m:
+        return None
+    ymd, lane_tok, hhmm = m.group(1), m.group(2), m.group(3).zfill(4)
+    try:
+        d = dt.date(2000 + int(ymd[:2]), int(ymd[2:4]), int(ymd[4:6]))
+    except ValueError:
+        return None
+    lane = "ai_vtuber" if lane_tok == "AV" else "real_footage"
+    return d, lane, f"{hhmm[:2]}:{hhmm[2:]}"
+
+
+def _act_rerender(a: dict, db, do_veto) -> str:
+    """Re-render ONE launch slot and REPLACE its scheduled video (PD 2026-07-04: the
+    board bot is top admin and does this itself — no CLI, no confirm). Unlists the
+    currently-scheduled video for the slot (so it's a replace, not a duplicate), then
+    spawns a single-slot self-heal render that re-produces + re-uploads at the same
+    publish time and posts the result into a fresh batch-summary thread."""
+    label = (a.get("label") or a.get("fname") or a.get("slug") or a.get("text") or "").strip()
+    parsed = _parse_fname(label)
+    if not parsed:
+        return (":information_source: 어느 슬롯을 다시 만들지 파일명으로 알려주세요 — "
+                "예: `260705_RF2100 다시 만들어` (형식 `YYMMDD_<AV|RF>HHMM`).")
+    target, lane, slot = parsed
+    lane_lbl = "AV" if lane == "ai_vtuber" else "RF"
+    fname = f"{target.strftime('%y%m%d')}_{lane_lbl}{slot.replace(':', '')}"
+    # Replace: unlist the current scheduled video for this slot (frees it; no dup).
+    replaced = ""
+    try:
+        from agents.launch import video_id_for_fname
+        with db() as con:
+            old_vid = video_id_for_fname(con, fname)
+        if old_vid and do_veto:
+            do_veto(old_vid, delete=False)
+            replaced = f" (기존 `{old_vid}` 비공개 처리)"
+    except Exception as e:
+        log.warning("rerender pre-veto failed (%s): %s", fname, e)
+    logp = ROOT / "data" / "logs" / f"rerender_{fname}.log"
+    logp.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(logp, "a")
+    subprocess.Popen(
+        [str(ROOT / ".venv" / "bin" / "python"), "-m", "agents.launch_selfheal",
+         "--date", target.isoformat(), "--lane", lane, "--slot", slot, "--rounds", "1"],
+        cwd=str(ROOT), env=dict(os.environ), stdout=fh, stderr=subprocess.STDOUT)
+    return (f":arrows_counterclockwise: `{fname}` 재렌더 시작했어요{replaced} "
+            f"(백그라운드, ~$50). 완료되면 배치 써머리 쓰레드에 새 영상 올리고 같은 시각에 "
+            f"재예약해요. 로그: `{logp.name}`.")
+
+
 def _act_escalate(text: str, params: dict, db, user: str,
                   channel: str = "", thread_ts: str = "") -> str:
     summary = (params.get("summary") or text)[:200]
@@ -632,8 +686,11 @@ def _read_log(name: str, contains: str | None = None, lines: int = 40) -> str:
 # ── tool registry + agent loop ───────────────────────────────────────────────
 # READ-ONLY/cheap tools run inline in the loop; COSTLY tools (veto/render) are
 # returned to handle_board_message as a confirm-pending instead of executing.
-def _run_tool(name: str, args: dict, *, db, user: str, channel: str, thread_ts: str) -> str:
+def _run_tool(name: str, args: dict, *, db, user: str, channel: str, thread_ts: str,
+              do_veto=None) -> str:
     a = args or {}
+    if name == "rerender":
+        return _act_rerender(a, db, do_veto)
     if name == "youtube_schedule":
         return _fmt_schedule((a.get("date") or "").strip() or None)
     if name == "get_status":
@@ -656,7 +713,8 @@ def _run_tool(name: str, args: dict, *, db, user: str, channel: str, thread_ts: 
 _AGENT_MAX_STEPS = 5
 
 
-def _agent_answer(text: str, *, db, user: str, channel: str, thread_ts: str) -> dict:
+def _agent_answer(text: str, *, db, user: str, channel: str, thread_ts: str,
+                  do_veto=None) -> dict:
     """Tool-using agent. Returns {'text': str} for a final answer, or
     {'costly': d} where d={'intent','params','reply'} to route through the
     confirm flow. The LLM calls live tools and composes the answer itself —
@@ -703,7 +761,7 @@ def _agent_answer(text: str, *, db, user: str, channel: str, thread_ts: str) -> 
                                "reply": d.get("reply") or ""}}
         try:
             result = _run_tool(tool, d.get("args") or {}, db=db, user=user,
-                               channel=channel, thread_ts=thread_ts)
+                               channel=channel, thread_ts=thread_ts, do_veto=do_veto)
         except Exception as e:
             log.warning("board tool %s failed: %s", tool, e)
             result = f"[툴 실행 오류: {e}]"
@@ -771,7 +829,8 @@ def handle_board_message(client, event, *, db, do_veto):
     #    back as a confirm-pending instead of executing.
     reply_thread = thread_ts or ts
     try:
-        res = _agent_answer(text, db=db, user=user, channel=channel, thread_ts=reply_thread)
+        res = _agent_answer(text, db=db, user=user, channel=channel,
+                            thread_ts=reply_thread, do_veto=do_veto)
     except Exception as e:
         log.exception("board agent failed")
         _post(client, channel, reply_thread,
