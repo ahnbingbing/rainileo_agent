@@ -23,7 +23,7 @@ Pillow==10.4.0
 imagehash==4.3.1
 moviepy==1.0.3
 pillow-heif==0.18.0    # HEIC/HEIF reader for Pillow (iPhone photos)
-osxphotos==0.69.5      # macOS Photos library reader (no API key)
+osxphotos==0.69.5; sys_platform == "darwin"   # macOS Photos reader — Mac dawn-delta ONLY; skip on Linux VM (GCS-pull there)
 
 # Utilities
 python-dotenv==1.0.1
