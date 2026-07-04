@@ -58,8 +58,14 @@ def _ensure(con: sqlite3.Connection) -> None:
         "ts TEXT DEFAULT (datetime('now')), "      # UTC
         "provider TEXT, service TEXT, model TEXT, stage TEXT, "
         "units INTEGER DEFAULT 1, est_cost_usd REAL DEFAULT 0, "
+        "tokens INTEGER DEFAULT 0, "     # LLM total tokens (text calls); 0 for image/video
         "card_id TEXT, meta TEXT)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_api_calls_ts ON api_calls(ts)")
+    # Promote tokens to a first-class column on pre-existing DBs (was only in meta JSON).
+    try:
+        con.execute("ALTER TABLE api_calls ADD COLUMN tokens INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass  # already added
 
 
 def log_call(provider: str, service: str, *, price_key: str | None = None,
@@ -78,11 +84,19 @@ def log_call(provider: str, service: str, *, price_key: str | None = None,
         con = sqlite3.connect(DB_PATH, timeout=10)
         try:
             _ensure(con)
+            # tokens: callers already pass meta={"tokens": N} for text calls — mirror it
+            # into the first-class column so cost/token reports don't have to parse JSON.
+            _tok = 0
+            if meta and isinstance(meta, dict):
+                try:
+                    _tok = int(meta.get("tokens") or 0)
+                except (TypeError, ValueError):
+                    _tok = 0
             con.execute(
                 "INSERT INTO api_calls (provider, service, model, stage, units, "
-                "est_cost_usd, card_id, meta) VALUES (?,?,?,?,?,?,?,?)",
+                "est_cost_usd, tokens, card_id, meta) VALUES (?,?,?,?,?,?,?,?,?)",
                 (provider, service, model, stage, units, round(est_cost, 4),
-                 card_id, json.dumps(meta, ensure_ascii=False) if meta else None))
+                 _tok, card_id, json.dumps(meta, ensure_ascii=False) if meta else None))
             con.commit()
         finally:
             con.close()

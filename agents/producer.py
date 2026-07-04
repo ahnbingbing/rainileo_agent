@@ -868,10 +868,18 @@ def _recently_used_rf_assets(con: sqlite3.Connection,
     used: set[str] = set()
     try:
         _ensure_uploaded_column(con)
+        # PD 2026-07-04: a clip that has been in a PUBLISHED episode must not be reused
+        # ("그동안 사용한 동영상 클립은 빼기로 했잖아"). The old last-`n`(=4)-episode window
+        # aged clips out fast — a clip used 7 uploads / ~5 days ago (6/29) reappeared in a
+        # 7/5 episode because it fell off the 4-episode window. Exclude EVERY uploaded RF
+        # episode's clips (all-time); the pool is large (~1.7k videos) so fresh material
+        # remains, and PD's rule is "reuse only if there's truly nothing else left".
+        # RF_USED_CLIP_ALLTIME=0 reverts to the last-n window.
+        _lim = 100000 if os.getenv("RF_USED_CLIP_ALLTIME", "1") == "1" else n
         rows = con.execute(
             "SELECT payload_json FROM cards WHERE render_style='real_footage' "
             "AND uploaded=1 "
-            "ORDER BY created_at DESC LIMIT ?", (n,),
+            "ORDER BY created_at DESC LIMIT ?", (_lim,),
         ).fetchall()
         for r in rows:
             try:
@@ -2318,7 +2326,9 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
             avail_videos = filtered
             if (cooldown or _visual_cool) and progress_cb:
                 _vmsg = f" + 비슷한 룩 {len(_visual_cool)}개" if _visual_cool else ""
-                progress_cb(f":snowflake: 최근 {RF_CLIP_COOLDOWN_EPISODES}편 사용 클립 "
+                _cool_lbl = ("이미 쓴" if os.getenv("RF_USED_CLIP_ALLTIME", "1") == "1"
+                             else f"최근 {RF_CLIP_COOLDOWN_EPISODES}편 사용")
+                progress_cb(f":snowflake: {_cool_lbl} 클립 "
                             f"{before - len(filtered)}개 제외 (쿨다운{_vmsg})")
         else:
             log.warning("cooldown left only %d clips (<6) — relaxing", len(filtered))
@@ -2662,6 +2672,40 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
             _fb = ("[재탕검증] 아래 컨셉이 최근 공개된 회차와 사실상 같은 이야기(핵심 소재·사건이 "
                    "겹침)다. 장소·클립만 바꾼 재탕은 금지 — 겹친 소재 자체를 피하고 완전히 다른 "
                    "사건·활동·앵글로 새로 짜라:\n" + _vs
+                   + (("\n\n[이전 피드백]\n" + prior_feedback) if prior_feedback else ""))
+            return _propose_realfootage_singlepass(target, context, progress_cb,
+                                                   prior_feedback=_fb)
+    # PD 2026-07-04: deterministic EVENTLESS-COEXISTENCE gate. The "각자의 방식 / 평행 동행 /
+    # 따로 또 같이 / 집에서 각자 노는" template — two pets coexisting with NO event — has been
+    # banned in the Writer prompt for weeks, yet the Writer keeps re-emitting it (a prompt
+    # ADVISORY the LLM ignores, exactly like the dedup soft-note). Every recurrence had to be
+    # hand-fixed per episode; the generator never stopped producing it. Enforce deterministically:
+    # if a concept's title/oneliner/beats match the eventless-coexistence signature, reject and
+    # re-propose demanding a CONCRETE single event. "[사건없음]" bounds it. RF_EVENTLESS_GATE=0 reverts.
+    if (os.getenv("RF_EVENTLESS_GATE", "1") == "1"
+            and "[사건없음]" not in prior_feedback):
+        _banned_phr = ["각자의 방식", "각자 노는", "각자논다", "각자의 자리", "각자만의", "제각각",
+                       "평행 동행", "평행동행", "따로 또 같이", "따로또같이", "each their own",
+                       "parallel", "side by side", "루틴의 작은 변화"]
+        _evtless = []
+        for _cc in concepts:
+            _blob = " ".join(str(_cc.get(k, "") or "") for k in
+                             ("title", "theme", "narrative_oneliner", "logline"))
+            for _b in (_cc.get("beats") or _cc.get("cuts") or []):
+                _blob += " " + (" ".join(str(v) for v in _b.values()) if isinstance(_b, dict) else str(_b))
+            _bl = _blob.lower()
+            hit = next((p for p in _banned_phr if p.lower() in _bl), None)
+            if hit:
+                _evtless.append((_cc.get("title", ""), hit))
+        if _evtless:
+            if progress_cb:
+                progress_cb(f":no_entry: 사건없음검증 — 무사건 공존 템플릿 {len(_evtless)}건 → 재작성")
+            _vs = "; ".join(f"'{t}'(→'{p}')" for t, p in _evtless)
+            _fb = ("[사건없음] 아래 컨셉이 '사건 없는 공존 관찰'(각자의 방식/평행 동행/따로 또 같이/"
+                   "각자 노는/막연한 루틴)이다 — 이건 금지다(수없이 반복돼 왔다). 반드시 **구체적 사건 "
+                   "1개**로 다시 짜라: 놀이/장난·간식 사건·나들이·물놀이·목욕·새 물건 탐험·한쪽이 다른 쪽에게 "
+                   "하는 구체 상호작용(쫓기·핥기·자리 뺏기) 등, 클립에 실제로 있는 하나의 사건. '두 마리가 "
+                   "각자 뭐한다'는 나열 금지:\n" + _vs
                    + (("\n\n[이전 피드백]\n" + prior_feedback) if prior_feedback else ""))
             return _propose_realfootage_singlepass(target, context, progress_cb,
                                                    prior_feedback=_fb)

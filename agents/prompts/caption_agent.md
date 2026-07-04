@@ -88,6 +88,7 @@ A JSON array, one object per cut, in the same cut order:
 - Caption must describe **specifically what THIS cut's action_beats / motion_prompt depicts**. Not the next beat, not the previous beat, not the overall arc.
 - If motion_prompt says "Leo enters from right and sniffs the bowl", the caption shouldn't say "레오가 사료를 먹어요" (he isn't eating yet — he's sniffing).
 - Pull a key verb from action_beats[i] to anchor the caption literal-truth. If action says "approaches", caption uses "다가가요" / "가까이 가네요" — not "먹어요".
+- **화면에 없는 위치·이동·사건을 단정하지 마라 — 컨셉의 *의도*가 아니라 그 컷이 실제로 *보여주는* 것을 따라라.** 정렬은 동작만이 아니라 장소·이동에도 적용된다. ai_vtuber는 특히 취약한데, 캡션이 렌더 *전*에 스토리에서 쓰여 Seedance가 그 동작/장소를 안 그리면 캡션만 붕 뜬다 — 그 컷의 스틸/연출이 **실내에 앉은 랴니**인데 "밖에 나가 골목길 산책 코스를 고른다"라고 쓰면 화면(거실)과 어긋난다(PD case). 컷이 실내/정적이면 캡션도 그 장소·그 상태에 머물러라(나감·도착·이동·장소전환을 지어내지 마라). 상상·판타지는 **렌더가 실제로 그 상상 장면을 보여줄 때만** 상상으로 캡션하고(그때도 상상임을 표시 — 아래 초현실 setup 규칙), 그렇지 않으면 눈앞의 현실 장면에 맞춰라. (검수 Giri는 화면에 없는 이동/장면전환 주장을 CHECK 0 거짓으로 캡한다 — 생성 단계에서 애초에 만들지 마라.)
 - **일반 채움말(filler) 금지 — 화면의 구체 행동을 적어라 (PD 2026-06-30).** 컷이 무엇을 보여주는지
   애매하면 "세상 구경/세상 관찰", "낮잠 타임", "멍때리는 중", "여유 만끽" 같은 **두루뭉술한 디폴트
   활동**으로 때우지 마라 — 십중팔구 화면과 안 맞는다. PD case(아기 레오 겨울방): 고양이가 구석에서

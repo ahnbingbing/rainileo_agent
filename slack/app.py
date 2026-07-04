@@ -1165,6 +1165,30 @@ def _ingest_file(file_info: dict, client) -> dict | None:
     except Exception as e:
         log.warning("Metadata extraction failed for %s: %s", asset_id, e)
 
+    # CONTENT dedup (PD: iCloud sync & Slack uploads overlap). The asset_id above is keyed
+    # on the Slack FILE id, so the SAME clip re-uploaded (new file id) — or arriving from
+    # both iCloud and Slack — slips past the id-check as a fresh asset (root cause of an
+    # episode using one clip 3×). Hash the downloaded bytes and, if an identical asset
+    # already exists from ANY source, drop this copy and reuse the existing one.
+    chash = None
+    try:
+        from icloud.sync import content_hash as _chash, find_content_dup as _find_dup, _ensure_content_hash_col
+        chash = _chash(dest)
+        with db() as con:
+            _ensure_content_hash_col(con)
+            dup = _find_dup(con, chash)
+        if dup and dup[0] != asset_id:
+            log.info("slack content-dup: %s == existing %s — reusing, dropping copy", asset_id, dup[0])
+            try:
+                dest.unlink()
+            except Exception:
+                pass
+            return {"asset_id": dup[0], "kind": kind, "file_path": dup[1],
+                    "width": None, "height": None, "duration_sec": None,
+                    "already_ingested": True}
+    except Exception as e:
+        log.debug("slack content-dedup skipped for %s: %s", asset_id, e)
+
     # Insert into DB. Use INSERT OR IGNORE + tolerate IntegrityError: the slack_sync
     # cron can ingest the same file in the gap between the existing-check above and
     # this insert (the "UNIQUE constraint failed: assets.asset_id" seen in logs).
@@ -1177,11 +1201,11 @@ def _ingest_file(file_info: dict, client) -> dict | None:
                 """
                 INSERT OR IGNORE INTO assets
                     (asset_id, source, kind, file_path, captured_iso,
-                     duration_sec, width, height, phash, subjects_csv)
-                VALUES (?, 'slack', ?, ?, ?, ?, ?, ?, ?, NULL)
+                     duration_sec, width, height, phash, subjects_csv, content_hash)
+                VALUES (?, 'slack', ?, ?, ?, ?, ?, ?, ?, NULL, ?)
                 """,
                 (asset_id, kind, str(dest), captured_iso,
-                 duration, width, height, phash),
+                 duration, width, height, phash, chash),
             )
     except sqlite3.IntegrityError as e:
         log.info("asset %s already present (concurrent ingest race) — reusing: %s",

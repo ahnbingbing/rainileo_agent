@@ -827,21 +827,73 @@ def warm_working_set(budget_gb: "float | None" = None,
     return got, final
 
 
-def insert_asset(con: sqlite3.Connection, **kw) -> None:
+def content_hash(path) -> "str | None":
+    """md5 of the file BYTES — a content fingerprint that is identical no matter which
+    source (iCloud sync vs Slack) or how many times the SAME media was ingested. This is
+    the dedup key that source-id keys (Slack file id / photo uuid) cannot provide: the
+    same clip uploaded to Slack 3× gets 3 file ids → 3 asset rows, and the same media
+    arriving from BOTH iCloud and Slack gets 2 ids — but one content_hash. (PD flagged the
+    iCloud↔Slack overlap; source-id dedup let it through.)"""
+    import hashlib
+    try:
+        h = hashlib.md5()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return None
+
+
+def _ensure_content_hash_col(con: sqlite3.Connection) -> None:
+    try:
+        con.execute("ALTER TABLE assets ADD COLUMN content_hash TEXT")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_assets_content_hash ON assets(content_hash)")
+    except sqlite3.OperationalError:
+        pass  # already added
+
+
+def find_content_dup(con: sqlite3.Connection, chash: "str | None"):
+    """Return an existing asset row (asset_id, file_path) with this content_hash, else None.
+    Used to skip creating a duplicate asset for byte-identical media from any source."""
+    if not chash:
+        return None
+    try:
+        return con.execute(
+            "SELECT asset_id, file_path FROM assets WHERE content_hash = ? LIMIT 1", (chash,)
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+
+
+def insert_asset(con: sqlite3.Connection, **kw) -> "str | None":
+    """Insert an asset, deduped by CONTENT hash. If a byte-identical asset already exists
+    (regardless of source/asset_id), skip the insert and return that existing asset_id so
+    the same media never becomes two pool entries. Returns the asset_id actually in the DB."""
     kw.setdefault("source_uuid", None)
+    _ensure_content_hash_col(con)
+    chash = kw.get("content_hash")
+    if chash is None:
+        chash = content_hash(kw.get("file_path"))
+        kw["content_hash"] = chash
+    dup = find_content_dup(con, chash)
+    if dup and dup[0] != kw.get("asset_id"):
+        log.info("content-dup: %s == existing %s (skip new asset)", kw.get("asset_id"), dup[0])
+        return dup[0]
     con.execute(
         """
         INSERT OR IGNORE INTO assets
             (asset_id, source, kind, file_path, captured_iso, ingested_iso,
              duration_sec, width, height, phash, subjects_csv, age_tag,
-             location_tag, notes, source_uuid)
+             location_tag, notes, source_uuid, content_hash)
         VALUES (:asset_id, :source, :kind, :file_path, :captured_iso,
                 COALESCE(:ingested_iso, datetime('now')),
                 :duration_sec, :width, :height, :phash,
-                :subjects_csv, :age_tag, :location_tag, :notes, :source_uuid)
+                :subjects_csv, :age_tag, :location_tag, :notes, :source_uuid, :content_hash)
         """,
         kw,
     )
+    return kw.get("asset_id")
 
 
 # ──────────────────────────────────────────────────────────────────────
