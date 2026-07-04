@@ -8,7 +8,9 @@
 set -euo pipefail
 
 CONF=/etc/rianileo/deploy.env
-[ -f "$CONF" ] && . "$CONF"
+# set -a so non-secret runtime config in deploy.env (e.g. BOARD_EXEC_MODE) is EXPORTED to
+# the python child, not just a shell var. The secrets file is likewise exported below.
+[ -f "$CONF" ] && { set -a; . "$CONF"; set +a; }
 : "${APP_DIR:?set APP_DIR in $CONF}" "${PY:?set PY in $CONF}"
 : "${APP_ENV_FILE:=/etc/rianileo/env}"
 
