@@ -9,7 +9,7 @@
 3. **RF21 삼계탕 재make** (task #7) — `xX9EZEsxQjo`(7/5 21:00). pd_notes 이제 정확 → 97s 클립의 **먹는 구간**으로 트림, 레오 보이게, 사람다리 제외.
 4. **AV18 렌더결함 진단+재렌더** (task #8) — `7poBXMKiwJ4`(7/5 18:00). 레오 꼬리 잘림/튜브 겉핥기/물리·인과 붕괴. 근본 진단 후 $50 재렌더.
 5. **7/5 RF1230 재make** (task #9) — `VdaD-QH4WfU`(7/5 12:30) "집에서 각자 노는"=무사건 템플릿+6/29 재사용클립. 게이트는 이제 활성이나 예약분은 손 재make.
-6. **AV21 v2 검증+전달** (task #11) — `VtjEL9fwkZA` 교체용 얼음-adore 렌더 **in-flight**(`data/tmp/av21_adore.log`, pid `/tmp/av21_pid`). 완료 시 프레임검증→reupload.
+6. **AV21 v2 검증+전달** (task #11) — `VtjEL9fwkZA`(7/4 21:00) 교체용 얼음-adore(레오가 랴니를 꽃길여왕 상상, 산책conceit 제거) 렌더 **in-flight, nohup 계속 돎**. 세션종료 시점 = **Seedance 5/40, cut3 렌더링** (cut2 액션 렌더 실패→best-effort 유지). 로그 `data/tmp/av21_adore.log`, 스크립트 `scripts/_render_av21_adore.py`. 다음 세션: 완료 확인(`grep RENDER_OUTS data/tmp/av21_adore.log`) → 프레임검증(랴니 petite·산책없음·상상라벨·cut2 액션) → reupload `VtjEL9fwkZA`. cut2 별로면 그 컷만 재렌더.
 7. ~~durable 픽스 커밋 정리 (task #10)~~ — ✅ **완료** (`0163e21`→main FF). 아래 SHIPPED 참조.
 
 ## SHIPPED 이번 세션 (커밋 `0163e21` → main, + 앞선 `97b1478`)
