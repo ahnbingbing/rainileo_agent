@@ -66,13 +66,18 @@ echo "== 6. secrets from Secret Manager → /etc/rianileo/env =="
 # OPENAI_API_KEY, BYTEPLUS_*, GCS_ASSET_BUCKET, GCP_PROJECT, …) lives in Secret Manager.
 if command -v gcloud >/dev/null 2>&1; then
   if gcloud secrets versions access latest --secret="$SECRET_NAME" > /etc/rianileo/env 2>/dev/null; then
-    chmod 600 /etc/rianileo/env; chown root:root /etc/rianileo/env
+    # root:$RIANILEO_USER 640 — the deploy service runs as $RIANILEO_USER and its
+    # smoke.sh sources this file DIRECTLY (unlike the bot, whose systemd EnvironmentFile
+    # is read by root before dropping privileges). 600 root:root locks smoke out →
+    # KeyError: 'SLACK_BOT_TOKEN' → every push silently smoke-blocked. Group-read grants
+    # nothing new (the bot already runs as $RIANILEO_USER with these secrets in-env).
+    chown "root:$RIANILEO_USER" /etc/rianileo/env; chmod 640 /etc/rianileo/env
     echo "   secrets written"
   else
     echo "   !! could not read secret '$SECRET_NAME' — create it, then re-run step 6"
   fi
 else
-  echo "   !! gcloud not present — install Cloud SDK or hand-place /etc/rianileo/env (chmod 600)"
+  echo "   !! gcloud not present — install Cloud SDK or hand-place /etc/rianileo/env (chown root:$RIANILEO_USER, chmod 640)"
 fi
 
 echo "== 7. systemd units (bot + deploy timer) =="
