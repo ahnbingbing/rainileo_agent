@@ -9,8 +9,16 @@ google-auth==2.34.0
 google-auth-oauthlib==1.2.1
 google-auth-httplib2==0.2.0
 
-# LLM (Writer Agent)
+# LLM / VLM SDKs. The pipeline's llm_cascade tries OpenAI → Gemini → Anthropic, and AV
+# uses gpt-image (openai) + Gemini VLM. These were installed out-of-band on the Mac and were
+# missing from a fresh VM venv → "No module named 'openai'" / "cannot import name 'genai'"
+# → AV renders died. Pin them all. Both google SDKs are needed: new `google.genai` (most
+# paths, migrated 2026-06-03) AND legacy `google.generativeai` (7 not-yet-migrated call
+# sites: photo_selector, cameraman_brain, room_extractor, slack tagging). They coexist.
 anthropic==0.39.0
+openai==1.98.0
+google-genai==1.2.0
+google-generativeai==0.8.6
 # httpx 0.28 removed the `proxies` kwarg that anthropic/openai 0.39-era SDKs still pass to
 # httpx.Client → `Client.__init__() got an unexpected keyword argument 'proxies'` at client
 # init (NOT import — so the deploy smoke's import check misses it). Pin below 0.28. Unpinned,

@@ -51,15 +51,28 @@ fi
 #    Constructing the client makes NO network call (a dummy key never authenticates here).
 if ! "$PY" - <<'PYEOF'
 import sys
+bad = []
+# anthropic: construct the client (builds httpx.Client; no network with a dummy key).
 try:
     import anthropic
-    anthropic.Anthropic(api_key="smoke-not-a-real-key")  # builds httpx.Client; no network
+    anthropic.Anthropic(api_key="smoke-not-a-real-key")
 except Exception as e:
-    print(f"client init failed: {type(e).__name__}: {e}"); sys.exit(1)
-print("smoke: anthropic client init OK")
+    bad.append(f"anthropic: {type(e).__name__}: {e}")
+# The LLM/VLM SDKs are imported LAZILY (inside functions), so step 2's module import can't
+# see them missing — import them here so a fresh-venv gap (openai / either genai) is caught.
+for mod, label in (("openai", "openai"),
+                   ("google.genai", "google-genai (new)"),
+                   ("google.generativeai", "google-generativeai (legacy)")):
+    try:
+        __import__(mod)
+    except Exception as e:
+        bad.append(f"{label}: {type(e).__name__}: {e}")
+if bad:
+    print("client/SDK checks failed:"); [print("  -", b) for b in bad]; sys.exit(1)
+print("smoke: anthropic init + openai/genai SDKs OK")
 PYEOF
 then
-  echo "smoke: FAIL — client init"; exit 1
+  echo "smoke: FAIL — client/SDK init"; exit 1
 fi
 
 echo "smoke: PASS"
