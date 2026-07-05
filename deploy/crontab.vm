@@ -8,6 +8,8 @@
 #   (writer is NOT a daemon — KeepAlive=false + Cal 18:00 → cron job, listed below)
 SHELL=/bin/bash
 TZ=Asia/Seoul
+# Modern static ffmpeg first (drawtext text_align — apt ffmpeg 5.1 lacks it → caption burn fails).
+PATH=/home/rianileo/.local/bin:/usr/local/bin:/usr/bin:/bin
 J=/home/rianileo/rianileo-agent/deploy/run_job.sh
 LOG=/home/rianileo/rianileo-agent/data/logs
 # Autonomous board executor ON (PD 2026-07-04): auto = self-fix code + push + PD-authored

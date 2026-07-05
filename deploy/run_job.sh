@@ -17,6 +17,9 @@ CONF=/etc/rianileo/deploy.env
 cd "$APP_DIR"
 [ -f "$APP_ENV_FILE" ] && { set -a; . "$APP_ENV_FILE"; set +a; }
 export TZ=Asia/Seoul PYTHONPATH="$APP_DIR"
+# Modern static ffmpeg (drawtext `text_align`, libass) ahead of the distro's apt ffmpeg 5.1
+# — the caption burn uses text_align, added in ffmpeg 7.1+. Mirrors the Mac's evermeet build.
+export PATH="/home/${RIANILEO_USER:-rianileo}/.local/bin:$PATH"
 
 case "${1:-}" in
   *.py) exec "$PY" "$@" ;;

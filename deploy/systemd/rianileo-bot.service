@@ -13,6 +13,9 @@ User=rianileo
 WorkingDirectory=/home/rianileo/rianileo-agent
 EnvironmentFile=/etc/rianileo/env
 Environment=TZ=Asia/Seoul
+# Modern static ffmpeg first so board-bot-spawned re-renders get drawtext text_align
+# (apt ffmpeg 5.1 lacks it). Matches run_job.sh / crontab for the cron render path.
+Environment=PATH=/home/rianileo/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin
 ExecStart=/home/rianileo/rianileo-agent/.venv/bin/python -m slack.app
 # Always come back. The in-app BrokenPipe watchdog still exits on a wedge; systemd
 # then restarts a fresh process within seconds.

@@ -41,6 +41,22 @@ done
 chown -R "$RIANILEO_USER:$RIANILEO_USER" "/home/$RIANILEO_USER/Library" 2>/dev/null || true
 fc-cache -f >/dev/null 2>&1 || true
 
+echo "== 2b. modern static ffmpeg (drawtext text_align) =="
+# apt ffmpeg is 5.1 and LACKS drawtext `text_align`, which the caption burn uses (added in
+# ffmpeg 7.1) → captions fail with "Option 'text_align' not found". Install a current static
+# build (BtbN master, like the Mac's evermeet 8.x) into the service user's ~/.local/bin, which
+# run_job.sh / crontab / the bot service put first on PATH. apt ffmpeg stays as a fallback.
+FFBIN="/home/$RIANILEO_USER/.local/bin"
+mkdir -p "$FFBIN"
+if ! "$FFBIN/ffmpeg" -hide_banner -h filter=drawtext 2>/dev/null | grep -q text_align; then
+  curl -fsSL -o /tmp/ffbtbn.tar.xz \
+    https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz \
+    && (cd /tmp && rm -rf ffbtbn && mkdir ffbtbn && tar xf ffbtbn.tar.xz -C ffbtbn --strip-components=1 \
+        && cp ffbtbn/bin/ffmpeg ffbtbn/bin/ffprobe "$FFBIN/" && chmod +x "$FFBIN/ffmpeg" "$FFBIN/ffprobe") \
+    || echo "   !! modern ffmpeg fetch failed — apt ffmpeg 5.1 will be used (captions may fail)"
+fi
+chown -R "$RIANILEO_USER:$RIANILEO_USER" "$FFBIN" 2>/dev/null || true
+
 echo "== 3. service user =="
 id -u "$RIANILEO_USER" >/dev/null 2>&1 || useradd -m -s /bin/bash "$RIANILEO_USER"
 
