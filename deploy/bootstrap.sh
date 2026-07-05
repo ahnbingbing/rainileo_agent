@@ -97,6 +97,18 @@ if command -v gcloud >/dev/null 2>&1; then
   else
     echo "   !! could not read secret '$SECRET_NAME' — create it, then re-run step 6"
   fi
+  # YouTube OAuth creds (gitignored, so not in the repo) → youtube/{client_secret,token}.json,
+  # from their own Secret Manager secrets. Best-effort: without them the pipeline renders +
+  # reviews fine, only the upload/schedule step is disabled. Owned by the service user, 600.
+  YT_DIR="$APP_DIR/youtube"; mkdir -p "$YT_DIR"
+  for pair in "rianileo-youtube-client:client_secret.json" "rianileo-youtube-token:token.json"; do
+    sec="${pair%%:*}"; dst="$YT_DIR/${pair##*:}"
+    if gcloud secrets versions access latest --secret="$sec" > "$dst" 2>/dev/null; then
+      chown "$RIANILEO_USER:$RIANILEO_USER" "$dst"; chmod 600 "$dst"; echo "   $dst written"
+    else
+      rm -f "$dst"; echo "   !! secret '$sec' absent — YouTube upload will be disabled until placed"
+    fi
+  done
 else
   echo "   !! gcloud not present — install Cloud SDK or hand-place /etc/rianileo/env (chown root:$RIANILEO_USER, chmod 640)"
 fi
