@@ -1233,11 +1233,23 @@ def _rf_segment_reuse_overlaps(concept: dict, used_segs: dict,
 # exclude ONLY assets PD marked as channel BRANDING (pd_notes contains '[BRANDING]') — a
 # generic memory collage stays usable. PD also keeps branding out of the synced album (3).
 def _branding_asset_ids(con) -> set:
+    """Asset ids to DROP from every candidate pool (both lanes).
+
+    Two PD markers, both via pd_notes:
+    - [BRANDING] — the channel bumper/promo collage (synced into the library, else it
+      gets picked as a cut and duplicates mid-episode).
+    - [EXCLUDE] — footage that is NOT our content and must never be selected: stray
+      cats/dogs, other people's pets, clips with none of our pets. (PD 2026-07-05: a
+      2020 winter-street stray black+orange cat scene kept surfacing as an RF concept —
+      it grounds fine because it never CLAIMS to be Leo/Ryani, but the channel is Ryani
+      + Leo, so a stray-animal clip has no place in the pool at all.)
+    """
     try:
         return {r[0] for r in con.execute(
-            "SELECT asset_id FROM assets WHERE pd_notes LIKE '%[BRANDING]%'")}
+            "SELECT asset_id FROM assets WHERE pd_notes LIKE '%[BRANDING]%' "
+            "OR pd_notes LIKE '%[EXCLUDE]%'")}
     except Exception as e:
-        log.warning("branding asset lookup failed: %s", e)
+        log.warning("pool-exclude asset lookup failed: %s", e)
         return set()
 
 
