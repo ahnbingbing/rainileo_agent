@@ -30,6 +30,14 @@ SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube",
     "https://www.googleapis.com/auth/yt-analytics.readonly",
+    # Read viewer comments for the macro reviewer's audience-context. commentThreads.list
+    # is gated SPECIFICALLY behind force-ssl — verified empirically: a token carrying
+    # youtube + youtube.readonly STILL 403s "insufficient scopes" on commentThreads, so
+    # neither the manage nor the readonly scope unlocks comments (a well-known YouTube API
+    # quirk — comments are moderatable data). We only fetch, never moderate. Adding a scope
+    # requires a FRESH consent (a refresh keeps the OLD scope set): delete token.json then
+    # `python -m youtube.oauth`.
+    "https://www.googleapis.com/auth/youtube.force-ssl",
 ]
 
 CLIENT_SECRETS = Path(os.getenv("YOUTUBE_CLIENT_SECRETS", str(ROOT / "youtube" / "client_secret.json")))
