@@ -1958,9 +1958,20 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
         "frames contradict (says 거실/카페/집 but clearly OUTDOORS, or says 산책길 but clearly "
         "INDOORS), OR claims an ACTION the frames contradict — ESPECIALLY a LOCOMOTION claim "
         "(걷다/다가오다/순찰/스텝/스텔스/돌아다니다/달리다/뛰다/쫓다/지나간다) while moving=false: a "
-        "stationary pet captioned as patrolling/stepping/sneaking is a MISMATCH), "
-        "\"action\":\"≤12-word Korean of what ACTUALLY happens; if the pet is stationary say so "
-        "(e.g. '레오가 가만히 앉아 받아먹는다')\"}. Judge literally and strictly from the two frames.")
+        "stationary pet captioned as patrolling/stepping/sneaking is a MISMATCH. "
+        # LAYER 1 — object/body-part/action grounding (PD 2026-07-05): the caption fabricated
+        # a water-bowl DRINKING over a person washing dishes, and a '엉덩이 실룩' (butt wiggle)
+        # when the rear wasn't even in frame. So ALSO false when the caption highlights a
+        # specific OBJECT (물그릇/장난감/간식/공/담요), a BODY PART (엉덩이/꼬리/혀/발/코), or a
+        # concrete ACTION (물 마시기/설거지/씰룩/핥기/점프/파닥) that is NOT actually visible in
+        # these two frames. The named thing must be ON SCREEN; if it isn't (it's off-frame,
+        # or the real activity is something else entirely), caption_matches=false), "
+        "\"claimed\":\"the specific object/body-part/action the caption asserts, or empty\", "
+        "\"claimed_visible\":bool (is that asserted object/body-part/action actually visible in "
+        "the frames? true if the caption makes no specific claim), "
+        "\"action\":\"≤12-word Korean of what ACTUALLY happens on screen — name the REAL "
+        "activity even if mundane (e.g. '사람이 그릇을 설거지한다', '레오가 가만히 앉아 받아먹는다')\"}. "
+        "Judge literally and strictly from the two frames.")
 
     def _frame_at(mp4: Path, t: float):
         jpg = work_dir / f"_gg_{mp4.stem}_{t:.1f}.jpg"
@@ -2014,6 +2025,7 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
     #    elsewhere in the clip, so a cut-level check passes the fabrication).
     mismatched = []  # (tag, idx, vlm, ko, reason)
     pet_absent_tags = []  # cuts where NO frame shows our pet (human/scenery only)
+    _svs_by_tag = {}  # tag → scene_vs, for the Layer-3 opening-visibility pass
     n_scenes = 0
     _BREEDS = {"코기": "corgi", "웰시": "corgi", "corgi": "corgi",
                "리트리버": "retriever", "retriever": "retriever", "골든": "golden",
@@ -2033,6 +2045,7 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
             n_scenes += 1
             scene_vs.append((idx, ko, _check_scene(
                 mp4, float(sc.get("start", 0.1)), float(sc.get("end", 1.0)), ko)))
+        _svs_by_tag[tag] = scene_vs
         # CUT-LEVEL dominant other-animal (union across the cut's scenes that saw one) —
         # so a breed-mismatch is caught even when a given scene's OWN frame missed the
         # other dog (per-frame VLM flicker let "웰시 코기" slip when the retriever had walked
@@ -2081,6 +2094,10 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
                                                "step", "sneak", "stealth", "walk", "run"))
                     and "이동" not in " ".join(reasons)):
                 reasons.append(f"이동-주장(화면은 정지: {(v.get('action') or '')[:16]})")
+            # LAYER 1: caption asserts an object/body-part/action that isn't on screen
+            # (물그릇 over dishwashing, 엉덩이 실룩 with no rear in frame).
+            if v.get("claimed_visible") is False and "이동" not in " ".join(reasons):
+                reasons.append(f"미표시-주장({(v.get('claimed') or '')[:16]}—화면엔 {(v.get('action') or '')[:16]})")
             if v.get("caption_matches") is False and not reasons:
                 reasons.append(f"캡션≠화면({(v.get('other_animal') or v.get('action') or '')[:20]})")
             if reasons:
@@ -2115,6 +2132,27 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
         if progress_cb:
             progress_cb(f":scissors: 주인공-부재 컷 {len(pet_absent_tags)}개 드롭 "
                         f"(펫이 화면에 안 보이는 사람/풍경 컷): {', '.join(pet_absent_tags)}")
+
+    # LAYER 3 — the HOOK must open on our pet. cand3: cut1's opening showed no Ryani (she
+    # only appeared at cut2), so the episode opened on a pet-less frame. The per-CUT
+    # pet-absent gate missed it because a LATER scene of that cut did show her. Check the
+    # FIRST remaining cut's FIRST viewable scene: if no pet is visible there (and it isn't a
+    # real other-animal intro), flag it so its caption is re-grounded (not asserting an
+    # absent pet) and surface it — the clip's trim_start should have opened on the pet (an
+    # upstream selection fix). Deterministic, no re-timing.
+    _first = next((t for t in cap if not t.startswith("_")), None)
+    if _first and _first in _svs_by_tag:
+        _svs0 = [x for x in _svs_by_tag[_first] if x[2]]
+        if _svs0:
+            _i0, _ko0, _v0 = _svs0[0]
+            if (_v0.get("frame_ok") is not False
+                    and not (_v0.get("ryani_visible") or _v0.get("leo_visible"))
+                    and not (_v0.get("other_animal") or "").strip()
+                    and not any(m[0] == _first and m[1] == _i0 for m in mismatched)):
+                mismatched.append((_first, _i0, _v0, _ko0, "오프닝-주체부재(훅에 펫 안보임)"))
+                if progress_cb:
+                    progress_cb(":warning: 오프닝 훅에 주체가 안 보임 — 캡션 재그라운딩 "
+                                "(상류: 클립 trim이 펫에서 시작하도록 개선 필요)")
 
     if not mismatched:
         if progress_cb:
