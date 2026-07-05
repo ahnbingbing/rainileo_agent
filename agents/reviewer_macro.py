@@ -440,18 +440,20 @@ _REVIEWER_PROMPT = ROOT / "agents" / "prompts" / "reviewer_agent.md"
 # ──────────────────────────────────────────────────────────────────────
 # Quantitative visual-overlap (PD 2026-06-13)
 # ──────────────────────────────────────────────────────────────────────
-# PD: "리뷰어가 볼 것은 컨셉이 아니고 동영상 사이의 유사성이야. 유사한 컷이 얼마나 많은지를
-# 기준으로." The concept-text reviewer can't see that the FOOTAGE repeats — count it.
+# PD: "리뷰어가 볼 것은 컨셉이 아니고 동영상 사이의 유사성이야." — but crucially (PD 2026-07-05)
+# the unit is the ACTUAL VIDEO, not the theme: "소재가 문제가 아니라 동일 동영상을 빼는 게 포인트.
+# 시간이 다르면 소재가 같아도 다른 내용이잖아." So a cut "repeats" ONLY when it is literally the same
+# footage as a recent upload — the SAME asset reused, or a near-identical pixel duplicate. The same
+# (location, activity) on a DIFFERENT clip / different era is DIFFERENT content and must pass.
 #
-# Calibration finding: perceptual hashing CANNOT reliably tell a same-scene
-# clip from a random one on our moving-pet footage (same-moment median 110 vs random
-# 114 / 256; a loose threshold false-positives ~17%). So pixel phash is used only at
-# a TIGHT threshold (high precision) as confirmation. The PRIMARY signal is SEMANTIC
-# OVER-REPRESENTATION: a cut "repeats" if its (location_type, activity) is something
-# recent uploads already lean on heavily (e.g. (home, resting) = 32% of last-week cuts
-# — the literal "집/실내 휴식" complaint). Mere membership is too coarse (6 locations ×
-# ~15 activities saturate over 50+ episodes); the FREQUENCY share is the real signal.
-# VLM tags cover ~all assets, so this has no iCloud coverage gap.
+# Theme variety is a SELECTION concern (broaden the pool — producer._over_represented biases clip
+# picking toward under-used places), NOT a reviewer rejection. The reviewer's job is only "did this
+# reuse the same video?". (Earlier this counted (loc,act) over-representation as a repeat — that
+# rejected fresh footage of a common home activity and starved RF; reversed here.)
+#
+# phash calibration: on moving-pet footage a loose threshold false-positives (~17% at 114/256), so
+# the pixel-dup check runs only at a TIGHT threshold (high precision) — it confirms "same footage,
+# different file". VLM tags cover ~all assets, so this has no iCloud coverage gap.
 _VIS_TIGHT = int(os.getenv("REVIEWER_VHASH_TIGHT", "96"))
 # A (loc, act) pair counts as over-represented if it is ≥ this share of recent cuts.
 # ~15% ≈ 4–5× a uniform baseline (~30 realistic combos), so only genuinely over-used
@@ -513,15 +515,16 @@ def visual_overlap(drafts: list, ctx: dict, *, tight: int | None = None) -> dict
         loc_freq = Counter(loc for loc, _ in recent_la)
         overused_loc = {loc for loc, n in loc_freq.items()
                         if n / tot_la >= _LOC_OVERUSE_FRAC}
-        recent_h = [meta[a]["h"] for a in set(recent_ids) if a in meta and meta[a]["h"]]
-        comparable = repeats = pixel_dups = 0
+        recent_id_set = set(recent_ids)
+        recent_h = [meta[a]["h"] for a in recent_id_set if a in meta and meta[a]["h"]]
+        comparable = repeats = pixel_dups = same_clip = 0
         examples: list[dict] = []
         for a in draft_ids:
             m = meta.get(a)
-            if not m or not (m["loc"] and m["act"]):
+            if not m:
                 continue
             comparable += 1
-            sem = (m["loc"], m["act"]) in overused or m["loc"] in overused_loc
+            is_same = a in recent_id_set          # the EXACT clip a recent episode used
             pix = None
             if m["h"] and recent_h:
                 pix = min((d for d in (_ham(m["h"], rh) for rh in recent_h)
@@ -529,16 +532,24 @@ def visual_overlap(drafts: list, ctx: dict, *, tight: int | None = None) -> dict
             is_pixdup = pix is not None and pix <= tt
             if is_pixdup:
                 pixel_dups += 1
-            if sem or is_pixdup:
+            if is_same:
+                same_clip += 1
+            # PD 2026-07-05: a "repeat" is the SAME ACTUAL FOOTAGE — the exact clip reused, or a
+            # near-identical duplicate (tight phash). A (loc,act) THEME match is NOT a repeat: the
+            # same activity on a DIFFERENT clip / different era is different content ("시간이 다르면
+            # 소재가 같아도 다른 내용"). Theme variety is a SELECTION concern (look across more
+            # pools), never a reviewer rejection — the whole point is to exclude the same video.
+            if is_same or is_pixdup:
                 repeats += 1
                 if len(examples) < 4:
                     examples.append({"asset_id": a, "loc": m["loc"], "act": m["act"],
-                                     "semantic": sem, "pixel_dist": pix})
+                                     "same_clip": is_same, "pixel_dist": pix})
         return {
             "comparable": comparable,
             "repeats": repeats,
             "repeat_ratio": round(repeats / comparable, 2) if comparable else 0.0,
             "pixel_dups": pixel_dups,
+            "same_clip": same_clip,
             "examples": examples,
             "recent_cuts": len(recent_ids),
             "overused": sorted(((f"{loc}/{act}", round(freq[(loc, act)] / tot_la, 2))
@@ -577,9 +588,10 @@ def run_reviewer(drafts: list, ctx: dict, lane: str, progress_cb=None) -> dict:
     if vo["comparable"]:
         vo_line = (f"\n\n[footage 중복 — 객관 지표]\n"
                    f"- 비교가능 컷 {vo['comparable']}개 중 {vo['repeats']}개가 최근 업로드와 "
-                   f"같은 (장소+활동)을 재사용(중복률 {vo['repeat_ratio']}). "
-                   f"그중 {vo['pixel_dups']}개는 화면까지 거의 동일(pixel near-dup).\n"
-                   f"- 이건 '컨셉'이 아니라 실제 footage 반복이다. 중복률이 높으면 다른 장소/활동의 클립을 쓰라.")
+                   f"**동일한 실제 영상**(같은 클립 {vo.get('same_clip', 0)}개 + 화면동일 "
+                   f"{vo['pixel_dups']}개, 중복률 {vo['repeat_ratio']}).\n"
+                   f"- 판단 기준은 오직 '같은 실제 영상을 다시 썼는가'다. 테마·장소·활동이 비슷해도 "
+                   f"다른 클립이거나 다른 시기면 다른 내용이니 **중복 아님**. 같은 영상 재사용만 교체하라.")
     user = ("[이번 후보 초안]\n" + "\n---\n".join(_d(c) for c in (drafts or [])) +
             "\n\n[채널 거시 컨텍스트]\n" + macro_context_text(ctx) + vo_line +
             "\n\nlane: " + lane + "\n\n위 초안을 거시 관점에서 검수하고 JSON으로 답하라.")
@@ -612,8 +624,8 @@ def run_reviewer(drafts: list, ctx: dict, lane: str, progress_cb=None) -> dict:
                 and vo["repeat_ratio"] >= fail_ratio):
             verdict["pass"] = False
             od = (f"footage 중복 과다: 비교 {vo['comparable']}컷 중 {vo['repeats']}컷이 최근 "
-                  f"업로드와 같은 (장소+활동) 재사용(중복률 {vo['repeat_ratio']}, "
-                  f"화면동일 {vo['pixel_dups']}컷). 해당 컷을 다른 장소/활동/시기의 클립으로 교체하라.")
+                  f"업로드와 **동일한 실제 영상** 재사용(같은 클립 {vo.get('same_clip', 0)}, 화면동일 "
+                  f"{vo['pixel_dups']}컷, 중복률 {vo['repeat_ratio']}). 해당 컷을 다른 실제 클립으로 교체하라.")
             verdict["rewrite_directive"] = (
                 (verdict["rewrite_directive"] + " " if verdict["rewrite_directive"] else "") + od)
             verdict["macro_notes"] = (verdict.get("macro_notes") or "") + " [vhash-override:fail]"
