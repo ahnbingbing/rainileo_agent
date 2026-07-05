@@ -1903,6 +1903,146 @@ def _retime_cut_scenes(scenes: list, clip_dur: float, min_read: float = 2.5,
     return scenes
 
 
+_RF_ACTION_SYS = (
+    "You caption ONE real home clip for the pet channel 'Ryani & Leo', from N still frames "
+    "sampled at known SECONDS across the clip. RYANI = a small BLACK French bulldog (white "
+    "chin/chest/paws, grey muzzle, NO tail). LEO = an ORANGE tabby cat.\n"
+    "Read what the pet ACTUALLY DOES across the frames and split it into 2–5 sequential "
+    "BEATS by when the action changes (e.g. sniffing a tree → walking on → sniffing the "
+    "curb → squatting). For EACH beat write ONE short, warm, casual Korean caption (+ its "
+    "English) anchored to that beat's real time window.\n"
+    "GROUND EVERY WORD IN THE FRAMES — this is the whole point:\n"
+    "• Describe the REAL action at that moment. If the pet is walking, say moving; if "
+    "sniffing, say sniffing; if sitting still, say so. Never caption an action a beat "
+    "doesn't show (do NOT say '마킹/marks' over a WALKING beat — a dog marks when it "
+    "STOPS and squats/lifts a leg at a pole/curb, so put a marking line only on that "
+    "squat/sit beat).\n"
+    "• Name our pets (레오/랴니), never generic '고양이/강아지'. A pet's playful inner voice "
+    "(랴니 속마음: '나도 마킹! 나도 왔다감!') is welcome WHEN it fits that beat's action.\n"
+    "• NO over-specification the frames can't confirm: no exact clock time (한밤중/자정 — "
+    "say just 밤/낮), no exact body-spot you can't see (무릎 vs just 품), no absent props.\n"
+    "• A human FACE may be in frame — never describe or caption the person; keep it about "
+    "the pets.\n"
+    "Return ONLY JSON: {\"beats\":[{\"start\":sec,\"end\":sec,\"ko\":\"..\",\"en\":\"..\"}]} — "
+    "start/end within the clip, in order, non-overlapping, each ≥ 2.5s apart.")
+
+
+def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path,
+                                 progress_cb=None, dry_run: bool = False) -> None:
+    """PD 2026-07-06 (Layer 2 — upstream): write RF captions FROM the clip's observed
+    action arc, anchored to WHEN each beat happens — not from thin upstream tags. For each
+    real-video cut, sample frames across its length, have the VLM read the action per
+    segment (sniff → walk → squat=mark) and emit one grounded caption per beat at that
+    beat's window. Replaces the cut's captions in-place; the grounding gate + count-cap +
+    여운 tail still run after as safety nets. Env RF_ACTION_CAPTIONS=0 disables; failures
+    are silent (keep the writer's captions)."""
+    if dry_run or os.getenv("RF_ACTION_CAPTIONS", "1") == "0":
+        return
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    cap_path = Path(manifests.get("captions") or "")
+    if not api_key or not cap_path.exists():
+        return
+    try:
+        cap = json.loads(cap_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    tags = [k for k in cap.keys() if not k.startswith("_")
+            and isinstance(cap.get(k), dict) and cap[k].get("scenes")]
+    if not tags:
+        return
+    try:
+        from google import genai as _g
+        from google.genai import types as _gt
+        client = _g.Client(api_key=api_key, http_options=_gt.HttpOptions(
+            timeout=int(os.getenv("VLM_TIMEOUT_MS", "90000"))))
+        model = os.getenv("VLM_MODEL", "gemini-2.5-flash")
+    except Exception as e:
+        log.warning("action-caption: VLM init failed: %s", e)
+        return
+    if progress_cb:
+        progress_cb(":clapper: [1a/3] 동작-그라운딩 캡션 (클립 동작 arc → 순간별 캡션)")
+    min_read = float(os.getenv("CAPTION_MIN_SEC", "2.5"))
+    n_written = 0
+    for tag in tags:
+        mp4 = anim_dir / f"{tag}.mp4"
+        if not mp4.exists():
+            continue
+        try:
+            dur = float(subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=nw=1:nk=1", str(mp4)],
+                capture_output=True, text=True, timeout=15).stdout.strip() or 0)
+        except Exception:
+            dur = 0.0
+        if dur <= 2.0:                      # too short to segment — leave writer's caption
+            continue
+        n_frames = max(3, min(6, round(dur / 3.5)))
+        times = [round(0.3 + (dur - 0.6) * i / (n_frames - 1), 2) for i in range(n_frames)]
+        parts, jpgs = [], []
+        for t in times:
+            jp = work_dir / f"_ac_{tag}_{t:.1f}.jpg"
+            subprocess.run(["ffmpeg", "-y", "-nostats", "-loglevel", "error", "-ss",
+                            f"{t:.2f}", "-i", str(mp4), "-frames:v", "1", "-q:v", "3",
+                            str(jp)], capture_output=False, timeout=15)
+            if jp.exists() and jp.stat().st_size > 1000:
+                parts.append(_gt.Part.from_bytes(data=jp.read_bytes(), mime_type="image/jpeg"))
+                parts.append(f"[frame at {t:.1f}s]")
+                jpgs.append(jp)
+        if len(jpgs) < 3:
+            for jp in jpgs:
+                try:
+                    jp.unlink()
+                except Exception:
+                    pass
+            continue
+        parts.append(f"Clip length ≈ {dur:.1f}s. Caption the action beats.")
+        beats = None
+        try:
+            resp = client.models.generate_content(
+                model=model, contents=parts,
+                config=_gt.GenerateContentConfig(
+                    system_instruction=_RF_ACTION_SYS, response_mime_type="application/json",
+                    thinking_config=_gt.ThinkingConfig(thinking_budget=0)))
+            d = json.loads((resp.text or "{}").strip())
+            beats = d.get("beats") if isinstance(d, dict) else None
+        except Exception as e:
+            log.warning("action-caption VLM %s: %s", tag, e)
+        finally:
+            for jp in jpgs:
+                try:
+                    jp.unlink()
+                except Exception:
+                    pass
+        if not isinstance(beats, list) or not beats:
+            continue
+        # sanitize → ordered, non-overlapping, ≥ min_read, within clip
+        scenes, cur = [], 0.1
+        for b in beats:
+            ko = (b.get("ko") or "").strip()
+            if not ko:
+                continue
+            st = max(cur, float(b.get("start", cur) or cur))
+            en = float(b.get("end", st + min_read) or (st + min_read))
+            en = max(en, st + min_read)
+            en = min(en, round(dur - 0.05, 2))
+            if en <= st:
+                continue
+            scenes.append({"start": round(st, 2), "end": round(en, 2),
+                           "ko": ko, "en": (b.get("en") or "").strip()})
+            cur = en
+        if scenes:
+            cap[tag]["scenes"] = scenes
+            n_written += 1
+    if n_written and not dry_run:
+        try:
+            cap_path.write_text(json.dumps(cap, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as e:
+            log.warning("action-caption write-back failed: %s", e)
+            return
+    if progress_cb and n_written:
+        progress_cb(f":clapper: 동작-그라운딩 캡션 — {n_written}컷 재작성 (화면 동작 기준)")
+
+
 def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
                                progress_cb=None, dry_run: bool = False) -> None:
     """PD 2026-06-13: real_footage caption GROUNDING gate (verify, don't blind-rewrite).
@@ -4906,7 +5046,15 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
         # cuts whose captions contradict the frame (subject absent / animal mis-ID /
         # blown-out), leaving matching captions untouched. Catches the corgi≠retriever /
         # Ryani-not-in-frame fabrications PD flagged.
-        log.info("real_footage single-pass: grounding gate (no full rewrite)")
+        log.info("real_footage single-pass: action-grounded captions + grounding gate")
+        # Layer 2 (PD 2026-07-06): regenerate captions FROM the clip's observed action arc,
+        # anchored to when each beat happens (sniff→walk→squat=mark). Runs BEFORE the
+        # grounding gate, which then verifies + the count-cap/여운 tail finish.
+        try:
+            _rf_action_grounded_captions(work_dir, manifests, anim_dir,
+                                         progress_cb=progress_cb, dry_run=dry_run)
+        except Exception as ex:
+            log.warning("action-grounded captions skipped: %s", ex)
         if progress_cb:
             progress_cb(":lock: [1b/3] 단일-패스 캡션 보존 + 그라운딩 게이트")
         try:
