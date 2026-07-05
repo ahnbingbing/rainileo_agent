@@ -1977,6 +1977,13 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
         "\"claimed\":\"the specific object/body-part/action the caption asserts, or empty\", "
         "\"claimed_visible\":bool (is that asserted object/body-part/action actually visible in "
         "the frames? true if the caption makes no specific claim), "
+        # Over-specification (PD 2026-07-05: '한밤중' when only 'night' is knowable; '무릎' when
+        # it's the chest; 'sitting/focused' when the pet is walking). A caption must not assert
+        # a precise detail the two frames can't confirm.
+        "\"overspecified\":bool (does the caption assert a PRECISE detail the frames can't "
+        "confirm — an exact time like 한밤중/자정/새벽/정오 when only day-vs-night is visible, an "
+        "exact body-position/spot like 무릎/어깨 vs just 'held', or a posture the pet isn't in "
+        "e.g. 'sitting/앉아/집중' while moving=true? true = over-claims beyond the frames), "
         "\"action\":\"≤12-word Korean of what ACTUALLY happens on screen — name the REAL "
         "activity even if mundane (e.g. '사람이 그릇을 설거지한다', '레오가 가만히 앉아 받아먹는다')\"}. "
         "Judge literally and strictly from the two frames.")
@@ -2106,6 +2113,8 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
             # (물그릇 over dishwashing, 엉덩이 실룩 with no rear in frame).
             if v.get("claimed_visible") is False and "이동" not in " ".join(reasons):
                 reasons.append(f"미표시-주장({(v.get('claimed') or '')[:16]}—화면엔 {(v.get('action') or '')[:16]})")
+            if v.get("overspecified") is True and not reasons:
+                reasons.append(f"과잉특정(프레임 확인불가—실제: {(v.get('action') or '')[:16]})")
             if v.get("caption_matches") is False and not reasons:
                 reasons.append(f"캡션≠화면({(v.get('other_animal') or v.get('action') or '')[:20]})")
             if reasons:
@@ -2185,6 +2194,11 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
         "▲★이동을 지어내지 마라 — actual이 '가만히/앉아/엎드려/제자리/받아먹는다'처럼 정지 상태면 "
         "'순찰/스텝/스텔스/돌아다닌다/다가온다/걷는다' 같은 이동 표현을 절대 쓰지 말고, 그 정지 상태 "
         "그대로(앉아 받아먹기·구경·기다리기 등) 담백히 써라. "
+        "▲★반대로 actual이 '걷는다/냄새맡으며 이동/마킹한다'처럼 움직이는데 '가만히/집중/앉아'로 "
+        "뭉개지 마라 — 실제 동작(냄새 맡기·이동·마킹·순찰)을 살려 써라. "
+        "▲★과잉 특정 금지 — 프레임으로 확인 안 되는 정밀한 디테일을 지어내지 마라: 정확한 시각"
+        "(한밤중/자정/새벽 — 그냥 '밤/낮'만 알 수 있으면 그렇게), 정확한 위치(무릎/어깨 — 확실치 "
+        "않으면 '품/곁' 정도로), 없는 소품·행동. actual에 있는 것만 담백히. "
         "▲★과거(예전/아기 때) 클립이면 시점을 캡션에 명시하라 — actual에 '아기'·어린 모습·옛 정황이 "
         "보이면 '○개월 전', '아기 땐', '그때는' 같이 시점을 드러내(현재 클립과 헷갈리지 않게). "
         "▲'낯선 친구'·익명 관찰자 톤은 other_animal에 **진짜 다른 동물**(리트리버 등)이 있을 때만. "
