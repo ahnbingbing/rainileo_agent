@@ -2647,7 +2647,9 @@ def _fit_caption_reading_time(manifests: dict, in_dir: Path, progress_cb=None) -
         if not cap_path.exists():
             return
         data = json.loads(cap_path.read_text(encoding="utf-8"))
-        tail = float(os.getenv("CAPTION_TAIL_SEC", "0.8"))
+        # PD 2026-07-06: the last caption ended too fast to read (the clip hard-cut ~0.8s
+        # after it appeared). Give it a longer 여운 tail so the final line lingers a beat.
+        tail = float(os.getenv("CAPTION_TAIL_SEC", "1.5"))
         # assemble_episode speeds each cut by _tempo_factors[tag] (else its 1.3
         # default), which would SHRINK the reading time we fit here. Captions are
         # burned PRE-speed, so we fit in cut-timeline = display × speed, and pin the
