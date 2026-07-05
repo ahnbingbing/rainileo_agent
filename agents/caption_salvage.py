@@ -29,6 +29,7 @@ import logging
 import os
 import re
 import subprocess
+import sys
 import datetime as dt
 from pathlib import Path
 
@@ -288,7 +289,7 @@ def salvage(card_id: str, report: dict, *, progress_cb=None,
     ts = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     prefix = "rf" if lane == "real_footage" else "av"
     out = ROOT / "data" / "output" / "episodes" / f"episode_{prefix}_{ts}_salvaged.mp4"
-    asm = ["python3", "scripts/assemble_episode.py",
+    asm = [sys.executable, "scripts/assemble_episode.py",
            "--captions", str(cap_path),
            # PD 2026-06-17: MUST read the cuts we just burned into THIS salvage's
            # captioned_dir. Without --in-dir, assemble_episode defaults to the SHARED

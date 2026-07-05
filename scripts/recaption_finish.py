@@ -13,6 +13,7 @@ sizing/placement match the channel standard.
 import argparse
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 from scripts import burn_captions as bc
@@ -95,7 +96,7 @@ def main() -> int:
         print(f"  re-captioning {tag} ({dur:.1f}s, {len(scenes or [])} scenes)…")
         subprocess.run(cmd, check=True)
 
-    cmd = ["python3", "-m", "scripts.assemble_episode",
+    cmd = [sys.executable, "-m", "scripts.assemble_episode",
            "--captions", str(captions_path), "--in-dir", str(out_dir), "--out", args.out,
            "--intro-bumper", str(INTRO), "--outro-bumper", str(OUTRO)]
     if bgm:

@@ -2691,7 +2691,7 @@ def _burn_captions_cmd(manifests: dict, in_dir: Path, out_dir: Path) -> list[str
     burn call sites get it for free."""
     _fit_caption_reading_time(manifests, in_dir)
     cmd = [
-        "python3", "scripts/burn_captions.py",
+        sys.executable, "scripts/burn_captions.py",
         "--manifest", manifests["captions"],
         "--in-dir", str(in_dir),
         "--out-dir", str(out_dir),
@@ -3223,7 +3223,7 @@ def _prerender_interp_fills(manifests: dict, work_dir: Path,
         prompt = cc.get("motion_prompt") or "smooth natural transition motion"
         seconds = str(int(cc.get("duration_seconds", 4)))
         cmd = [
-            "python3", "scripts/animate_seedance_i2v.py",
+            sys.executable, "scripts/animate_seedance_i2v.py",
             "--mode", "interp",
             "--image", str(first_jpg),
             "--last-frame", str(last_jpg),
@@ -3648,7 +3648,7 @@ def _prerender_photo_i2v_cuts(manifests: dict, work_dir: Path,
             if frontal_refs:
                 # ref mode: frontal character reference(s), NO source first_frame.
                 cmd = [
-                    "python3", "scripts/animate_seedance_i2v.py",
+                    sys.executable, "scripts/animate_seedance_i2v.py",
                     "--mode", "ref",
                     "--prompt", prompt,
                     "--seconds", seconds,
@@ -3659,7 +3659,7 @@ def _prerender_photo_i2v_cuts(manifests: dict, work_dir: Path,
                     cmd.extend(["--ref-image", str(_rp)])
             else:
                 cmd = [
-                    "python3", "scripts/animate_seedance_i2v.py",
+                    sys.executable, "scripts/animate_seedance_i2v.py",
                     "--mode", "i2v",
                     "--image", str(photo_path),
                     "--prompt", prompt,
@@ -3857,7 +3857,7 @@ def _prerender_chain_from_prev(manifests: dict, work_dir: Path,
         motion = entry.get("motion_prompt") or "gentle continuation motion"
         seconds = str(int(entry.get("seedance_seconds") or 5))
         cmd = [
-            "python3", "scripts/animate_seedance_i2v.py",
+            sys.executable, "scripts/animate_seedance_i2v.py",
             "--mode", "i2v",
             "--image", str(chain_jpg),
             "--prompt", motion,
@@ -4886,7 +4886,7 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
     # Step 2: ensure bumpers exist
     if not INTRO_BUMPER.exists() or not OUTRO_BUMPER.exists():
         _run(
-            ["python3", "scripts/build_bumpers.py",
+            [sys.executable, "scripts/build_bumpers.py",
              "--intro-music", str(BUMPER_MUSIC),
              "--outro-music", str(BUMPER_MUSIC)],
             ":loud_sound: [2/3] Building bumpers",
@@ -4903,7 +4903,7 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
                          (manifests.get("concept") or {}).get("cuts") or [],
                          style="real_footage")
     _run(
-        ["python3", "scripts/assemble_episode.py",
+        [sys.executable, "scripts/assemble_episode.py",
          "--captions", manifests["captions"],
          "--in-dir", str(captioned_dir),
          "--intro-bumper", str(INTRO_BUMPER),
@@ -4988,7 +4988,7 @@ def run_cartoon_sticker_pipeline(manifests: dict, card: dict, work_dir: Path,
 
     # Step 1: preprocess photos
     _run(
-        ["python3", "scripts/preprocess_for_i2v.py",
+        [sys.executable, "scripts/preprocess_for_i2v.py",
          "--manifest", manifests["sources"],
          "--out-dir", str(input_dir)],
         ":gear: [1/6] Preprocessing photos",
@@ -5057,7 +5057,7 @@ def run_cartoon_sticker_pipeline(manifests: dict, card: dict, work_dir: Path,
         prompt = manifests.get("motion_prompts", {}).get(tag,
             "gentle natural motion, slow blink, slight head movement, soft breathing")
         _run(
-            ["python3", "scripts/animate_hero_veo3_vertex.py",
+            [sys.executable, "scripts/animate_hero_veo3_vertex.py",
              "--image", str(regen_png),
              "--prompt", prompt,
              "--seconds", "4",
@@ -5070,7 +5070,7 @@ def run_cartoon_sticker_pipeline(manifests: dict, card: dict, work_dir: Path,
     # Step 4: build bumpers if needed
     if not INTRO_BUMPER.exists() or not OUTRO_BUMPER.exists():
         _run(
-            ["python3", "scripts/build_bumpers.py",
+            [sys.executable, "scripts/build_bumpers.py",
              "--intro-music", str(BUMPER_MUSIC),
              "--outro-music", str(BUMPER_MUSIC)],
             ":loud_sound: [4/6] Building bumpers",
@@ -5091,7 +5091,7 @@ def run_cartoon_sticker_pipeline(manifests: dict, card: dict, work_dir: Path,
     # Step 6: assemble
     out = ROOT / "data" / "output" / "episodes" / f"episode_cs_{ts}.mp4"
     _run(
-        ["python3", "scripts/assemble_episode.py",
+        [sys.executable, "scripts/assemble_episode.py",
          "--captions", manifests["captions"],
          "--in-dir", str(captioned_dir),
          "--intro-bumper", str(INTRO_BUMPER),
@@ -5290,7 +5290,7 @@ def _run_t2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                      tag, has_blaze, len(prompt))
 
         cmd = [
-            "python3", "scripts/animate_hero_veo3_vertex.py",
+            sys.executable, "scripts/animate_hero_veo3_vertex.py",
             "--prompt", prompt,
             "--seconds", seconds,
             "--aspect", "9:16",
@@ -5345,7 +5345,7 @@ def _run_t2v_pipeline(manifests: dict, card: dict, work_dir: Path,
     step_bump = n_scenes + 1
     if not INTRO_BUMPER.exists() or not OUTRO_BUMPER.exists():
         _run(
-            ["python3", "scripts/build_bumpers.py",
+            [sys.executable, "scripts/build_bumpers.py",
              "--intro-music", str(BUMPER_MUSIC),
              "--outro-music", str(BUMPER_MUSIC)],
             f":loud_sound: [{step_bump}/{total_steps}] Building bumpers",
@@ -5368,7 +5368,7 @@ def _run_t2v_pipeline(manifests: dict, card: dict, work_dir: Path,
     step_asm = n_scenes + 3
     out = ROOT / "data" / "output" / "episodes" / f"episode_t2v_{ts}.mp4"
     _run(
-        ["python3", "scripts/assemble_episode.py",
+        [sys.executable, "scripts/assemble_episode.py",
          "--captions", manifests["captions"],
          "--in-dir", str(captioned_dir),
          "--intro-bumper", str(INTRO_BUMPER),
@@ -6159,7 +6159,7 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
 
     # Step 1: preprocess photos for i2v
     _run(
-        ["python3", "scripts/preprocess_for_i2v.py",
+        [sys.executable, "scripts/preprocess_for_i2v.py",
          "--manifest", manifests["sources"],
          "--out-dir", str(input_dir)],
         ":gear: [1/6] Preprocessing photos",
@@ -6658,7 +6658,7 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
             # Veo fallback (no Seedance API key) — i2v from regen still only
             regen_png = regen_dir / f"{tag}.png"
             cmd = [
-                "python3", "scripts/animate_hero_veo3_vertex.py",
+                sys.executable, "scripts/animate_hero_veo3_vertex.py",
                 "--image", str(regen_png),
                 "--prompt", prompt,
                 "--seconds", "4",
@@ -6836,7 +6836,7 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
 
                 def _seedance_ref(p: str):
                     rcmd = [
-                        "python3", "scripts/animate_seedance_i2v.py",
+                        sys.executable, "scripts/animate_seedance_i2v.py",
                         "--mode", "ref",
                         "--prompt", p,
                         "--seconds", seconds,
@@ -6883,7 +6883,7 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
             last_p = anchors.get("last_frame_path")
             if first_p and last_p and Path(first_p).exists() and Path(last_p).exists():
                 cmd = [
-                    "python3", "scripts/animate_seedance_i2v.py",
+                    sys.executable, "scripts/animate_seedance_i2v.py",
                     "--mode", "interp",
                     "--image", first_p,
                     "--last-frame", last_p,
@@ -6978,7 +6978,7 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
 
         def _seedance_i2v(p: str, image=None):
             cmd = [
-                "python3", "scripts/animate_seedance_i2v.py",
+                sys.executable, "scripts/animate_seedance_i2v.py",
                 "--mode", "i2v",
                 "--image", str(image or first_frame_path),
                 "--prompt", p,
@@ -7181,7 +7181,7 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
     # Step 4: build bumpers if needed
     if not INTRO_BUMPER.exists() or not OUTRO_BUMPER.exists():
         _run(
-            ["python3", "scripts/build_bumpers.py",
+            [sys.executable, "scripts/build_bumpers.py",
              "--intro-music", str(BUMPER_MUSIC),
              "--outro-music", str(BUMPER_MUSIC)],
             ":loud_sound: [4/6] Building bumpers",
@@ -7252,7 +7252,7 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
     # Step 6: assemble
     out = ROOT / "data" / "output" / "episodes" / f"episode_av_{ts}.mp4"
     asm_cmd = [
-        "python3", "scripts/assemble_episode.py",
+        sys.executable, "scripts/assemble_episode.py",
         "--captions", manifests["captions"],
         "--in-dir", str(captioned_dir),
         "--intro-bumper", str(INTRO_BUMPER),

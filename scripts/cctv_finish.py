@@ -18,6 +18,7 @@ assemble_episode.
 import argparse
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 from scripts import burn_captions as bc
@@ -100,7 +101,7 @@ def main() -> int:
         subprocess.run(cmd, check=True)
 
     # Assemble graded+captioned cuts + bumpers + BGM (reuse assemble_episode).
-    cmd = ["python3", "-m", "scripts.assemble_episode",
+    cmd = [sys.executable, "-m", "scripts.assemble_episode",
            "--captions", str(wd / "captions.json"),
            "--in-dir", str(out_dir),
            "--out", args.out,
