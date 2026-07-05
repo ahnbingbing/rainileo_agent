@@ -40,3 +40,37 @@ Each looked fine until the code path was actually exercised:
 - **Local review mirror** of GCS `output/episodes/` (PD wants the _review files locally, easy to check) — the `gcloud storage rsync … data/output/gcs_episodes/` was interrupted; finish it or wire a helper.
 - **icloud-sync → VM DB registration**: the Mac dawn sync added 9 new assets to the MAC DB + GCS, but they're NOT in the VM DB (ingest_register still unbuilt). New footage won't reach the VM until registered.
 - **Caption↔video semantic mismatch** beyond the grandiose register is still the VLM's CHECK 0 (which rubber-stamps); add deterministic sub-checks as PD flags specific patterns.
+
+## 4. Continued session (afternoon 07-05) — two MORE migration gaps + both lanes validated
+
+**Migration gaps 9-10 (found while validating a full batch, which the 03:00 cron had 0/4'd):**
+9. **SDK version deadlock → thinking_budget bug.** The httpx pin was a 3-way conflict: anthropic 0.39
+   needs httpx<0.28 (proxies), but google-genai with `types.ThinkingConfig(thinking_budget=0)` (used
+   everywhere to disable Gemini thinking — gotcha #4) only exists in versions requiring httpx>=0.28.1;
+   the earlier `google-genai==1.2.0` pin LACKS thinking_budget → "1 validation error for ThinkingConfig
+   thinking_budget" → VLM tagging/facecheck/still_select all failed. Resolved to the modern set (what
+   the Mac must have run out-of-band): **anthropic 0.116 + httpx 0.28.1 + google-genai 2.10.0**. All four
+   SDKs init + full pipeline imports; anthropic messages.create/cache_control is stable 0.39→0.116.
+10. **Subprocesses spawned with system `python3`, not the venv.** AV died at "[1/6] Preprocessing
+    photos: No module named 'PIL'" — the pipeline ran its step scripts (preprocess_for_i2v, build_bumpers,
+    assemble_episode, animate_*) via `"python3"`, which on the VM lacks venv deps (Mac had them via
+    --break-system-packages). RF survived because burn/assemble only need stdlib+ffmpeg. Replaced all
+    24 `"python3"` → `sys.executable` (cameraman, caption_salvage, cctv_finish, recaption_finish).
+
+**Giri (continued):** the grandiose gate was refined from motion-gated to a pure REGISTER gate per PD —
+catch "웅장"-류 pompous diction (웅장·장엄·서사시·전설의…), NOT playful energy/locomotion ("우다다 출동",
+"탐험 시작"). RF-scoped, cap ≤6.
+
+**Both lanes validated end-to-end on the VM (bdd0c47→7f1d456):**
+- **RF**: renders a valid UPRIGHT 1080×1920 episode (rotation fixed), passes macro-freshness (same-video),
+  Giri. (A validation upload 1oR1hcnK04A was the pre-rotation-fix sideways one — deleted.)
+- **AV**: full render — Writer(anthropic)→stills(gpt-image)→Seedance i2v→VLM caption rewrite(genai)→
+  assemble→Giri PASS 7/10→YouTube schedule. Frame: Ryani+Leo both correct/photoreal, portrait, upright.
+  The validation AV (kQZ47SoROVY) was deleted before the full batch to avoid a 12:30 duplicate.
+
+**IN-FLIGHT at session end:** a full 4-slot `launch_selfheal --date 2026-07-06` batch (the exact cron
+path, `data/logs/batch_0706b.log`) is running detached on the VM — 08:00 RF, 12:30 AV, 18:00 RF, 21:00 AV.
+It will produce 07-06's public batch. **Check when back:** `gcloud compute ssh rianileo-brain … 'grep 배치
+써머리 /home/rianileo/rianileo-agent/data/logs/batch_0706b.log'` for the N/4 result, GCS `260706_*.mp4`
+for the friendly-named episodes, and the YouTube schedule. PD `/veto`s any bad slot. The 03:00 cron
+tonight targets 07-07 (separate). All SDK/PIL/rotation/gate fixes are committed + deployed.
