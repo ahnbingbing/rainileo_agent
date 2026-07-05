@@ -15,15 +15,20 @@ google-auth-httplib2==0.2.0
 # → AV renders died. Pin them all. Both google SDKs are needed: new `google.genai` (most
 # paths, migrated 2026-06-03) AND legacy `google.generativeai` (7 not-yet-migrated call
 # sites: photo_selector, cameraman_brain, room_extractor, slack tagging). They coexist.
-anthropic==0.39.0
+anthropic==0.116.0
 openai==1.98.0
-google-genai==1.2.0
+google-genai==2.10.0
 google-generativeai==0.8.6
-# httpx 0.28 removed the `proxies` kwarg that anthropic/openai 0.39-era SDKs still pass to
-# httpx.Client → `Client.__init__() got an unexpected keyword argument 'proxies'` at client
-# init (NOT import — so the deploy smoke's import check misses it). Pin below 0.28. Unpinned,
-# a fresh venv (e.g. the GCP VM) pulls 0.28+ and every LLM call dies → whole batch 0/4.
-httpx==0.27.2
+# httpx version is a THREE-way constraint (learned 2026-07-05, the hard way):
+#   - anthropic 0.39 passed a `proxies` kwarg httpx 0.28 removed → needs httpx<0.28;
+#   - BUT google-genai with `types.ThinkingConfig(thinking_budget=0)` (used everywhere to
+#     disable Gemini thinking / stop JSON truncation — CLAUDE.md gotcha #4) only exists in
+#     versions that REQUIRE httpx>=0.28.1. Mutually exclusive.
+# Resolution: modern anthropic (0.116, no `proxies`) + httpx 0.28.1 + google-genai 2.10.0.
+# All four SDKs init AND the whole pipeline imports; anthropic's messages.create/cache_control
+# surface is stable across 0.39→0.116. (google-genai 1.2.0 pinned earlier LACKS thinking_budget
+# → "1 validation error for ThinkingConfig thinking_budget" → VLM tagging/facecheck all failed.)
+httpx==0.28.1
 
 # Validation
 jsonschema==4.23.0
