@@ -21,6 +21,8 @@ BOARD_EXEC_MODE=auto
 */5  * * * *  $J -m scripts.process_board_escalations            >> $LOG/cron.board_esc.log 2>&1
 */15 * * * *  $J scripts/slack_sync.py                           >> $LOG/cron.slack_sync.log 2>&1
 */30 * * * *  $J -m agents.reviewer_macro --sync-cache           >> $LOG/cron.ytcache.log 2>&1
+# Register Mac-synced iCloud assets into the VM DB (rows; files are GCS-mirrored). PD 2026-07-06.
+*/30 * * * *  $J -m scripts.ingest_register --import              >> $LOG/cron.ingest.log 2>&1
 
 # ── daily (KST) ──────────────────────────────────────────────────
 0   3 * * *   $J -m agents.launch_selfheal                       >> $LOG/cron.launch.log 2>&1

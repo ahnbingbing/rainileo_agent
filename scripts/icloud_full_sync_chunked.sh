@@ -50,3 +50,9 @@ for round in $(seq 1 "$MAX_ROUNDS"); do
   fi
 done
 echo "chunked full sync finished. full log: $LOG"
+
+# Register the freshly-imported/tagged asset ROWS to the VM DB (the FILES were already
+# GCS-mirrored during the sync above; this carries the metadata). The VM's
+# `ingest_register --import` cron then upserts them into the production DB.
+echo "== ingest_register --export (asset rows → GCS for the VM) =="
+"$PY" -m scripts.ingest_register --export 2>&1 | tee -a "$LOG" || echo ">>> export failed (non-fatal)"
