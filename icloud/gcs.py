@@ -50,18 +50,44 @@ def _bucket():
     return _client().bucket(BUCKET)
 
 
-def blob_name(file_path: str) -> str | None:
-    """Derive the GCS object name from a local asset path: its path relative to
-    data/assets/ (e.g. /…/data/assets/photos/2016/med_x.jpg → photos/2016/med_x.jpg).
-    Returns None for paths outside the assets tree."""
+def asset_rel(file_path: str) -> str | None:
+    """Host-INDEPENDENT relative key for a stored asset path: the `data/assets/…` tail,
+    with any host repo prefix stripped. This is the canonical form that belongs in the DB
+    (the SQLite DB is shared/cloud now — a host-specific absolute path like
+    `/Users/ahnbingbing/…/data/assets/clips/x.mov` from the old Mac doesn't resolve on the
+    VM). Works for Mac-absolute, VM-absolute, or already-relative inputs. None if the path
+    isn't under data/assets."""
     if not file_path:
         return None
+    s = str(file_path).replace("\\", "/")
+    i = s.rfind("data/assets/")
+    return s[i:] if i != -1 else None
+
+
+def local_path(file_path: str) -> Path:
+    """The path to use on THIS host: re-root a stored asset path to the local repo. A
+    Mac-absolute (or any-host) `…/data/assets/clips/x.mov` becomes `<ROOT>/data/assets/
+    clips/x.mov`; a relative path is anchored to ROOT. Use this before any .exists()/open()/
+    ffmpeg on a DB-stored path so it doesn't matter which host wrote it."""
+    rel = asset_rel(file_path)
+    if rel:
+        return ROOT / rel
+    p = Path(file_path)
+    return p if p.is_absolute() else (ROOT / p)
+
+
+def blob_name(file_path: str) -> str | None:
+    """Derive the GCS object name from a stored asset path: the part under data/assets/
+    (e.g. …/data/assets/photos/2016/med_x.jpg → photos/2016/med_x.jpg). Host-independent —
+    tolerates Mac-absolute, VM-absolute, or relative inputs. None if not an asset path."""
+    rel = asset_rel(file_path)
+    if rel:
+        return rel[len("data/assets/"):]
+    # Fallback: a path already relative to data/assets, or an odd input.
     try:
-        rel = Path(file_path).resolve().relative_to(ASSETS_ROOT.resolve())
+        return str(local_path(file_path).resolve().relative_to(ASSETS_ROOT.resolve()))
     except (ValueError, OSError):
-        # Not under data/assets (or unresolved) — fall back to basename grouping by kind.
         return None
-    return str(rel)
 
 
 def list_blob_names(prefix: str = "") -> set[str]:
@@ -101,7 +127,10 @@ def download_to(file_path: str) -> str | None:
         blob = _bucket().blob(name)
         if not blob.exists():
             return None
-        dest = Path(file_path)
+        # Write to the LOCAL re-rooted path — file_path may be a foreign (Mac) absolute path
+        # whose parent can't be created on this host. Anchoring to ROOT keeps the on-disk
+        # layout identical and returns a path callers can actually open.
+        dest = local_path(file_path)
         dest.parent.mkdir(parents=True, exist_ok=True)
         tmp = dest.with_suffix(dest.suffix + ".gcsdl")
         blob.download_to_filename(str(tmp))

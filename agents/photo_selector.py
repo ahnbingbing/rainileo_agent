@@ -281,9 +281,14 @@ def vlm_select(candidates: list[dict], concept: dict,
     # Build image parts
     parts: list[Any] = []
     for i, c in enumerate(candidates, 1):
-        fp = Path(c["file_path"])
-        if not fp.is_absolute():
-            fp = ROOT / fp
+        # Re-root the stored (possibly foreign-absolute or relative) path to THIS host, and
+        # pull from GCS if it isn't cached locally — the DB path is host-independent now.
+        from icloud import gcs
+        fp = gcs.local_path(c["file_path"])
+        if not fp.exists():
+            got = gcs.download_to(c["file_path"])
+            if got:
+                fp = Path(got)
         if not fp.exists():
             continue
 

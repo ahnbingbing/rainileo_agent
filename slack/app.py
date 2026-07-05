@@ -29,6 +29,16 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
+
+def _rel_asset(p) -> str:
+    """Store host-INDEPENDENT relative asset paths in the DB (`data/assets/…`), never an
+    absolute host path — the DB is shared/cloud and consumers re-root to their own ROOT
+    (see icloud.gcs.local_path). Mirrors icloud.sync._rel_to_root."""
+    try:
+        return str(Path(p).resolve().relative_to(ROOT.resolve()))
+    except (ValueError, OSError):
+        return str(p)
+
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 log = logging.getLogger("slack.app")
 
@@ -1212,7 +1222,7 @@ def _ingest_file(file_info: dict, client) -> dict | None:
                      duration_sec, width, height, phash, subjects_csv, content_hash)
                 VALUES (?, 'slack', ?, ?, ?, ?, ?, ?, ?, NULL, ?)
                 """,
-                (asset_id, kind, str(dest), captured_iso,
+                (asset_id, kind, _rel_asset(dest), captured_iso,
                  duration, width, height, phash, chash),
             )
     except sqlite3.IntegrityError as e:
@@ -1272,7 +1282,7 @@ def _handle_background_upload(event: dict, client, file_id: str) -> None:
         with db() as con:
             con.execute(
                 "INSERT INTO background_refs (file_path, space_name, description, slack_ts) VALUES (?, ?, ?, ?)",
-                (str(dest), desc, desc, event.get("event_ts", "")),
+                (_rel_asset(dest), desc, desc, event.get("event_ts", "")),
             )
 
         try:
@@ -1353,7 +1363,7 @@ def _handle_reference_upload(event: dict, client, file_id: str, message_text: st
             con.execute(
                 "INSERT INTO object_refs (file_path, name, description, category, subjects, slack_ts) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
-                (str(dest), name, desc, cat, subjects, event.get("event_ts", "")),
+                (_rel_asset(dest), name, desc, cat, subjects, event.get("event_ts", "")),
             )
 
         # React with camera emoji

@@ -57,6 +57,16 @@ ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 log = logging.getLogger("icloud.sync")
 
+
+def _rel_to_root(p) -> str:
+    """Store a host-INDEPENDENT relative path in the DB (`data/assets/…`), never an absolute
+    host path. The DB is shared/cloud now; an absolute Mac path from ingest won't resolve on
+    the render VM. Consumers re-root relative paths to their own ROOT (see icloud.gcs.local_path)."""
+    try:
+        return str(Path(p).resolve().relative_to(ROOT.resolve()))
+    except (ValueError, OSError):
+        return str(p)
+
 # ── Cross-process osxphotos / PhotoKit serialization ─────────────────────────
 # EVERY osxphotos export (--download-missing pulls originals via PhotoKit) and every
 # PhotosDB() open MUST be serialized across ALL processes: the 03:00 launchd batch, the
@@ -1196,7 +1206,7 @@ def sync_album(
                 source="icloud",
                 source_uuid=p.uuid,
                 kind=kind,
-                file_path=str(dest_path),
+                file_path=_rel_to_root(dest_path),
                 captured_iso=captured_iso,
                 ingested_iso=None,
                 duration_sec=getattr(p, "duration", None),
@@ -1227,7 +1237,7 @@ def sync_album(
                         source="icloud",
                         source_uuid=p.uuid,
                         kind="video",
-                        file_path=str(live_dest),
+                        file_path=_rel_to_root(live_dest),
                         captured_iso=captured_iso,
                         ingested_iso=None,
                         duration_sec=None,
