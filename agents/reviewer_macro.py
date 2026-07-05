@@ -650,19 +650,23 @@ def run_reviewer(drafts: list, ctx: dict, lane: str, progress_cb=None) -> dict:
         # for AV where vhash is blind entirely). Theme repeat is an INDEPENDENT fail:
         # even with fresh footage, reusing a recently-PUBLISHED episode's salient
         # motifs demotes to fail so the rewrite loop diversifies.
-        if verdict["pass"] and os.getenv("REVIEWER_MOTIF_DEDUP", "1") != "0":
-            mo = motif_overlap(drafts, ctx)
-            if len(mo["shared"]) >= _MOTIF_MIN_SHARED:
-                verdict["pass"] = False
-                shared = ", ".join(sorted(mo["shared"]))
-                md = (f"테마 재탕: 이 컨셉이 최근 공개 '{mo['episode']}'와 모티프 "
-                      f"[{shared}]를 공유한다. 다른 소재/장소/계절로 차별화하라.")
-                verdict["rewrite_directive"] = (
-                    (verdict["rewrite_directive"] + " " if verdict["rewrite_directive"]
-                     else "") + md)
-                verdict["macro_notes"] = (verdict.get("macro_notes") or "") + " [motif-override:fail]"
-                log.info("reviewer motif override → fail (shared=%s ep=%s)",
-                         shared, mo["episode"])
+        # PD 2026-07-05: theme/motif repetition is NO LONGER a hard fail. The freshness unit is
+        # the actual VIDEO, not the theme ("소재가 문제가 아니라 동일 동영상을 빼는 게 포인트. 시간이
+        # 다르면 소재가 같아도 다른 내용"). Fresh footage of a recurring motif (간식·루틴·카페…) is
+        # different content and MUST pass — visual_overlap above already blocks same-video reuse.
+        # So motif overlap is ADVISORY: surfaced for PD's visibility, never a rejection. (Theme
+        # variety is pursued in SELECTION via broader pools, not enforced by the reviewer.)
+        if os.getenv("REVIEWER_MOTIF_DEDUP", "1") != "0":
+            try:
+                mo = motif_overlap(drafts, ctx)
+                if len(mo["shared"]) >= _MOTIF_MIN_SHARED:
+                    shared = ", ".join(sorted(mo["shared"]))
+                    verdict["macro_notes"] = ((verdict.get("macro_notes") or "")
+                        + f" [motif-dejavu(advisory): [{shared}]~{mo['episode'][:16]}]")
+                    log.info("reviewer motif dejavu (advisory, not a fail — shared=%s ep=%s)",
+                             shared, mo["episode"])
+            except Exception as e:
+                log.info("motif dedup skipped: %s", e)
         # PD 2026-06-30: signature-prop dedup vs recently RENDERED cards (not just
         # public). Catches a distinctive gimmick (곶감꼭지 등) re-run that the public-only
         # motif gate misses because the earlier episode isn't public yet, and that token
