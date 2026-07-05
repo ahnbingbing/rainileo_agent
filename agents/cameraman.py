@@ -4101,21 +4101,17 @@ def _trim_real_footage_clips(manifests: dict, anim_dir: Path,
             log.info("crop %s — has_human=%s hint=%s → %s",
                      tag, has_human, crop_hint, crop_vf[:40])
 
-        # PD 2026-06-08 ROTATION FIX: a rotated source (e.g. iPhone landscape with
-        # rotation=-90) + a crop filter → ffmpeg crops the RAW unrotated frame and
-        # leaves the rotation flag → sideways output ("갑자기 세로 화면"). Bake the
-        # rotation with transpose BEFORE crop (so crop coords, computed on the
-        # display-oriented frame, match) and disable autorotate to avoid doubling.
-        rot = _probe_rotation(src_path)
-        transpose_vf = ""
-        if rot in (-90, 270):
-            transpose_vf = "transpose=1"
-        elif rot in (90, -270):
-            transpose_vf = "transpose=2"
-        elif rot in (180, -180):
-            transpose_vf = "transpose=1,transpose=1"
-        if transpose_vf:
-            vf = ",".join(p for p in (transpose_vf, vf) if p)
+        # ROTATION (PD 2026-06-08, revised 2026-07-05): a rotated source (iPhone portrait
+        # stored as 1920×1080 + rotation=-90) must reach display orientation BEFORE the crop —
+        # else crop hits the raw landscape frame and the output is sideways. The old fix baked it
+        # with a manual transpose + `-noautorotate`, but that LEFT the stale display-matrix on the
+        # trimmed clip, so every downstream re-encode (burn_captions, assemble) auto-rotated it a
+        # SECOND time → sideways again (the 260706_RF0800 bug). On modern ffmpeg (7.x+ — both the
+        # VM's static build and the Mac's) DEFAULT autorotate already inserts the rotation as the
+        # FIRST filter (crop is correct) AND strips the display matrix from the re-encoded output
+        # (no stale metadata → nothing double-rotates). So we let autorotate run and do NOT
+        # transpose or pass -noautorotate. Verified: a -90 clip → clean 1080×1920, rotation=none.
+        transpose_vf = ""  # rely on ffmpeg default autorotate (see above); no manual bake
 
         # Landscape-source reframing for the 9:16 frame (FINAL vf step). Two modes:
         #  - letterbox (DEFAULT, PD 2026-06-17): show the WHOLE landscape (fit width, black
