@@ -1056,6 +1056,85 @@ def _pd_groundtruth_block(concept: dict | None) -> str:
     return "\n".join(lines)
 
 
+# Caption-content mismatch (PD 2026-07-05): a mundane, near-static clip captioned with GRAND
+# / HIGH-ENERGY language ("웅장" over a sleeping cat) OR narrating LOCOMOTION/ADVENTURE that
+# never happens ("출동!/탐험 시작" over a cat that never moves — "레오가 움직이지도 않는데"). The
+# VLM rubber-stamps both despite the CHECK 0 rules. A pure lexicon over-fires (the channel is
+# witty), so this fires DETERMINISTICALLY only when the OBJECTIVE motion says the video is
+# near-static: static footage + a big-energy/locomotion caption = a real content mismatch.
+# RF-scoped (motion is measurable on real clips; AV motion is generated).
+_OVERCLAIM_WORDS = (
+    # grandeur / drama / high energy
+    "웅장", "장엄", "웅대", "장대", "위대한", "대서사", "서사시", "전설의", "에픽", "epic",
+    "질주", "돌진", "폭주", "질풍", "맹렬", "격렬", "광란", "폭발", "대격돌", "대격전",
+    "혈투", "혈전", "대난투", "대소동", "스릴", "액션", "긴박", "숨막히는",
+    # claimed locomotion / adventure that a static clip can't be showing
+    "대모험", "대탐험", "탐험 시작", "모험 시작", "출동", "출격", "출발!", "달려나", "뛰어나",
+    "우다다", "질풍처럼", "기지개 켜고 일어", "벌떡 일어",
+)
+_OVERCLAIM_STATIC_MOTION = float(os.getenv("REVIEWER_OVERCLAIM_MOTION", "1.5"))
+
+
+def _episode_main_motion(video: Path) -> float:
+    """Avg frame-to-frame luma change over the episode's MIDDLE (skips intro/outro bumpers),
+    a proxy for how much MOVES: <1.5 near-static (sleeping/still), 4+ clearly moving. Returns
+    -1.0 on error so the caller SKIPS the gate rather than false-firing on an unmeasurable clip."""
+    try:
+        dur = _probe_dur(video)
+        if dur <= 0:
+            return -1.0
+        ss = 3.0 if dur > 12 else 1.0
+        t = max(1.0, dur - ss - 3.0)
+        proc = subprocess.run(
+            ["ffmpeg", "-nostats", "-loglevel", "error", "-ss", f"{ss}", "-t", f"{t}",
+             "-i", str(video), "-vf", "tblend=all_mode=difference,signalstats,"
+             "metadata=print:key=lavfi.signalstats.YAVG:file=-", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=90)
+        vals = [float(l.split("=")[-1]) for l in proc.stdout.splitlines() if "YAVG" in l]
+        return sum(vals) / len(vals) if vals else -1.0
+    except Exception:
+        return -1.0
+
+
+def _caption_static_overclaim_gate(concept: "dict | None", report: dict, video: Path) -> None:
+    """RF-scoped: captions overclaiming grandeur/energy/drama on an objectively near-static
+    clip → caption-content mismatch. Deterministic (lexicon AND measured motion) so a witty
+    line on genuinely-moving footage never trips it. Cap ≤6, verdict 수정 필요."""
+    if not concept or (concept.get("render_style") or "") != "real_footage":
+        return
+    blob = []
+    for c in concept.get("cuts") or []:
+        caps = c.get("captions") or []
+        if isinstance(caps, list):
+            for sc in caps:
+                blob.append(str(sc.get("ko", "")) if isinstance(sc, dict) else str(sc))
+        for k in ("ko", "en", "caption"):
+            if c.get(k):
+                blob.append(str(c[k]))
+    text = " ".join(blob)
+    hits = sorted({w for w in _OVERCLAIM_WORDS if w in text})
+    if not hits:
+        return
+    motion = _episode_main_motion(video)
+    if motion < 0 or motion >= _OVERCLAIM_STATIC_MOTION:
+        return  # unmeasurable, or genuinely moving → the big words may be earned; don't fire
+    note = (f"캡션-내용 불일치(결정론): 영상은 거의 정적(motion={motion:.1f})인데 캡션이 과장·역동 "
+            f"표현 [{', '.join(hits)}]을 씀 — 잔잔히 자거나 가만한 화면에 없는 웅장함/역동을 지어냈다. "
+            f"화면에 실제로 있는 것만 담백·발랄하게 써라(없는 드라마를 얹지 마라).")
+    prev = report.get("가장_큰_문제", "") or ""
+    report["가장_큰_문제"] = note if (not prev or "없" in prev[:6]) else f"{note} / {prev}"
+    try:
+        report["점수"] = min(int(report.get("점수", 10)), 6)
+    except Exception:
+        report["점수"] = 6
+    if report.get("판정", "") in ("업로드", "즉시 업로드", "소폭 수정 후 업로드", ""):
+        report["판정"] = "수정 필요"
+    report["최종_결정"] = report.get("판정", "수정 필요")
+    report["_overclaim_gate_override"] = note
+    log.info("caption overclaim gate FIRED: %s (motion=%.2f) → 판정=%s 점수=%s",
+             hits, motion, report.get("판정"), report.get("점수"))
+
+
 def review(video: Path, storyboard: list[dict] | None = None,
            concept: dict | None = None) -> dict:
     """Full review: extract frames + audio check + VLM review.
@@ -1294,6 +1373,14 @@ def review(video: Path, storyboard: list[dict] | None = None,
         _false_first_water_gate(concept, report)
     except Exception as e:
         log.warning("False-first-water gate failed: %s", e)
+
+    # Caption-content mismatch (PD 2026-07-05): grand/energetic captions on an objectively
+    # near-static clip ("웅장" over a sleeping cat) — Giri rubber-stamped it. Deterministic
+    # (lexicon AND measured motion), RF-scoped, so it can't false-fire on genuine action.
+    try:
+        _caption_static_overclaim_gate(concept, report, video)
+    except Exception as e:
+        log.warning("Caption overclaim gate failed: %s", e)
 
     # Cleanup
     for f in frames:
