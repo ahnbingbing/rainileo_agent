@@ -33,12 +33,20 @@ ART = ROOT / "data" / "artifacts" / "selfheal"
 KST = dt.timezone(dt.timedelta(hours=9))
 
 # Ordered: first match wins. Patterns matched against the slot's captured log.
+# render_error precedes giri_fail (PD 2026-07-05): the emptied-slot line is the generic
+# "기리 미통과/렌더 실패 — 슬롯 비움" (both tokens, always emitted on empty), so keying
+# giri_fail first mislabels a real render CRASH as giri_fail — which is TERMINAL (never
+# retried), wrong for a likely-transient Seedance cut-miss. A render exception emits the
+# CONCRETE "렌더 실패: <exc>" (colon) + the exception text ("cannot render", "missing
+# animated mp4", …); those disambiguate a crash from a pure giri rejection. The bare
+# "렌더 실패 —" of the generic line has no colon and won't match, so a genuine giri
+# rejection still falls through to giri_fail.
 FAILURE_PATTERNS = [
     ("asset_not_found", r"not found|Preprocessing photos.*failed|원본 재다운로드.*실패|No candidates"),
     ("validator_block", r"Validator blocked|건너뜀|블록"),
     ("face_defect",     r"얼굴 무결성|얼굴 왜곡|face[_ ]?defect|\borb\b"),
+    ("render_error",    r"렌더 실패:|cannot render|missing animated mp4|direct render failed|Render attempt.*failed|Traceback|rc=1|EXC:"),
     ("giri_fail",       r"기리 미통과|수정 필요|폐기|미통과"),
-    ("render_error",    r"렌더 실패|Render attempt.*failed|rc=1|EXC:"),
     ("no_concept",      r"컨셉 없음|컨셉 실패"),
 ]
 
@@ -160,7 +168,13 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
         for (lane, slot) in pending:
             buf: list[str] = []
             try:
+                # progress_cb → Slack workroom (cap) for humans; slot_log_cb → buf for
+                # classify_failure. Both needed: with a Slack slot-thread active,
+                # launch_pipeline's sp() posts to the thread and skips progress_cb, so the
+                # PURE slot_log_cb sink is what actually feeds the failure classifier (else
+                # every failure classifies "unknown" → blind retry). PD 2026-07-05.
                 res = launch_pipeline(target, progress_cb=lambda m: cap(m, buf),
+                                      slot_log_cb=buf.append,
                                       do_upload=do_upload, lane_filter=lane,
                                       slot_filter=slot, slack_client=slack_client,
                                       slack_channel=slack_channel,

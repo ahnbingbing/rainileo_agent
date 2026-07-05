@@ -261,6 +261,7 @@ def _propose_n_for_lane(target: dt.date, context: dict, lane: str, n: int,
 
 def launch_pipeline(target: dt.date, *,
                     progress_cb: Callable[[str], None] | None = None,
+                    slot_log_cb: Callable[[str], None] | None = None,
                     video_cb: Callable[[Path], None] | None = None,
                     do_upload: bool = True,
                     dry_run: bool = False,
@@ -423,6 +424,14 @@ def launch_pipeline(target: dt.date, *,
 
         def sp(m: str):
             print(m, flush=True)
+            # PURE capture sink (PD 2026-07-05): self-heal classifies a failed slot by
+            # regex-scanning its log, but when a Slack slot-thread exists every sp() goes
+            # to the thread and NEVER to progress_cb (the elif below) — so self-heal's buf
+            # stayed empty and real render/giri failures were misclassified "unknown" →
+            # blind retry + no early diagnosis. slot_log_cb is ALWAYS called (no Slack
+            # side-effect, no double-post) so the caller can capture the full slot log.
+            if slot_log_cb:
+                slot_log_cb(m)
             if slack_client and slack_channel and slot_ts:
                 try:
                     slack_client.chat_postMessage(channel=slack_channel, text=m,

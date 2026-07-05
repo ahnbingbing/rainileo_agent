@@ -39,6 +39,13 @@ ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 log = logging.getLogger("agents.reviewer")
 
+# Review ffmpeg/ffprobe timeout (PD 2026-07-05). The GCP VM (e2-medium, 2 shared
+# vCPU) runs Seedance renders + ffmpeg concurrently; a single review frame-extract
+# ("-ss … -frames:v 1") that was fine on the Mac hit the old 10s ceiling and threw,
+# aborting the Giri review → the slot failed for a NON-content reason. Configurable so
+# a bigger machine can tighten it back. Not a substitute for right-sizing the VM.
+FFMPEG_REVIEW_TIMEOUT = int(os.getenv("REVIEW_FFMPEG_TIMEOUT", "30"))
+
 from agents import canon  # central character canon — judge the SAME pets we generate
 
 REVIEW_GUIDE = (ROOT / "notes" / "shorts_review_agent_giri.md").read_text(encoding="utf-8") \
@@ -326,7 +333,7 @@ def _probe_dur(p: Path) -> float:
         r = subprocess.run(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration",
              "-of", "default=nw=1:nk=1", str(p)],
-            capture_output=True, text=True, timeout=10)
+            capture_output=True, text=True, timeout=FFMPEG_REVIEW_TIMEOUT)
         return float(r.stdout.strip() or 0)
     except Exception:
         return 0.0
@@ -364,7 +371,7 @@ def _extract_frames(video: Path, n_cuts: int = 4, per_cut: int = 2,
         subprocess.run(
             ["ffmpeg", "-y", "-ss", f"{max(0.0, t):.2f}", "-i", str(video),
              "-frames:v", "1", "-q:v", "2", str(out)],
-            capture_output=True, timeout=10,
+            capture_output=True, timeout=FFMPEG_REVIEW_TIMEOUT,
         )
         if out.exists():
             frames.append(out)
@@ -378,7 +385,7 @@ def _check_audio(video: Path) -> dict:
     probe = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "a:0",
          "-show_entries", "stream=codec_type", "-of", "json", str(video)],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True, text=True, timeout=FFMPEG_REVIEW_TIMEOUT,
     )
     if not json.loads(probe.stdout).get("streams"):
         result["issues"].append("오디오 스트림 없음")
