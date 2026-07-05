@@ -1167,9 +1167,23 @@ def review(video: Path, storyboard: list[dict] | None = None,
     report["audio"] = audio
 
     # Character similarity check — compare generated frames vs real Ryani/Leo photos
+    # PD 2026-07-05: a real_footage episode with NO Seedance/AI cut is real clips of the
+    # REAL Ryani — her markings are correct BY DEFINITION, and the pixel heuristic only
+    # false-flags on real angles/lighting. Don't just skip the CAP (below) — skip the whole
+    # check so it never runs, never prints "이마줄 ❌", and never sways the LLM review. Only
+    # when RF actually uses Seedance (photo_i2v / interp / ref) can markings drift → check.
+    _rs0 = (concept or {}).get("render_style", "")
+    _has_ai_cut = any(
+        (c.get("source_hint") or "").strip().lower() == "photo_i2v"
+        or (c.get("seedance_mode") or "").strip().lower() in ("i2v", "interp", "ref")
+        for c in (concept or {}).get("cuts", []))
+    _pure_rf = _rs0 == "real_footage" and not _has_ai_cut
     try:
-        char_sim = _check_character_similarity(frames, concept)
+        char_sim = {"checks": {}} if _pure_rf else _check_character_similarity(frames, concept)
         report["character_similarity"] = char_sim
+        if _pure_rf:
+            report.setdefault("_marking_overrides", []).append(
+                "real_footage(Seedance 미사용) — 마킹 픽셀검사 생략(실제 랴니)")
 
         # HARD OVERRIDE: marking checks trump VLM subjective scores
         checks = char_sim.get("checks", {})
