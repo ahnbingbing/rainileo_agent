@@ -1882,11 +1882,19 @@ def _retime_cut_scenes(scenes: list, clip_dur: float, min_read: float = 2.5,
     scenes = [s for s in (scenes or []) if (s.get("ko") or s.get("en"))]
     if not scenes or is_wink:
         return scenes
-    # PD 2026-06-13 (#4): do NOT drop captions to fit a short clip — the burn-time
-    # _fit_caption_reading_time extends the cut so every caption gets read-time. Keep
-    # all scenes; span just needs to hold them at >= min_read each.
-    span = max(float(clip_dur or 0) or (len(scenes) * min_read),
-               len(scenes) * min_read, min_read)
+    # PD 2026-07-05: a real clip's caption count MUST fit its ACTUAL length at min_read —
+    # the old "keep all, extend the clip at burn-time" plan silently failed for RF
+    # one-takes (a 17s clip carried 12 captions, so the last 2 collapsed into the final
+    # 0.5s and were unreadable — "끝에 캡션 안 읽히고 왜 끝나?"). When there are more
+    # captions than the clip can hold at min_read, DROP the trailing excess so every kept
+    # caption gets a readable window. (Photo montages keep their own short flashes; this is
+    # for real video cuts with a known clip_dur.)
+    _cd = float(clip_dur or 0)
+    if _cd >= min_read:
+        _fit = max(1, int(_cd / min_read))
+        if len(scenes) > _fit:
+            scenes = scenes[:_fit]
+    span = max(_cd or (len(scenes) * min_read), len(scenes) * min_read, min_read)
     n = len(scenes)
     for j, s in enumerate(scenes):
         s["start"] = round(0.1 if j == 0 else j * span / n, 2)
