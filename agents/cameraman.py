@@ -262,6 +262,15 @@ def _av_still_compose_prompt(cc: dict) -> str:
         "floor plane with correct ground contact and a soft contact shadow, aligned to the room's "
         "perspective and floor lines. Do NOT oversize the pet, do NOT paste it flat in the "
         "foreground, do NOT let it float; a real animal photographed standing in this room."
+        # PD 2026-07-05: a wink still put a right-side-up front-facing dog face on a belly-up
+        # (upside-down) body, so the neck twisted ~180° to reconcile them — a grotesque broken
+        # neck. Any pose is fine (lying on the back is fine); what breaks is a face whose
+        # up-direction disagrees with the body's. Keep head and body in ONE orientation.
+        " ANATOMY: correct, natural animal anatomy — head, neck and body in ONE consistent "
+        "orientation, the neck never twisted or rotated past a natural range. If the pet lies on "
+        "its back or side, its face stays oriented to match that body (looking up/back is fine); "
+        "do NOT force a right-side-up, front-facing face onto a belly-up or turned-away body. No "
+        "extra/missing/duplicated limbs, no impossible joints."
         " 9:16 vertical, pet eye-level, natural room light."
         "\n\n" + base + ("\n" + emph if emph else ""))
 

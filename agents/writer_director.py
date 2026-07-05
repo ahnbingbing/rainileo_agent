@@ -2947,12 +2947,20 @@ def _build_wink_cut(subject: str, prev_cut: dict, other: str | None = None) -> d
             f"frame together: {_wink_char_desc(other)}; AND {_wink_char_desc(subject)}. "
             "They settle for a beat (a small natural breath). Over ~2s the camera slowly "
             "pushes IN (smooth forward dolly, no panning) to a cozy tight two-shot. FIRST, "
-            f"{names.get(other, other)} turns to the camera and gives a slow, playful WINK "
-            "— one eye closes for a clear beat while the other stays open — with a little "
-            f"smile. A BEAT LATER, {names.get(subject, subject)} turns to the camera and "
-            "gives the FINAL slow, deliberate happy WINK (the closing sign-off), one eye "
-            "closed with a smug satisfied smile. Each pet winks ONCE, in TURN (NOT at the "
-            "same time). A brief hold after the final wink, then the clip ends — NO long lingering. Casual iPhone "
+            f"{names.get(other, other)} makes eye contact with the camera and gives a slow, "
+            "playful WINK — one eye closes for a clear beat while the other stays open — "
+            f"with a little smile. A BEAT LATER, {names.get(subject, subject)} makes eye "
+            "contact and gives the FINAL slow, deliberate happy WINK (the closing sign-off), "
+            "one eye closed with a smug satisfied smile. Each pet winks ONCE, in TURN (NOT "
+            "at the same time). "
+            # Anatomy guard (root cause of a grotesque wink): the pet engages the camera
+            # FROM ITS CURRENT natural head position — it may only slightly lift or tilt its
+            # head. Head and body stay in ONE consistent orientation. If a pet is lying on
+            # its back or side, it winks from THAT natural pose (head tilted back / to the
+            # side is fine); NEVER rotate the neck to force a right-side-up, front-facing
+            # face onto a belly-up or turned-away body — that impossible twist reads as a
+            # broken neck. Keep the neck natural and untwisted at all times.
+            "A brief hold after the final wink, then the clip ends — NO long lingering. Casual iPhone "
             "snapshot, natural fur strands, no studio polish. Completely bare-furred — NO "
             "clothing, NO collar, NO accessories. Keep each pet's exact markings (Ryani has NO tail)."
         )
@@ -2968,12 +2976,18 @@ def _build_wink_cut(subject: str, prev_cut: dict, other: str | None = None) -> d
             "natural movement — a relaxed breath, ears shifting). Then, over about "
             "2 seconds, the camera slowly pushes IN with a smooth forward dolly (no "
             "panning) toward an intimate tight CLOSE-UP where the face fills the "
-            "frame. As the lens pushes in, the subject slowly turns its head to look "
-            "directly into the camera and holds steady, warm eye contact for a clear "
-            "beat. Then a slow, deliberate, playful WINK — one eye closes for a "
-            "noticeable moment while the other stays wide open on the camera — with "
-            "a subtle smug satisfied smile, mouth corner slightly raised. Hold the "
-            "close-up wink and smile briefly, then the clip ends — NO long lingering. "
+            "frame. As the lens pushes in, the subject makes soft eye contact with the "
+            "camera FROM ITS CURRENT natural head position — a small lift or tilt of the "
+            "head is fine — and holds a warm beat. Then a slow, deliberate, playful "
+            "WINK — one eye closes for a noticeable moment while the other stays open "
+            "toward the camera — with a subtle smug satisfied smile, mouth corner "
+            "slightly raised. "
+            # Anatomy guard (root cause of a grotesque wink): head and body stay in ONE
+            # consistent orientation. If the pet is lying on its back or side, it winks
+            # from THAT natural pose (looking up or back is fine); NEVER rotate the neck to
+            # force a right-side-up, front-facing face onto a belly-up or turned-away body —
+            # that impossible twist reads as a broken neck. Keep the neck natural, untwisted.
+            "Hold the close-up wink and smile briefly, then the clip ends — NO long lingering. "
             "Casual iPhone snapshot, natural fur strands visible at this close "
             "distance, no studio polish. Completely bare-furred — NO clothing, "
             "NO collar, NO accessories."
