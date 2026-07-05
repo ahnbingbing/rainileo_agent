@@ -1443,8 +1443,15 @@ def _enforce_wink_empty_captions(c: dict) -> None:
 _HONORIFIC_BAD = (
     r"오빠|형아|형님",
     r"레오(?:는|가|은|이|도|만)?\s*(?:베테랑|시니어|노령|senior|맏이)|(?:베테랑|시니어|노령|senior|맏이)\s*레오",
-    r"랴니(?:는|가|은|이|도|만)?\s*(?:막내|아기|신참|꼬맹이)|(?:막내|아기|신참|꼬맹이)\s*랴니",
+    r"랴니(?:는|가|은|이|도|만)?\s*(?:막내|신참)|(?:막내|신참)\s*랴니",
 )
+# "아기/꼬맹이 랴니" is era-fact (she WAS a baby 2016–2017, pre-Leo), not a fixed inversion —
+# only rewrite it when the episode does NOT frame the footage as past (see _RYANI_BABY_BAD /
+# _TEMPORAL_MARK below). Matches reviewer._canon_honorific_gate's era exemption.
+_RYANI_BABY_BAD = r"랴니(?:는|가|은|이|도|만)?\s*(?:아기|꼬맹이)|(?:아기|꼬맹이)\s*랴니"
+_TEMPORAL_MARK = ("년 전", "년전", "개월 전", "그때", "그 때", "그땐", "시절", "예전", "옛날",
+                  "어릴", "어렸", "새끼 ", "갓난", "작년", "재작년", "만나기 전", "자랐", "추억",
+                  "ago", "back then", "used to", "as a baby", "as a puppy", "grew up")
 
 
 def _enforce_canon_honorifics(c: dict, progress_cb=None) -> None:
@@ -1455,11 +1462,20 @@ def _enforce_canon_honorifics(c: dict, progress_cb=None) -> None:
     but catching only leaves the launch slot empty — so PREVENT here: LLM-rewrite the violating
     captions canon-correct (레오→랴니='랴니엄마/누나', 랴니/narrator→레오='막내/레오'), keeping meaning
     and tone. Only applies a rewrite that actually clears the violation. Same detection as Giri."""
+    # Episode-wide era check: if ANY caption frames the footage as past (memory-lane),
+    # "아기/꼬맹이 랴니" is era-fact and must NOT be rewritten. Otherwise it's a present-tense
+    # canon reversal and gets fixed like the fixed patterns.
+    _epitext = " ".join(
+        str(cap.get("ko", "")) for cut in (c.get("cuts") or [])
+        for cap in (cut.get("captions") or []))
+    _era = any(m in _epitext for m in _TEMPORAL_MARK)
     flagged = []
     for cut in c.get("cuts") or []:
         for capi, cap in enumerate(cut.get("captions") or []):
             ko = cap.get("ko") or ""
-            if any(re.search(p, ko) for p in _HONORIFIC_BAD):
+            bad = any(re.search(p, ko) for p in _HONORIFIC_BAD) or \
+                (not _era and re.search(_RYANI_BABY_BAD, ko))
+            if bad:
                 flagged.append({"cut_tag": cut.get("tag", ""), "cap_index": capi,
                                 "ko": ko, "en": cap.get("en", "")})
     if not flagged:
@@ -1485,7 +1501,9 @@ def _enforce_canon_honorifics(c: dict, progress_cb=None) -> None:
         for cut in c.get("cuts") or []:
             for capi, cap in enumerate(cut.get("captions") or []):
                 f = by.get((cut.get("tag", ""), capi))
-                if f and f.get("ko") and not any(re.search(p, f["ko"]) for p in _HONORIFIC_BAD):
+                _clean = f and f.get("ko") and not any(re.search(p, f["ko"]) for p in _HONORIFIC_BAD) \
+                    and (_era or not re.search(_RYANI_BABY_BAD, f["ko"]))
+                if _clean:
                     cap["ko"] = f["ko"]
                     if f.get("en"):
                         cap["en"] = f["en"]

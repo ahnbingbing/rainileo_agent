@@ -873,8 +873,24 @@ _HONORIFIC_VIOLATIONS = (
     (r"오빠|형아|형님", "'오빠/형' 호칭 — 연상 남자 캐릭터가 없음 (레오=막내 남, 랴니=여자 누나/엄마)"),
     (r"레오(?:는|가|은|이|도|만)?\s*(?:베테랑|시니어|노령|senior|맏이)|(?:베테랑|시니어|노령|senior|맏이)\s*레오",
      "레오를 연장자/시니어로 — 레오는 8개월 막내"),
-    (r"랴니(?:는|가|은|이|도|만)?\s*(?:막내|아기|신참|꼬맹이)|(?:막내|아기|신참|꼬맹이)\s*랴니",
-     "랴니를 막내/아기로 — 랴니는 11살 누나/엄마"),
+    (r"랴니(?:는|가|은|이|도|만)?\s*(?:막내|신참)|(?:막내|신참)\s*랴니",
+     "랴니를 막내/신참으로 — 랴니는 원조 첫째, 레오가 막내/신참"),
+)
+
+# "아기/꼬맹이 랴니" is NOT a fixed violation like 막내/신참: Ryani genuinely WAS a baby
+# (2016–2017, before Leo existed 2025-09), so a memory-lane caption may correctly say "아기
+# 랴니". It's a canon reversal ONLY in the PRESENT — flag it just when NO time-distance marker
+# frames it as past. (This is the era-fact vs reversed-hierarchy distinction PD called out.)
+_RYANI_BABY_PAT = r"랴니(?:는|가|은|이|도|만)?\s*(?:아기|꼬맹이)|(?:아기|꼬맹이)\s*랴니"
+# TIME-DISTANCE markers only — deliberately EXCLUDES the baby-descriptor words ("아기 "/"아가 "/
+# "새끼 ") that _TEMPORAL_TOKENS carries, because "아기 랴니" must not self-exempt. A hit here means
+# the caption frames the footage as PAST, so a baby-Ryani mention is era-fact, not a reversal.
+_PAST_ERA_MARK = (
+    "년 전", "년전", "개월 전", "개월전", "달 전", "그때", "그 때", "그땐", "그시절", "그 시절",
+    "시절", "예전", "옛날", "과거", "어릴", "어렸", "갓난", "갓 태어", "작년", "재작년",
+    "만나기 전", "만나기전", "처음 왔", "처음 만", "자랐", "커버린", "자라서", "세월", "옛", "추억",
+    "ago", "back then", "back when", "used to", "younger", "as a baby", "as a puppy",
+    "as a kitten", "grew up", "years back", "as a pup", "as a kit",
 )
 
 
@@ -899,6 +915,11 @@ def _canon_honorific_gate(concept: "dict | None", report: dict) -> None:
                 blob.append(str(c[k]))
     text = " ".join(blob)
     hits = [msg for pat, msg in _HONORIFIC_VIOLATIONS if re.search(pat, text)]
+    # "아기/꼬맹이 랴니" only violates canon in the PRESENT — allow it as memory-lane era-fact
+    # when a time-distance marker (그때/N년 전/아기 시절/ago…) frames the footage as past.
+    if re.search(_RYANI_BABY_PAT, text) and not any(t in text for t in _PAST_ERA_MARK):
+        hits.append("현재 시점에 랴니를 아기/꼬맹이로 — 랴니는 11살(과거 아기 시절은 'N년 전' 등 시점을 "
+                    "명시하면 허용)")
     if not hits:
         return
     note = ("호칭/나이 canon 역전(결정론적 게이트): " + " / ".join(hits) +
