@@ -97,15 +97,23 @@ _SYS = (
     "- render: 프리셋 1편 즉석 렌더(~$50 → PD 확인 후 실행). args={slug:'hawaii'|'homecam'|'chimipja'|null, "
     "text:'프리셋 아니면 컨셉 지시문'}.\n"
     "- rerender: 배치의 한 슬롯을 다시 만들고 예약영상을 교체(~$50). args={label:'260705_RF2100'} — "
-    "파일명(YYMMDD_<AV|RF>HHMM)으로 슬롯을 지목. PD가 리뷰 후 '260705_RF2100 다시 만들어 / 이 슬롯 재렌더' "
-    "류로 말하면 이걸 쓴다. 기존 예약영상을 비공개로 내리고 같은 시각에 새로 렌더·재예약하며, **확인 없이 "
-    "바로 실행**된다(board 봇=최상위 어드민).\n\n"
+    "파일명(YYMMDD_<AV|RF>HHMM)으로 슬롯을 지목. 기존 예약영상을 비공개로 내리고 같은 시각에 새로 "
+    "렌더·재예약하며 **확인 없이 바로 실행**된다(board 봇=최상위 어드민). rerender는 그 슬롯을 **컨셉부터 "
+    "새로 뽑아** 다시 그리니, PD가 구체적 방향('다리에 붙는 설정으로', '컨트롤룸 뒤에 상상씬 넣어', "
+    "'캡션이 동작이랑 안 맞아')을 줬으면 그냥 rerender만 하면 그 방향이 안 반영된다 — 반드시 **먼저 "
+    "set_concept으로 그 방향을 해당 날짜·레인 지시문으로 박고 → rerender** 해라(set_concept 지시문이 "
+    "재렌더의 새 컨셉에 최우선으로 들어간다). 방향 없이 '그냥 이거 망했어 다시'면 rerender만.\n\n"
     "원칙: 모르면 툴로 확인하고 추측으로 사실을 지어내지 마라. 애매하면 되묻는 final이 낫다.\n"
     "★역할 분담 — board 봇은 최상위 어드민이라 **렌더·재렌더·재업로드/교체를 직접** 한다(render·rerender "
-    "툴이 실제로 돈다). 재렌더 요청이면 '재렌더해줄게'라고 약속해도 되고 rerender 툴로 실행하면 된다 — "
-    "CLI 세션으로 미루지 마라. escalate는 **코드·프롬프트·데이터의 수정/분석/디버깅** 같은 리포지토리 작업 "
-    "전용이다(자율 실행기는 안전상 유료키가 없어 렌더/업로드를 못 하고 코드만 고친다). 즉 버그·로직 수정은 "
-    "escalate, 영상 다시 만들기는 rerender — 섞지 마라."
+    "툴이 실제로 돈다). CLI 세션으로 미루지 마라. escalate는 **코드·프롬프트·데이터의 수정/분석/디버깅** 같은 "
+    "리포지토리 작업 전용이다(자율 실행기는 안전상 유료키가 없어 렌더/업로드를 못 하고 코드만 고친다). 즉 "
+    "버그·로직 수정은 escalate, 영상 다시 만들기는 (필요하면 set_concept→)rerender — 섞지 마라.\n"
+    "★한 메시지에 리뷰가 여러 건 온다 — PD는 보통 '이 배치 리뷰 줄게: A는 캡션 고쳐, B는 상상씬 넣어, "
+    "C는 다시 만들어'처럼 슬롯 여러 개를 한 번에 준다. 이걸 **슬롯별로 쪼개 각각** 처리해라: 먼저 "
+    "youtube_schedule로 그 날짜의 슬롯·파일명을 확인하고, 편마다 위 규칙대로(방향 있으면 set_concept→"
+    "rerender, 없으면 rerender). 명확한 리뷰를 받고 '확인할 게 많아요, 좁혀서 다시 물어봐 주세요'로 "
+    "떠넘기는 건 실패다 — 할 수 있는 데까지 실행하고 무엇을 했는지 정리해 답하고, 정말 못 끝낸 부분만 "
+    "명확히 남겨라(그건 CLI 세션이 이어받는다)."
 )
 
 
@@ -710,7 +718,12 @@ def _run_tool(name: str, args: dict, *, db, user: str, channel: str, thread_ts: 
     return f"[알 수 없는 툴: {name}]"
 
 
-_AGENT_MAX_STEPS = 5
+# A single PD message can bundle several actions (e.g. "review the 4 slots and
+# fix these three"). Each fix is often a 2-tool compose (set_concept → rerender),
+# so the budget must fit 3–4 items + lookups, not one Q&A. Board is low-volume
+# Opus, so a larger cap is cheap; the real guard is forcing a graceful final on
+# the last step (below) rather than clamping the count low.
+_AGENT_MAX_STEPS = 10
 
 
 def _agent_answer(text: str, *, db, user: str, channel: str, thread_ts: str,
@@ -729,7 +742,15 @@ def _agent_answer(text: str, *, db, user: str, channel: str, thread_ts: str,
                   f"[최근 진행 로그 — board(너)와 CLI(Claude Code)가 함께 한 일. 이 맥락 위에서 이어가라]\n"
                   f"{_prog}\n\n"
                   f"PD 메시지: {text}\n")
-    for _ in range(_AGENT_MAX_STEPS):
+    for _step in range(_AGENT_MAX_STEPS):
+        if _step == _AGENT_MAX_STEPS - 1:
+            # Last step: never call another tool — the loop is about to end. Force a
+            # real final so PD gets a substantive answer, and route any unfinished
+            # part to the CLI session instead of a dead-end "ask again".
+            transcript += ("\n[남은 스텝: 이번이 마지막이야. 더 툴을 부르지 말고 지금 바로 "
+                           '{"final":"…"} 로 끝내라. 지금까지 확인/실행한 걸 정리하고, 아직 '
+                           "못 끝낸 게 있으면 '나머지는 CLI 세션에 넘겨 이어서 처리할게요'라고 "
+                           "명확히 알려라. 절대 '좁혀서 다시 물어봐' 로 떠넘기지 마라.]\n")
         raw = _board_llm(_SYS, transcript, max_tokens=2500).strip()
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
         raw = re.sub(r"\s*```$", "", raw)
@@ -768,7 +789,22 @@ def _agent_answer(text: str, *, db, user: str, channel: str, thread_ts: str,
         transcript += (f"\n[너의 호출] {json.dumps(d, ensure_ascii=False)[:300]}\n"
                        f"[결과]\n{result}\n\n위 결과를 보고, 더 확인할 게 있으면 툴을 또 부르고 "
                        f"충분하면 {{\"final\":\"…\"}} 로 답하세요.\n")
-    return {"text": "확인할 게 많아 정리가 길어졌어요. 좀 더 좁혀서 다시 물어봐 주세요 🐾"}
+    # Safety net (should be unreachable now that the last step forces a final): the
+    # model kept calling tools past budget. Don't dead-end PD — queue the original
+    # request for the CLI session (shared board↔CLI loop reads board_escalations) and
+    # say so honestly, rather than "narrow it down and ask again".
+    try:
+        with db() as con:
+            con.execute(
+                "CREATE TABLE IF NOT EXISTS board_escalations ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT DEFAULT (datetime('now')), "
+                "author TEXT, request TEXT, summary TEXT, handled INTEGER DEFAULT 0)")
+            con.execute("INSERT INTO board_escalations (author, request, summary) VALUES (?,?,?)",
+                        (user or "", text, ("[미완 인계] " + text)[:200]))
+    except Exception as e:  # noqa: BLE001
+        log.warning("board fallback handoff-record failed: %s", e)
+    return {"text": "요청이 여러 건이라 여기서 한 번에 다 처리하진 못했어요 🙏 "
+                    "확인/실행한 부분은 위에 정리했고, 나머지는 CLI 세션에 넘겨서 이어 처리할게요."}
 
 
 def _confirm_preview(d: dict) -> str:
