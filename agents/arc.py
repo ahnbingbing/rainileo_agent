@@ -469,6 +469,17 @@ def next_directive(con: sqlite3.Connection, *, today: str, render_style: str) ->
     """Showrunner directive for THIS episode: what it should contribute to the
     shared arc, given the rolling plan + what already aired. Injected into the
     lane's writer. Empty string on failure (writer just falls back to grounded)."""
+    # An explicit board-bot re-render direction is PD's top authority — it wins over
+    # everything, ARC on or off. It travels via env (set on the re-render subprocess)
+    # rather than the date-scoped pd_concept_directives table, so it is per-process:
+    # two concurrent same-lane re-renders each carry their OWN direction with no
+    # collision, and it is never blocked by the "earliest applicable date" guard (that
+    # guard belongs to the passive /concept-for-future-batch flow, not to re-rolling an
+    # existing slot on demand).
+    _rr = os.environ.get("PD_RERENDER_DIRECTIVE", "").strip()
+    if _rr:
+        return ("[PD 지정 컨셉 — 이 방향을 최우선으로] " + _rr +
+                " (단 캐릭터 사실/자산 충실도는 그대로 지켜라.)")
     # PD-scheduled concept (/concept <date> <text>) — highest priority, applies
     # even when ARC is off (it's PD's explicit instruction for that date).
     pd = get_concept_directive(con, today)

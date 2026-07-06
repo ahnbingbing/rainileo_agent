@@ -87,8 +87,10 @@ _SYS = (
     "- read_log: 최근 로그 확인(디버깅 '왜 실패' 류). args={name:'launch_out'|'launch_err'|'batch_problems'|'slack_err', "
     "contains:'필터문자열'|생략, lines:40}.\n"
     "- list_knowledge: 파이프라인이 PD에게 물은 미답 캐릭터 사실 목록. args={}.\n"
-    "- set_concept: 특정 날짜 컨셉 예약(액션). args={date:'YYYY-MM-DD'|null, text:'컨셉 지시문 전체', "
-    "lane:'ai_vtuber'|'real_footage'|null}. 연도 생략=올해, 지난 날짜면 내년(과거 연도 추측 금지).\n"
+    "- set_concept: **아직 안 만들어진 미래 배치**(03:00 자동제작)에 컨셉을 예약한다. args={date:'YYYY-MM-DD'"
+    "|null, text:'컨셉 지시문 전체', lane:'ai_vtuber'|'real_footage'|null}. 연도 생략=올해(과거 연도 추측 금지). "
+    "⚠️이미 만들어진 오늘/과거 슬롯을 리뷰 반영해 고치는 건 set_concept이 아니라 **rerender(direction=…)** 다 "
+    "— set_concept은 지나간 배치엔 안 걸린다(가장 빠른 적용일은 내일).\n"
     "- answer_knowledge: 지식질문에 답. args={id:'질문id'|null, answer:'답'}.\n"
     "- escalate: 코드·파이프라인 수정/분석/디버깅 같은 깊은 작업을 자율 실행기에 넘긴다. args={summary:'한 줄 요약'}. "
     "넘긴 뒤엔 final로 무엇을 맡겼는지 알려라.\n"
@@ -97,24 +99,26 @@ _SYS = (
     "- render: 프리셋 1편 즉석 렌더(~$50 → PD 확인 후 실행). args={slug:'hawaii'|'homecam'|'chimipja'|null, "
     "text:'프리셋 아니면 컨셉 지시문'}.\n"
     "- rerender: 배치의 한 슬롯을 다시 만들고 예약영상을 교체. 비용은 레인마다 다르다 — **AV=~$50**"
-    "(Seedance i2v), **RF=거의 무료**(ffmpeg trim+캡션, 몇 센트). args={label:'260705_RF2100'} — "
-    "파일명(YYMMDD_<AV|RF>HHMM)으로 슬롯을 지목. 기존 예약영상을 비공개로 내리고 같은 시각에 새로 "
-    "렌더·재예약하며 **확인 없이 바로 실행**된다(board 봇=최상위 어드민). rerender는 그 슬롯을 **컨셉부터 "
-    "새로 뽑아** 다시 그리니, PD가 구체적 방향('다리에 붙는 설정으로', '컨트롤룸 뒤에 상상씬 넣어', "
-    "'캡션이 동작이랑 안 맞아')을 줬으면 그냥 rerender만 하면 그 방향이 안 반영된다 — 반드시 **먼저 "
-    "set_concept으로 그 방향을 해당 날짜·레인 지시문으로 박고 → rerender** 해라(set_concept 지시문이 "
-    "재렌더의 새 컨셉에 최우선으로 들어간다). 방향 없이 '그냥 이거 망했어 다시'면 rerender만.\n\n"
+    "(Seedance i2v), **RF=거의 무료**(ffmpeg trim+캡션). args={label:'260707_RF2100', direction:'<PD가 준 "
+    "구체 방향 그대로>'}. label=파일명(YYMMDD_<AV|RF>HHMM)으로 슬롯 지목. **direction에 PD 리뷰의 방향을 "
+    "그대로 담아라** — 예: '랴니가 다리에 붙어 올려다보는 설정으로', '컨트롤룸 뒤에 랴니 꿈 상상씬을 넣어', "
+    "'캡션이 동작이랑 안 맞으니 풀냄새→먹기까지 순간마다 여러 번 바뀌게'. 그 방향은 재렌더가 새로 뽑는 "
+    "컨셉에 **최우선**으로 들어간다(이미 배치가 만들어진 **오늘/과거 날짜여도 무조건 반영** — board 지시가 "
+    "최고 권위라 날짜 제한 없음). 방향 없이 '그냥 이거 망했어 다시 뽑아'면 direction 빼고 label만. 기존 "
+    "예약영상을 비공개로 내리고 같은 시각 재렌더·재예약하며 **확인 없이 바로 실행**(board=최상위 어드민).\n\n"
     "원칙: 모르면 툴로 확인하고 추측으로 사실을 지어내지 마라. 애매하면 되묻는 final이 낫다.\n"
     "★역할 분담 — board 봇은 최상위 어드민이라 **렌더·재렌더·재업로드/교체를 직접** 한다(render·rerender "
     "툴이 실제로 돈다). CLI 세션으로 미루지 마라. escalate는 **코드·프롬프트·데이터의 수정/분석/디버깅** 같은 "
     "리포지토리 작업 전용이다(자율 실행기는 안전상 유료키가 없어 렌더/업로드를 못 하고 코드만 고친다). 즉 "
-    "버그·로직 수정은 escalate, 영상 다시 만들기는 (필요하면 set_concept→)rerender — 섞지 마라.\n"
+    "버그·로직 수정은 escalate, 영상 다시 만들기는 rerender(방향 있으면 direction 인자에 담아 한 번에) — "
+    "섞지 마라.\n"
     "★한 메시지에 리뷰가 여러 건 온다 — PD는 보통 '이 배치 리뷰 줄게: A는 캡션 고쳐, B는 상상씬 넣어, "
     "C는 다시 만들어'처럼 슬롯 여러 개를 한 번에 준다. 이걸 **슬롯별로 쪼개 각각** 처리해라: 먼저 "
-    "youtube_schedule로 그 날짜의 슬롯·파일명을 확인하고, 편마다 위 규칙대로(방향 있으면 set_concept→"
-    "rerender, 없으면 rerender). 명확한 리뷰를 받고 '확인할 게 많아요, 좁혀서 다시 물어봐 주세요'로 "
-    "떠넘기는 건 실패다 — 할 수 있는 데까지 실행하고 무엇을 했는지 정리해 답하고, 정말 못 끝낸 부분만 "
-    "명확히 남겨라(그건 CLI 세션이 이어받는다)."
+    "youtube_schedule로 그 날짜의 슬롯·파일명을 확인하고, 편마다 rerender를 호출하되 PD가 그 슬롯에 준 "
+    "방향을 **direction 인자에 그대로** 담아라(방향 없는 슬롯은 label만). 절대 방향을 버린 채 재렌더를 "
+    "걸어 돈만 쓰지 마라 — 방향은 direction으로 항상 함께 간다. 명확한 리뷰를 받고 '확인할 게 많아요, "
+    "좁혀서 다시 물어봐 주세요'로 떠넘기는 건 실패다 — 할 수 있는 데까지 실행하고 무엇을 했는지 정리해 "
+    "답하고, 정말 못 끝낸 부분만 명확히 남겨라(그건 CLI 세션이 이어받는다)."
 )
 
 
@@ -452,6 +456,11 @@ def _act_rerender(a: dict, db, do_veto) -> str:
         return (":information_source: 어느 슬롯을 다시 만들지 파일명으로 알려주세요 — "
                 "예: `260705_RF2100 다시 만들어` (형식 `YYMMDD_<AV|RF>HHMM`).")
     target, lane, slot = parsed
+    # PD's revision direction (optional) travels WITH this re-render via env, so the
+    # re-proposed concept reflects it — no separate set_concept, no date guard, no race
+    # between same-lane slots. Board is top authority: the direction is honored even
+    # though the slot's date already has a batch.
+    direction = (a.get("direction") or a.get("note") or "").strip()
     lane_lbl = "AV" if lane == "ai_vtuber" else "RF"
     fname = f"{target.strftime('%y%m%d')}_{lane_lbl}{slot.replace(':', '')}"
     # Replace: unlist the current scheduled video for this slot (frees it; no dup).
@@ -468,15 +477,19 @@ def _act_rerender(a: dict, db, do_veto) -> str:
     logp = ROOT / "data" / "logs" / f"rerender_{fname}.log"
     logp.parent.mkdir(parents=True, exist_ok=True)
     fh = open(logp, "a")
+    env = dict(os.environ)
+    if direction:
+        env["PD_RERENDER_DIRECTIVE"] = direction
     subprocess.Popen(
         [str(ROOT / ".venv" / "bin" / "python"), "-m", "agents.launch_selfheal",
          "--date", target.isoformat(), "--lane", lane, "--slot", slot, "--rounds", "1"],
-        cwd=str(ROOT), env=dict(os.environ), stdout=fh, stderr=subprocess.STDOUT)
+        cwd=str(ROOT), env=env, stdout=fh, stderr=subprocess.STDOUT)
     # Cost is lane-dependent: AV = Seedance i2v (~$50); RF = ffmpeg trim + VLM caption
     # (a few cents, effectively free). Don't quote $50 for an RF re-render.
     cost = "~$50" if lane == "ai_vtuber" else "거의 무료 (ffmpeg+캡션)"
+    dir_line = f"\n  → 반영할 방향: _{direction[:200]}_" if direction else ""
     return (f":arrows_counterclockwise: `{fname}` 재렌더 시작했어요{replaced} "
-            f"(백그라운드, {cost}). 완료되면 배치 써머리 쓰레드에 새 영상 올리고 같은 시각에 "
+            f"(백그라운드, {cost}).{dir_line}\n완료되면 배치 써머리 쓰레드에 새 영상 올리고 같은 시각에 "
             f"재예약해요. 로그: `{logp.name}`.")
 
 
