@@ -81,7 +81,11 @@ _SYS = (
     "툴 목록:\n"
     "- youtube_schedule: 예약/공개 예정 영상의 슬롯·video_id·공개시각·privacy를 YouTube API로 **라이브** "
     "확인. args={date:'YYYY-MM-DD'|생략}. PD가 '예약/배치/슬롯/비디오아이디/언제 올라가/오늘 만든 거' 류를 "
-    "물으면 무조건 이걸로 확인해 답해라(DB는 stale일 수 있으니 추측 금지).\n"
+    "물으면 무조건 이걸로 확인해 답해라(DB는 stale일 수 있으니 추측 금지). ★날짜를 주면 응답 끝에 **'슬롯 "
+    "지도'**가 붙는다 — 그날 4슬롯의 **rerender 라벨(YYMMDD_RF1230 식)** 을 비공개·빈 슬롯까지 전부 나열한다. "
+    "그러니 rerender 라벨은 **여기서 네가 직접** 잡아라(비공개로 내려가 라이브에 안 보이는 슬롯도 여기엔 뜬다) "
+    "— PD한테 라벨을 되묻지 마라. 라이브에 한 슬롯만 보여도 '다른 날짜인가' 의심 말고 슬롯 지도로 그날 4슬롯을 "
+    "확인해라.\n"
     "- get_status: board에 들어온 코드/파이프라인 요청의 처리 큐·진행 현황. args={}. '뭐 하고 있어/진행상황'에.\n"
     "- db_query: agent.db 읽기전용 SELECT(카드/성과/트렌드 등 임의 데이터 질문). args={sql:'SELECT …'}. SELECT/WITH만.\n"
     "- read_log: 최근 로그 확인(디버깅 '왜 실패' 류). args={name:'launch_out'|'launch_err'|'batch_problems'|'slack_err', "
@@ -114,11 +118,15 @@ _SYS = (
     "섞지 마라.\n"
     "★한 메시지에 리뷰가 여러 건 온다 — PD는 보통 '이 배치 리뷰 줄게: A는 캡션 고쳐, B는 상상씬 넣어, "
     "C는 다시 만들어'처럼 슬롯 여러 개를 한 번에 준다. 이걸 **슬롯별로 쪼개 각각** 처리해라: 먼저 "
-    "youtube_schedule로 그 날짜의 슬롯·파일명을 확인하고, 편마다 rerender를 호출하되 PD가 그 슬롯에 준 "
+    "youtube_schedule로 그 날짜의 슬롯 지도(라벨)를 확인하고, 편마다 rerender를 호출하되 PD가 그 슬롯에 준 "
     "방향을 **direction 인자에 그대로** 담아라(방향 없는 슬롯은 label만). 절대 방향을 버린 채 재렌더를 "
-    "걸어 돈만 쓰지 마라 — 방향은 direction으로 항상 함께 간다. 명확한 리뷰를 받고 '확인할 게 많아요, "
-    "좁혀서 다시 물어봐 주세요'로 떠넘기는 건 실패다 — 할 수 있는 데까지 실행하고 무엇을 했는지 정리해 "
-    "답하고, 정말 못 끝낸 부분만 명확히 남겨라(그건 CLI 세션이 이어받는다)."
+    "걸어 돈만 쓰지 마라 — 방향은 direction으로 항상 함께 간다.\n"
+    "★PD의 리뷰 메시지엔 보통 **슬롯별 방향이 이미 다 들어 있다**('RF1230 캡션이 동작이랑 안 맞아 여러 번 "
+    "바뀌게', 'AV1800 뒤에 상상씬 넣어', 'RF2100 다리에 붙는 설정으로'). 그 문장에서 각 슬롯의 방향을 "
+    "**직접 뽑아** direction에 넣어라 — 이미 준 방향·날짜·라벨을 **되묻지 마라**(슬롯은 슬롯 지도로, 라벨은 "
+    "규칙으로, 방향은 리뷰 문장에서 스스로 잡을 수 있다). 되물음은 정말로 문장에서 알 수 없을 때만. 명확한 "
+    "리뷰를 받고 '확인할 게 많아요' 나 '어느 날짜/라벨/방향인지 알려주세요'로 떠넘기는 건 실패다 — 할 수 "
+    "있는 데까지 실행하고 무엇을 했는지 정리해 답하고, 정말 못 끝낸 부분만 명확히 남겨라(CLI가 이어받는다)."
 )
 
 
@@ -640,17 +648,41 @@ def _live_schedule(date_iso: str | None = None) -> list[dict]:
 
 def _fmt_schedule(date_iso: str | None) -> str:
     items = [i for i in _live_schedule(date_iso) if i.get("privacy") != "삭제됨/없음"]
-    if not items:
-        return (f"`{date_iso}` 에 예약된 영상이 없어요 (YouTube 라이브 확인)." if date_iso
+    if items:
+        head = f":calendar: *예약 현황{f' — {date_iso}' if date_iso else ''}* _(YouTube 라이브 확인)_"
+        out, cur = [head], None
+        for i in items:
+            if not date_iso and i["kst_date"] != cur:
+                cur = i["kst_date"]; out.append(f"*{cur}*")
+            lane = "AV" if i["lane"] == "ai_vtuber" else "RF"
+            out.append(f"  • `{i['slot']}` {lane} → `{i['video_id']}` · {i['privacy']} · {i['title'][:30]}")
+        base = "\n".join(out)
+    else:
+        base = (f"`{date_iso}` 에 라이브 예약 영상이 없어요 (YouTube 라이브 확인)." if date_iso
                 else "다가오는 예약 영상이 없어요 (YouTube 라이브 확인).")
-    head = f":calendar: *예약 현황{f' — {date_iso}' if date_iso else ''}* _(YouTube 라이브 확인)_"
-    out, cur = [head], None
-    for i in items:
-        if not date_iso and i["kst_date"] != cur:
-            cur = i["kst_date"]; out.append(f"*{cur}*")
-        lane = "AV" if i["lane"] == "ai_vtuber" else "RF"
-        out.append(f"  • `{i['slot']}` {lane} → `{i['video_id']}` · {i['privacy']} · {i['title'][:30]}")
-    return "\n".join(out)
+    # Slot map for a specific date: enumerate ALL 4 canonical slots (day_assignments) with
+    # their rerender labels + state, INCLUDING slots whose video was un-listed and so no
+    # longer shows in the live schedule. This is how the bot resolves a rerender label
+    # itself from PD's description ("RF1230", "18:00 AV") — it never needs PD to hand-type
+    # the label, and an un-listed/empty slot is still visible + targetable.
+    if date_iso:
+        try:
+            from agents.launch import day_assignments
+            d = dt.date.fromisoformat(date_iso)
+            live_by_slot = {(i["lane"], i["slot"]): i for i in items}
+            rows = ["", f":round_pushpin: *슬롯 지도 — {date_iso}* "
+                    "_(rerender 라벨 기준 · 비공개/빈 슬롯 포함)_"]
+            for lane, hhmm in day_assignments(d):
+                lane_lbl = "AV" if lane == "ai_vtuber" else "RF"
+                label = f"{d.strftime('%y%m%d')}_{lane_lbl}{hhmm.replace(':', '')}"
+                live = live_by_slot.get((lane, hhmm))
+                state = (f"live · `{live['video_id']}` · {live['privacy']}" if live
+                         else "비어있음 → rerender로 채움")
+                rows.append(f"  • `{label}` ({hhmm} {lane_lbl}) — {state}")
+            base += "\n" + "\n".join(rows)
+        except Exception as e:  # noqa: BLE001
+            log.warning("slot-map append failed: %s", e)
+    return base
 
 
 def _safe_db_query(sql: str) -> str:
