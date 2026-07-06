@@ -96,7 +96,8 @@ _SYS = (
     "delete는 '완전삭제/영구삭제' 명시 때만 true.\n"
     "- render: 프리셋 1편 즉석 렌더(~$50 → PD 확인 후 실행). args={slug:'hawaii'|'homecam'|'chimipja'|null, "
     "text:'프리셋 아니면 컨셉 지시문'}.\n"
-    "- rerender: 배치의 한 슬롯을 다시 만들고 예약영상을 교체(~$50). args={label:'260705_RF2100'} — "
+    "- rerender: 배치의 한 슬롯을 다시 만들고 예약영상을 교체. 비용은 레인마다 다르다 — **AV=~$50**"
+    "(Seedance i2v), **RF=거의 무료**(ffmpeg trim+캡션, 몇 센트). args={label:'260705_RF2100'} — "
     "파일명(YYMMDD_<AV|RF>HHMM)으로 슬롯을 지목. 기존 예약영상을 비공개로 내리고 같은 시각에 새로 "
     "렌더·재예약하며 **확인 없이 바로 실행**된다(board 봇=최상위 어드민). rerender는 그 슬롯을 **컨셉부터 "
     "새로 뽑아** 다시 그리니, PD가 구체적 방향('다리에 붙는 설정으로', '컨트롤룸 뒤에 상상씬 넣어', "
@@ -471,8 +472,11 @@ def _act_rerender(a: dict, db, do_veto) -> str:
         [str(ROOT / ".venv" / "bin" / "python"), "-m", "agents.launch_selfheal",
          "--date", target.isoformat(), "--lane", lane, "--slot", slot, "--rounds", "1"],
         cwd=str(ROOT), env=dict(os.environ), stdout=fh, stderr=subprocess.STDOUT)
+    # Cost is lane-dependent: AV = Seedance i2v (~$50); RF = ffmpeg trim + VLM caption
+    # (a few cents, effectively free). Don't quote $50 for an RF re-render.
+    cost = "~$50" if lane == "ai_vtuber" else "거의 무료 (ffmpeg+캡션)"
     return (f":arrows_counterclockwise: `{fname}` 재렌더 시작했어요{replaced} "
-            f"(백그라운드, ~$50). 완료되면 배치 써머리 쓰레드에 새 영상 올리고 같은 시각에 "
+            f"(백그라운드, {cost}). 완료되면 배치 써머리 쓰레드에 새 영상 올리고 같은 시각에 "
             f"재예약해요. 로그: `{logp.name}`.")
 
 
