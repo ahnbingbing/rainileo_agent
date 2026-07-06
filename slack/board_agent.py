@@ -729,9 +729,30 @@ def _run_tool(name: str, args: dict, *, db, user: str, channel: str, thread_ts: 
 # the last step (below) rather than clamping the count low.
 _AGENT_MAX_STEPS = 10
 
+# Tools whose RESULT is itself a good user-facing progress update ("재렌더 시작했어요…").
+# For these we stream the result; for read-only tools we stream a short "…중" line so
+# PD sees continuous progress instead of one long silence.
+_ACTION_TOOLS = {"rerender", "set_concept", "answer_knowledge", "escalate"}
+
+
+def _tool_progress_line(name: str, args: dict) -> str:
+    """A short, human progress line streamed to the thread before a read-only tool runs."""
+    a = args or {}
+    if name == "youtube_schedule":
+        return "📅 예약 슬롯 확인 중…"
+    if name == "db_query":
+        return "🔎 데이터 확인 중…"
+    if name == "read_log":
+        return "📄 로그 확인 중…"
+    if name == "get_status":
+        return "📊 진행현황 확인 중…"
+    if name == "list_knowledge":
+        return "📚 미답 지식 확인 중…"
+    return f"🔧 {name} 처리 중…"
+
 
 def _agent_answer(text: str, *, db, user: str, channel: str, thread_ts: str,
-                  do_veto=None) -> dict:
+                  do_veto=None, progress_cb=None) -> dict:
     """Tool-using agent. Returns {'text': str} for a final answer, or
     {'costly': d} where d={'intent','params','reply'} to route through the
     confirm flow. The LLM calls live tools and composes the answer itself —
@@ -784,12 +805,26 @@ def _agent_answer(text: str, *, db, user: str, channel: str, thread_ts: str,
         if tool in COSTLY:                          # veto / render → confirm first
             return {"costly": {"intent": tool, "params": d.get("args") or {},
                                "reply": d.get("reply") or ""}}
+        args = d.get("args") or {}
+        # Stream progress so a multi-step job isn't silent: read-only tools get a short
+        # "…중" line before running; action tools stream their (already user-facing)
+        # result right after, so PD watches each slot get handled live.
+        if progress_cb and tool not in _ACTION_TOOLS:
+            try:
+                progress_cb(_tool_progress_line(tool, args))
+            except Exception:
+                pass
         try:
-            result = _run_tool(tool, d.get("args") or {}, db=db, user=user,
+            result = _run_tool(tool, args, db=db, user=user,
                                channel=channel, thread_ts=thread_ts, do_veto=do_veto)
         except Exception as e:
             log.warning("board tool %s failed: %s", tool, e)
             result = f"[툴 실행 오류: {e}]"
+        if progress_cb and tool in _ACTION_TOOLS:
+            try:
+                progress_cb(result)
+            except Exception:
+                pass
         transcript += (f"\n[너의 호출] {json.dumps(d, ensure_ascii=False)[:300]}\n"
                        f"[결과]\n{result}\n\n위 결과를 보고, 더 확인할 게 있으면 툴을 또 부르고 "
                        f"충분하면 {{\"final\":\"…\"}} 로 답하세요.\n")
@@ -874,9 +909,14 @@ def handle_board_message(client, event, *, db, do_veto):
     # it, the bot IS receiving (rules out the private-channel/message.groups drop); if
     # not, the message never reached the bot.
     _post(client, channel, reply_thread, "👀 받았어요 — 확인해서 바로 처리할게요…")
+    # Stream each step to the thread so the (possibly minute-long) job shows continuous
+    # progress instead of one silent gap between ack and final.
+    def _progress(msg):
+        _post(client, channel, reply_thread, msg)
     try:
         res = _agent_answer(text, db=db, user=user, channel=channel,
-                            thread_ts=reply_thread, do_veto=do_veto)
+                            thread_ts=reply_thread, do_veto=do_veto,
+                            progress_cb=_progress)
     except Exception as e:
         log.exception("board agent failed")
         _post(client, channel, reply_thread,
