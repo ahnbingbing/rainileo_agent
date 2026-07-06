@@ -868,6 +868,12 @@ def handle_board_message(client, event, *, db, do_veto):
     #    questions don't need a new hand-coded intent. Costly tools (veto/render) come
     #    back as a confirm-pending instead of executing.
     reply_thread = thread_ts or ts
+    # Instant receipt ack BEFORE the (possibly minute-long) tool loop. A multi-item
+    # review runs several LLM calls + re-renders; grinding in silence reads as "봇이
+    # 멈췄다". This immediate reply also doubles as a live receipt signal — if PD sees
+    # it, the bot IS receiving (rules out the private-channel/message.groups drop); if
+    # not, the message never reached the bot.
+    _post(client, channel, reply_thread, "👀 받았어요 — 확인해서 바로 처리할게요…")
     try:
         res = _agent_answer(text, db=db, user=user, channel=channel,
                             thread_ts=reply_thread, do_veto=do_veto)
