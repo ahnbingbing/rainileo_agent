@@ -1124,9 +1124,10 @@ def _clip_reuse_gate(concept: "dict | None", report: dict) -> None:
     if not mine:
         return
     try:
+        import datetime as _dt
         con = sqlite3.connect(str(ROOT / "data" / "agent.db"))
         try:
-            since = (dt.date.today() - dt.timedelta(days=7)).isoformat()
+            since = (_dt.date.today() - _dt.timedelta(days=7)).isoformat()
             live: set = set()
             for (pj,) in con.execute(
                 "SELECT payload_json FROM cards WHERE date >= ? AND youtube_video_id IS NOT NULL "
