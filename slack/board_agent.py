@@ -1105,65 +1105,80 @@ def _post(client, channel, thread_ts, text):
         log.warning("board post failed: %s", e)
 
 
+def _is_bot_msg(m: dict) -> bool:
+    return bool(m.get("bot_id")) or m.get("subtype") == "bot_message"
+
+
 def resume_unanswered(client, *, channel: str, db, do_veto) -> None:
-    """PD 2026-07-09: on (re)start, recover the newest board message whose answer was
-    killed by a restart (it got the ack but the tool loop died with the process). Mirrors
+    """PD 2026-07-09: on (re)start, recover the board request whose answer was killed by a
+    restart (it got the ack but the tool loop died with the process). Mirrors
     `_grandma_catchup`, but the board's own ack is a bot message, so "newer than last bot
-    reply" would wrongly read an ack-only orphan as answered — we instead treat a message
-    as ANSWERED only if it's in the handled log OR a NON-ack bot reply already follows it.
-    One resume attempt per message (recorded), recent-only, and we skip the last ~15s so a
-    message arriving right at startup is left to the live event path (no double-reply)."""
+    reply" would wrongly read an ack-only orphan as answered — a message counts as ANSWERED
+    only if a NON-ack bot reply follows it (or it's in the handled log).
+
+    THREAD-AWARE: board convos happen in threads, and conversations_history returns only
+    top-level parents — so we resolve the newest conversation's FULL thread and act on its
+    last human message. Answered-detection and the handled/resumed keys all use that
+    message's own ts (not the thread root), so a later orphan in an already-answered thread
+    is still recoverable and an answered thread is never re-driven. One attempt per message,
+    recent-only, skip the last ~15s so a message arriving at startup is left to the live path."""
     if not channel:
         return
     try:
         resp = client.conversations_history(channel=channel, limit=10)
-        msgs = resp.get("messages", []) if resp.get("ok", True) else []
+        top = resp.get("messages", []) if resp.get("ok", True) else []
     except Exception as e:
         log.warning("board resume history fetch failed: %s", e)
         return
-    # newest-first. Walk to the most recent human message; collect the bot messages
-    # posted after it (i.e. newer) to detect whether a real answer already exists.
-    human = None
-    bots_after: list[str] = []
-    for m in msgs:
-        if m.get("subtype") in ("message_changed", "message_deleted", "channel_join",
-                                 "channel_leave"):
+    for tm in top:
+        if tm.get("subtype") in ("message_changed", "message_deleted", "channel_join",
+                                  "channel_leave"):
             continue
-        if m.get("bot_id") or m.get("subtype") == "bot_message":
-            bots_after.append(m.get("text") or "")
-            continue
-        if (m.get("text") or "").strip():
-            human = m
-            break
-    if not human:
-        return
-    ts = human.get("ts", "")
-    try:
-        if time.time() - float(ts) < 15 or time.time() - float(ts) > 6 * 3600:
-            return  # too fresh (live path owns it) or too old (don't replay ancient)
-    except Exception:
-        return
-    with _STATE_LOCK:
-        d = _load_state()
-        if ts in d["handled"] or ts in d["resumed"]:
-            return
-    # A non-ack bot reply already after it → it was actually answered (handled log may
-    # just predate this feature). Ack / resume-notice lines don't count as an answer.
-    if any(b and not any(mk in b for mk in _ACK_MARKERS) for b in bots_after):
-        return
-    _mark("resumed", ts)   # bound to a single attempt even if this drive is also killed
-    log.info("board resume: re-driving orphaned message ts=%s", ts)
-
-    def _run():
+        # Resolve the full conversation (parent + thread replies), oldest → newest.
+        convo = [tm]
+        if tm.get("reply_count") or tm.get("latest_reply"):
+            try:
+                rr = client.conversations_replies(channel=channel, ts=tm.get("ts"), limit=50)
+                convo = rr.get("messages", []) or [tm]
+            except Exception as e:
+                log.warning("board resume replies fetch failed: %s", e)
+        # Last human message in this conversation.
+        last_human = None
+        for i, m in enumerate(convo):
+            if not _is_bot_msg(m) and (m.get("text") or "").strip():
+                last_human, last_i = m, i
+        if last_human is None:
+            continue  # bot-only convo → look at the next-older top-level message
+        ts = last_human.get("ts", "")
         try:
-            _post(client, channel, human.get("thread_ts") or ts,
-                  "🔄 재시작으로 끊긴 요청을 이어서 처리할게요…")
-            handle_board_message(client, {
-                "channel": channel, "user": human.get("user", ""),
-                "text": human.get("text", ""), "ts": ts,
-                "thread_ts": human.get("thread_ts"),
-            }, db=db, do_veto=do_veto)
-        except Exception as e:
-            log.warning("board resume drive failed: %s", e)
+            age = time.time() - float(ts)
+        except Exception:
+            return
+        if age < 15 or age > 6 * 3600:
+            return  # newest convo is too fresh (live path owns it) or too old — stop here
+        with _STATE_LOCK:
+            d = _load_state()
+            if ts in d["handled"] or ts in d["resumed"]:
+                return
+        # Answered iff a NON-ack bot reply follows the last human message.
+        tail = convo[last_i + 1:]
+        if any(_is_bot_msg(m) and (m.get("text") or "")
+               and not any(mk in m["text"] for mk in _ACK_MARKERS) for m in tail):
+            return
+        _mark("resumed", ts)  # bound to a single attempt even if this drive is also killed
+        log.info("board resume: re-driving orphaned message ts=%s", ts)
 
-    threading.Thread(target=_run, daemon=True).start()
+        def _run(hm=last_human, root=tm.get("ts")):
+            try:
+                _post(client, channel, hm.get("thread_ts") or root,
+                      "🔄 재시작으로 끊긴 요청을 이어서 처리할게요…")
+                handle_board_message(client, {
+                    "channel": channel, "user": hm.get("user", ""),
+                    "text": hm.get("text", ""), "ts": hm.get("ts", ""),
+                    "thread_ts": hm.get("thread_ts") or root,
+                }, db=db, do_veto=do_veto)
+            except Exception as e:
+                log.warning("board resume drive failed: %s", e)
+
+        threading.Thread(target=_run, daemon=True).start()
+        return
