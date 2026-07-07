@@ -1,5 +1,19 @@
 {
   "permissions": {
     "allow": ["Bash(source:*)"]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/session_handoff_hook.sh\" 2>/dev/null || true",
+            "timeout": 10,
+            "statusMessage": "Loading latest session handoff..."
+          }
+        ]
+      }
+    ]
   }
 }
