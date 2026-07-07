@@ -1996,6 +1996,11 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
                     pass
             continue
         parts.append(f"Clip length ≈ {dur:.1f}s. Caption the action beats.")
+        # A caption-fix re-render carries PD's specific caption direction via env — honor it
+        # while still grounding to the real on-screen beats (roadmap A2 caption mode).
+        _pd_dir = os.getenv("PD_RERENDER_DIRECTIVE", "").strip()
+        if _pd_dir:
+            parts.append("PD의 캡션 수정 요청(화면 동작에 맞추되 이 방향을 최우선 반영): " + _pd_dir)
         beats = None
         try:
             resp = client.models.generate_content(

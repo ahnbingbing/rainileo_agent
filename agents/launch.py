@@ -380,6 +380,33 @@ def launch_pipeline(target: dt.date, *,
     # uploaded so the cooldown is inert) still avoids the other slot's clips.
     batch_used_assets: set = set(exclude_asset_ids or [])
 
+    # PD 2026-07-07: clip-level cooldown across BATCHES. batch_used_assets only avoids the
+    # OTHER slots in THIS run — so a single-slot re-render (no siblings) had an empty set
+    # and could re-pick a clip that's already live in a recently-published episode (the
+    # 7/7 root: an RF re-render grabbed a clip from that day's public video). Seed from the
+    # clips used by recently-published/scheduled episodes (last 7d) so no render re-uses a
+    # currently-live clip. Truly old memory-lane clips are unaffected — only recently-USED
+    # ones are blocked; log the count so the constraint is never a silent over-cap.
+    try:
+        import json as _json
+        _seeded = 0
+        with _db() as _con:
+            for _r in _con.execute(
+                "SELECT payload_json FROM cards WHERE date >= ? AND youtube_video_id IS NOT NULL "
+                "AND state!='archived' ORDER BY date DESC LIMIT 60",
+                ((target - dt.timedelta(days=7)).isoformat(),)).fetchall():
+                try:
+                    for _cut in (_json.loads(_r[0] or "{}").get("cuts") or []):
+                        _aid = _cut.get("asset_id")
+                        if _aid and _aid not in batch_used_assets:
+                            batch_used_assets.add(_aid); _seeded += 1
+                except Exception:
+                    continue
+        if _seeded:
+            log.info("clip cooldown: seeded %d recently-published clips into exclude set", _seeded)
+    except Exception as e:
+        log.warning("recent-published clip cooldown seed failed: %s", e)
+
     # PD 2026-06-18: same-batch CONCEPT dedup (not just clip dedup). Two AV slots on
     # 6/19 shipped near-identical concepts (both "꼬리" theme, same set, same wink) —
     # batch_used_assets only blocks reusing the same CLIP, and the macro reviewer judges

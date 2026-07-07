@@ -103,9 +103,13 @@ _SYS = (
     "- render: 프리셋 1편 즉석 렌더(~$50 → PD 확인 후 실행). args={slug:'hawaii'|'homecam'|'chimipja'|null, "
     "text:'프리셋 아니면 컨셉 지시문'}.\n"
     "- rerender: 배치의 한 슬롯을 다시 만들고 예약영상을 교체. 비용은 레인마다 다르다 — **AV=~$50**"
-    "(Seedance i2v), **RF=거의 무료**(ffmpeg trim+캡션). args={label:'260707_RF2100', direction:'<PD가 준 "
-    "구체 방향 그대로>'}. label=파일명(YYMMDD_<AV|RF>HHMM)으로 슬롯 지목. **direction에 PD 리뷰의 방향을 "
-    "그대로 담아라** — 예: '랴니가 다리에 붙어 올려다보는 설정으로', '컨트롤룸 뒤에 랴니 꿈 상상씬을 넣어', "
+    "(Seedance i2v), **RF=거의 무료**(ffmpeg trim+캡션). args={label:'260707_RF2100', mode:'caption'|'rebuild', "
+    "direction:'<PD가 준 구체 방향 그대로>'}. label=파일명(YYMMDD_<AV|RF>HHMM)으로 슬롯 지목. "
+    "★**mode를 정확히 골라라** — PD 리뷰가 '캡션이 안 맞아 / 자막이 하나가 너무 오래가 / 여러 번 바뀌게 / "
+    "고쳐' 처럼 **영상은 그대로 두고 자막만** 손보는 거면 `mode='caption'`(원본 클립 보존, 캡션만 재생성, "
+    "거의 무료). '다시 만들어 / 컨셉 바꿔 / ~로 변경 / 다른 내용으로' 처럼 **내용 자체를 새로** 만드는 거면 "
+    "`mode='rebuild'`(컨셉·소스 재선택). 캡션 수정을 rebuild로 돌리면 PD가 리뷰한 그 영상이 다른 클립으로 "
+    "바뀌어버린다(절대 금지). 애매하면 caption. **direction에 PD 리뷰의 방향을 그대로 담아라** — 예: '랴니가 다리에 붙어 올려다보는 설정으로', '컨트롤룸 뒤에 랴니 꿈 상상씬을 넣어', "
     "'캡션이 동작이랑 안 맞으니 풀냄새→먹기까지 순간마다 여러 번 바뀌게'. 그 방향은 재렌더가 새로 뽑는 "
     "컨셉에 **최우선**으로 들어간다(이미 배치가 만들어진 **오늘/과거 날짜여도 무조건 반영** — board 지시가 "
     "최고 권위라 날짜 제한 없음). 방향 없이 '그냥 이거 망했어 다시 뽑아'면 direction 빼고 label만. 기존 "
@@ -469,6 +473,20 @@ def _act_rerender(a: dict, db, do_veto) -> str:
     # between same-lane slots. Board is top authority: the direction is honored even
     # though the slot's date already has a batch.
     direction = (a.get("direction") or a.get("note") or "").strip()
+    # Fix TYPE (roadmap A2): a CAPTION fix keeps the footage and only refreshes captions;
+    # a REBUILD re-proposes a new concept + footage. The bot sets `mode`; if it didn't,
+    # infer from the direction — caption-fix wording → preserve. Treating a caption fix as
+    # a rebuild is exactly how the 7/7 RF1230 re-render swapped the original clip.
+    mode = (a.get("mode") or "").strip().lower()
+    if mode not in ("caption", "rebuild"):
+        _cap_kw = ("캡션", "자막", "여러 번", "여러번", "안 맞", "안맞", "오래가", "가독", "글자")
+        _rebuild_kw = ("다시 만들", "다시 제작", "새로 만들", "컨셉", "바꿔", "변경", "다른 내용", "다른 영상")
+        if any(k in direction for k in _rebuild_kw):
+            mode = "rebuild"
+        elif any(k in direction for k in _cap_kw):
+            mode = "caption"
+        else:
+            mode = "rebuild"
     lane_lbl = "AV" if lane == "ai_vtuber" else "RF"
     fname = f"{target.strftime('%y%m%d')}_{lane_lbl}{slot.replace(':', '')}"
     # Replace: unlist the current scheduled video for this slot (frees it; no dup).
@@ -486,19 +504,27 @@ def _act_rerender(a: dict, db, do_veto) -> str:
     logp.parent.mkdir(parents=True, exist_ok=True)
     fh = open(logp, "a")
     env = dict(os.environ)
+    env["PYTHONPATH"] = str(ROOT)
     if direction:
         env["PD_RERENDER_DIRECTIVE"] = direction
-    subprocess.Popen(
-        [str(ROOT / ".venv" / "bin" / "python"), "-m", "agents.launch_selfheal",
-         "--date", target.isoformat(), "--lane", lane, "--slot", slot, "--rounds", "1"],
-        cwd=str(ROOT), env=env, stdout=fh, stderr=subprocess.STDOUT)
-    # Cost is lane-dependent: AV = Seedance i2v (~$50); RF = ffmpeg trim + VLM caption
-    # (a few cents, effectively free). Don't quote $50 for an RF re-render.
-    cost = "~$50" if lane == "ai_vtuber" else "거의 무료 (ffmpeg+캡션)"
+    if mode == "caption":
+        # Caption-preserve: keep the slot's original clips, refresh only the captions.
+        cmd = [str(ROOT / ".venv" / "bin" / "python"), str(ROOT / "scripts" / "recaption_slot.py"),
+               "--date", target.isoformat(), "--lane", lane, "--slot", slot]
+        mode_note = "🎯 캡션 보존 재렌더 (원본 클립 그대로, 캡션만 재생성)"
+        cost = "거의 무료"
+    else:
+        # Full rebuild: re-propose concept + footage (now clip-cooldown-seeded from
+        # recently-published episodes in launch_pipeline, so it can't reuse a live clip).
+        cmd = [str(ROOT / ".venv" / "bin" / "python"), "-m", "agents.launch_selfheal",
+               "--date", target.isoformat(), "--lane", lane, "--slot", slot, "--rounds", "1"]
+        mode_note = "🔁 전체 재렌더 (컨셉·소스 새로)"
+        cost = "~$50" if lane == "ai_vtuber" else "거의 무료 (ffmpeg+캡션)"
+    subprocess.Popen(cmd, cwd=str(ROOT), env=env, stdout=fh, stderr=subprocess.STDOUT)
     dir_line = f"\n  → 반영할 방향: _{direction[:200]}_" if direction else ""
-    return (f":arrows_counterclockwise: `{fname}` 재렌더 시작했어요{replaced} "
-            f"(백그라운드, {cost}).{dir_line}\n완료되면 배치 써머리 쓰레드에 새 영상 올리고 같은 시각에 "
-            f"재예약해요. 로그: `{logp.name}`.")
+    return (f":arrows_counterclockwise: `{fname}` {mode_note} 시작했어요{replaced} "
+            f"(백그라운드, {cost}).{dir_line}\n완료되면 새 영상 올리고 같은 시각에 재예약해요. "
+            f"로그: `{logp.name}`.")
 
 
 def _act_escalate(text: str, params: dict, db, user: str,
