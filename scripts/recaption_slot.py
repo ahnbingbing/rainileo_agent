@@ -77,9 +77,24 @@ def main() -> int:
     p.add_argument("--slot", required=True, help="HH:MM")
     a = p.parse_args()
     sys.path.insert(0, str(ROOT))
-    r = recaption_slot(dt.date.fromisoformat(a.date), a.lane, a.slot,
-                       progress_cb=lambda m: print(m, flush=True))
+
+    def _pcb(m):
+        print(m, flush=True)
+        try:
+            from agents.board_progress import post_board_progress
+            post_board_progress(m)
+        except Exception:
+            pass
+
+    r = recaption_slot(dt.date.fromisoformat(a.date), a.lane, a.slot, progress_cb=_pcb)
     print("RECAPTION_RESULT:", json.dumps(r, ensure_ascii=False), flush=True)
+    try:
+        from agents.board_progress import post_board_progress
+        post_board_progress(
+            f":white_check_mark: `{a.date} {a.slot}` 캡션 보존 재렌더 완료 — "
+            f"새 영상 `{r.get('new_video_id','?')}` {a.slot} 재예약", force=True)
+    except Exception:
+        pass
     return 0
 
 

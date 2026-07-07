@@ -456,7 +456,7 @@ def _parse_fname(label: str):
     return d, lane, f"{hhmm[:2]}:{hhmm[2:]}"
 
 
-def _act_rerender(a: dict, db, do_veto) -> str:
+def _act_rerender(a: dict, db, do_veto, *, channel: str = "", thread_ts: str = "") -> str:
     """Re-render ONE launch slot and REPLACE its scheduled video (PD 2026-07-04: the
     board bot is top admin and does this itself — no CLI, no confirm). Unlists the
     currently-scheduled video for the slot (so it's a replace, not a duplicate), then
@@ -507,6 +507,11 @@ def _act_rerender(a: dict, db, do_veto) -> str:
     env["PYTHONPATH"] = str(ROOT)
     if direction:
         env["PD_RERENDER_DIRECTIVE"] = direction
+    # Stream this render's milestones back into PD's board thread (roadmap B), not just
+    # the workroom slot-thread — so the job isn't silent between start and result.
+    if channel and thread_ts:
+        env["BOARD_PROGRESS_CHANNEL"] = channel
+        env["BOARD_PROGRESS_THREAD"] = thread_ts
     if mode == "caption":
         # Caption-preserve: keep the slot's original clips, refresh only the captions.
         cmd = [str(ROOT / ".venv" / "bin" / "python"), str(ROOT / "scripts" / "recaption_slot.py"),
@@ -773,7 +778,7 @@ def _run_tool(name: str, args: dict, *, db, user: str, channel: str, thread_ts: 
               do_veto=None) -> str:
     a = args or {}
     if name == "rerender":
-        return _act_rerender(a, db, do_veto)
+        return _act_rerender(a, db, do_veto, channel=channel, thread_ts=thread_ts)
     if name == "youtube_schedule":
         return _fmt_schedule((a.get("date") or "").strip() or None)
     if name == "get_status":

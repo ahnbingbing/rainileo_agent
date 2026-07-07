@@ -139,6 +139,13 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
                 slack_client.chat_postMessage(channel=slack_channel, text=m)
             except Exception:
                 pass
+        # Roadmap B: also stream milestones into PD's board thread when a board rerender
+        # set BOARD_PROGRESS_* on the env (filtered to milestones inside the helper).
+        try:
+            from agents.board_progress import post_board_progress
+            post_board_progress(m)
+        except Exception:
+            pass
         if progress_cb:
             progress_cb(m)
 
