@@ -1110,6 +1110,59 @@ def _caption_grandiose_gate(concept: "dict | None", report: dict) -> None:
              report.get("판정"), report.get("점수"))
 
 
+def _clip_reuse_gate(concept: "dict | None", report: dict) -> None:
+    """Deterministic freshness gate (PD 2026-07-07): this episode reuses a clip that is
+    ALREADY LIVE in a recently-published episode (last 7d). The 7/7 root — a re-render
+    grabbed a clip from that day's public video because the clip-cooldown was inert. The
+    generator now seeds that cooldown, but Giri is the guarantee: same footage live in two
+    concurrent episodes = viewers see the identical clip twice. Cap ≤5, verdict 수정 필요.
+    Both lanes. The episode under review isn't published yet, so no self-match."""
+    if not concept:
+        return
+    mine = {c.get("asset_id") or c.get("secondary_asset_id") for c in (concept.get("cuts") or [])}
+    mine = {a for a in mine if a}
+    if not mine:
+        return
+    try:
+        con = sqlite3.connect(str(ROOT / "data" / "agent.db"))
+        try:
+            since = (dt.date.today() - dt.timedelta(days=7)).isoformat()
+            live: set = set()
+            for (pj,) in con.execute(
+                "SELECT payload_json FROM cards WHERE date >= ? AND youtube_video_id IS NOT NULL "
+                "AND state!='archived'", (since,)).fetchall():
+                try:
+                    for c in (json.loads(pj or "{}").get("cuts") or []):
+                        aid = c.get("asset_id") or c.get("secondary_asset_id")
+                        if aid:
+                            live.add(aid)
+                except Exception:
+                    continue
+        finally:
+            con.close()
+    except Exception as e:
+        log.warning("clip-reuse gate skipped: %s", e)
+        return
+    dup = sorted(mine & live)
+    if not dup:
+        return
+    note = (f"클립 재사용(결정론): 이 편이 최근 7일 내 공개된 다른 에피소드가 이미 쓴 클립을 다시 썼다 "
+            f"({', '.join(d[:28] for d in dup[:3])}) — 같은 footage가 동시에 여러 편에 살아 있으면 "
+            f"시청자가 같은 영상을 두 번 본다. 아직 안 쓴 다른 클립으로 교체하라.")
+    prev = report.get("가장_큰_문제", "") or ""
+    report["가장_큰_문제"] = note if (not prev or "없" in prev[:6]) else f"{note} / {prev}"
+    try:
+        report["점수"] = min(int(report.get("점수", 10)), 5)
+    except Exception:
+        report["점수"] = 5
+    if report.get("판정", "") in ("업로드", "즉시 업로드", "소폭 수정 후 업로드", ""):
+        report["판정"] = "수정 필요"
+    report["최종_결정"] = report.get("판정", "수정 필요")
+    report["_clip_reuse_gate_override"] = note
+    log.info("clip-reuse gate FIRED: %s → 판정=%s 점수=%s", dup[:3],
+             report.get("판정"), report.get("점수"))
+
+
 def review(video: Path, storyboard: list[dict] | None = None,
            concept: dict | None = None) -> dict:
     """Full review: extract frames + audio check + VLM review.
@@ -1356,6 +1409,14 @@ def review(video: Path, storyboard: list[dict] | None = None,
         _caption_grandiose_gate(concept, report)
     except Exception as e:
         log.warning("Grandiose caption gate failed: %s", e)
+
+    # Clip reused from a currently-live episode (PD 2026-07-07): the 7/7 re-render grabbed
+    # a clip already public that day. Deterministic — Giri is the guarantee behind the
+    # generator's clip-cooldown seed.
+    try:
+        _clip_reuse_gate(concept, report)
+    except Exception as e:
+        log.warning("Clip-reuse gate failed: %s", e)
 
     # Cleanup
     for f in frames:
