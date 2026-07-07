@@ -2316,6 +2316,16 @@ def main() -> None:
             _grandma_catchup(app.client)
         except Exception as e:
             log.warning("grandma catchup thread failed: %s", e)
+        # Board resume: a deploy `systemctl restart` kills an in-flight board answer thread
+        # (PD sees the ack, never the answer). Re-drive the newest ack-only board message so
+        # the restart self-heals instead of silently dropping PD's request.
+        if BOARD_CHANNEL:
+            try:
+                from slack import board_agent
+                board_agent.resume_unanswered(app.client, channel=BOARD_CHANNEL,
+                                              db=db, do_veto=_do_veto)
+            except Exception as e:
+                log.warning("board resume thread failed: %s", e)
     threading.Thread(target=_catchup_later, daemon=True).start()
 
     try:

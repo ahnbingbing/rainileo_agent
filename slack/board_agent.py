@@ -42,6 +42,55 @@ PENDING_TTL_S = 180
 # Costly / irreversible → must be confirmed before executing.
 COSTLY = {"veto", "render"}
 
+# ── resume-after-restart state (PD 2026-07-09) ───────────────────────────────
+# A board request runs in a daemon thread (slack/app.py routes it off-thread). A
+# deploy `systemctl restart rianileo-bot` SIGTERMs the process mid-answer → PD gets
+# the "👀 받았어요" ack but the tool loop dies with the process, leaving NO answer and
+# NO retry. That silent drop is the recurring "board 봇이 또 답이 없어" (a board convo
+# that overlaps a deploy is lost). Fix: persist which board messages got a SUBSTANTIVE
+# response (final / costly-confirm / error — the ack alone does NOT count) and, on
+# startup, re-drive the newest board message left ack-only. The ack marker is how we
+# tell "acked but unanswered" from "actually answered".
+_ACK_MARKERS = ("받았어요", "이어서 처리할게요")   # bot lines that are NOT a real answer
+_STATE_PATH = ROOT / "data" / "board_state.json"
+_STATE_LOCK = threading.Lock()
+_STATE_CAP = 200
+
+
+def _load_state() -> dict:
+    try:
+        d = json.loads(_STATE_PATH.read_text())
+        d.setdefault("handled", []); d.setdefault("resumed", [])
+        return d
+    except Exception:
+        return {"handled": [], "resumed": []}
+
+
+def _save_state(d: dict) -> None:
+    try:
+        d["handled"] = d.get("handled", [])[-_STATE_CAP:]
+        d["resumed"] = d.get("resumed", [])[-_STATE_CAP:]
+        tmp = _STATE_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(d, ensure_ascii=False))
+        tmp.replace(_STATE_PATH)
+    except Exception as e:
+        log.warning("board state save failed: %s", e)
+
+
+def _mark(kind: str, ts: str) -> None:
+    if not ts:
+        return
+    with _STATE_LOCK:
+        d = _load_state()
+        if ts not in d[kind]:
+            d[kind].append(ts); _save_state(d)
+
+
+def _mark_handled(ts: str) -> None:
+    """Record that this board message got a substantive response (not just the ack), so a
+    restart-resume won't re-answer it."""
+    _mark("handled", ts)
+
 # The 03:00 producer on day D builds day D+1's batch. So the earliest date a
 # /concept can still steer is the TARGET of the next 03:00 run:
 #   before 03:00 today → next run is tonight, builds tomorrow      → today + 1
@@ -1034,6 +1083,7 @@ def handle_board_message(client, event, *, db, do_veto):
         log.exception("board agent failed")
         _post(client, channel, reply_thread,
               f":x: 처리 중 문제가 생겼어요: {str(e)[:200]}")
+        _mark_handled(ts)
         return
     if res.get("costly"):
         d = res["costly"]
@@ -1042,8 +1092,10 @@ def handle_board_message(client, event, *, db, do_veto):
         _post(client, channel, reply_thread,
               f":pause_button: *{_confirm_preview(d)}* 할까요?\n"
               f"_`응`/`yes` 면 실행, `취소` 면 취소 (3분 후 자동 만료)._")
+        _mark_handled(ts)
         return
     _post(client, channel, reply_thread, res.get("text") or "네! 🐾")
+    _mark_handled(ts)
 
 
 def _post(client, channel, thread_ts, text):
@@ -1051,3 +1103,67 @@ def _post(client, channel, thread_ts, text):
         client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=text)
     except Exception as e:
         log.warning("board post failed: %s", e)
+
+
+def resume_unanswered(client, *, channel: str, db, do_veto) -> None:
+    """PD 2026-07-09: on (re)start, recover the newest board message whose answer was
+    killed by a restart (it got the ack but the tool loop died with the process). Mirrors
+    `_grandma_catchup`, but the board's own ack is a bot message, so "newer than last bot
+    reply" would wrongly read an ack-only orphan as answered — we instead treat a message
+    as ANSWERED only if it's in the handled log OR a NON-ack bot reply already follows it.
+    One resume attempt per message (recorded), recent-only, and we skip the last ~15s so a
+    message arriving right at startup is left to the live event path (no double-reply)."""
+    if not channel:
+        return
+    try:
+        resp = client.conversations_history(channel=channel, limit=10)
+        msgs = resp.get("messages", []) if resp.get("ok", True) else []
+    except Exception as e:
+        log.warning("board resume history fetch failed: %s", e)
+        return
+    # newest-first. Walk to the most recent human message; collect the bot messages
+    # posted after it (i.e. newer) to detect whether a real answer already exists.
+    human = None
+    bots_after: list[str] = []
+    for m in msgs:
+        if m.get("subtype") in ("message_changed", "message_deleted", "channel_join",
+                                 "channel_leave"):
+            continue
+        if m.get("bot_id") or m.get("subtype") == "bot_message":
+            bots_after.append(m.get("text") or "")
+            continue
+        if (m.get("text") or "").strip():
+            human = m
+            break
+    if not human:
+        return
+    ts = human.get("ts", "")
+    try:
+        if time.time() - float(ts) < 15 or time.time() - float(ts) > 6 * 3600:
+            return  # too fresh (live path owns it) or too old (don't replay ancient)
+    except Exception:
+        return
+    with _STATE_LOCK:
+        d = _load_state()
+        if ts in d["handled"] or ts in d["resumed"]:
+            return
+    # A non-ack bot reply already after it → it was actually answered (handled log may
+    # just predate this feature). Ack / resume-notice lines don't count as an answer.
+    if any(b and not any(mk in b for mk in _ACK_MARKERS) for b in bots_after):
+        return
+    _mark("resumed", ts)   # bound to a single attempt even if this drive is also killed
+    log.info("board resume: re-driving orphaned message ts=%s", ts)
+
+    def _run():
+        try:
+            _post(client, channel, human.get("thread_ts") or ts,
+                  "🔄 재시작으로 끊긴 요청을 이어서 처리할게요…")
+            handle_board_message(client, {
+                "channel": channel, "user": human.get("user", ""),
+                "text": human.get("text", ""), "ts": ts,
+                "thread_ts": human.get("thread_ts"),
+            }, db=db, do_veto=do_veto)
+        except Exception as e:
+            log.warning("board resume drive failed: %s", e)
+
+    threading.Thread(target=_run, daemon=True).start()
