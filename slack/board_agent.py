@@ -113,7 +113,22 @@ _SYS = (
     "'캡션이 동작이랑 안 맞으니 풀냄새→먹기까지 순간마다 여러 번 바뀌게'. 그 방향은 재렌더가 새로 뽑는 "
     "컨셉에 **최우선**으로 들어간다(이미 배치가 만들어진 **오늘/과거 날짜여도 무조건 반영** — board 지시가 "
     "최고 권위라 날짜 제한 없음). 방향 없이 '그냥 이거 망했어 다시 뽑아'면 direction 빼고 label만. 기존 "
-    "예약영상을 비공개로 내리고 같은 시각 재렌더·재예약하며 **확인 없이 바로 실행**(board=최상위 어드민).\n\n"
+    "예약영상을 비공개로 내리고 같은 시각 재렌더·재예약하며 **확인 없이 바로 실행**(board=최상위 어드민).\n"
+    "- stop_renders: 지금 돌고 있는 렌더를 **실제로 중단**한다. args={}. PD가 '그만둬/멈춰/중단/스톱' 하면 "
+    "무조건 이걸 불러라 — 예전처럼 '멈췄어요'라고 **말만** 하고 실제론 안 멈추면 거짓말이다(렌더는 detached라 "
+    "말로는 안 죽는다). 예약된 영상은 안 건드리고 렌더 프로세스만 죽인다.\n\n"
+    "★★재렌더 규율(이걸 어겨서 PD가 화났다):\n"
+    "  ① **개수를 지켜라** — PD가 '하나 만들어'면 **정확히 하나만** 걸어라. 슬롯이 여러 개 비어도, 헷갈려도 "
+    "절대 rerender를 2개 이상 연달아 걸지 마라(돈이 편당 나간다). 어느 슬롯인지 하나로 못 좁히면 걸지 말고 "
+    "PD에게 어느 슬롯인지 **한 번만** 물어라.\n"
+    "  ② **이미 준 걸 되묻지 마라** — PD가 소스/컨셉/날짜/레오주인공 같은 걸 이미 말했으면 그걸로 바로 direction에 "
+    "담아 실행하라. '어떤 컨셉인지 알려주세요'로 되묻는 건 실패다.\n"
+    "  ③ **빈 슬롯 채우기 = rerender 하나** — 빈 슬롯에 새로 만드는 것도 그 슬롯 라벨로 rerender(mode=rebuild, "
+    "direction=PD요청)면 된다. 별개 개념 아니다.\n"
+    "  ④ **레인이 슬롯 배정과 다르면 CLI로** — PD가 슬롯의 배정 레인과 **다른 레인**(예: AV 슬롯을 RF 실제영상으로, "
+    "또는 grandmompapa 채널 특정 영상 소스)으로 원하면, rerender는 슬롯 배정 레인을 따르므로 그대로는 안 된다. "
+    "이건 escalate로 CLI에 넘기고 'CLI가 손으로 만들어 넣을게요'라고 답하라 — **절대 엉뚱한 레인으로 blind "
+    "재렌더를 걸지 마라**(이번에 AV 슬롯에 AV를 2개 걸어 PD가 화났다).\n\n"
     "원칙: 모르면 툴로 확인하고 추측으로 사실을 지어내지 마라. 애매하면 되묻는 final이 낫다.\n"
     "★역할 분담 — board 봇은 최상위 어드민이라 **렌더·재렌더·재업로드/교체를 직접** 한다(render·rerender "
     "툴이 실제로 돈다). CLI 세션으로 미루지 마라. escalate는 **코드·프롬프트·데이터의 수정/분석/디버깅** 같은 "
@@ -716,6 +731,26 @@ def _fmt_schedule(date_iso: str | None) -> str:
     return base
 
 
+def _act_stop_renders() -> str:
+    """ACTUALLY stop in-flight renders. The bot used to say '멈췄어요' while the detached
+    render kept running (it spawns setsid subprocesses it never tracked) — so 'stop' was a
+    lie. This pkills the render processes for real. Does NOT touch the bot (slack.app) or
+    the deploy timer — only render workers."""
+    pats = ["agents.launch_selfheal", "recaption_slot.py", "scripts/_render_",
+            "scripts/_rf_", "scripts/_recap_", "animate_seedance", "seedance_i2v"]
+    killed = []
+    for p in pats:
+        try:
+            if subprocess.run(["pkill", "-9", "-f", p]).returncode == 0:
+                killed.append(p)
+        except Exception:
+            pass
+    if killed:
+        return (":octagonal_sign: 진행 중이던 렌더를 **실제로 중단**했어요. "
+                "(예약된 영상은 그대로 두었어요 — 특정 영상을 내리려면 veto 하세요.)")
+    return ":information_source: 지금 돌고 있는 렌더 프로세스가 없어요 (이미 끝났거나 안 걸려 있어요)."
+
+
 def _safe_db_query(sql: str) -> str:
     """Read-only SELECT against agent.db so the agent can answer arbitrary data
     questions without a hand-coded intent. SELECT/WITH only, single statement."""
@@ -779,6 +814,8 @@ def _run_tool(name: str, args: dict, *, db, user: str, channel: str, thread_ts: 
     a = args or {}
     if name == "rerender":
         return _act_rerender(a, db, do_veto, channel=channel, thread_ts=thread_ts)
+    if name == "stop_renders":
+        return _act_stop_renders()
     if name == "youtube_schedule":
         return _fmt_schedule((a.get("date") or "").strip() or None)
     if name == "get_status":
