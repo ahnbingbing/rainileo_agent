@@ -1118,8 +1118,17 @@ def _clip_reuse_gate(concept: "dict | None", report: dict) -> None:
     grabbed a clip from that day's public video because the clip-cooldown was inert. The
     generator now seeds that cooldown, but Giri is the guarantee: same footage live in two
     concurrent episodes = viewers see the identical clip twice. Cap ≤5, verdict 수정 필요.
-    Both lanes. The episode under review isn't published yet, so no self-match."""
+    The episode under review isn't published yet, so no self-match.
+
+    REAL_FOOTAGE ONLY (PD 2026-07-09): the "same footage on screen twice" premise holds
+    only when asset_id IS the on-screen clip. For ai_vtuber, asset_id is a POSE/GENERATION
+    reference — the same good reference photo is legitimately reused across episodes and each
+    render is a fresh Seedance still, so no viewer-facing duplication. Firing here was a
+    category error that killed whole AV batches (giri_fail after Seedance spend). Mixed-media
+    AV real-clip cuts are covered by the generator's clip-cooldown seed, not this gate."""
     if not concept:
+        return
+    if (concept.get("render_style") or "") != "real_footage":
         return
     mine = {c.get("asset_id") or c.get("secondary_asset_id") for c in (concept.get("cuts") or [])}
     mine = {a for a in mine if a}

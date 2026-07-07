@@ -545,7 +545,11 @@ def launch_pipeline(target: dt.date, *,
                 if _att == 1:
                     sp(f":calendar: {hhmm} {lane_lbl} — 오늘의 '시의성 AV' 슬롯 "
                        "(월드컵/시즌 이벤트/밈 등 시의성 훅 강제)")
-            if batch_used_assets:
+            # PD 2026-07-09: asset_id cooldown is an ON-SCREEN clip constraint — real_footage
+            # only. For ai_vtuber asset_id is a pose/generation reference (reused legitimately
+            # across episodes; the render is a fresh Seedance still), so excluding recently-used
+            # refs just starves AV. Same-slot divergence for AV is handled by concept-dedup below.
+            if lane == "real_footage" and batch_used_assets:
                 ctx["exclude_asset_ids"] = sorted(batch_used_assets)
             if batch_concepts:
                 ctx["exclude_concepts"] = list(batch_concepts)
@@ -581,7 +585,7 @@ def launch_pipeline(target: dt.date, *,
             # Giri-retry's RE-propose (which rebuilds a fresh context inside
             # produce_and_render) still avoids the other slot's clips. Without this
             # the first propose excluded them but a retry re-picked them (재탕).
-            if batch_used_assets:
+            if lane == "real_footage" and batch_used_assets:
                 concept["_batch_exclude_asset_ids"] = sorted(batch_used_assets)
             # Register this concept so LATER slots (and self-heal rounds) diverge from it
             # — same-batch concept-dedup. theme carries the core motif ("내 꼬리는 어디에").
