@@ -7511,11 +7511,73 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
 # ──────────────────────────────────────────────────────────────────────
 # Main entry: render_card
 # ──────────────────────────────────────────────────────────────────────
+def _protected_workdirs(dirs: list[Path]) -> set[Path]:
+    """PD 2026-07-09: a workdir's animated/<tag>.mp4 cuts are the ONLY $0 source for a
+    caption-salvage (re-caption without paying Seedance again). So a workdir must NOT be
+    pruned while its episode is still IN-FLIGHT — scheduled but not yet public, or published
+    so recently that PD might still send a fix. Blind keep-newest-N deleted a scheduled 7/9
+    AV's salvage source and forced a paid re-render; this makes prune episode-state-aware.
+
+    Protected = its card (by render_meta.card_id) is a recent/future batch AND either not yet
+    uploaded, or published within the salvage window (CAMERAMAN_SALVAGE_DAYS, default 3).
+    Stale un-published junk (old drafts/vetoes) is NOT protected, so disk stays bounded."""
+    salvage_days = int(os.getenv("CAMERAMAN_SALVAGE_DAYS", "3"))
+    protected: set[Path] = set()
+    try:
+        con = _db()
+    except Exception as e:
+        log.warning("prune protect: db open failed (%s) — protecting nothing", e)
+        return protected
+    try:
+        now = dt.datetime.now(dt.timezone.utc)
+        today = now.date()
+        for d in dirs:
+            try:
+                cid = json.loads((d / "render_meta.json").read_text(
+                    encoding="utf-8")).get("card_id")
+            except Exception:
+                continue  # no meta → keep-newest-N still covers the recent ones
+            if not cid:
+                continue
+            row = con.execute(
+                "SELECT date, state, uploaded, youtube_publish_at FROM cards WHERE card_id=?",
+                (cid,)).fetchone()
+            if not row:
+                continue
+            cdate, state, uploaded, pub = row[0], row[1], row[2] or 0, row[3]
+            # A future publish time is always in-flight (protect regardless of card date).
+            if pub:
+                try:
+                    p = dt.datetime.fromisoformat(str(pub).replace("Z", "+00:00"))
+                    if p > now - dt.timedelta(days=salvage_days):
+                        protected.add(d)
+                        continue
+                except Exception:
+                    protected.add(d)  # unparseable schedule → be safe
+                    continue
+            # Not-yet-public AND part of a current/future batch (recent date) → in-flight.
+            try:
+                recent = cdate and cdate >= (today - dt.timedelta(days=salvage_days)).isoformat()
+            except Exception:
+                recent = False
+            if uploaded == 0 and state != "archived" and recent:
+                protected.add(d)
+    except Exception as e:
+        log.warning("prune protect scan failed: %s", e)
+    finally:
+        con.close()
+    return protected
+
+
 def _prune_tmp_workdirs(keep: int | None = None) -> None:
     """PD 2026-06-06: delete old cameraman_* tmp workdirs (trimmed clips,
     photo_i2v, animated intermediates) — they accumulated to 16GB. Keep the
     most recent `keep` for debugging. Final episodes live in data/output/
-    episodes and are never touched. Override count with CAMERAMAN_TMP_KEEP."""
+    episodes and are never touched. Override count with CAMERAMAN_TMP_KEEP.
+
+    PD 2026-07-09: ALSO keep any workdir whose episode is still in-flight (see
+    `_protected_workdirs`) — never delete the salvage source of a scheduled or
+    just-published episode just because 6 newer renders happened."""
     if keep is None:
         keep = int(os.getenv("CAMERAMAN_TMP_KEEP", "6"))
     try:
@@ -7524,12 +7586,16 @@ def _prune_tmp_workdirs(keep: int | None = None) -> None:
             [d for d in tmp.glob("cameraman_*") if d.is_dir()],
             key=lambda d: d.stat().st_mtime, reverse=True,
         )
+        protected = _protected_workdirs(dirs)
         removed = 0
-        for d in dirs[keep:]:
+        for i, d in enumerate(dirs):
+            if i < keep or d in protected:
+                continue
             shutil.rmtree(d, ignore_errors=True)
             removed += 1
         if removed:
-            log.info("pruned %d old tmp workdirs (kept %d)", removed, keep)
+            log.info("pruned %d old tmp workdirs (kept newest %d + %d in-flight)",
+                     removed, keep, len(protected))
     except Exception as e:
         log.warning("tmp prune failed: %s", e)
 
