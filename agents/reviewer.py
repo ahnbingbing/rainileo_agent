@@ -1175,6 +1175,79 @@ def _clip_reuse_gate(concept: "dict | None", report: dict) -> None:
              report.get("판정"), report.get("점수"))
 
 
+def _caption_scene_sets(concept: "dict | None") -> list:
+    """(label, scenes) for each RF cut — ground truth is the captions.json actually BURNED
+    (workdir), not the card payload, which can be stale/overwritten (e.g. a concurrent
+    recaption). Falls back to concept.cuts[].captions. Handles both {scenes:[...]} and a
+    flat scene list."""
+    out = []
+    caps = None
+    try:
+        from agents.caption_salvage import _find_work_dir
+        cid = (concept or {}).get("card_id") or ""
+        wd = _find_work_dir(cid) if cid else None
+        if wd and (wd / "captions.json").exists():
+            caps = json.loads((wd / "captions.json").read_text(encoding="utf-8"))
+    except Exception as e:
+        log.warning("caption-hold gate: workdir captions read failed: %s", e)
+    if isinstance(caps, dict):
+        for k, v in caps.items():
+            if k.startswith("_"):
+                continue
+            sc = v.get("scenes") if isinstance(v, dict) else (v if isinstance(v, list) else None)
+            if sc:
+                out.append((k, sc))
+    if not out:
+        for i, c in enumerate((concept or {}).get("cuts") or []):
+            cap = c.get("captions")
+            sc = None
+            if isinstance(cap, list):
+                sc = cap
+            elif isinstance(cap, dict):
+                sc = cap.get("scenes") or (cap.get("ko") if isinstance(cap.get("ko"), list) else None)
+            if sc:
+                out.append((c.get("tag") or c.get("beat") or f"cut{i+1}", sc))
+    return out
+
+
+def _caption_hold_gate(concept: "dict | None", report: dict) -> None:
+    """Deterministic '캡션이 안 바뀜' (PD 2026-07-10). RF captions carry the story, so a single
+    line held for a long stretch reads as static. The 7/8 rule for this was FRAME-JUDGED (VLM
+    prompt) and got rubber-stamped two days later — Giri praised a 20.9s nap under ONE caption.
+    So compute it from the burned captions.json instead: any single scene held ≥
+    RF_CAPTION_MAX_HOLD_S seconds → cap ≤6, 수정 필요. RF only. (The generator should beat-split
+    the clip's action arc; a static clip that can't be split shouldn't be a full episode.)"""
+    if not concept or (concept.get("render_style") or "") != "real_footage":
+        return
+    hold_max = float(os.getenv("RF_CAPTION_MAX_HOLD_S", "10.0"))
+    worst, worst_label = 0.0, ""
+    for label, sc in _caption_scene_sets(concept):
+        for s in sc:
+            try:
+                d = float(s.get("end", 0)) - float(s.get("start", 0))
+            except Exception:
+                continue
+            if d > worst:
+                worst, worst_label = d, label
+    if worst < hold_max:
+        return
+    note = (f"캡션이 안 바뀜(결정론): {worst_label} 컷에서 캡션 한 줄이 {worst:.0f}초 동안 그대로 유지된다 "
+            f"(≥{hold_max:.0f}s). RF는 캡션이 이야기를 끌어가므로 클립의 동작 순간마다 바뀌어야 한다 — 한 줄로 "
+            f"긴 클립을 버티면 정적으로 읽힌다. 동작 arc를 순간별 beat로 쪼개 캡션을 여러 번 바꿔라.")
+    prev = report.get("가장_큰_문제", "") or ""
+    report["가장_큰_문제"] = note if (not prev or "없" in prev[:6]) else f"{note} / {prev}"
+    try:
+        report["점수"] = min(int(report.get("점수", 10)), 6)
+    except Exception:
+        report["점수"] = 6
+    if report.get("판정", "") in ("업로드", "즉시 업로드", "소폭 수정 후 업로드", ""):
+        report["판정"] = "수정 필요"
+    report["최종_결정"] = report.get("판정", "수정 필요")
+    report["_caption_hold_gate_override"] = note
+    log.info("caption-hold gate FIRED: %s held %.1fs → 점수=%s", worst_label, worst,
+             report.get("점수"))
+
+
 def review(video: Path, storyboard: list[dict] | None = None,
            concept: dict | None = None) -> dict:
     """Full review: extract frames + audio check + VLM review.
@@ -1429,6 +1502,14 @@ def review(video: Path, storyboard: list[dict] | None = None,
         _clip_reuse_gate(concept, report)
     except Exception as e:
         log.warning("Clip-reuse gate failed: %s", e)
+
+    # RF caption held on one line for a long stretch = 캡션이 안 바뀜 (PD 2026-07-10). The
+    # 7/8 frame-judged VLM rule rubber-stamped it; this reads the burned captions.json and
+    # caps deterministically.
+    try:
+        _caption_hold_gate(concept, report)
+    except Exception as e:
+        log.warning("Caption-hold gate failed: %s", e)
 
     # Cleanup
     for f in frames:

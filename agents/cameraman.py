@@ -1907,10 +1907,16 @@ _RF_ACTION_SYS = (
     "You caption ONE real home clip for the pet channel 'Ryani & Leo', from N still frames "
     "sampled at known SECONDS across the clip. RYANI = a small BLACK French bulldog (white "
     "chin/chest/paws, grey muzzle, NO tail). LEO = an ORANGE tabby cat.\n"
-    "Read what the pet ACTUALLY DOES across the frames and split it into 2–5 sequential "
-    "BEATS by when the action changes (e.g. sniffing a tree → walking on → sniffing the "
-    "curb → squatting). For EACH beat write ONE short, warm, casual Korean caption (+ its "
-    "English) anchored to that beat's real time window.\n"
+    "Read what the pet ACTUALLY DOES across the frames and split it into sequential BEATS: "
+    "a NEW beat whenever the action changes (e.g. sniffing a tree → walking on → sniffing "
+    "the curb → squatting), AND — because the caption CARRIES the story — at least one beat "
+    "every ~5–6s so no single line ever holds for more than ~7s (a held caption reads as a "
+    "frozen, boring clip; the caption must keep moving). Aim for about ⌈clip_seconds ÷ 6⌉ "
+    "beats (a 20s clip → ~3–4). Even a CALM clip has micro-beats grounded in subtle real "
+    "change: a nap = 이불 파고듦 → 자리잡음 → 새근새근 → 발끝 씰룩 → 눈 스르륵; a rest = 두리번 → "
+    "자세 고쳐 앉기 → 늘어짐. Never invent big motion the frames don't show, but never let one "
+    "caption sit on the whole clip either. For EACH beat write ONE short, warm, casual Korean "
+    "caption (+ its English) anchored to that beat's real time window.\n"
     "GROUND EVERY WORD IN THE FRAMES — this is the whole point:\n"
     "• Describe the REAL action at that moment. If the pet is walking, say moving; if "
     "sniffing, say sniffing; if sitting still, say so. Never caption an action a beat "
@@ -1924,7 +1930,7 @@ _RF_ACTION_SYS = (
     "• A human FACE may be in frame — never describe or caption the person; keep it about "
     "the pets.\n"
     "Return ONLY JSON: {\"beats\":[{\"start\":sec,\"end\":sec,\"ko\":\"..\",\"en\":\"..\"}]} — "
-    "start/end within the clip, in order, non-overlapping, each ≥ 2.5s apart.")
+    "start/end within the clip, in order, non-overlapping, each ≥ 2.5s and ≤ ~7s long.")
 
 
 def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path,
