@@ -1910,9 +1910,9 @@ _RF_ACTION_SYS = (
     "Read what the pet ACTUALLY DOES across the frames and split it into sequential BEATS: "
     "a NEW beat whenever the action changes (e.g. sniffing a tree → walking on → sniffing "
     "the curb → squatting), AND — because the caption CARRIES the story — at least one beat "
-    "every ~5–6s so no single line ever holds for more than ~7s (a held caption reads as a "
-    "frozen, boring clip; the caption must keep moving). Aim for about ⌈clip_seconds ÷ 6⌉ "
-    "beats (a 20s clip → ~3–4). Even a CALM clip has micro-beats grounded in subtle real "
+    "every ~4–5s so no single line ever holds for more than ~6s (a held caption reads as a "
+    "frozen, boring clip; the caption must keep moving). Aim for about ⌈clip_seconds ÷ 5⌉ "
+    "beats (a 20s clip → ~4–5). Even a CALM clip has micro-beats grounded in subtle real "
     "change: a nap = 이불 파고듦 → 자리잡음 → 새근새근 → 발끝 씰룩 → 눈 스르륵; a rest = 두리번 → "
     "자세 고쳐 앉기 → 늘어짐. Never invent big motion the frames don't show, but never let one "
     "caption sit on the whole clip either. For EACH beat write ONE short, warm, casual Korean "
@@ -1930,7 +1930,7 @@ _RF_ACTION_SYS = (
     "• A human FACE may be in frame — never describe or caption the person; keep it about "
     "the pets.\n"
     "Return ONLY JSON: {\"beats\":[{\"start\":sec,\"end\":sec,\"ko\":\"..\",\"en\":\"..\"}]} — "
-    "start/end within the clip, in order, non-overlapping, each ≥ 2.5s and ≤ ~7s long.")
+    "start/end within the clip, in order, non-overlapping, each ≥ 2.5s and ≤ ~6s long.")
 
 
 def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path,

@@ -1219,7 +1219,7 @@ def _caption_hold_gate(concept: "dict | None", report: dict) -> None:
     the clip's action arc; a static clip that can't be split shouldn't be a full episode.)"""
     if not concept or (concept.get("render_style") or "") != "real_footage":
         return
-    hold_max = float(os.getenv("RF_CAPTION_MAX_HOLD_S", "10.0"))
+    hold_max = float(os.getenv("RF_CAPTION_MAX_HOLD_S", "8.0"))
     worst, worst_label = 0.0, ""
     for label, sc in _caption_scene_sets(concept):
         for s in sc:
