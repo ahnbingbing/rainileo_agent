@@ -4171,6 +4171,67 @@ def _ensure_local(file_path: str, source_uuid: str | None, *, force: bool = Fals
         return file_path if (file_path and Path(file_path).exists()) else None
 
 
+def _rf_dehaze_vf(src_path: Path, trim_start: float, trim_dur: float) -> str:
+    """De-haze filter for a SOFT/blurry real-footage clip, or "" if it's already sharp.
+
+    PD 2026-07-10: grandma films on a phone whose lens is sometimes smudged, so some
+    real clips arrive soft/hazy (the dirty-lens veil kills fine detail). We recover it
+    the way PD approved for RF2100 — a gentle unsharp + a touch of contrast/saturation —
+    but ONLY when the clip is genuinely soft, so a sharp clip is never over-sharpened
+    (that adds halos). Softness is measured as low high-frequency energy (variance of a
+    Laplacian) on a few normalized frames — this is a BLUR signal, not a contrast one:
+    the dirty-lens footage measured lapVar≈600 vs ≈1200 corrected vs ≈7000 for a
+    genuinely crisp clip, so the default 800 threshold cleanly separates soft from sharp.
+    RF-only: AV cuts are Seedance-generated and never carry a real lens's haze.
+    Knobs: RF_DEHAZE(=1), RF_DEHAZE_LAPVAR(=800), RF_DEHAZE_VF(override the filter).
+    Non-fatal: any probe error returns "" (never blocks a render for a cosmetic pass).
+    """
+    if os.getenv("RF_DEHAZE", "1") != "1":
+        return ""
+    try:
+        import numpy as _np
+        import tempfile as _tf
+        from PIL import Image as _PImg
+        thresh = float(os.getenv("RF_DEHAZE_LAPVAR", "800"))
+        # Below this the frame is near-black / static / extreme-blur — unsharp there just
+        # amplifies noise instead of recovering detail, so leave it alone (a soft clip
+        # with recoverable detail sits in the band, e.g. RF2100 ≈600).
+        floor = float(os.getenv("RF_DEHAZE_LAPVAR_MIN", "40"))
+        dur = max(0.1, float(trim_dur or 0.0))
+        times = [trim_start + f * dur for f in (0.2, 0.5, 0.8)]
+        vals = []
+        with _tf.TemporaryDirectory() as td:
+            for i, t in enumerate(times):
+                fp = Path(td) / f"h{i}.jpg"
+                try:
+                    _extract_frame(src_path, max(0.0, t), fp)
+                    if not fp.exists():
+                        continue
+                    im = _PImg.open(fp).convert("L")
+                    W = 1080
+                    h = max(2, int(im.height * W / max(1, im.width)))
+                    a = _np.asarray(im.resize((W, h)), dtype=_np.float64)
+                    lap = (a[:-2, 1:-1] + a[2:, 1:-1] + a[1:-1, :-2]
+                           + a[1:-1, 2:] - 4 * a[1:-1, 1:-1])
+                    vals.append(float(lap.var()))
+                except Exception:
+                    continue
+        if not vals:
+            return ""
+        med = sorted(vals)[len(vals) // 2]
+        if med >= thresh or med < floor:
+            return ""
+        vf = os.getenv(
+            "RF_DEHAZE_VF",
+            "unsharp=5:5:0.9:5:5:0.0,eq=contrast=1.09:saturation=1.05:gamma=0.98")
+        log.info("rf de-haze: soft clip %s (lapVar=%.0f < %.0f) → %s",
+                 src_path.name, med, thresh, vf)
+        return vf
+    except Exception as e:
+        log.warning("rf de-haze probe failed (%s) — skipping", e)
+        return ""
+
+
 def _trim_real_footage_clips(manifests: dict, anim_dir: Path,
                                 progress_cb: ProgressCb = None,
                                 dry_run: bool = False) -> None:
@@ -4356,6 +4417,14 @@ def _trim_real_footage_clips(manifests: dict, anim_dir: Path,
                 else:  # letterbox (default)
                     _reframe = _letterbox_fill_filter()
                 vf = ",".join(p for p in (vf, _reframe) if p)
+
+        # PD 2026-07-10: gently de-haze a SOFT clip (smudged phone lens) — measured
+        # per-clip, applied FIRST so it recovers detail on the raw frame before crop/
+        # reframe. Sharp clips read above threshold and are left untouched. RF-only.
+        if not dry_run:
+            _dehaze_vf = _rf_dehaze_vf(src_path, trim_start, trim_dur)
+            if _dehaze_vf:
+                vf = ",".join(p for p in (_dehaze_vf, vf) if p)
 
         cmd = ["ffmpeg", "-y", "-nostats", "-loglevel", "error"]
         if transpose_vf:
