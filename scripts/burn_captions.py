@@ -154,6 +154,17 @@ def _strip_unrenderable(text: str) -> str:
         if ch in _CAPTION_KEEP_PICTO:
             out.append(ch)
             continue
+        # PD 2026-07-10: ffmpeg drawtext expands `%` (the `%{...}` function syntax)
+        # EVEN from `textfile=` — a literal half-width `%` in a caption ("습도 100%")
+        # aborts the render with "Stray %" (RF 21:00 batch failure). Map it to the
+        # fullwidth `％` (U+FF05), which all three caption fonts (Pretendard-Bold/
+        # Medium, NanumPenScript) render as a normal percent glyph and which never
+        # triggers drawtext expansion. Done HERE (idempotent, 1 glyph so wrap-width
+        # measurement stays correct) rather than escaping `\%` at write time, which
+        # would double-escape on build_vf's read→re-wrap→re-write.
+        if ch == "%":
+            out.append("％")
+            continue
         o = ord(ch)
         if (
             0x1F000 <= o <= 0x1FAFF        # emoji: emoticons, pictographs, symbols & more

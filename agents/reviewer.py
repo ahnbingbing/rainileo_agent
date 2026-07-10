@@ -30,6 +30,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 from io import BytesIO
 from pathlib import Path
 
@@ -1345,11 +1346,43 @@ def review(video: Path, storyboard: list[dict] | None = None,
 
     parts.append(REVIEW_PROMPT + "\n\n" + context)
 
-    response = client.models.generate_content(
-        model=model_name,
-        contents=parts,
-        config=_types.GenerateContentConfig(response_mime_type="application/json"),
-    )
+    # PD 2026-07-10: the Giri gate call had NO model fallback and NO retry — a single
+    # transient Gemini 404 / 5xx (or a momentarily-unresolvable model name) failed the
+    # whole review and stranded an ALREADY-RENDERED (paid ~$50) episode as giri_fail
+    # with an empty slot (7/9 AV 08:00+18:00). The primary model itself is fine; this
+    # only guards the intermittent case. Mirror the tag_assets fallback: retry transient
+    # errors per-model, then fall through to the next model (gemini-flash-latest) on a
+    # 404/non-transient. VLM_FALLBACK_MODELS / VLM_MAX_RETRIES tune it.
+    _fallbacks = [m.strip() for m in os.getenv(
+        "VLM_FALLBACK_MODELS", "gemini-flash-latest").split(",") if m.strip()]
+    _models = [model_name] + [m for m in _fallbacks if m != model_name]
+    _max_retries = int(os.getenv("VLM_MAX_RETRIES", "4"))
+    _cfg = _types.GenerateContentConfig(response_mime_type="application/json")
+    response = None
+    _last_err = None
+    for _mn in _models:
+        for _attempt in range(_max_retries):
+            try:
+                response = client.models.generate_content(
+                    model=_mn, contents=parts, config=_cfg)
+                break  # got a response
+            except Exception as e:  # noqa: BLE001
+                _last_err = e
+                response = None
+                _transient = any(s in str(e) for s in (
+                    "429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE", "500",
+                    "INTERNAL", "deadline", "timeout", "Timeout"))
+                if _transient and _attempt < _max_retries - 1:
+                    time.sleep(min(2 ** _attempt + 0.5, 20))
+                    continue
+                break  # non-transient (e.g. 404) or exhausted → try next model
+        if response is not None:
+            if _mn != model_name:
+                log.warning("Giri VLM fell back to %s (primary %s failed: %s)",
+                            _mn, model_name, _last_err)
+            break
+    if response is None:
+        raise _last_err or RuntimeError("Giri VLM failed on all models")
     text = (response.text or "").strip()
     text = re.sub(r"^```(?:json)?\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
