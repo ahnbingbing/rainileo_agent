@@ -419,6 +419,21 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
         ).fetchall()
     ]
 
+    # PD 2026-07-11: the grandparents' EXPLICIT recent asks — the [요청]/[컨셉]-tagged
+    # rows the grandmompapa bot distilled from what they actually described — are the
+    # story SPINE, but they were mixed indistinguishably into episode_stories with
+    # generic chatter, so the writers (AV especially) didn't commit to them. Surface
+    # them as their OWN recency-ordered field; both writer prompts require building on
+    # one of these when present (ranking just below an explicit PD /concept directive).
+    grandmompapa_recent = [
+        {"text": r["text"], "date": (r["created_at"] or "")[:10]}
+        for r in con.execute(
+            "SELECT text, created_at FROM episode_stories "
+            "WHERE (text LIKE '[요청]%' OR text LIKE '[컨셉]%') "
+            "ORDER BY created_at DESC LIMIT 12"
+        ).fetchall()
+    ]
+
     # Object references from #references channel
     object_refs = []
     try:
@@ -555,6 +570,7 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
         "recent_themes_7d": themes,
         "milestones": milestones,
         "episode_stories": episode_stories,
+        "grandmompapa_recent": grandmompapa_recent,  # 조부모 최근 명시 요청/제안 — spine 우선
         "object_references": object_refs,
         "set_library": bg_refs,
         "set_objects": set_objects,
@@ -633,6 +649,30 @@ def _av_era_floor() -> str:
         return (ef + dt.timedelta(days=182)).isoformat()
     except Exception:
         return "2026-03-25"
+
+
+def _backfill_av_set_anchor(concept: dict, style_filter: str | None) -> dict:
+    """Guarantee an ai_vtuber concept carries a `set_anchor` (PD 2026-07-11).
+
+    An AV concept with no set_anchor makes the cameraman's `_resolve_scene_ref` miss the
+    real-room reference in set_library and silently fall back to a GPT-invented generic
+    room — the root of AV backgrounds drifting off the real home. If the Director left it
+    empty, derive it deterministically from the cuts' most common `space`; if the cuts
+    carry no space either, default to `home_livingroom` (the channel's home base). Never
+    overwrites a set_anchor the Director did set. RF is unaffected (it renders real clips,
+    not scene_ref stills)."""
+    is_av = (style_filter == "ai_vtuber"
+             or (concept.get("render_style") or "").strip() == "ai_vtuber")
+    if not is_av or str(concept.get("set_anchor") or "").strip():
+        return concept
+    from collections import Counter
+    spaces = [str(cu.get("space") or cu.get("set_anchor") or "").strip()
+              for cu in (concept.get("cuts") or [])]
+    spaces = [s for s in spaces if s and s != "?"]
+    anchor = Counter(spaces).most_common(1)[0][0] if spaces else "home_livingroom"
+    concept["set_anchor"] = anchor
+    log.info("backfill AV set_anchor=%s (Director left it empty)", anchor)
+    return concept
 
 
 def propose_concepts(target: dt.date, context: dict, style_filter: str | None = None,
@@ -756,6 +796,7 @@ def propose_concepts(target: dt.date, context: dict, style_filter: str | None = 
                 good = [c for c in retry if (c.get("cuts") or [])]
             if concepts and not good and progress_cb:
                 progress_cb(":x: 재시도 후에도 컷 없는 컨셉만 — LLM 불안정, 슬롯 비움(churn 방지)")
+            good = [_backfill_av_set_anchor(c, style_filter) for c in good]
             return good
         except Exception as e:
             log.warning("writer_director failed (%s) — falling back to legacy", e)

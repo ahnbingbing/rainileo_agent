@@ -347,6 +347,17 @@ def _build_writer_user_prompt(target_date: dt.date, context: dict,
         body["macro_context_recent_uploads"] = context["macro_context"]
     if isinstance(context, dict) and context.get("reviewer_feedback"):
         body["reviewer_rewrite_directive"] = context["reviewer_feedback"]
+    # PD 2026-07-11: the grandparents' RECENT explicit asks + the real props/spaces they
+    # uploaded are the spine + set material — hoist them to the top level (like the macro
+    # context) so the AV writer can't leave them buried in the context blob. A named
+    # grandmompapa ask, when present, MUST be the story spine (see writer_story.md);
+    # object_references / pd_background_refs are the REAL props/rooms to build the scene on.
+    if isinstance(context, dict) and context.get("grandmompapa_recent"):
+        body["grandmompapa_recent_asks"] = context["grandmompapa_recent"]
+    if isinstance(context, dict) and context.get("object_references"):
+        body["grandma_props_object_refs"] = context["object_references"]
+    if isinstance(context, dict) and context.get("pd_background_refs"):
+        body["grandma_space_photos"] = context["pd_background_refs"]
     # PD 2026-06-12: is a PD-designated concept active? (arc_directive carries the
     # "[PD 지정 컨셉 …]" prefix.) If so, the few-shots — which are recent high-Giri
     # concepts and may be the very episodes PD just rejected (e.g. the cafe ones) —
