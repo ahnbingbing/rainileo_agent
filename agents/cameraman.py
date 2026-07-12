@@ -7652,10 +7652,19 @@ def _prune_tmp_workdirs(keep: int | None = None) -> None:
 
     PD 2026-07-09: ALSO keep any workdir whose episode is still in-flight (see
     `_protected_workdirs`) — never delete the salvage source of a scheduled or
-    just-published episode just because 6 newer renders happened."""
+    just-published episode just because 6 newer renders happened.
+
+    PD 2026-07-12: retain by AGE, not just count — keep EVERY workdir from the last
+    CAMERAMAN_TMP_KEEP_DAYS (default 7) days. The count-only rule pruned a still-scheduled
+    episode's source, which forced a full $50 AV re-render for a one-word caption fix.
+    A 7-day window means a caption fix / salvage almost always has its source. (Lower the
+    env knob if disk pressures; the in-flight protection + newest-N floor still apply.)"""
     if keep is None:
         keep = int(os.getenv("CAMERAMAN_TMP_KEEP", "6"))
+    keep_days = float(os.getenv("CAMERAMAN_TMP_KEEP_DAYS", "7"))
     try:
+        import time as _time
+        cutoff = _time.time() - keep_days * 86400.0
         tmp = ROOT / "data" / "tmp"
         dirs = sorted(
             [d for d in tmp.glob("cameraman_*") if d.is_dir()],
@@ -7664,13 +7673,14 @@ def _prune_tmp_workdirs(keep: int | None = None) -> None:
         protected = _protected_workdirs(dirs)
         removed = 0
         for i, d in enumerate(dirs):
-            if i < keep or d in protected:
+            # keep: newest-N floor, in-flight/scheduled, OR within the 7-day window
+            if i < keep or d in protected or d.stat().st_mtime >= cutoff:
                 continue
             shutil.rmtree(d, ignore_errors=True)
             removed += 1
         if removed:
-            log.info("pruned %d old tmp workdirs (kept newest %d + %d in-flight)",
-                     removed, keep, len(protected))
+            log.info("pruned %d old tmp workdirs (kept newest %d + %d in-flight + <%.0fd)",
+                     removed, keep, len(protected), keep_days)
     except Exception as e:
         log.warning("tmp prune failed: %s", e)
 
