@@ -21,7 +21,36 @@ ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "data" / "agent.db"
 
 
-def reupload_episode(card_prefix: str, video_path: str, dry_run: bool = False) -> dict:
+def _meta_from_render(video_path: str) -> dict | None:
+    """Title/desc/tags of the ACTUAL rendered video, from its render workdir.
+
+    PD 2026-07-12: when this reupload REPLACES a slot with a REMADE video (a new
+    concept), the card's payload still holds the OLD concept — so pulling the title
+    from the card shipped all 3 remakes under their old titles (11년차 카페 / 댕냥년생 /
+    거실이 커진다면). The remade video's true metadata lives in its render workdir's
+    render_meta.json, matched by the `YYYYMMDD_HHMMSS` stamp in the video filename.
+    Prefer that; fall back to the card payload only when no render_meta is found."""
+    import re
+    import glob
+    m = re.search(r"_(\d{8}_\d{6})", Path(video_path).stem)
+    if not m:
+        return None
+    for wd in glob.glob(str(ROOT / "data" / "tmp" / f"cameraman_*_{m.group(1)}")):
+        try:
+            con = json.loads((Path(wd) / "render_meta.json").read_text(encoding="utf-8")).get("concept", {})
+            d = con.get("draft", {})
+            title = d.get("title_ko") or d.get("title") or con.get("title")
+            if title:
+                return {"title": title,
+                        "description": d.get("description") or con.get("narrative_oneliner") or "",
+                        "tags": [t.lstrip("#") for t in (d.get("hashtags") or con.get("hashtag_pool") or [])]}
+        except Exception:
+            pass
+    return None
+
+
+def reupload_episode(card_prefix: str, video_path: str, dry_run: bool = False,
+                     title_override: str | None = None) -> dict:
     from youtube.upload import upload_short, veto_video
 
     con = sqlite3.connect(DB_PATH)
@@ -38,6 +67,13 @@ def reupload_episode(card_prefix: str, video_path: str, dry_run: bool = False) -
     title = draft.get("title") or payload.get("title") or payload.get("theme")
     description = draft.get("description") or payload.get("narrative_oneliner") or ""
     tags = [t.lstrip("#") for t in (draft.get("hashtags") or payload.get("hashtag_slate") or [])]
+    # A remade video carries its OWN metadata in render_meta — prefer it over the
+    # (now stale) card payload so the title matches the new video. Explicit override wins.
+    _rm = _meta_from_render(video_path)
+    if _rm:
+        title, description, tags = _rm["title"], _rm["description"] or description, _rm["tags"] or tags
+    if title_override:
+        title = title_override
     publish_at = row["youtube_publish_at"]
     old_vid = row["youtube_video_id"]
 
@@ -76,7 +112,8 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--card", required=True, help="card_id prefix or old youtube video_id")
     ap.add_argument("--video", required=True, help="path to the re-rendered mp4")
+    ap.add_argument("--title", default=None, help="override title (else: render_meta of the video, then card payload)")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
-    print(json.dumps(reupload_episode(a.card, a.video, dry_run=a.dry_run),
+    print(json.dumps(reupload_episode(a.card, a.video, dry_run=a.dry_run, title_override=a.title),
                      ensure_ascii=False, indent=2))
