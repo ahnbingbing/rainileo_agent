@@ -2144,6 +2144,14 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
         "credits 랴니/Ryani, our DOG, to something the ORANGE CAT is doing, or credits 레오/Leo, "
         "our CAT, to what the BLACK DOG is doing? true = the names are swapped onto the wrong "
         "species; false if names are absent or correctly matched to species), "
+        # Already-finished source (PD 2026-07-12): a clip the family already EDITED into a
+        # finished short — with baked-in caption text, stickers, hearts, sparkles, paw-print
+        # graphics, or emoji overlays — must NEVER get our captions layered on top. It's a
+        # finished product, not raw footage.
+        "\"baked_text\":bool (does this FRAME already contain overlaid TEXT/caption words, "
+        "stickers, emoji, hearts, sparkles, paw-print or other graphic decorations baked into "
+        "the video itself — i.e. it is a pre-edited/finished clip, not clean raw footage? Judge "
+        "only decorations that are PART OF THE IMAGE; ignore anything you're told is our caption), "
         "\"action\":\"≤12-word Korean of what ACTUALLY happens on screen — name the REAL "
         "activity even if mundane (e.g. '사람이 그릇을 설거지한다', '레오가 가만히 앉아 받아먹는다')\"}. "
         "Judge literally and strictly from the two frames.")
@@ -2200,6 +2208,7 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
     #    elsewhere in the clip, so a cut-level check passes the fabrication).
     mismatched = []  # (tag, idx, vlm, ko, reason)
     pet_absent_tags = []  # cuts where NO frame shows our pet (human/scenery only)
+    finished_tags = []    # cuts whose SOURCE clip already has baked-in text/stickers (finished product)
     _svs_by_tag = {}  # tag → scene_vs, for the Layer-3 opening-visibility pass
     n_scenes = 0
     _BREEDS = {"코기": "corgi", "웰시": "corgi", "corgi": "corgi",
@@ -2239,6 +2248,11 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
         _pet_seen = any(vv.get("ryani_visible") or vv.get("leo_visible") for vv in _valid)
         if _viewable and not _pet_seen and not cut_oa.strip():
             pet_absent_tags.append(tag)
+        # Finished-product source (PD 2026-07-12): if the source already carries baked-in
+        # caption text / stickers / hearts, it's an edited short, not raw footage — never
+        # layer our captions on it (XBeEe1saTwk did exactly that). Drop the cut.
+        if any(vv.get("baked_text") for vv in _valid):
+            finished_tags.append(tag)
         # Pass 2: evaluate each scene (using its own frame + the cut-level animal).
         for idx, ko, v in scene_vs:
             low = ko.lower()
@@ -2313,6 +2327,34 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
         if progress_cb:
             progress_cb(f":scissors: 주인공-부재 컷 {len(pet_absent_tags)}개 드롭 "
                         f"(펫이 화면에 안 보이는 사람/풍경 컷): {', '.join(pet_absent_tags)}")
+
+    # 1c. NEVER caption over an already-finished/decorated source (PD 2026-07-12): a clip
+    # with baked-in text/stickers is a finished short, not raw footage. Drop those cuts; if
+    # that guts the episode (the common case — the whole clip was pre-made), fail the slot so
+    # launch re-selects RAW footage instead of layering our captions on a finished product.
+    if finished_tags and os.getenv("RF_FINISHED_SOURCE_GATE", "1") == "1":
+        keep = [t for t in cap if t.startswith("_") or t not in finished_tags]
+        _remaining = [t for t in keep if not t.startswith("_")]
+        if len(_remaining) < 2:
+            raise RuntimeError(
+                f"finished/decorated source (baked-in text/stickers): {finished_tags} — "
+                f"refusing to caption over a pre-edited clip; failing slot to re-select raw footage")
+        cap = {t: cap[t] for t in keep}
+        for key in ("cuts", "concept_cuts"):
+            lst = manifests.get(key)
+            if isinstance(lst, list):
+                manifests[key] = [c for c in lst
+                                  if (c.get("tag") or c.get("cut_tag")) not in finished_tags]
+        mismatched = [m for m in mismatched if m[0] not in set(finished_tags)]
+        try:
+            cap_path.write_text(json.dumps(cap, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as e:
+            log.warning("grounding gate: finished-source drop write-back failed: %s", e)
+        log.warning("grounding gate: dropped %d finished/decorated-source cut(s): %s",
+                    len(finished_tags), finished_tags)
+        if progress_cb:
+            progress_cb(f":scissors: 완성/데코 소스 컷 {len(finished_tags)}개 드롭 "
+                        f"(이미 텍스트·스티커 박힌 완성영상): {', '.join(finished_tags)}")
 
     # LAYER 3 — the HOOK must open on our pet. cand3: cut1's opening showed no Ryani (she
     # only appeared at cut2), so the episode opened on a pet-less frame. The per-CUT
