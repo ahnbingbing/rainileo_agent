@@ -195,7 +195,28 @@ _DECIMAL_YEAR_KO = _re_caps.compile(r"(\d+)\.(\d+)\s*년")
 _DECIMAL_YEAR_EN = _re_caps.compile(r"(\d+)\.(\d+)\s*years?")
 
 
+_AGE_GAP_KO = _re_caps.compile(r"\d+\s*살\s*차이")
+_AGE_GAP_EN = _re_caps.compile(r"\b\d+[\s-]*year[s]?([\s-]+(?:gap|difference|apart))", _re_caps.IGNORECASE)
+
+
+def _correct_canon_facts(text: str) -> str:
+    """Force the pets' age facts to canon at the burn chokepoint (PD 2026-07-12).
+
+    Ryani was born 2015, Leo 2025, so their age gap is ALWAYS 10 years. A caption that
+    invents "12살 차이" (which implies Ryani 2013) is a fabricated canon violation — the
+    Writer/Giri let it through, so correct it deterministically here (both lanes), since a
+    prompt rule alone gets rubber-stamped. Conservative: only the age-GAP phrasing is
+    touched (this 2-pet channel has exactly one gap = 10y), so no legitimate number breaks."""
+    if not text:
+        return text
+    if "살 차이" in text:
+        text = _AGE_GAP_KO.sub("10살 차이", text)
+    text = _AGE_GAP_EN.sub(lambda m: "10-year" + m.group(1), text)
+    return text
+
+
 def _naturalize_decimal_year(text: str) -> str:
+    text = _correct_canon_facts(text)
     if not text or ("." not in text):
         return text
 
