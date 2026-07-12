@@ -20,9 +20,25 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 
 log = logging.getLogger("icloud.gcs")
+
+# PD 2026-07-12: the Mac's iCloud→GCS upload uses an unstable home network, so a large
+# fresh clip (a 56MB grandma .mov) blew the 120s default timeout and never reached GCS —
+# the VM then imported "0 new" and the newest grandparent footage never entered the pool.
+# Give uploads a generous timeout + resumable chunking (survives transient drops) + a few
+# retries so fresh content isn't silently stranded. Env-tunable.
+_UPLOAD_TIMEOUT = float(os.getenv("GCS_UPLOAD_TIMEOUT", "600"))
+_UPLOAD_RETRIES = int(os.getenv("GCS_UPLOAD_RETRIES", "3"))
+
+
+def _upload_blob(blob, file_path: str) -> None:
+    """Upload one file with a generous timeout and resumable chunking for large files."""
+    if Path(file_path).stat().st_size > 8 * 1024 * 1024:
+        blob.chunk_size = 8 * 1024 * 1024  # resumable → tolerates a dropped connection
+    blob.upload_from_filename(file_path, timeout=_UPLOAD_TIMEOUT)
 ROOT = Path(__file__).resolve().parent.parent
 ASSETS_ROOT = ROOT / "data" / "assets"
 
@@ -150,17 +166,20 @@ def upload(file_path: str) -> bool:
     name = blob_name(file_path)
     if not name or not Path(file_path).exists():
         return False
-    try:
-        blob = _bucket().blob(name)
-        if blob.exists():
-            blob.reload()
-            if blob.size == Path(file_path).stat().st_size:
-                return True  # already mirrored
-        blob.upload_from_filename(file_path)
-        return True
-    except Exception as e:
-        log.warning("gcs upload failed for %s: %s", name, e)
-        return False
+    for attempt in range(_UPLOAD_RETRIES):
+        try:
+            blob = _bucket().blob(name)
+            if blob.exists():
+                blob.reload()
+                if blob.size == Path(file_path).stat().st_size:
+                    return True  # already mirrored
+            _upload_blob(blob, file_path)
+            return True
+        except Exception as e:
+            log.warning("gcs upload failed for %s (attempt %d/%d): %s",
+                        name, attempt + 1, _UPLOAD_RETRIES, e)
+            time.sleep(min(2 ** attempt + 1, 15))
+    return False
 
 
 OUTPUT_ROOT = ROOT / "data" / "output"
@@ -188,18 +207,21 @@ def upload_episode(file_path: str, name: str | None = None) -> str | None:
             name = f"output/{p.resolve().relative_to(OUTPUT_ROOT.resolve())}"
         except (ValueError, OSError):
             name = f"output/episodes/{p.name}"
-    try:
-        blob = _bucket().blob(name)
-        if blob.exists():
-            blob.reload()
-            if blob.size == p.stat().st_size:
-                return f"gs://{BUCKET}/{name}"
-        blob.upload_from_filename(str(p))
-        log.info("gcs: mirrored output %s (%.1f MB)", name, p.stat().st_size / 1e6)
-        return f"gs://{BUCKET}/{name}"
-    except Exception as e:
-        log.warning("gcs upload_episode failed for %s: %s", p.name, e)
-        return None
+    for attempt in range(_UPLOAD_RETRIES):
+        try:
+            blob = _bucket().blob(name)
+            if blob.exists():
+                blob.reload()
+                if blob.size == p.stat().st_size:
+                    return f"gs://{BUCKET}/{name}"
+            _upload_blob(blob, str(p))
+            log.info("gcs: mirrored output %s (%.1f MB)", name, p.stat().st_size / 1e6)
+            return f"gs://{BUCKET}/{name}"
+        except Exception as e:
+            log.warning("gcs upload_episode failed for %s (attempt %d/%d): %s",
+                        p.name, attempt + 1, _UPLOAD_RETRIES, e)
+            time.sleep(min(2 ** attempt + 1, 15))
+    return None
 
 
 def mirror_local(limit: int | None = None, max_workers: int = 16) -> int:
