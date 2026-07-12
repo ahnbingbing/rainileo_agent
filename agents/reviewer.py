@@ -1462,14 +1462,23 @@ def review(video: Path, storyboard: list[dict] | None = None,
         report["face_integrity"] = fi
         sev = (fi.get("severity") or "none").lower()
         detail = fi.get("detail", "") or ""
-        # A clear, describable artifact (orb/blob/melted/distorted/asymmetric) must
-        # NOT auto-publish even if the VLM softly labels it "minor" — PD's hard rule
-        # on face accuracy. Vague minors stay a downgrade-but-pass.
-        is_artifact = bool(re.search(
-            r"orb|blob|dot|melt|smear|distort|warp|deform|asymmetr|mismatch",
-            detail, re.IGNORECASE))
-        if fi.get("face_defect") and (sev in ("minor", "major") or is_artifact):
-            fail = (sev == "major") or is_artifact
+        # Two tiers of defect (PD 2026-07-12, after the face gate over-fired on a natural
+        # belly-up sleeping pose — a soft muzzle read as "smeared" → hard-failed a clean,
+        # real-home episode and wasted a $50 render):
+        #  - STRUCTURAL collapse (melted/orb/blob/deformed/duplicated/mismatched-eyes) is
+        #    unambiguous — it kills the episode ALONE, even if the holistic read is clean.
+        #  - SOFT softness (smear/blend/distort/asymmetric/blur) is what the focused VLM
+        #    over-calls on natural sleeping/belly-up poses. It kills ONLY when the MAIN
+        #    holistic review did NOT independently call the episode upload-clean — i.e. two
+        #    signals must agree before a borderline smear discards a paid render.
+        is_hard = bool(re.search(
+            r"orb|blob|melt|deform|warp|fused|floating|duplicat|mismatch|"
+            r"extra[ -]?(eye|limb|leg|head|paw)", detail, re.IGNORECASE))
+        is_soft = bool(re.search(
+            r"smear|blend|distort|asymmetr|blurr|soft", detail, re.IGNORECASE))
+        holistic_clean = str(report.get("판정", "")).strip() in ("업로드", "즉시 업로드")
+        if fi.get("face_defect") and (sev in ("minor", "major") or is_hard or is_soft):
+            fail = is_hard or (sev == "major" and not (is_soft and holistic_clean))
             note = (f"AI 얼굴 무결성 결함({'major' if fail else sev}): {detail}"
                     f" [frame {fi.get('worst_frame')}]")
             prev = report.get("가장_큰_문제", "") or ""

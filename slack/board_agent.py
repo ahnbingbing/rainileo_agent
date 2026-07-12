@@ -137,8 +137,9 @@ _SYS = (
     "확인해라.\n"
     "- get_status: board에 들어온 코드/파이프라인 요청의 처리 큐·진행 현황. args={}. '뭐 하고 있어/진행상황'에.\n"
     "- db_query: agent.db 읽기전용 SELECT(카드/성과/트렌드 등 임의 데이터 질문). args={sql:'SELECT …'}. SELECT/WITH만.\n"
-    "- read_log: 최근 로그 확인(디버깅 '왜 실패' 류). args={name:'launch_out'|'launch_err'|'batch_problems'|'slack_err', "
-    "contains:'필터문자열'|생략, lines:40}.\n"
+    "- read_log: 최근 로그 확인(디버깅 '왜 실패' 류). 배치 실패 원인은 'cron_launch'(=cron.launch.log, "
+    "슬롯별 렌더/기리판정/예약 결과가 다 여기 있음)를 본다. args={name:'cron_launch'|'launch_out'|'launch_err'|"
+    "'batch_problems'|'board_esc'|'slack_err', contains:'필터문자열'(예 '18:00' 또는 슬롯/카드id), lines:40}.\n"
     "- list_knowledge: 파이프라인이 PD에게 물은 미답 캐릭터 사실 목록. args={}.\n"
     "- set_concept: **아직 안 만들어진 미래 배치**(03:00 자동제작)에 컨셉을 예약한다. args={date:'YYYY-MM-DD'"
     "|null, text:'컨셉 지시문 전체', lane:'ai_vtuber'|'real_footage'|null}. 연도 생략=올해(과거 연도 추측 금지). "
@@ -309,9 +310,13 @@ def _act_concept(params: dict, db) -> str:
 
 
 def _last_batch_summary() -> str:
-    """Best-effort summary of the most recent launch batch from launch.out.log.
+    """Best-effort summary of the most recent launch batch from the batch log.
     Reliable source (the DB youtube fields go stale). Returns '' if unavailable."""
-    p = ROOT / "data" / "logs" / "launch.out.log"
+    # PD 2026-07-12: the batch writes to cron.launch.log now; fall back to the legacy
+    # launch.out.log only if the live file is absent.
+    p = ROOT / "data" / "logs" / "cron.launch.log"
+    if not p.exists():
+        p = ROOT / "data" / "logs" / "launch.out.log"
     if not p.exists():
         return ""
     try:
@@ -834,8 +839,14 @@ def _safe_db_query(sql: str) -> str:
     return "\n".join(lines) + extra
 
 
-_LOGS = {"launch_out": "launch.out.log", "launch_err": "launch.err.log",
-         "batch_problems": "batch_problems.jsonl", "slack_err": "slack.err.log"}
+# PD 2026-07-12: the 03:00 batch now writes to cron.launch.log (cron job), so the old
+# launch.out/err + batch_problems.jsonl names are DEAD FILES — the board's "왜 실패"
+# debugging reported "로그 없음" while cron.launch.log held the actual cause (e.g. a
+# giri face-gate drop). Point every batch-debug name at the live file; keep the old
+# names as aliases so existing tool calls still resolve.
+_LOGS = {"launch_out": "cron.launch.log", "launch_err": "cron.launch.log",
+         "cron_launch": "cron.launch.log", "batch_problems": "cron.launch.log",
+         "board_esc": "cron.board_esc.log", "slack_err": "slack.err.log"}
 
 
 def _read_log(name: str, contains: str | None = None, lines: int = 40) -> str:
