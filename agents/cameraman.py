@@ -2135,6 +2135,15 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
         "confirm — an exact time like 한밤중/자정/새벽/정오 when only day-vs-night is visible, an "
         "exact body-position/spot like 무릎/어깨 vs just 'held', or a posture the pet isn't in "
         "e.g. 'sitting/앉아/집중' while moving=true? true = over-claims beyond the frames), "
+        # Subject↔name swap (PD 2026-07-12): both pets can be on screen, so visibility passes,
+        # yet the caption pins the WRONG NAME on the actor — a snack-hunt narration called the
+        # ORANGE CAT '랴니' and the BLACK DOG '레오' throughout. 랴니/Ryani = the DOG, 레오/Leo =
+        # the CAT. If the caption credits an action/trait to a NAMED pet, check the SPECIES of
+        # who's actually doing it.
+        "\"subject_swapped\":bool (does the caption put our pets' names on the WRONG animals — "
+        "credits 랴니/Ryani, our DOG, to something the ORANGE CAT is doing, or credits 레오/Leo, "
+        "our CAT, to what the BLACK DOG is doing? true = the names are swapped onto the wrong "
+        "species; false if names are absent or correctly matched to species), "
         "\"action\":\"≤12-word Korean of what ACTUALLY happens on screen — name the REAL "
         "activity even if mundane (e.g. '사람이 그릇을 설거지한다', '레오가 가만히 앉아 받아먹는다')\"}. "
         "Judge literally and strictly from the two frames.")
@@ -2249,6 +2258,10 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
                 reasons.append("랴니 미등장")
             if (("레오" in ko) or ("leo" in low)) and not v.get("leo_visible"):
                 reasons.append("레오 미등장")
+            # Names on the wrong animals (both pets visible so the checks above pass) — PD 2026-07-12.
+            if v.get("subject_swapped") is True and (("랴니" in ko) or ("레오" in ko)
+                                                     or ("ryani" in low) or ("leo" in low)):
+                reasons.append(f"주체-이름 스왑(랴니↔레오 반대 동물에; 실제: {(v.get('action') or '')[:16]})")
             _oa_all = ((v.get("other_animal") or "").lower() + " " + cut_oa).strip()
             if _mentioned and _oa_all and not any(b in _oa_all for b in _mentioned):
                 reasons.append(f"견종 불일치(캡션:{'/'.join(_mentioned)}≠화면:{(v.get('other_animal') or cut_oa)[:24]})")
