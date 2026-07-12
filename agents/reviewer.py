@@ -201,6 +201,10 @@ looks. These are CAPS (a ceiling), not soft notes:
   조름 → 결국 부비며 화해 = 명확한 대비+payoff = 통과). 상상/판타지·불가능 갸그는 훅을 만드는 **한 방법일
   뿐 필수가 아니다**. (PD 2026-06-30: "hook이 없잖아" = 이야기가 없다는 뜻이지 실사처럼 보인다는 뜻이
   아니었다.) 이 cap은 무-스토리를 못 잡고 러버스탬프하던 구멍만 막는다 — 실사 LOOK을 잡는 게 아니다.
+  **이 판단을 `story_arc_present`에 반드시 명시하라**: 설정→전개→payoff가 실제로 펼쳐지면 true, 무사건
+  나열이면 false. 홀리스틱 점수에 묻지 말고 이 필드로 또렷이 답하라 — false면 시스템이 자동으로 cap≤5로
+  내린다(러버스탬프 방지). "거실이 커진다면", "~하는 이유" 같은 추상 무드·가정형 컨셉이 화면에서 구체 사건으로
+  전개되지 못하면 false다.
 - **상상 컷이 상상으로 안 읽힘 (ai_vtuber)**: a beat meant as a daydream/상상 (the caption says
   so, or the action is impossible-on-purpose) must READ as imagination — a dreamy look
   (misty haze OR a vivid, luminous, magical dreamscape — a wonder-fantasy SHOULD look lush
@@ -290,6 +294,8 @@ Return JSON:
   "최소_수정안": "가장 작은 수정",
   "툴_수정_요청": "Claude Code / Veo용 수정 문장",
   "최종_결정": "정확히 무엇을 할지",
+  "story_arc_present": true | false,
+  "story_arc_reason": "한 문장 — 설정→전개→payoff가 화면에서 실제로 펼쳐지면 true, 원인/대비/반전/payoff 하나 없이 평범한 펫 행동만 훑는 '무사건 나열'이면 false",
   "dimensions": {{
     "opening_hook": 1-10,
     "character_clarity": 1-10,
@@ -1499,6 +1505,27 @@ def review(video: Path, storyboard: list[dict] | None = None,
                      report["판정"], report["점수"])
     except Exception as e:
         log.warning("Face integrity gate failed: %s", e)
+
+    # Deterministic no-story cap (PD 2026-07-12): the '무훅·무사건' rule existed but the
+    # holistic reviewer kept rubber-stamping an eventless AV (a '거실이 커진다면' abstract mood
+    # with disconnected observation captions shipped as content). Force the reviewer to answer
+    # story_arc_present explicitly, then cap deterministically on its OWN answer — an ai_vtuber
+    # episode the reviewer itself judged to have no setup→escalation→payoff arc cannot pass.
+    try:
+        _rs_av = (concept or {}).get("render_style", "") == "ai_vtuber"
+        if _rs_av and report.get("story_arc_present") is False:
+            report["점수"] = min(int(report.get("점수", 10) or 10), 5)
+            if report.get("판정") in ("업로드", "즉시 업로드", "소폭 수정 후 업로드"):
+                report["판정"] = "수정 필요"
+            report["최종_결정"] = report["판정"]
+            _why = str(report.get("story_arc_reason") or "").strip()
+            _note = f"AV 무훅 — 스토리·payoff 없음(무사건 나열){': ' + _why[:80] if _why else ''}"
+            _prev = report.get("가장_큰_문제", "") or ""
+            report["가장_큰_문제"] = _note if (not _prev or "없" in _prev[:6]) else f"{_note} / {_prev}"
+            log.info("no-story cap: AV story_arc_present=false → 판정=%s 점수=%s",
+                     report["판정"], report["점수"])
+    except Exception as e:
+        log.warning("no-story cap failed: %s", e)
 
     # Deterministic era-mix gate (PD 2026-06-23): catches un-narrated time-jumps
     # the LLM can't see in a sparse frame sample. Runs LAST so its 수정 필요 verdict
