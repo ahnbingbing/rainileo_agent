@@ -102,7 +102,20 @@ def main() -> int:
     if bgm:
         cmd += ["--music", bgm]
     print("  assembling…")
-    subprocess.run(cmd, check=True, cwd=str(ROOT))
+    # PD 2026-07-12: the assemble ffmpeg intermittently fails under load (an
+    # RF2100 + RF1230 recaption each failed once, then succeeded verbatim on retry,
+    # leaving a truncated/invalid mp4). Retry a couple times so a transient glitch
+    # doesn't strand a $0 caption fix.
+    import time as _t
+    for _attempt in range(3):
+        try:
+            subprocess.run(cmd, check=True, cwd=str(ROOT))
+            break
+        except subprocess.CalledProcessError as e:
+            if _attempt == 2:
+                raise
+            print(f"  assemble failed (attempt {_attempt + 1}/3): {e} — retrying")
+            _t.sleep(2)
     print("RECAP_OUT:", args.out)
     return 0
 
