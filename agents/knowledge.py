@@ -131,6 +131,7 @@ def facts_block(con: sqlite3.Connection, limit: int | None = None,
     knowledge actually reaches the model that reads the footage. `limit` keeps the VLM prompt
     bounded (most-recently-learned first); None = all (concept stage)."""
     ensure_table(con)
+    con.row_factory = sqlite3.Row   # this fn reads rows by column name — don't depend on caller
     q = ("SELECT subject, fact FROM character_facts "
          "WHERE status='answered' AND fact IS NOT NULL ORDER BY answered_at DESC")
     rows = con.execute(q).fetchall()
