@@ -30,6 +30,16 @@ def upload_short(
     publish_at_iso: str | None = None,   # e.g. "2026-05-10T12:00:00Z" for scheduled-public
 ) -> dict:
     yt = get_youtube()
+    # Deterministic canon last-line: a Writer-invented age-gap / birth-year ("나 2024년생
+    # 고양이인데~") must not reach a viewer via the TITLE either — the caption burn already
+    # corrects it, this covers the same fabrication in the title/description. (agents.canon
+    # is the single source; see correct_canon_age_text.)
+    try:
+        from agents.canon import correct_canon_age_text
+        title = correct_canon_age_text(title)
+        description = correct_canon_age_text(description)
+    except Exception:
+        pass
     body: dict = {
         "snippet": {
             "title": title[:100],                 # YouTube hard cap

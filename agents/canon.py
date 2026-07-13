@@ -96,6 +96,49 @@ def age_era_at(pet: str, captured_iso: str) -> str:
         return "어린"
     return ""
 
+
+# ── Deterministic canon age/year corrector ────────────────────────────
+# The single home for "the Writer invented a wrong age/birth-year" fixes. A prompt
+# rule alone gets rubber-stamped by Giri, so we correct it deterministically at every
+# viewer-facing chokepoint (caption burn + upload title/description, both lanes). The
+# channel has exactly two birth years and one age gap, all derived from the canon dates
+# above — so any other value in an age-GAP or "N년생"/"born YYYY" phrasing is a
+# hallucination. Precision over recall: only age-gap and birth-year phrasings are
+# touched, so legitimate numbers (event years like "2016년 첫 수영", counts) never break.
+import re as _re_canon
+
+_RYANI_BIRTH_YEAR = int(RYANI["exists_from"][:4])   # 2015
+_LEO_BIRTH_YEAR = int(LEO["exists_from"][:4])        # 2025
+_CANON_BIRTH_YEARS = tuple(sorted({_RYANI_BIRTH_YEAR, _LEO_BIRTH_YEAR}))
+_AGE_GAP_YEARS = abs(_LEO_BIRTH_YEAR - _RYANI_BIRTH_YEAR)  # 10
+
+_AGE_GAP_KO = _re_canon.compile(r"\d+\s*살\s*차이")
+_AGE_GAP_EN = _re_canon.compile(
+    r"\b\d+[\s-]*year[s]?([\s-]+(?:gap|difference|apart))", _re_canon.IGNORECASE)
+_BIRTH_YEAR_KO = _re_canon.compile(r"(\d{4})\s*년\s*생")
+_BIRTH_YEAR_EN = _re_canon.compile(r"\b([Bb]orn)\s+(\d{4})\b")
+
+
+def _snap_birth_year(y: int) -> int:
+    return min(_CANON_BIRTH_YEARS, key=lambda c: (abs(y - c), c))  # tie → older
+
+
+def correct_canon_age_text(text: str) -> str:
+    """Force the pets' age-gap and birth-year to canon in viewer-facing text.
+
+    Ryani 2015 / Leo 2025 → gap is always 10y; a "N살 차이"/"N-year gap" other than that,
+    or a "N년생"/"born YYYY" that isn't 2015/2025, is a fabricated canon violation. Idempotent
+    on already-correct text. Call at each output chokepoint (burn captions, upload title)."""
+    if not text:
+        return text
+    if "살 차이" in text:
+        text = _AGE_GAP_KO.sub(f"{_AGE_GAP_YEARS}살 차이", text)
+    text = _AGE_GAP_EN.sub(lambda m: f"{_AGE_GAP_YEARS}-year" + m.group(1), text)
+    if "년생" in text:
+        text = _BIRTH_YEAR_KO.sub(lambda m: f"{_snap_birth_year(int(m.group(1)))}년생", text)
+    text = _BIRTH_YEAR_EN.sub(lambda m: f"{m.group(1)} {_snap_birth_year(int(m.group(2)))}", text)
+    return text
+
 # ──────────────────────────────────────────────────────────────────────
 # Rendered blocks — authoritative text. Edit HERE; consumers import these.
 # ──────────────────────────────────────────────────────────────────────
