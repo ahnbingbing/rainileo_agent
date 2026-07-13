@@ -286,6 +286,37 @@ LOFI_REALISM_DIRECTIVE = (
     "reduce the animation. Lower the image quality, NOT the movement or the story."
 )
 
+# PD 2026-07-13: the LO-FI *prompt* directive above is not enough for a real-look AV cut. When
+# Seedance renders from clean real reference photos (ref mode), the output comes back glossy/HD
+# no matter what the text asks — so a "real filmed" challenge/daily episode looks too plain and
+# clean, not like an actual phone clip. Apply a deterministic lo-fi *grade* as a post-process on
+# every real-look (non-fantasy) AV cut so it reads as genuinely filmed and blends with RF. PD
+# picked the SUBTLE grade (2026-07-13 A/B sample): mild grain + slight warm/desaturation + a
+# touch of softening — never heavy vignette. Fantasy cuts keep their vivid look (skipped below).
+AV_LOFI_GRADE_VF = os.getenv(
+    "AV_LOFI_GRADE_VF",
+    "eq=contrast=1.05:saturation=0.90:brightness=0.008,colorbalance=rm=0.03:bm=-0.03,"
+    "noise=alls=7:allf=t,unsharp=3:3:-0.4:3:3:0.0")
+
+
+def _apply_av_lofi_grade(mp4_path: "Path", progress_cb: "ProgressCb" = None,
+                         dry_run: bool = False) -> None:
+    """Bake the subtle lo-fi grade onto a finished real-look AV cut, in place. No-op on
+    dry_run / missing file / AV_LOFI_GRADE=0. Keeps audio out (AV cuts are silent here)."""
+    if dry_run or os.getenv("AV_LOFI_GRADE", "1") == "0":
+        return
+    if not mp4_path.exists() or mp4_path.stat().st_size < 10_000:
+        return
+    graded = mp4_path.with_name(mp4_path.stem + "_lofi.mp4")
+    cmd = ["ffmpeg", "-y", "-i", str(mp4_path), "-vf", AV_LOFI_GRADE_VF, "-an",
+           "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "fast", "-crf", "19",
+           str(graded)]
+    _run(cmd, f":film_frames: [3c/6] lo-fi grade {mp4_path.stem}", progress_cb, dry_run)
+    if graded.exists() and graded.stat().st_size > 10_000:
+        mp4_path.unlink(missing_ok=True)
+        graded.rename(mp4_path)
+
+
 # PD 2026-06-24: the lo-fi home-video look is for REALITY cuts (so AV blends with real_footage).
 # An imagination / fantasy beat (a daydream, a magical world, 무릉도원·근두운) should look the
 # OPPOSITE — lush and wondrous — or the dream renders as a dull, washed-out, low-res scene
@@ -7531,6 +7562,18 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         if not dry_run and slowed_mp4.exists():
             src_mp4.unlink()
             slowed_mp4.rename(src_mp4)
+
+    # Step 3c (PD 2026-07-13): lo-fi grade for real-look AV cuts. A "real filmed" AV episode
+    # (challenge / daily) came back too clean/glossy because Seedance ref-mode ignores the LO-FI
+    # *prompt* — so grade the finished cut deterministically. Real-look = ai_vtuber AND not a
+    # fantasy beat (fantasy keeps its vivid dreamscape). Applied here (before persist + burn) so
+    # the persisted cuts and any re-caption reuse the graded footage, captions stay crisp on top.
+    if (card.get("render_style") or "").lower() == "ai_vtuber":
+        for i, item in enumerate(cuts):
+            cc = concept_cuts[i] if i < len(concept_cuts) else {}
+            if _cut_is_fantasy(cc):
+                continue
+            _apply_av_lofi_grade(anim_dir / f"{item['tag']}.mp4", progress_cb, dry_run)
 
     # Step 4: build bumpers if needed
     if not INTRO_BUMPER.exists() or not OUTRO_BUMPER.exists():
