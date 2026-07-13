@@ -1968,6 +1968,23 @@ _RF_ACTION_SYS = (
     "start/end within the clip, in order, non-overlapping, each ≥ 2.5s and ≤ ~6s long.")
 
 
+def _household_knowledge_block(limit: int = 40) -> str:
+    """The family's learned facts (grandma/grandpa clues + PD Q&A) as a compact block to
+    inject into the caption VLMs — so the model that READS the footage knows what the family
+    told us (e.g. the dried fish is 청어, not the generic '멸치'). Empty on any failure; capped
+    so the VLM prompt stays bounded. Facts are harvested in slack _grandma_converse."""
+    try:
+        import sqlite3 as _sql
+        from agents import knowledge as _kn
+        con = _sql.connect(ROOT / "data" / "agent.db")
+        try:
+            return _kn.facts_block(con, limit=limit)
+        finally:
+            con.close()
+    except Exception:
+        return ""
+
+
 def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path,
                                  progress_cb=None, dry_run: bool = False) -> None:
     """PD 2026-07-06 (Layer 2 — upstream): write RF captions FROM the clip's observed
@@ -2043,11 +2060,12 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
         if _pd_dir:
             parts.append("PD의 캡션 수정 요청(화면 동작에 맞추되 이 방향을 최우선 반영): " + _pd_dir)
         beats = None
+        _sys_grnd = _RF_ACTION_SYS + ("\n\n" + _hh_block if (_hh_block := _household_knowledge_block()) else "")
         try:
             resp = client.models.generate_content(
                 model=model, contents=parts,
                 config=_gt.GenerateContentConfig(
-                    system_instruction=_RF_ACTION_SYS, response_mime_type="application/json",
+                    system_instruction=_sys_grnd, response_mime_type="application/json",
                     thinking_config=_gt.ThinkingConfig(thinking_budget=0)))
             d = json.loads((resp.text or "{}").strip())
             beats = d.get("beats") if isinstance(d, dict) else None
@@ -2526,7 +2544,7 @@ def _rf_caption_punchup(work_dir: Path, manifests: dict, anim_dir: Path,
         return
     try:
         from agents import canon as _canon
-        facts = _canon.CHARACTER_FACTS
+        facts = _canon.CHARACTER_FACTS + _household_knowledge_block()
     except Exception:
         facts = ""
     sys = (
@@ -2628,6 +2646,7 @@ def _vlm_post_render_caption_rewrite(work_dir: Path, manifests: dict,
         "Be specific about subject positions, movements, AND any explicit sounds "
         "(짖다/왕왕/야옹/냐옹). If a pet doesn't bark or meow, do NOT mention it. "
         "Ground-truth observer only — no speculation.")
+    _vlm_sys += ("\n\n" + _hh if (_hh := _household_knowledge_block()) else "")
     try:
         from google import genai as _g
         from google.genai import types as _gt

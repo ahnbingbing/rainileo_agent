@@ -1601,6 +1601,11 @@ def _grandma_converse(client, channel, user, text, thread_ts, asset_id=None):
             "\"intent\": \"request\"(영상 제작 요청)|\"story\"(펫 일화·설명)|\"chat\"(인사·안부·잡담), "
             "\"subjects\": \"ryani\"|\"leo\"|\"ryani,leo\"|\"\", "
             "\"concept\": 대화에서 건질 만한 펫 영상 컨셉이 있으면 한 줄로(없으면 \"\"), "
+            "\"facts\": [어르신이 알려준 **지속적인 사실**만 짧은 표준어 문장으로 배열 — 펫의 "
+            "습성·먹거리·성격·건강, 사람(하비=할아버지/함미=할머니 등)·사물·장소에 대한 항구적 사실. "
+            "예: \"레오는 청어 말린 간식을 좋아한다\", \"랴니는 관절 영양제를 먹는다\". ⚠️이 영상 "
+            "한정의 일회성 사건(오늘 뭐 했다)이나 컨셉 요청은 넣지 마라 — 그건 concept/summary로. "
+            "새 사실이 없으면 []], "
             "\"summary\": 한 줄 요약}"
         )
         usr = (("최근 대화:\n" + convo + "\n\n") if convo else "") + \
@@ -1613,10 +1618,28 @@ def _grandma_converse(client, channel, user, text, thread_ts, asset_id=None):
         summary = (d.get("summary") or text[:80]).strip()
         subjects = (d.get("subjects") or "").strip()
         concept = (d.get("concept") or "").strip()
+        facts = [f.strip() for f in (d.get("facts") or []) if isinstance(f, str) and f.strip()]
     except Exception as e:
         log.warning("grandma LLM failed: %s", e)
         reply = "💛 감사합니다! 잘 받았어요. 영상 만들 때 꼭 참고할게요 🐾"
         subjects = ""
+        facts = []
+    # ── Harvest durable facts → knowledge layer ③ (PD 2026-07-13) ──
+    # The clues grandma/grandpa volunteer in conversation must reach the model that reads the
+    # footage, not just the concept brainstorm. Store each durable fact in character_facts so
+    # knowledge.facts_block injects it into the caption VLMs (both lanes) — that's how "이 집
+    # 마른 생선 = 청어" stops the VLM defaulting to the generic '멸치'.
+    if facts:
+        try:
+            from agents import knowledge as _kn
+            _subj_map = {"ryani": "랴니", "leo": "레오", "ryani,leo": "랴니·레오"}
+            _subj = _subj_map.get(subjects, "")
+            with db() as con:
+                for fct in facts:
+                    if _kn.remember_fact(con, fct, subject=_subj, source="grandma"):
+                        log.info("grandma fact learned: %s", fct[:70])
+        except Exception as e:
+            log.warning("grandma fact harvest failed: %s", e)
     # 일화/요청/대화에서 건진 컨셉 → episode_stories (브레인스토밍이 자동으로 읽음).
     #   요청=[요청] 태그(우선 가중), 잡담 중 떠오른 영상 아이디어=[컨셉] 태그로도 별도 저장.
     saved = []

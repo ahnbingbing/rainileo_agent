@@ -107,16 +107,38 @@ def pending_questions(con: sqlite3.Connection) -> list[dict]:
         "WHERE status='pending' ORDER BY created_at")]
 
 
-def facts_block(con: sqlite3.Connection) -> str:
-    """All answered learned facts as an injectable prompt block (empty if none)."""
+def remember_fact(con: sqlite3.Connection, fact: str, subject: str = "",
+                  source: str = "grandma") -> bool:
+    """Store a VOLUNTEERED durable fact (not a Q&A) — e.g. a clue grandma/grandpa gave
+    in conversation ("레오는 청어를 좋아해"). Layer ③ was built only for ask-PD answers, so
+    the household's freely-given knowledge never landed here and never reached the VLM/
+    concept stages. This is the write side of that fix. Dedups on the fact text (qkey), so
+    the same fact repeated across many chats is stored once. Returns False if already known."""
+    fact = (fact or "").strip()
+    if not fact:
+        return False
     ensure_table(con)
-    rows = con.execute(
-        "SELECT subject, question, fact FROM character_facts "
-        "WHERE status='answered' AND fact IS NOT NULL ORDER BY subject, created_at"
-    ).fetchall()
+    if has_question(con, fact):   # qkey(fact) already present
+        return False
+    add_answer(con, question=fact, fact=fact, subject=subject, source=source)
+    return True
+
+
+def facts_block(con: sqlite3.Connection, limit: int | None = None,
+                header: str = "## 가족이 알려준 사실 (할머니·할아버지·PD 확인 — 권위, 발명 금지)") -> str:
+    """Answered facts (PD Q&A + grandma-volunteered) as an injectable prompt block. Injected
+    into BOTH the concept/writer prompts AND the caption-VLM stages so the household's
+    knowledge actually reaches the model that reads the footage. `limit` keeps the VLM prompt
+    bounded (most-recently-learned first); None = all (concept stage)."""
+    ensure_table(con)
+    q = ("SELECT subject, fact FROM character_facts "
+         "WHERE status='answered' AND fact IS NOT NULL ORDER BY answered_at DESC")
+    rows = con.execute(q).fetchall()
+    if limit and limit > 0:
+        rows = rows[:limit]
     if not rows:
         return ""
-    lines = ["## 학습된 사실 (PD 확인 — 권위, 발명 금지)"]
+    lines = [header]
     for r in rows:
         sub = f"[{r['subject']}] " if r["subject"] else ""
         lines.append(f"- {sub}{r['fact']}")
