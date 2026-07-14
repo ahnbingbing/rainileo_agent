@@ -165,6 +165,14 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
     # keep retrying across rounds.
     EXPENSIVE = {"giri_fail", "face_defect"}
     terminal: set = set()
+    # PD 2026-07-14 ("왜 4개를 다 못 만들어"): an EXPENSIVE fail (rendered then failed Giri/face)
+    # used to be immediately TERMINAL → the slot shipped EMPTY, so a batch routinely landed 2-3/4.
+    # The cost rule that made it terminal was about not re-rendering the SAME broken concept every
+    # round. So allow exactly ONE re-roll with a COMPLETELY FRESH concept (launch_pipeline re-
+    # brainstorms; the failed concept is now in the exclude set, so the gag-dedup won't repeat it)
+    # before giving up. One extra ~$50 AV render buys the 4th slot — PD's call. Kill: SELFHEAL_REROLL=0.
+    rerolled: set = set()
+    reroll_on = os.getenv("SELFHEAL_REROLL", "1") != "0"
 
     for rnd in range(1, max_rounds + 1):
         pending = [(l, h) for (l, h) in want if (l, h) not in done and (l, h) not in terminal]
@@ -198,8 +206,19 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
                 cat = classify_failure(logtext)
                 rem = _remediate(cat, rnd)
                 cap(f":x: [self-heal] {slot} {lane} 실패 ({cat}) — 조치: {rem}")
-                fail_info[(lane, slot)] = {"cat": cat, "rem": rem, "terminal": cat in EXPENSIVE}
-                if cat in EXPENSIVE:
+                # An EXPENSIVE fail gets ONE fresh-concept re-roll (if rounds remain) before it's
+                # terminal — so a Giri/face reject fills the slot on a new concept instead of
+                # leaving it empty. The failed concept is now a card in the exclude set, so the
+                # re-roll's brainstorm won't repeat it.
+                _reroll_now = (cat in EXPENSIVE and reroll_on
+                               and (lane, slot) not in rerolled and rnd < max_rounds)
+                is_terminal = cat in EXPENSIVE and not _reroll_now
+                fail_info[(lane, slot)] = {"cat": cat, "rem": rem, "terminal": is_terminal}
+                if _reroll_now:
+                    rerolled.add((lane, slot))
+                    cap(f":game_die: [self-heal] {slot} {lane} 비용 실패 → **완전히 새 컨셉으로 1회 재롤** "
+                        f"(같은 컨셉 재렌더 아님)")
+                elif cat in EXPENSIVE:
                     terminal.add((lane, slot))
                     cap(f":coin: [self-heal] {slot} {lane} 비용 발생 실패 → 재렌더 중단 "
                         f"(영상 저장됨, 추가 Seedance 안 씀)")
