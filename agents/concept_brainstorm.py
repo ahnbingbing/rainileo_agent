@@ -389,6 +389,47 @@ def _concept_lexical_collision(cand: dict, exclude: list[dict], *, min_shared: i
     return {"collision": False}
 
 
+# Format/packaging words describe HOW a concept is presented, not WHAT the gag is — they
+# recur across unrelated concepts (a 페스티벌·챌린지·배틀 is not a repeated gag), so they must
+# never count as the distinctive repeated element.
+_CONCEPT_FORMAT_WORDS = {
+    "페스티벌", "챌린지", "배틀", "대잔치", "대작전", "작전", "대결", "유니버스", "미션",
+    "루틴", "리액션", "타임", "모먼트", "스페셜", "에디션", "파티", "월드", "버전", "브이로그",
+}
+
+
+def _concept_gag_collision(cand: dict, exclude: list[dict], *, df_max: int | None = None) -> dict:
+    """Catch a repeated SPECIFIC concept (same distinctive gag noun — 워터밤·수박·삼계탕) while
+    ALLOWING seasonal THEME revisits (여름·에어컨 recurring is fine — PD 2026-07-14). The signal
+    is RARITY across channel history: a token that appears in only a FEW past concepts is that
+    concept's distinctive gag; a token common across history is a theme. So flag a candidate that
+    reuses a RARE past gag token — substring-tolerant, since the lexical gate missed '워터밤'
+    hiding inside '대워터밤'. `df_max` = max past-concept count for a token to still count as a
+    distinctive gag (default 2 → 에어컨/뱃살 that recur often are treated as themes, not gags)."""
+    if not cand or not exclude:
+        return {"collision": False}
+    if df_max is None:
+        df_max = int(os.getenv("CONCEPT_GAG_DF_MAX", "2"))
+    from collections import Counter
+    hist = [((h.get("title") or h.get("theme") or ""),
+             _dedup_tokens(h.get("title") or h.get("theme") or "", h.get("logline") or ""))
+            for h in exclude]
+    df: Counter = Counter()
+    for _t, ts in hist:
+        for tok in ts:
+            df[tok] += 1
+    ct = _dedup_tokens(cand.get("title") or cand.get("theme") or "", cand.get("logline") or "")
+    ct = {c for c in ct if len(c) >= 3 and c not in _CONCEPT_FORMAT_WORDS}
+    for title, ht in hist:
+        for t in ht:
+            if len(t) < 3 or t in _CONCEPT_FORMAT_WORDS or df[t] > df_max:
+                continue  # short / format / common-theme token → not a distinctive gag
+            for c in ct:
+                if t == c or t in c or c in t:  # substring-tolerant: 대워터밤 ⊃ 워터밤
+                    return {"collision": True, "vs": title.strip(), "shared": t}
+    return {"collision": False}
+
+
 def _is_redundant_vs_batch(cand: dict, exclude: list[dict]) -> dict:
     """Same-batch concept-dedup gate: is `cand` substantially the SAME episode as a
     sibling already locked into today's batch? Substance = premise/motif/set/punchline,
@@ -437,6 +478,14 @@ def best(style: str, brief: str, n: int = 5, *, context: dict | None = None) -> 
     if exclude and ranked:
         winner = None
         for c in ranked:
+            # Distinctive-gag repeat first — a rare past gag noun reused (워터밤 twice) is the
+            # re-tread PD keeps catching; substring-tolerant so it survives rewording, and
+            # rarity-weighted so seasonal themes (여름/에어컨) are NOT treated as repeats.
+            gc = _concept_gag_collision(c, exclude)
+            if gc.get("collision"):
+                c["_batch_redundant"] = {"redundant": True, "vs": gc.get("vs"),
+                                         "reason": f"이미 만든 특정 컨셉 재탕 — '{gc.get('shared')}'"}
+                continue
             # Deterministic first — a shared-core-noun collision is a re-tread the LLM
             # 'diverge' check keeps missing; don't rely on the model to notice it.
             lc = _concept_lexical_collision(c, exclude)

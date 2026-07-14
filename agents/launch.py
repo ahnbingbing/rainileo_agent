@@ -416,15 +416,28 @@ def launch_pipeline(target: dt.date, *,
     # (last 14 days) so we avoid not just the day's other concepts but a near-repeat of a
     # past public episode (PD 2026-06-27: an AV 낮잠 shipped that duplicated a prior 낮잠
     # upload — same-date dedup alone never caught it). state!=archived, has a video_id.
+    # PD 2026-07-14 ("기존에 쓴 거 재탕하지 말라니까 — 컨셉!"): a 워터밤 concept shipped twice
+    # despite the seed. Two reasons the old 14-day/published-only window missed it: (1) an
+    # older repeat or a concept that was PRODUCED but not published (rendered/approved) never
+    # entered the exclude set, (2) the lexical gate needs a full-history exclude to compare
+    # against. So seed from ALL produced concepts (any non-archived card with a theme), most-
+    # recent first, capped — semantic dedup (concept_brainstorm) then judges specific-concept
+    # repeats while still allowing seasonal THEME revisits.
     batch_concepts: list = []
     try:
+        import json as _json
         with _db() as _con:
             for _r in _con.execute(
-                "SELECT theme FROM cards WHERE date >= ? AND youtube_video_id IS NOT NULL "
-                "AND state!='archived' AND theme IS NOT NULL ORDER BY date DESC LIMIT 40",
-                ((target - dt.timedelta(days=14)).isoformat(),)).fetchall():
+                "SELECT theme, payload_json FROM cards WHERE state!='archived' "
+                "AND theme IS NOT NULL ORDER BY date DESC LIMIT 80").fetchall():
                 if _r[0]:
-                    batch_concepts.append({"theme": _r[0]})
+                    _ll = ""
+                    try:
+                        _p = _json.loads(_r[1] or "{}")
+                        _ll = (_p.get("draft", {}) or {}).get("logline") or _p.get("narrative_oneliner") or ""
+                    except Exception:
+                        pass
+                    batch_concepts.append({"theme": _r[0], "logline": _ll})
     except Exception as e:
         log.warning("batch_concepts seed failed: %s", e)
 
