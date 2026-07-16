@@ -1411,6 +1411,46 @@ def _drop_branding(items: list, branding_ids: set) -> list:
     return out
 
 
+def _clip_capture_seconds(asset_id: "str | None") -> "float | None":
+    """Absolute capture time (epoch seconds) parsed from a med_YYYY_MM_DD_HHMMSS asset id, so two
+    clips seconds apart can be recognized as the same moment. None if the id has no timestamp."""
+    import re as _re
+    import datetime as _dt2
+    m = _re.search(r"med_(\d{4})_(\d{2})_(\d{2})_(\d{2})(\d{2})(\d{2})", asset_id or "")
+    if not m:
+        return None
+    try:
+        y, mo, d, h, mi, s = (int(x) for x in m.groups())
+        return _dt2.datetime(y, mo, d, h, mi, s, tzinfo=_dt2.timezone.utc).timestamp()
+    except Exception:
+        return None
+
+
+def _slot_time_of_day(hhmm: "str | None") -> "str | None":
+    """The slot's time-of-day bucket (낮/저녁/밤), matching _tod's clip buckets, from 'HH:MM'."""
+    if not hhmm:
+        return None
+    try:
+        h = int(str(hhmm).split(":")[0])
+    except (ValueError, IndexError):
+        return None
+    if h < 16:
+        return "낮"          # 08:00 / 12:30 lunch slots read as daytime
+    if h < 20:
+        return "저녁"        # 18:00
+    return "밤"              # 21:00
+
+
+def _tod_mismatch(clip_tod: "str | None", slot_tod: "str | None") -> int:
+    """0 = fine (match / unknown), 1 = adjacent (저녁↔낮/밤), 2 = jarring (밤 clip in a 낮 slot or
+    a bright 낮 clip in a 밤 slot). Used to rank, never to drop — a mismatch still beats empty."""
+    if not clip_tod or not slot_tod or clip_tod == "?" or clip_tod == slot_tod:
+        return 0
+    if {clip_tod, slot_tod} == {"낮", "밤"}:
+        return 2
+    return 1
+
+
 def _rf_long_candidates(context: dict) -> list[dict]:
     """The 12s+ original clips available to RF, longest-first (id/dur/sc/date).
     PD 2026-06-12: honor the BATCH dedup (context['exclude_asset_ids'], per slot) so
@@ -1450,11 +1490,15 @@ def _rf_long_candidates(context: dict) -> list[dict]:
         except Exception as e:
             log.warning("one-take visual cooldown lookup failed: %s", e)
     longs = [{"id": v.get("id"), "dur": float(v.get("dur") or 0),
-              "sc": (v.get("sc") or "")[:240], "date": v.get("date")}
+              "sc": (v.get("sc") or "")[:240], "date": v.get("date"), "tod": v.get("tod")}
              for v in pool
              if isinstance(v.get("dur"), (int, float)) and v.get("dur") >= _min
              and v.get("id") not in _excl]
-    longs.sort(key=lambda v: -(v.get("dur") or 0))
+    # PD 2026-07-16: match footage time-of-day to the slot's time-of-day (a 밤 clip must not lead
+    # a 12:30 lunch slot). Soft ordering, not a hard drop — a mismatched clip still beats an empty
+    # slot, so we rank time-appropriate clips first, then longest. RF_TOD_MATCH=0 disables.
+    _slot_tod = _slot_time_of_day(context.get("slot_hhmm")) if os.getenv("RF_TOD_MATCH", "1") != "0" else None
+    longs.sort(key=lambda v: (_tod_mismatch(v.get("tod"), _slot_tod), -(v.get("dur") or 0)))
     # de-dup by id; attach a free (non-overlapping) trim_start, skip if fully used.
     import hashlib as _hl
     seen, out = set(), []
@@ -1471,6 +1515,22 @@ def _rf_long_candidates(context: dict) -> list[dict]:
         v["trim_start"] = ts if ts is not None else 0.0
         v["used_segments"] = segs
         out.append(v)
+    # PD 2026-07-16: two clips captured seconds apart are the SAME moment — the batch grabbed a
+    # 22:54:59 wall clip for one slot and a 22:55:02 one for another as if different events (the
+    # asset-id cooldown only excluded the exact id, not its 3-seconds-later sibling). Drop any pool
+    # clip within ~2 min of an already-kept OR already-USED(_excl) clip's capture time, so a moment
+    # that shipped in one slot can't reappear from a neighbouring second. RF_MOMENT_DEDUP=0 disables.
+    if os.getenv("RF_MOMENT_DEDUP", "1") != "0":
+        kept = []
+        kept_secs = [s for s in (_clip_capture_seconds(a) for a in _excl) if s is not None]
+        for v in out:
+            s = _clip_capture_seconds(v["id"])
+            if s is not None and any(abs(s - k) <= 120 for k in kept_secs):
+                continue
+            kept.append(v)
+            if s is not None:
+                kept_secs.append(s)
+        out = kept
     return out
 
 
@@ -3922,6 +3982,41 @@ def _compute_publish_at(target: dt.date) -> str:
     return when.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _content_era_note(con: sqlite3.Connection, cuts: list) -> str:
+    """Season + pet-age era of the footage, from the clips' capture dates — so title/desc reflect
+    WHEN it was shot (PD 2026-07-16: a winter clip of 3-month baby Leo was titled '여름 오후').
+    Uses the EARLIEST clip as the era being shown. Empty when no dated clips."""
+    from collections import Counter
+    aids = [c.get("asset_id") for c in cuts if isinstance(c, dict) and c.get("asset_id")]
+    caps = []
+    for aid in aids:
+        try:
+            r = con.execute("SELECT captured_iso FROM assets WHERE asset_id=?", (aid,)).fetchone()
+            if r and r[0]:
+                caps.append(str(r[0]))
+        except Exception:
+            pass
+    if not caps:
+        return ""
+    _SEASON = {12: "겨울", 1: "겨울", 2: "겨울", 3: "봄", 4: "봄", 5: "봄",
+               6: "여름", 7: "여름", 8: "여름", 9: "가을", 10: "가을", 11: "가을"}
+    months = [int(c[5:7]) for c in caps if len(c) >= 7]
+    season = Counter(_SEASON.get(m, "") for m in months).most_common(1)[0][0] if months else ""
+    shoot = min(caps)                    # earliest clip = the era on screen
+    parts = []
+    if season:
+        parts.append(f"계절={season} (촬영 {shoot[:7]})")
+    try:
+        from agents import canon as _canon
+        for pet, ko in (("leo", "레오"), ("ryani", "랴니")):
+            era = _canon.age_era_at(pet, shoot)
+            if era:
+                parts.append(f"{ko}={era}")
+    except Exception:
+        pass
+    return " · ".join(parts)
+
+
 def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.date,
                          progress_cb: ProgressCb = None,
                          publish_at_iso: str | None = None) -> str | None:
@@ -3952,11 +4047,19 @@ def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.dat
     title = desc = None
     tags = []
     try:
-        from agents.channel_manager import make_packaging
+        from agents.channel_manager import make_packaging, actual_captions_for_video
         # payload top-level carries the concept (title/oneliner/cuts) for normal cards;
         # pinned cards have only draft.title — make_packaging degrades gracefully.
         concept = dict(payload)
         concept.setdefault("title", draft.get("title") or row["theme"])
+        # PD 2026-07-16: title/desc must match the ACTUAL video, not the concept (a '주방 대작전'
+        # concept rendered a nap → wrong title). Feed the final burned captions (VLM-grounded) so
+        # packaging titles from what's really on screen.
+        concept["actual_captions"] = actual_captions_for_video(out_path)
+        # PD 2026-07-16 ("내용 작성할 때 자꾸 시점 안볼래?"): the footage's ERA must anchor the copy —
+        # a winter clip of 3-month-old baby Leo was titled "여름 오후". Derive season + each pet's
+        # age from the clips' capture dates so packaging says '겨울 / 아기 레오', not the wrong season.
+        concept["content_era"] = _content_era_note(con, concept.get("cuts") or [])
         pkg = make_packaging(concept, card_id=card_id)
         title, desc = pkg["title"], pkg["description"]
         tags = [str(t).lstrip("#") for t in pkg["hashtags"]]

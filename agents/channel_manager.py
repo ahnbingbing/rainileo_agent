@@ -88,8 +88,39 @@ def _salvage_json(txt: str) -> dict:
         raise
 
 
+def actual_captions_for_video(video_path) -> list[str]:
+    """The FINAL on-screen captions of a rendered episode (VLM-rewritten post-render to match
+    the real footage) — the ground truth of what the video actually shows. Read from the render
+    workdir's captions.json, matched by the YYYYMMDD_HHMMSS stamp in the video filename. Empty on
+    any miss. PD 2026-07-16: title/description kept drifting because they came from the CONCEPT,
+    which the render diverges from (a '주방 대작전' concept rendered a nap); the burned captions are
+    grounded, so package from THEM."""
+    import re as _re, glob as _glob
+    try:
+        m = _re.search(r"_(\d{8}_\d{6})", Path(video_path).stem)
+        if not m:
+            return []
+        for wd in _glob.glob(str(ROOT / "data" / "tmp" / f"cameraman_*_{m.group(1)}")):
+            cap = json.loads((Path(wd) / "captions.json").read_text(encoding="utf-8"))
+            out = []
+            for tag, e in cap.items():
+                if tag.startswith("_") or not isinstance(e, dict):
+                    continue
+                for s in (e.get("scenes") or []):
+                    if isinstance(s, dict) and (s.get("ko") or "").strip():
+                        out.append(s["ko"].strip())
+            if out:
+                return out
+    except Exception:
+        pass
+    return []
+
+
 def _concept_brief(concept: dict) -> str:
-    """Compact, packaging-relevant view of the concept for the LLM."""
+    """Compact, packaging-relevant view of the concept for the LLM. When `actual_captions`
+    (the final burned, VLM-grounded on-screen text) is present, it is the AUTHORITATIVE content —
+    the packaging prompt titles from it, not the concept, so title/description match the video."""
+    actual = [c for c in (concept.get("actual_captions") or []) if isinstance(c, str) and c.strip()]
     caps = []
     for c in (concept.get("cuts") or [])[:8]:
         for s in (c.get("captions") or c.get("scenes") or []):
@@ -97,12 +128,16 @@ def _concept_brief(concept: dict) -> str:
             if ko:
                 caps.append(ko)
     brief = {
-        "title": concept.get("title"),
+        "concept_title_hint": concept.get("title"),
         "narrative_oneliner": concept.get("narrative_oneliner") or concept.get("logline"),
         "lane": concept.get("render_style") or concept.get("lane"),
         "subjects": concept.get("subjects"),
         "tone": concept.get("tone") or concept.get("tone_style"),
-        "captions": caps[:14],
+        # actual_captions = ground truth of what's on screen; captions = concept-stage (may drift)
+        "actual_on_screen_captions": actual[:16] if actual else None,
+        "captions": (actual or caps)[:14],
+        # era of the footage (season + pet age) — title/desc must respect it, never invent a season
+        "content_era": concept.get("content_era") or None,
     }
     return json.dumps(brief, ensure_ascii=False)
 

@@ -551,6 +551,10 @@ def launch_pipeline(target: dt.date, *,
             suffix = f" (재제안 {_att}/{max_repropose})" if _att > 1 else ""
             sp(f":bulb: {hhmm} {lane_lbl} 컨셉 생성 중...{suffix}")
             ctx = dict(context)
+            # PD 2026-07-16: a night clip (22:55) landed in the 12:30 lunch slot. Pass the slot's
+            # time-of-day so RF clip selection matches footage time to slot time (night→evening,
+            # day→daytime slots) — see producer _rf_long_candidates / _tod_matches_slot.
+            ctx["slot_hhmm"] = hhmm
             # The day's designated 시의성 AV slot: force a timely concept (see timely_av_slot
             # above). Exactly one AV/day carries this; the other AV proposes free-form.
             if lane == "ai_vtuber" and hhmm == timely_av_slot:
