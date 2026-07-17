@@ -1985,6 +1985,168 @@ def _household_knowledge_block(limit: int = 40) -> str:
         return ""
 
 
+# A caption carries a TIME anchor when it names WHEN the clip is from (past archive or
+# the present bookend). The post-render caption stages ground on WHAT the footage shows
+# and routinely drop this — flattening a memory-lane montage to present-tense (retro C13).
+_TEMPORAL_MARKER = re.compile(
+    r"\d+\s*년\s*전|\d+\s*개월\s*전|\d+\s*달\s*전|\d{4}\s*년|몇\s*해|그때|그\s*시절|어릴|어린\s*시절|"
+    r"아기\s*때|아기\s*(랴니|레오)|입양|첫\s*(날|해|낮잠|수영|산책|만남)|지금(은|도)?|여전히|오늘도|"
+    r"어느새|이젠|이제는|해가\s*갈수록|해마다|그로부터|"
+    r"years?\s*ago|months?\s*ago|back\s*then|as\s*a\s*(pup|puppy|kitten)|these\s*days|"
+    r"nowadays|\bstill\b|\btoday\b|first\s*(day|nap|swim|walk)",
+    re.IGNORECASE)
+
+
+def _asset_shoot_date(con, asset_id: str):
+    """Shoot date of an asset: assets.captured_iso, else parsed from the id's
+    `med_YYYY_MM_DD_` prefix (all iCloud clip ids encode the capture date, so this
+    works even when the DB row/captured_iso is missing). Returns a date or None."""
+    if not asset_id:
+        return None
+    if con is not None:
+        try:
+            row = con.execute("SELECT captured_iso FROM assets WHERE asset_id=?",
+                              (asset_id,)).fetchone()
+            if row and row[0]:
+                return dt.date.fromisoformat(str(row[0])[:10])
+        except Exception:
+            pass
+    m = re.search(r"(?:^|_)(\d{4})_(\d{2})_(\d{2})_", str(asset_id))
+    if m:
+        try:
+            return dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except Exception:
+            return None
+    return None
+
+
+def _fit_writer_caps(writer_caps: list, mp4: Path) -> list:
+    """Clamp the Writer's original caption scenes to the rendered clip's duration so a
+    reverted caption never overruns the (possibly retimed) clip."""
+    dur = 0.0
+    try:
+        if mp4.exists():
+            dur = float(subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=nw=1:nk=1", str(mp4)],
+                capture_output=True, text=True, timeout=15).stdout.strip() or 0)
+    except Exception:
+        dur = 0.0
+    out = []
+    for sc in writer_caps or []:
+        ko = (sc.get("ko") or "").strip()
+        if not ko:
+            continue
+        st = float(sc.get("start", 0.0) or 0.0)
+        en = float(sc.get("end", st + 2.5) or (st + 2.5))
+        if dur > 0:
+            en = min(en, round(dur - 0.05, 2))
+            st = min(st, max(0.0, en - 0.5))
+        if en <= st:
+            continue
+        out.append({"start": round(st, 2), "end": round(en, 2), "ko": ko,
+                    "en": (sc.get("en") or "").strip()})
+    return out or [dict(s) for s in (writer_caps or [])]
+
+
+def _enforce_memorylane_anchors(manifests: dict, anim_dir: Path,
+                                progress_cb=None, dry_run: bool = False) -> None:
+    """Deterministic memory-lane guarantee (retro C13). The post-render caption stages
+    (RF action-grounded / punch-up, AV VLM rewrite) ground on WHAT the footage shows and
+    drop the WHEN — so a multi-year montage (2016→2025 낮잠) ships every cut in present
+    tense and the 10-year spine collapses (PD: 10년 전 클립에 현재형 캡션 → 시간 안 맞음).
+    The prompt already asks for the anchor at the ends (§메모리레인) but the LLM ignores
+    it; enforce it. For a multi-year memory-lane episode, restore the Writer's temporal
+    OPENER and CLOSER captions when the regen stripped their time anchor. Middle cuts keep
+    their action-grounded captions (anchor belongs at 처음·끝, not every cut). Lane-shared;
+    no-op for a same-day episode or when the Writer never wrote an anchor."""
+    if dry_run:
+        return
+    cap_path = Path(manifests.get("captions") or "")
+    concept_cuts = (manifests.get("concept_cuts")
+                    or (manifests.get("concept") or {}).get("cuts") or [])
+    if not cap_path.exists() or not concept_cuts:
+        return
+    try:
+        cap = json.loads(cap_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    ordered_tags = [k for k in cap.keys()
+                    if not k.startswith("_") and isinstance(cap.get(k), dict)]
+    if not ordered_tags:
+        return
+    tgt = None
+    for src in ((manifests.get("concept") or {}), manifests):
+        for k in ("date", "target_date", "episode_date"):
+            v = src.get(k)
+            if v:
+                try:
+                    tgt = dt.date.fromisoformat(str(v)[:10]); break
+                except Exception:
+                    pass
+        if tgt:
+            break
+    if tgt is None:
+        tgt = dt.date.today()
+    con = None
+    try:
+        import sqlite3 as _sql
+        _dbp = ROOT / "data" / "agent.db"
+        if _dbp.exists():
+            con = _sql.connect(str(_dbp))
+    except Exception:
+        con = None
+    live = []
+    for idx, tag in enumerate(ordered_tags):
+        cc = concept_cuts[idx] if idx < len(concept_cuts) else {}
+        if cc.get("function") == "wink_ending":
+            continue
+        d0 = _asset_shoot_date(con, cc.get("asset_id") or cc.get("secondary_asset_id"))
+        ya = round((tgt - d0).days / 365.25, 1) if d0 else None
+        live.append({"tag": tag, "years_ago": ya,
+                     "writer_caps": cc.get("captions") or []})
+    if con is not None:
+        try:
+            con.close()
+        except Exception:
+            pass
+    dated = [x for x in live if x["years_ago"] is not None]
+    if len(dated) < 2:
+        return
+    yrs = [x["years_ago"] for x in dated]
+    if max(yrs) < 2 and (max(yrs) - min(yrs)) < 2:
+        return  # not a multi-year memory-lane — leave present-tense captions alone
+
+    def _has_marker(scenes):
+        return any(_TEMPORAL_MARKER.search((sc.get("ko") or "") + " " + (sc.get("en") or ""))
+                   for sc in (scenes or []))
+
+    restored = []
+    for role, x in (("opener", live[0]), ("closer", live[-1])):
+        if not x or (role == "closer" and x is live[0]):
+            continue
+        # opener must be an actual past clip; a recent-clip closer still gets its
+        # present bookend ("지금도") restored if the Writer wrote one and it was dropped.
+        if role == "opener" and (x["years_ago"] or 0) < 1.0:
+            continue
+        cur = cap.get(x["tag"], {}).get("scenes") or []
+        if _has_marker(cur) or not _has_marker(x["writer_caps"]):
+            continue
+        cap[x["tag"]]["scenes"] = _fit_writer_caps(x["writer_caps"],
+                                                   anim_dir / f"{x['tag']}.mp4")
+        restored.append(f"{x['tag']}({role})")
+    if restored:
+        try:
+            cap_path.write_text(json.dumps(cap, ensure_ascii=False, indent=2),
+                                encoding="utf-8")
+        except Exception as e:
+            log.warning("memory-lane anchor write-back failed: %s", e)
+            return
+        log.info("memory-lane anchor restore: %s", ", ".join(restored))
+        if progress_cb:
+            progress_cb(f":hourglass_flowing_sand: 메모리레인 시점 앵커 복원 — {', '.join(restored)}")
+
+
 def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path,
                                  progress_cb=None, dry_run: bool = False) -> None:
     """PD 2026-07-06 (Layer 2 — upstream): write RF captions FROM the clip's observed
@@ -5282,6 +5444,11 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
     if not dry_run:
         _prune_missing_cuts(manifests, anim_dir, progress_cb)
 
+    # Step 1b-anchor: the caption regen above grounds on WHAT the footage shows and drops
+    # the WHEN — deterministically restore the memory-lane time spine (opener/closer) that
+    # the Writer set, before burn (retro C13). No-op unless multi-year memory-lane.
+    _enforce_memorylane_anchors(manifests, anim_dir, progress_cb, dry_run)
+
     # Step 1c: burn captions on trimmed clips.
     manifests["style"] = "real_footage"  # enables caption reading-time fit (#4)
     # PD 2026-06-17: per-EPISODE captioned dir, NOT the shared data/output/
@@ -7665,6 +7832,11 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                 manifests["_edit_plan"] = _plan
         except Exception as ex:
             log.warning("AV editor pass failed (keeping render): %s", ex)
+
+    # Step 4d-anchor: same memory-lane time-spine guarantee as RF (retro C13) — the VLM
+    # rewrite grounds on what's on screen and can drop the Writer's 과거⇄현재 anchor on an
+    # AV memory-lane; restore opener/closer before burn. No-op unless multi-year.
+    _enforce_memorylane_anchors(manifests, anim_dir, progress_cb, dry_run)
 
     # Step 5: burn captions (손글씨 기본, Director font_override 가능)
     # PD 2026-06-17: per-EPISODE captioned dir (not the shared junk-drawer).
