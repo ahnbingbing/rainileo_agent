@@ -109,9 +109,24 @@ def check_card(con, row) -> dict | None:
     return res
 
 
+def _post_slack(text: str) -> None:
+    import os
+    try:
+        from slack_sdk import WebClient
+        ch = os.environ.get("SLACK_WORKROOM_CHANNEL")
+        tok = os.environ.get("SLACK_BOT_TOKEN")
+        if ch and tok:
+            WebClient(token=tok).chat_postMessage(channel=ch, text=text[:2900])
+            print("posted to slack")
+    except Exception as e:
+        print(f"slack post failed: {e}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", default=dt.datetime.now(KST).date().isoformat())
+    ap.add_argument("--slack", action="store_true",
+                    help="post to the workroom channel when a memory-lane episode is found")
     a = ap.parse_args()
     con = sqlite3.connect(str(DB))
     con.row_factory = sqlite3.Row
@@ -145,6 +160,20 @@ def main() -> int:
     fails = [r for r in found if r.get("verdict") == "FAIL"]
     print(f"\nSUMMARY: {len(found)} memory-lane, "
           f"{len(found)-len(fails)} PASS, {len(fails)} FAIL")
+
+    if a.slack:
+        icon = ":white_check_mark:" if not fails else ":rotating_light:"
+        lines = [f"{icon} *메모리레인 앵커 스팟체크 {a.date}* — "
+                 f"{len(found)}편 (PASS {len(found)-len(fails)} / FAIL {len(fails)})"]
+        for r in found:
+            v = r.get("verdict")
+            lines.append(f"• [{v}] {r.get('lane','')} '{(r.get('title') or '')[:34]}' "
+                         f"({r.get('span','?')})"
+                         + (f" — opener={r.get('opener_anchor')} closer={r.get('closer_anchor')}"
+                            if v in ("PASS", "FAIL") else ""))
+            if v == "FAIL":
+                lines.append(f"    opener: {r.get('opener_caps')}")
+        _post_slack("\n".join(lines))
     return 0
 
 
