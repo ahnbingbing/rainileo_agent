@@ -14,6 +14,18 @@ assets/branding/
 *.jpg
 *.jpeg
 *.png
+# Character reference images are load-bearing pipeline assets (they anchor the pets'
+# appearance in AV still-gen). Version-control them so they deploy to the VM — the
+# blanket *.png ignore left them off the VM, so AV Leo drifted grey/white with no real
+# orange anchor (retro: AV0800 2026-07-19). Keep the set the pipeline actually reads.
+!assets/character_ref/base_both.png
+!assets/character_ref/base_both_clean.png
+!assets/character_ref/leo_real.png
+!assets/character_ref/ryani_solo.png
+!assets/character_ref/ryani_real.png
+!assets/character_ref/official_ryani_leo.png
+!assets/character_ref/official_ryani_leo_cafe.png
+!assets/character_ref/ryani_wink.png
 youtube/token.json
 youtube/client_secret.json
 .DS_Store
