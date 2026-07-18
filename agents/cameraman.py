@@ -5607,6 +5607,25 @@ def run_cartoon_sticker_pipeline(manifests: dict, card: dict, work_dir: Path,
         concept_ref = None
         if _lock_scene and os.getenv("AV_CONCEPT_REF", "0") != "0":
             concept_ref = _build_concept_char_ref(payload, regen_dir, progress_cb)
+        # Anchor every cut's IDENTITY to the clean real character reference so GPT can't
+        # drift the pets' coat/markings — retro: AV0800 (2026-07-19) rendered Leo as a
+        # grey/brown-and-white tabby instead of the ginger orange he is, because the
+        # still-gen seeded cut1 from a candid pose photo (weak colour anchor) and the
+        # style-anchor chain then propagated that drift to every cut. A clean front-facing
+        # both-pets studio ref (base_both.png) holds Leo's orange + Ryani's markings far
+        # better (validated: same prompt, base_both ref → correct orange Leo). Use it as a
+        # CHARACTER LOCK — identity from the ref, scene/pose still from each cut's own
+        # prompt — so it also works for multi-location episodes. Skipped when a
+        # concept-grounded ref already exists. Gate: AV_CLEAN_CHAR_REF (default on).
+        if concept_ref is None and os.getenv("AV_CLEAN_CHAR_REF", "1") != "0":
+            _clean_ref = ROOT / "assets" / "character_ref" / "base_both.png"
+            if not _clean_ref.exists():
+                _clean_ref = ROOT / "assets" / "character_ref" / "base_both_clean.png"
+            if _clean_ref.exists():
+                concept_ref = _clean_ref
+                _lock_scene = False  # character-lock (base_both is white-bg): scene per-cut
+                if progress_cb:
+                    progress_cb(":art: 캐릭터 앵커 = 실제 레퍼런스(base_both) — 색·무늬 드리프트 방지")
         failures = generate_batch(
             Path(manifests["regen_prompts"]),
             input_dir if input_dir.exists() else None,
