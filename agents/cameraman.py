@@ -1954,6 +1954,13 @@ _RF_ACTION_SYS = (
     "doesn't show (do NOT say '마킹/marks' over a WALKING beat — a dog marks when it "
     "STOPS and squats/lifts a leg at a pole/curb, so put a marking line only on that "
     "squat/sit beat).\n"
+    "• OBJECT INTERACTION beats the generic default: if the pet has its MOUTH or PAWS ON an "
+    "object — grabbing/biting/pulling/carrying a stick, branch, leaf, toy, blanket — caption "
+    "THAT specific act (물다/문다/당기다/물고 간다/끌고 간다), NOT '냄새 맡는다/sniffing'. A snout "
+    "buried in grass with a branch in the mouth is GRABBING/tugging the branch, not smelling "
+    "dirt. Look at what the mouth/paws are DOING, not just where the head is. Don't let the "
+    "episode's theme (e.g. a '킁킁이/sniffing' concept) override a beat that clearly shows a "
+    "different action — caption the FRAME, not the concept.\n"
     "• Name our pets (레오/랴니), never generic '고양이/강아지'. A pet's playful inner voice "
     "(랴니 속마음: '나도 마킹! 나도 왔다감!') is welcome WHEN it fits that beat's action.\n"
     "• NO over-specification the frames can't confirm: no exact clock time (한밤중/자정 — "
@@ -2279,6 +2286,106 @@ def _rf_subject_exit_tail_trim(work_dir: Path, manifests: dict, anim_dir: Path,
         log.info("rf subject-exit tail trim: %s", ", ".join(trimmed))
         if progress_cb:
             progress_cb(f":scissors: 주체 이탈 tail 트림 — {', '.join(trimmed)}")
+
+
+def _decide_incoherent_drops(cuts: list, memory_lane_min_days: int = 730,
+                             diff_days: int = 2):
+    """PURE decision (unit-tested): given ordered RF cuts [{tag,date,activity}], return the
+    tags to DROP as an incoherent stitch (retro C14 #2 / RF1800: a 2018-10-29 field-explore
+    cut + an unrelated 2018-10-07 dressed-walk cut fused into one episode). A coherent RF is
+    either ONE outing (same/adjacent day) or a real memory-lane (cuts span years) or a
+    same-activity multi-day compilation — those are EXEMPT. Only a cut from a DIFFERENT
+    outing (≥ diff_days from cut1) doing a DIFFERENT activity is dropped; cut1 (theme-setter)
+    is always kept. Conservative on purpose: undated cuts, span ≥ memory_lane_min_days (clear
+    memory-lane), or same-activity are never dropped, so legit compilations/memory-lanes pass."""
+    dated = [c for c in cuts if c.get("date")]
+    if len(dated) < 2:
+        return []
+    span = (max(c["date"] for c in dated) - min(c["date"] for c in dated)).days
+    if span >= memory_lane_min_days:
+        return []                       # spans years → real memory-lane, exempt
+    first = next((c for c in cuts if c.get("date")), None)
+    if not first:
+        return []
+    fa = (first.get("activity") or "").strip().lower()
+    drops = []
+    for c in cuts:
+        if c is first or not c.get("date"):
+            continue
+        if abs((c["date"] - first["date"]).days) < diff_days:
+            continue                    # same/adjacent day → same outing, keep
+        ca = (c.get("activity") or "").strip().lower()
+        if ca and fa and ca == fa:
+            continue                    # same activity across days → compilation, keep
+        drops.append(c.get("tag"))
+    return [t for t in drops if t]
+
+
+def _rf_cross_cut_coherence_gate(manifests: dict, anim_dir: Path,
+                                 progress_cb: ProgressCb = None) -> None:
+    """RF cross-cut COHERENCE gate (retro C14 #2). Drops a later cut that belongs to a
+    different outing (different day) doing a different activity than cut1, with no memory-lane
+    through-line — the incoherent 'two unrelated clips fused' case (RF1800). Reuses the
+    face-gate drop bookkeeping. Never fails on a 1-cut result (a single coherent clip is a
+    valid RF). Env RF_COHERENCE_GATE=0 disables; date/activity from asset_id + assets row."""
+    if os.getenv("RF_COHERENCE_GATE", "1") == "0":
+        return
+    cuts_meta = manifests.get("cuts") or []
+    concept_cuts = manifests.get("concept_cuts") or (manifests.get("concept") or {}).get("cuts") or []
+    if len(cuts_meta) < 2:
+        return
+    con = None
+    try:
+        import sqlite3 as _sql
+        dbp = ROOT / "data" / "agent.db"
+        if dbp.exists():
+            con = _sql.connect(str(dbp))
+    except Exception:
+        con = None
+    info = []
+    for i, item in enumerate(cuts_meta):
+        tag = item.get("tag")
+        cc = concept_cuts[i] if i < len(concept_cuts) else {}
+        aid = cc.get("asset_id") or item.get("asset_id")
+        d = _asset_shoot_date(con, aid)
+        act = ""
+        if con is not None and aid:
+            try:
+                r = con.execute("SELECT activity FROM assets WHERE asset_id=?", (aid,)).fetchone()
+                act = (r[0] if r else "") or ""
+            except Exception:
+                act = ""
+        info.append({"tag": tag, "date": d, "activity": act})
+    if con is not None:
+        try:
+            con.close()
+        except Exception:
+            pass
+    drop = set(_decide_incoherent_drops(info))
+    if not drop:
+        return
+    manifests["cuts"] = [c for c in cuts_meta if c.get("tag") not in drop]
+    for key in ("concept_cuts",):
+        lst = manifests.get(key)
+        if isinstance(lst, list):
+            manifests[key] = [c for c in lst
+                              if (c.get("tag") or c.get("cut_tag")) not in drop]
+    for t in drop:
+        try:
+            (anim_dir / f"{t}.mp4").unlink(missing_ok=True)
+        except Exception:
+            pass
+        try:
+            p = Path(manifests.get("captions", ""))
+            if p.exists():
+                d = json.loads(p.read_text(encoding="utf-8"))
+                d.pop(t, None)
+                p.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+    log.info("rf coherence gate: dropped incoherent cut(s) %s", ", ".join(sorted(drop)))
+    if progress_cb:
+        progress_cb(f":broken_chain: 컷간 일관성 — 무관 outing 컷 드롭: {', '.join(sorted(drop))}")
 
 
 def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path,
@@ -5528,6 +5635,14 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
             _rf_subject_exit_tail_trim(work_dir, manifests, anim_dir, progress_cb)
         except Exception as ex:
             log.warning("subject-tail-trim skipped: %s", ex)
+
+    # Step 1a-coherence: drop a cut fused from a different outing/activity with no
+    # memory-lane through-line (retro C14 #2 / RF1800) — before captioning.
+    if not dry_run:
+        try:
+            _rf_cross_cut_coherence_gate(manifests, anim_dir, progress_cb)
+        except Exception as ex:
+            log.warning("coherence-gate skipped: %s", ex)
 
     # Step 1b: VLM post-render check + caption rewrite (same agent as ai_vtuber).
     # PD 2026-06-06 ROOT CAUSE FIX: for single-pass real_footage, the captions
