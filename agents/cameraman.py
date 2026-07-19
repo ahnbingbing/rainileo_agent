@@ -2147,6 +2147,140 @@ def _enforce_memorylane_anchors(manifests: dict, anim_dir: Path,
             progress_cb(f":hourglass_flowing_sand: 메모리레인 시점 앵커 복원 — {', '.join(restored)}")
 
 
+def _decide_tail_trim(times: list, visible: list, dur: float,
+                      tail_min: float = 3.0, min_keep_frac: float = 0.4):
+    """PURE decision (unit-tested): given per-time pet-visibility samples over a `dur`-second
+    clip, return a trimmed duration when the pet is present EARLY but then EXITS frame for a
+    contiguous tail ≥ tail_min (retro C14 / RF0800: a 17s clip panned off Ryani to the owner
+    for its last 6s while captions kept narrating her). Return None (no trim) otherwise.
+    Conservative on purpose — misfiring would gut good footage: requires the pet visible in
+    the first third, an UNBROKEN absent tail, and keeping ≥ min_keep_frac of the clip.
+    Uncertainty (VLM error) is fed as visible=True upstream, so we never trim on doubt."""
+    if dur <= tail_min or len(times) < 3:
+        return None
+    order = sorted(range(len(times)), key=lambda i: times[i])
+    times = [times[i] for i in order]
+    visible = [bool(visible[i]) for i in order]
+    if not any(v for t, v in zip(times, visible) if t <= dur / 3.0):
+        return None  # not present early → whole-cut-absent case, that's the prominence gate
+    vis_times = [t for t, v in zip(times, visible) if v]
+    if not vis_times:
+        return None
+    last_vis = max(vis_times)
+    if any(v for t, v in zip(times, visible) if t > last_vis):
+        return None  # (last_vis is the max visible; defensive)
+    if (dur - last_vis) < tail_min:
+        return None  # absent tail too short to bother
+    new_dur = round(last_vis + 0.6, 2)
+    if new_dur / dur < min_keep_frac or new_dur >= dur - 0.3:
+        return None
+    return new_dur
+
+
+def _rf_subject_exit_tail_trim(work_dir: Path, manifests: dict, anim_dir: Path,
+                               progress_cb=None, dry_run: bool = False) -> None:
+    """RF within-clip subject-CONTINUITY gate (retro C14 #1). The prominence gate only asks
+    'is our pet in SOME frame of the cut', so a long clip that pans OFF the pet partway
+    (RF0800) passes and ships footage where our pet isn't the subject while captions still
+    narrate it. This samples each RF cut across its length and, when the pet is present early
+    but exits for a contiguous tail, TRIMS the clip to the last pet-visible moment (and drops
+    captions past it). Runs BEFORE the caption stages so they fit the trimmed clip. Env
+    RF_SUBJECT_TAIL_TRIM=0 disables; silent + conservative (never trims on VLM error)."""
+    if dry_run or os.getenv("RF_SUBJECT_TAIL_TRIM", "1") == "0":
+        return
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    cap_path = Path(manifests.get("captions") or "")
+    if not api_key or not cap_path.exists():
+        return
+    try:
+        cap = json.loads(cap_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    tags = [k for k in cap if not k.startswith("_") and isinstance(cap.get(k), dict)]
+    if not tags:
+        return
+    try:
+        from google import genai as _g
+        from google.genai import types as _gt
+        client = _g.Client(api_key=api_key, http_options=_gt.HttpOptions(
+            timeout=int(os.getenv("VLM_TIMEOUT_MS", "90000"))))
+        model = os.getenv("VLM_MODEL", "gemini-2.5-flash")
+    except Exception as e:
+        log.warning("subject-tail-trim: VLM init failed: %s", e)
+        return
+    _sys = ("Is one of OUR pets visible in this single frame? Our pets: RYANI = a small BLACK "
+            "French bulldog (no tail), LEO = an ORANGE tabby cat. Answer ONLY JSON "
+            "{\"pet_visible\":bool}. A clear frame showing only a person/hand/water/scenery "
+            "with NO cat and NO dog = false; if any part of our cat or dog is in frame = true.")
+    import tempfile as _tf
+    tail_min = float(os.getenv("RF_TAIL_MIN_SEC", "3.0"))
+    trimmed = []
+    for tag in tags:
+        mp4 = anim_dir / f"{tag}.mp4"
+        if not mp4.exists():
+            continue
+        try:
+            dur = float(subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=nw=1:nk=1", str(mp4)],
+                capture_output=True, text=True, timeout=15).stdout.strip() or 0)
+        except Exception:
+            continue
+        if dur < tail_min + 3.0:          # too short for a meaningful tail
+            continue
+        n = max(5, min(9, int(dur / 2.0)))
+        times = [round(0.4 + (dur - 0.8) * i / (n - 1), 2) for i in range(n)]
+        visible = []
+        with _tf.TemporaryDirectory() as td:
+            for t in times:
+                fp = Path(td) / f"v{t:.1f}.jpg"
+                subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{t:.2f}",
+                                "-i", str(mp4), "-frames:v", "1", "-q:v", "3", str(fp)],
+                               check=False, timeout=15)
+                v = True                   # default present → never trim on missing/uncertain
+                if fp.exists() and fp.stat().st_size > 1000:
+                    try:
+                        resp = client.models.generate_content(
+                            model=model,
+                            contents=[_gt.Part.from_bytes(data=fp.read_bytes(),
+                                                          mime_type="image/jpeg"),
+                                      "pet visible?"],
+                            config=_gt.GenerateContentConfig(
+                                system_instruction=_sys, response_mime_type="application/json",
+                                thinking_config=_gt.ThinkingConfig(thinking_budget=0)))
+                        v = bool(json.loads((resp.text or "{}").strip()).get("pet_visible", True))
+                    except Exception:
+                        v = True
+                visible.append(v)
+        new_dur = _decide_tail_trim(times, visible, dur, tail_min=tail_min)
+        if not new_dur:
+            continue
+        tmp = mp4.with_suffix(".trim.mp4")
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(mp4), "-t",
+                        f"{new_dur:.2f}", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                        "-crf", "19", "-an", str(tmp)], check=False)
+        if not (tmp.exists() and tmp.stat().st_size > 5000):
+            continue
+        os.replace(tmp, mp4)
+        kept = [s for s in (cap[tag].get("scenes") or [])
+                if float(s.get("start", 0) or 0) < new_dur - 0.3]
+        for s in kept:
+            if float(s.get("end", 0) or 0) > new_dur:
+                s["end"] = round(new_dur - 0.05, 2)
+        if kept:
+            cap[tag]["scenes"] = kept
+        trimmed.append(f"{tag} {dur:.1f}→{new_dur:.1f}s")
+    if trimmed:
+        try:
+            cap_path.write_text(json.dumps(cap, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as e:
+            log.warning("subject-tail-trim write-back failed: %s", e)
+            return
+        log.info("rf subject-exit tail trim: %s", ", ".join(trimmed))
+        if progress_cb:
+            progress_cb(f":scissors: 주체 이탈 tail 트림 — {', '.join(trimmed)}")
+
+
 def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path,
                                  progress_cb=None, dry_run: bool = False) -> None:
     """PD 2026-07-06 (Layer 2 — upstream): write RF captions FROM the clip's observed
@@ -5386,6 +5520,14 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
     # FACE after the crop (PD 2026-06-12: a face leaked into a render).
     if not dry_run:
         _rf_face_gate(manifests, anim_dir, progress_cb)
+
+    # Step 1a-continuity: trim a clip that pans OFF our pet for its tail (retro C14 #1 /
+    # RF0800) — runs BEFORE captioning so the caption stages fit the trimmed clip.
+    if not dry_run:
+        try:
+            _rf_subject_exit_tail_trim(work_dir, manifests, anim_dir, progress_cb)
+        except Exception as ex:
+            log.warning("subject-tail-trim skipped: %s", ex)
 
     # Step 1b: VLM post-render check + caption rewrite (same agent as ai_vtuber).
     # PD 2026-06-06 ROOT CAUSE FIX: for single-pass real_footage, the captions
