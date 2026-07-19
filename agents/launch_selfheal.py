@@ -247,6 +247,13 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
     diag_by = {(d.get("lane"), d.get("slot")): d for d in diagnoses}
     lines = [f":checkered_flag: *배치 써머리* {target.isoformat()} — 성공 "
              f"{len(done)}/{len(want)}" + ("" if failed else " (전부 성공 🎉)")]
+    # PD 2026-07-19: an EMPTY slot (self-heal exhausted → no video) used to be just one
+    # line in the digest and got missed until PD spotted it by hand. Lead with a loud,
+    # actionable alert naming the empty slots so a deficient batch can't slip by silently.
+    if failed:
+        _empties = ", ".join(f"{h} {_lbl(l)}" for (l, h) in failed)
+        lines.insert(1, f":rotating_light: *빈 슬롯 {len(failed)}개 — 손수정 필요*: {_empties} "
+                        f"(self-heal이 {max_rounds}회 시도 후 junk 대신 비움)")
     for (l, h), v in done.items():
         lines.append(f"  ✅ {h} {_lbl(l)} — `{v.get('video_id', '-')}` "
                      f"(공개 {v.get('publish_at', '?')})")
