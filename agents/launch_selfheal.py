@@ -41,7 +41,18 @@ KST = dt.timezone(dt.timedelta(hours=9))
 # animated mp4", …); those disambiguate a crash from a pure giri rejection. The bare
 # "렌더 실패 —" of the generic line has no colon and won't match, so a genuine giri
 # rejection still falls through to giri_fail.
+# PD 2026-07-20 ("7/21 RF 예약이 하나도 없어"): a DETERMINISTIC content-quality gate that
+# guts an episode below viability (RF coherence gate drops unrelated-outing cuts → too short;
+# RF face gate drops face-leaking cuts → too few cuts) fails HARD, and self-heal used to answer
+# with a futile SAME-concept re-render (render_error / asset_not_found paths) — the gate re-drops
+# the identical cuts every round, so all 3 rounds die and the slot ships empty. Unlike a transient
+# asset-download miss, retrying the same clips can NEVER recover; only a FRESH concept (different
+# clips) can. So this class is matched FIRST and routed to the proven fresh-reroll path below.
+CONTENT_GUTTED_PAT = (r"무관 outing 컷 드롭|컷간 일관성.*드롭|"
+                      r"too few cuts left after dropping face-leaking|"
+                      r"real_footage too short|refusing to publish a stub")
 FAILURE_PATTERNS = [
+    ("content_gutted",  CONTENT_GUTTED_PAT),
     ("asset_not_found", r"not found|Preprocessing photos.*failed|원본 재다운로드.*실패|No candidates"),
     ("validator_block", r"Validator blocked|건너뜀|블록"),
     ("face_defect",     r"얼굴 무결성|얼굴 왜곡|face[_ ]?defect|\borb\b"),
@@ -67,6 +78,12 @@ def _remediate(category: str, round_no: int) -> str:
     NO retry bump — re-rendering them ×N compounded into the ~$100 runaway. They are
     left for the next self-heal round at the SAME (low) render budget, and the hard
     SEEDANCE_MAX_CALLS ceiling backstops the whole run."""
+    if category == "content_gutted":
+        # A deterministic content gate gutted the episode — the SAME clips will re-drop the
+        # same way, so retrying this concept is futile. Widen re-propose AND (below) route to
+        # a fresh-concept reroll. Cheap for RF; the whole point is different clips.
+        os.environ["AV_BLOCK_REPROPOSE"] = str(min(8, 5 + round_no))
+        return "결정론 게이트 gutting — 완전히 새 컨셉(다른 클립)으로 재제안 (같은 컨셉 재렌더 무의미)"
     if category in ("asset_not_found", "validator_block", "no_concept"):
         # cheap (pre-Seedance) — widen re-propose to find a renderable concept
         os.environ["AV_BLOCK_REPROPOSE"] = str(min(8, 5 + round_no))
@@ -210,14 +227,21 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
                 # terminal — so a Giri/face reject fills the slot on a new concept instead of
                 # leaving it empty. The failed concept is now a card in the exclude set, so the
                 # re-roll's brainstorm won't repeat it.
-                _reroll_now = (cat in EXPENSIVE and reroll_on
+                # PD 2026-07-20: a content_gutted fail (deterministic gate over-drop → non-viable)
+                # ALSO reroll to a fresh concept — but EVERY remaining round, not just once: the
+                # concept is cheap to re-render and the ONLY recovery is different clips, so keep
+                # cycling the pool until a coherent/face-clean concept lands (or rounds run out).
+                _exp_reroll = (cat in EXPENSIVE and reroll_on
                                and (lane, slot) not in rerolled and rnd < max_rounds)
+                _content_reroll = (cat == "content_gutted" and reroll_on and rnd < max_rounds)
+                _reroll_now = _exp_reroll or _content_reroll
                 is_terminal = cat in EXPENSIVE and not _reroll_now
                 fail_info[(lane, slot)] = {"cat": cat, "rem": rem, "terminal": is_terminal}
                 if _reroll_now:
                     rerolled.add((lane, slot))
-                    cap(f":game_die: [self-heal] {slot} {lane} 비용 실패 → **완전히 새 컨셉으로 1회 재롤** "
-                        f"(같은 컨셉 재렌더 아님)")
+                    _why = ("결정론 게이트 gutting" if cat == "content_gutted" else "비용 실패")
+                    cap(f":game_die: [self-heal] {slot} {lane} {_why} → **완전히 새 컨셉으로 재롤** "
+                        f"(같은 컨셉 재렌더 아님 — 다른 클립)")
                 elif cat in EXPENSIVE:
                     terminal.add((lane, slot))
                     cap(f":coin: [self-heal] {slot} {lane} 비용 발생 실패 → 재렌더 중단 "
