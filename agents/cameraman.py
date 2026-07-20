@@ -7668,21 +7668,29 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                     try:
                         _srccuts = (concept_obj or {}).get("cuts") or []
                         # If the concept cuts carry no descriptions (asset-aligned/stripped in this
-                        # path), fall back to the DB card payload — the un-stripped source of truth
-                        # (dict(row) from _load_card always has payload_json with the full cuts).
+                        # path), fall back to the DB card payload — the un-stripped source of truth.
+                        # card may be a sqlite.Row OR a dict here; dict(card) normalizes both (a bare
+                        # .get on a Row raised AttributeError → silently swallowed → no prop refs).
                         if not any(str((_c or {}).get("description") or "") for _c in _srccuts):
                             import json as _json
-                            _pl = _json.loads((card or {}).get("payload_json") or "{}")
+                            _cardd = dict(card) if card is not None else {}
+                            _pl = _json.loads(_cardd.get("payload_json") or "{}")
                             _srccuts = (_pl.get("cuts") or (_pl.get("concept") or {}).get("cuts")
                                         or _srccuts)
                         _orig_cut = next((oc for oc in _srccuts if oc.get("tag") == tag),
                                          _srccuts[i] if i < len(_srccuts) else {}) or {}
-                    except Exception:
+                    except Exception as _pe:
+                        log.warning("prop src resolve failed: %s", _pe)
                         _orig_cut = {}
                     _cut_text = ((prompt or "") + " " + str(cc.get("motion_prompt") or "")
                                  + " " + str(cc.get("description") or "")
                                  + " " + str(_orig_cut.get("description") or "")
                                  + " " + str(_orig_cut.get("motion_prompt") or "")).lower()
+                    log.info("PROPDBG %s cardtype=%s srccuts=%d origdesc=%d har=%s bag=%s",
+                             tag, type(card).__name__,
+                             len((concept_obj or {}).get("cuts") or []),
+                             len(str(_orig_cut.get("description") or "")),
+                             "하네스" in _cut_text, "가방" in _cut_text)
                     with _db() as _con:
                         _props = _con.execute(
                             "SELECT name, file_path FROM object_refs "
