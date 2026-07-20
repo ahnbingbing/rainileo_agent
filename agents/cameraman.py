@@ -7664,33 +7664,31 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                     # prop-ref auto-detect silently found nothing and the harness/bag drifted (AV
                     # X5Le). Also scan the ORIGINAL concept cut (kept intact in manifests["concept"],
                     # matched by tag) so a prop named only in the description is still detected.
+                    # Resolve the ORIGINAL cut (with the Korean description where prop names live)
+                    # straight from the DB card payload — the asset-aligned `cc` here is stripped of
+                    # descriptions. _load_card returns dict(row) so payload_json is always present;
+                    # dict(card) normalizes a sqlite.Row too. Bulletproof source of truth.
                     _orig_cut = {}
+                    _dbg = ""
                     try:
-                        _srccuts = (concept_obj or {}).get("cuts") or []
-                        # If the concept cuts carry no descriptions (asset-aligned/stripped in this
-                        # path), fall back to the DB card payload — the un-stripped source of truth.
-                        # card may be a sqlite.Row OR a dict here; dict(card) normalizes both (a bare
-                        # .get on a Row raised AttributeError → silently swallowed → no prop refs).
-                        if not any(str((_c or {}).get("description") or "") for _c in _srccuts):
-                            import json as _json
-                            _cardd = dict(card) if card is not None else {}
-                            _pl = _json.loads(_cardd.get("payload_json") or "{}")
-                            _srccuts = (_pl.get("cuts") or (_pl.get("concept") or {}).get("cuts")
-                                        or _srccuts)
-                        _orig_cut = next((oc for oc in _srccuts if oc.get("tag") == tag),
-                                         _srccuts[i] if i < len(_srccuts) else {}) or {}
+                        import json as _json
+                        _cardd = dict(card) if card is not None else {}
+                        _pl = _json.loads(_cardd.get("payload_json") or "{}")
+                        _pcuts = _pl.get("cuts") or (_pl.get("concept") or {}).get("cuts") or []
+                        _orig_cut = next((oc for oc in _pcuts if oc.get("tag") == tag),
+                                         _pcuts[i] if i < len(_pcuts) else {}) or {}
+                        _dbg = ("cardtype=%s pcuts=%d desc=%d"
+                                % (type(card).__name__, len(_pcuts),
+                                   len(str(_orig_cut.get("description") or ""))))
                     except Exception as _pe:
-                        log.warning("prop src resolve failed: %s", _pe)
+                        _dbg = "ERR %r" % (_pe,)
                         _orig_cut = {}
                     _cut_text = ((prompt or "") + " " + str(cc.get("motion_prompt") or "")
                                  + " " + str(cc.get("description") or "")
-                                 + " " + str(_orig_cut.get("description") or "")
-                                 + " " + str(_orig_cut.get("motion_prompt") or "")).lower()
-                    log.info("PROPDBG %s cardtype=%s srccuts=%d origdesc=%d har=%s bag=%s",
-                             tag, type(card).__name__,
-                             len((concept_obj or {}).get("cuts") or []),
-                             len(str(_orig_cut.get("description") or "")),
-                             "하네스" in _cut_text, "가방" in _cut_text)
+                                 + " " + str(_orig_cut.get("description") or "")).lower()
+                    if progress_cb:
+                        progress_cb("PROPDBG %s %s har=%s bag=%s"
+                                    % (tag, _dbg, "하네스" in _cut_text, "가방" in _cut_text))
                     with _db() as _con:
                         _props = _con.execute(
                             "SELECT name, file_path FROM object_refs "
