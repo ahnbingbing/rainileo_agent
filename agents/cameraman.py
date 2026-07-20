@@ -7669,7 +7669,6 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                     # descriptions. _load_card returns dict(row) so payload_json is always present;
                     # dict(card) normalizes a sqlite.Row too. Bulletproof source of truth.
                     _orig_cut = {}
-                    _dbg = ""
                     try:
                         import json as _json
                         _cardd = dict(card) if card is not None else {}
@@ -7677,40 +7676,28 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                         _pcuts = _pl.get("cuts") or (_pl.get("concept") or {}).get("cuts") or []
                         _orig_cut = next((oc for oc in _pcuts if oc.get("tag") == tag),
                                          _pcuts[i] if i < len(_pcuts) else {}) or {}
-                        _dbg = ("cardtype=%s pcuts=%d desc=%d"
-                                % (type(card).__name__, len(_pcuts),
-                                   len(str(_orig_cut.get("description") or ""))))
                     except Exception as _pe:
-                        _dbg = "ERR %r" % (_pe,)
+                        log.warning("prop src resolve failed: %s", _pe)
                         _orig_cut = {}
                     _cut_text = ((prompt or "") + " " + str(cc.get("motion_prompt") or "")
                                  + " " + str(cc.get("description") or "")
                                  + " " + str(_orig_cut.get("description") or "")).lower()
-                    if progress_cb:
-                        progress_cb("PROPDBG %s %s har=%s bag=%s"
-                                    % (tag, _dbg, "하네스" in _cut_text, "가방" in _cut_text))
                     with _db() as _con:
                         _props = _con.execute(
                             "SELECT name, file_path FROM object_refs "
                             "WHERE file_path IS NOT NULL AND TRIM(name)!=''").fetchall()
-                    if progress_cb:
-                        progress_cb("PROPDBG2 %s nprops=%d" % (tag, len(_props)))
                     for _nm, _pth in _props:
                         if len(full_refs) >= 9:
                             break
                         if _nm and _nm.strip().lower() in _cut_text:
                             _pp = ROOT / _pth if not Path(_pth).is_absolute() else Path(_pth)
-                            if progress_cb:
-                                progress_cb("PROPMATCH %s nm=%s exists=%s dup=%s pp=%s"
-                                            % (tag, _nm, _pp.exists(), _pp in full_refs, _pp))
                             if _pp.exists() and _pp not in full_refs:
                                 full_refs.append(_pp)
+                                log.info("prop ref added for %s: '%s' → %s", tag, _nm, _pp.name)
                                 if progress_cb:
-                                    progress_cb("PROPADDED %s %s -> %d refs" % (tag, _pp.name, len(full_refs)))
+                                    progress_cb(":pushpin: 소품 ref 앵커: %s → %s" % (_nm, _pp.name))
                 except Exception as ex:
                     log.warning("prop ref load failed: %s", ex)
-                    if progress_cb:
-                        progress_cb("PROPERR %s %r" % (tag, ex))
                 full_refs = full_refs[:9]
 
                 # Resolve optional reference_video URL once (set_library per anchor)
