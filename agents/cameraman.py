@@ -7659,8 +7659,22 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                 # BECAUSE AV kept inventing the wrong object; feeding that photo here is what
                 # actually makes the render match the real thing. Bounded by the 9-ref cap.
                 try:
+                    # PD 2026-07-20: `cc` here is the ASSET-ALIGNED cut, which can be stripped of
+                    # the Director's Korean `description` (where prop names 하네스/가방 live) — so the
+                    # prop-ref auto-detect silently found nothing and the harness/bag drifted (AV
+                    # X5Le). Also scan the ORIGINAL concept cut (kept intact in manifests["concept"],
+                    # matched by tag) so a prop named only in the description is still detected.
+                    _orig_cut = {}
+                    try:
+                        _ocuts = (concept_obj or {}).get("cuts") or []
+                        _orig_cut = next((oc for oc in _ocuts if oc.get("tag") == tag),
+                                         _ocuts[i] if i < len(_ocuts) else {}) or {}
+                    except Exception:
+                        _orig_cut = {}
                     _cut_text = ((prompt or "") + " " + str(cc.get("motion_prompt") or "")
-                                 + " " + str(cc.get("description") or "")).lower()
+                                 + " " + str(cc.get("description") or "")
+                                 + " " + str(_orig_cut.get("description") or "")
+                                 + " " + str(_orig_cut.get("motion_prompt") or "")).lower()
                     with _db() as _con:
                         _props = _con.execute(
                             "SELECT name, file_path FROM object_refs "
