@@ -312,6 +312,19 @@ def salvage(card_id: str, report: dict, *, progress_cb=None,
         return None
     if not out.exists():
         return None
+    # PD 2026-07-20: repoint the card at the SALVAGED file so downstream auto-upload finds it.
+    # _auto_upload_episode locates the card by output_video_path; salvage writes a NEW filename
+    # (…_salvaged.mp4 with a fresh timestamp, NOT derivable from the original), so without this
+    # the lookup logged "no card for …_salvaged.mp4" and the slot shipped EMPTY — a silent second
+    # cause of empty launch slots (7/21 12:30 RF: rendered + Giri-passed, yet never scheduled).
+    try:
+        import sqlite3 as _sql
+        _con = _sql.connect(str(ROOT / "data" / "agent.db"))
+        _con.execute("UPDATE cards SET output_video_path=?, updated_at=datetime('now') "
+                     "WHERE card_id LIKE ?", (str(out), card_id + "%"))
+        _con.commit(); _con.close()
+    except Exception as e:
+        log.warning("salvage: could not repoint card output_video_path: %s", e)
     if progress_cb:
         progress_cb(f":sparkles: 캡션-salvage 완료 ({n}컷 자막 수정) — 재검수 진행")
     return out
