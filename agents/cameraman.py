@@ -7666,9 +7666,17 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                     # matched by tag) so a prop named only in the description is still detected.
                     _orig_cut = {}
                     try:
-                        _ocuts = (concept_obj or {}).get("cuts") or []
-                        _orig_cut = next((oc for oc in _ocuts if oc.get("tag") == tag),
-                                         _ocuts[i] if i < len(_ocuts) else {}) or {}
+                        _srccuts = (concept_obj or {}).get("cuts") or []
+                        # If the concept cuts carry no descriptions (asset-aligned/stripped in this
+                        # path), fall back to the DB card payload — the un-stripped source of truth
+                        # (dict(row) from _load_card always has payload_json with the full cuts).
+                        if not any(str((_c or {}).get("description") or "") for _c in _srccuts):
+                            import json as _json
+                            _pl = _json.loads((card or {}).get("payload_json") or "{}")
+                            _srccuts = (_pl.get("cuts") or (_pl.get("concept") or {}).get("cuts")
+                                        or _srccuts)
+                        _orig_cut = next((oc for oc in _srccuts if oc.get("tag") == tag),
+                                         _srccuts[i] if i < len(_srccuts) else {}) or {}
                     except Exception:
                         _orig_cut = {}
                     _cut_text = ((prompt or "") + " " + str(cc.get("motion_prompt") or "")
