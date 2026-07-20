@@ -1447,6 +1447,19 @@ def main(argv: list[str] | None = None) -> int:
                         log.info("post-sync GCS mirror: %d assets present in GCS", n)
                 except Exception:
                     log.exception("post-sync GCS mirror failed (non-fatal)")
+                # Publish the DB ROW snapshot too, not just the files. The VM's concept pool
+                # reads asset ROWS, which only reach it via ingest_register --export →
+                # assets.jsonl → VM --import. mirror_local() ships FILES only; without this
+                # export the launchd sync filled the Mac DB but the VM pool went stale for
+                # weeks (export lived only in the manual chunked script the launchd never ran)
+                # → batches reached for old off-season footage (7/22 Christmas in July while
+                # fresh summer iCloud clips sat unseen on the Mac). PD 2026-07-21.
+                try:
+                    from scripts.ingest_register import export_ as _ingest_export
+                    _ingest_export()
+                    log.info("post-sync ingest export: asset rows → GCS (VM pool refresh)")
+                except Exception:
+                    log.exception("post-sync ingest export failed (non-fatal)")
             # Efficient model: after mirroring, free the bulky originals (kept
             # re-downloadable by uuid AND now in GCS). Daily steady-state stays small;
             # the chunked backlog driver sets KEEP_DAYS=0 to delete each batch right away.
