@@ -26,6 +26,12 @@ assets/branding/
 !assets/character_ref/official_ryani_leo.png
 !assets/character_ref/official_ryani_leo_cafe.png
 !assets/character_ref/ryani_wink.png
+# Prop reference images anchor recurring props (harness, carrier bag) across cuts so they
+# don't drift in Seedance ref-mode (retro: AV X5Le 2026-07-20 — Ryani's harness vanished
+# mid-episode, Leo's bag changed size). Same version-control-or-it's-not-on-the-VM lesson.
+!assets/props/
+!assets/props/*.jpg
+!assets/props/*.png
 youtube/token.json
 youtube/client_secret.json
 .DS_Store
