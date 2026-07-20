@@ -88,14 +88,29 @@ def _real_material(limit_stories: int = 12, limit_clips: int = 12) -> str:
         except Exception:
             pass
         try:
-            # vivid, distinct real clips across years (round-robin-ish by recency)
-            rows = con.execute(
-                "SELECT DISTINCT substr(scene_description,1,120) FROM assets "
-                "WHERE kind='video' AND scene_description IS NOT NULL AND scene_description!='' "
-                "AND length(scene_description) > 40 ORDER BY RANDOM() LIMIT ?", (limit_clips,)).fetchall()
-            clips = [r[0].strip().replace("\n", " ") for r in rows if r[0]]
+            # PD 2026-07-21: RECENT-first, not flat RANDOM. A random sample over 3000+ all-time
+            # clips drowned the ~180 fresh grandmompapa July clips (≈6%) → concepts drifted to old
+            # off-season footage (Christmas in July) while the newly-arrived summer footage sat
+            # unused. Bias the material toward what JUST came in (majority recent by capture date)
+            # + a random tail so memory-lane variety survives. The comment always said "by recency";
+            # the query was RANDOM — this makes it true.
+            _base = ("SELECT DISTINCT substr(scene_description,1,120) FROM assets "
+                     "WHERE kind='video' AND scene_description IS NOT NULL AND scene_description!='' "
+                     "AND length(scene_description) > 40 ")
+            n_recent = max(1, int(limit_clips * 0.6))
+            recent = con.execute(_base + "ORDER BY captured_iso DESC LIMIT ?", (n_recent,)).fetchall()
+            rnd = con.execute(_base + "ORDER BY RANDOM() LIMIT ?", (limit_clips,)).fetchall()
+            seen, clips = set(), []
+            for r in list(recent) + list(rnd):     # recent first, dedup, random fills the rest
+                v = (r[0] or "").strip().replace("\n", " ")
+                if v and v not in seen:
+                    seen.add(v)
+                    clips.append(v)
+                if len(clips) >= limit_clips:
+                    break
             if clips:
-                bits.append("실제 보유 영상 장면(조합 재료):\n- " + "\n- ".join(clips))
+                bits.append("실제 보유 영상 장면 (최근 촬영 우선 — 새로 들어온 grandmompapa 소재 포함, 조합 재료):\n- "
+                            + "\n- ".join(clips))
         except Exception:
             pass
         con.close()
