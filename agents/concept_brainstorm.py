@@ -171,7 +171,9 @@ def _overused_format_block(days: int = 21, min_count: int = 3) -> str:
             "SELECT theme FROM cards WHERE theme IS NOT NULL AND date >= "
             "(SELECT date(MAX(date), ?) FROM cards) LIMIT 400", (f"-{days} days",)).fetchall()
         con.close()
-        markers = ["챌린지", "년생", "뱃살", "POV", "관찰기"]
+        # '평행'(parallel-world/compare) is both over-repeated AND teleport-prone for AV (two pets
+        # staged in two separate spaces → Giri '순간이동' rejects), so rotate away from it too.
+        markers = ["챌린지", "년생", "뱃살", "평행", "POV", "관찰기"]
         c = Counter()
         for (th,) in rows:
             for m in markers:
