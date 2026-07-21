@@ -153,6 +153,36 @@ def _exclude_block(context: dict | None) -> str:
             "'같은 이야기'는 금지다. 확실히 다른 앵글/소재로 가라:\n" + "\n".join(lines) + "\n")
 
 
+def _overused_format_block(limit: int = 30, min_count: int = 3) -> str:
+    """The batch dedup catches repeated TOPICS but not repeated FORMATS/frames — so '댕냥 챌린지'
+    and the '나 20XX년생인데' frame shipped ~10× in three weeks while each looked 'new' by topic.
+    Scan recent card themes for a small set of format markers and, when one recurs a lot, tell the
+    brainstorm to ROTATE the format (not just the topic) — and if it must ride a tired format,
+    make it genuinely different (fresh stage/outdoors, not the same indoor comparison). Empty when
+    nothing over-repeats (so it never over-constrains a healthy pool)."""
+    try:
+        import sqlite3
+        from collections import Counter
+        con = sqlite3.connect(DB_PATH)
+        rows = con.execute("SELECT theme FROM cards WHERE theme IS NOT NULL "
+                           "ORDER BY date DESC LIMIT ?", (limit,)).fetchall()
+        con.close()
+        markers = ["챌린지", "년생", "뱃살", "POV", "관찰기"]
+        c = Counter()
+        for (th,) in rows:
+            for m in markers:
+                if m in (th or ""):
+                    c[m] += 1
+        hot = [f"{k}({v}회)" for k, v in c.most_common() if v >= min_count]
+        if not hot:
+            return ""
+        return ("\n★최근 과다 반복된 포맷/프레임(이번엔 피하라): " + ", ".join(hot) + ". 같은 틀"
+                "('OO 챌린지', '나 20XX년생인데~' 비교물)을 또 쓰지 말고 완전히 다른 형식으로. 굳이 "
+                "챌린지류를 간다면 실내 비교가 아니라 야외·독특한 각도 등 확실히 새롭게.\n")
+    except Exception:
+        return ""
+
+
 def _active_trend_rows(limit: int = 6) -> list[tuple]:
     """Live `trends` rows (calendar events + discovered memes/challenges, fed by
     scripts/trend_feed.py), highest-fit first. Shared by the prompt block and the
@@ -290,6 +320,7 @@ def brainstorm(style: str, brief: str, n: int = 5, *, context: dict | None = Non
     system += _active_trends_block(
         style, require=bool((context or {}).get("require_timely")))
     system += _exclude_block(context)
+    system += _overused_format_block()
     # Channel Manager Phase 4: feed back what's WINNING (energy/format/packaging pattern,
     # not topics — freshness still rules topics). Empty until enough performance data.
     try:
