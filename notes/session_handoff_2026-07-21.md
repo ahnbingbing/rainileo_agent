@@ -16,7 +16,7 @@
 - **7/21 RF ×2 빈 슬롯 채움**: self-heal이 fresh 컨셉 렌더 → 12:30 `3lGFT2pHK1o`(랴니 소파낮잠)·21:00 `iUAKpk_1zQE`(랴니 카페). salvage-upload 버그로 자동예약 실패 → 수동 `_auto_upload_episode`.
 - **7/21 18:00 AV 하네스/가방 재렌더**: 옛 `X5Le` reupload 교체 → `16Ei9JpWPIY`. cut5서 랴니 빨간 하네스 유지+레오 회색 가방 일정 검증.
 - **7/22 백필**: 18:00 RF `MQ6J62US1dU`(여름·자동예약)·21:00 AV `tRWYEjtSvzs`(낮잠꿈, Giri미통과지만 캐릭터정상·PD 그대로예약결정). 크리스마스 08:00은 PD 지시로 유지.
-- **7/23 테스트 배치**(PD가 launch 1회 요청): 12:30 RF·21:00 RF 예약, 08:00 AV Giri미통과(순간이동+배경드리프트 5/10)→**PD 지시 C: 재렌더 중**, 18:00 AV 렌더 중. (7/23은 크론 안 채움 — 테스트로 직접.)
+- **7/23 테스트 배치**(PD가 launch 1회 요청) — **최종 4/4 완성**: 08:00 AV `9fsjASDaiP0`(폴라로이드 평행세계)·12:30 RF `MKi5jmKeW7I`(겨울농구)·18:00 AV `r02-GgxIG_0`(에어컨바람사수전)·21:00 RF `VSfZqNLrg8k`(수영장). 첫 테스트서 AV 두 슬롯 다 실패(순간이동-취약 "평행/비교" 컨셉)→PD 지시 C로 두 AV 재렌더→**포맷 픽스(챌린지+평행 회피)가 순간이동 없는 컨셉 만들어 둘 다 R1/R2 성공**(각 ~$25-50). 이게 포맷-로테이션이 실제로 AV 품질을 올린 라이브 증거. (7/23은 크론 안 채움 — LAUNCH_LEAD_DAYS=2로 크론은 7/24부터.)
 
 ## Durable 픽스 (전부 배포)
 1. **content_gutted 재롤**(a939708) — 결정론 게이트(coherence/face/stub-too-short)가 에피소드를 생존선 아래로 gutting하면 self-heal이 같은 컨셉 재렌더가 아니라 **fresh 컨셉 재롤**로. 7/21 RF 두 슬롯 전멸의 근본. [[empty_slot_multiroot_and_prop_anchor]]
@@ -36,9 +36,9 @@
 AV는 사진을 포즈·장면 ref 이미지로만 씀→촬영날짜=에피소드 시점 아님(계절은 컨셉이 정함). **off-season/철 문제는 RF 전용**. 날씨-위브도 RF-only.
 
 ## ★★ NEXT
-1. **7/23 08:00 AV 재렌더 결과** 확인(챌린지 회피했는지 + 예약) — 이 세션 마지막 업로드.
-2. **7/24 03:00 크론 배치**(첫 LAUNCH_LEAD_DAYS=2 + 대부분 durable의 첫 실전): recency로 fresh 여름소재 쓰는지 / 챌린지·위글 줄었는지 / 날씨-위브 실전 작동 / content_gutted·salvage로 빈 슬롯 없는지 스팟체크.
-3. 미완/판단대기: 12:30 겨울농구에 날씨-위브 데모적용(recaption+reupload)은 PD 판단 대기. 21:00 AV(7/22) 낮잠꿈 Giri미통과본 유지 중.
+1. **7/24 03:00 크론 배치**(첫 LAUNCH_LEAD_DAYS=2 + 대부분 durable의 첫 실전) 스팟체크: recency로 fresh 여름소재 쓰는지 / **챌린지·평행·위글 줄었는지**(포맷 로테이션+위글 de-default) / **날씨-위브 실전 작동**(off-season 오프너가 오늘 날씨로 프레이밍) / content_gutted·salvage로 빈 슬롯 없는지 / prop-ref 소품 앵커 유지.
+2. 미완/판단대기: **12:30 겨울농구**(7/23)에 날씨-위브 데모적용(recaption+reupload)은 PD 판단 대기 — 이 겨울 클립이 "장마에 그리운 겨울 농구"로 살아나는 걸 보고 싶으면. 21:00 AV(7/22) 낮잠꿈 Giri미통과본 유지 중.
+3. 관찰: AV "평행/비교" 구조가 순간이동에 취약 — 포맷 마커로 회피 시작했으나, 근본(멀티공간 AV still collapse)은 [[av_multispace_still_collapse]] 계열 상시 과제.
 
 ## 교훈
 - **증상의 근본은 한 겹 아래** — 빈 슬롯=게이트 아니라 자동복구가 복구 못함 / 크리스마스=풀 아니라 RANDOM 샘플링 / 챌린지=dedup이 토픽만 봄 / 소품드리프트=cc가 description 스트립. PD 직감이 반복해서 그 아래를 짚었다.
