@@ -164,9 +164,12 @@ def _overused_format_block(days: int = 21, min_count: int = 3) -> str:
         import sqlite3
         from collections import Counter
         con = sqlite3.connect(DB_PATH)
+        # Anchor the window to the newest CARD date, not the wall clock — the pipeline's
+        # timeline (card dates) can differ from the host clock, and date('now') would then
+        # match nothing.
         rows = con.execute(
-            "SELECT theme FROM cards WHERE theme IS NOT NULL "
-            "AND date >= date('now', ?) LIMIT 400", (f"-{days} days",)).fetchall()
+            "SELECT theme FROM cards WHERE theme IS NOT NULL AND date >= "
+            "(SELECT date(MAX(date), ?) FROM cards) LIMIT 400", (f"-{days} days",)).fetchall()
         con.close()
         markers = ["챌린지", "년생", "뱃살", "POV", "관찰기"]
         c = Counter()
