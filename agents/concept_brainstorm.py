@@ -153,7 +153,7 @@ def _exclude_block(context: dict | None) -> str:
             "'같은 이야기'는 금지다. 확실히 다른 앵글/소재로 가라:\n" + "\n".join(lines) + "\n")
 
 
-def _overused_format_block(limit: int = 30, min_count: int = 3) -> str:
+def _overused_format_block(days: int = 21, min_count: int = 3) -> str:
     """The batch dedup catches repeated TOPICS but not repeated FORMATS/frames — so '댕냥 챌린지'
     and the '나 20XX년생인데' frame shipped ~10× in three weeks while each looked 'new' by topic.
     Scan recent card themes for a small set of format markers and, when one recurs a lot, tell the
@@ -164,8 +164,9 @@ def _overused_format_block(limit: int = 30, min_count: int = 3) -> str:
         import sqlite3
         from collections import Counter
         con = sqlite3.connect(DB_PATH)
-        rows = con.execute("SELECT theme FROM cards WHERE theme IS NOT NULL "
-                           "ORDER BY date DESC LIMIT ?", (limit,)).fetchall()
+        rows = con.execute(
+            "SELECT theme FROM cards WHERE theme IS NOT NULL "
+            "AND date >= date('now', ?) LIMIT 400", (f"-{days} days",)).fetchall()
         con.close()
         markers = ["챌린지", "년생", "뱃살", "POV", "관찰기"]
         c = Counter()
