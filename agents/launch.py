@@ -744,9 +744,11 @@ def main() -> int:
                    help="re-render only this lane's slots (e.g. AV redo)")
     p.add_argument("--slot", default=None, help="re-render only this HH:MM timeslot")
     args = p.parse_args()
-    # default to TOMORROW (consistent with /daily/test; PD 2026-06-07)
+    # default LAUNCH_LEAD_DAYS ahead (1=tomorrow; PD 2026-07-21 set cron to 2 for an extra
+    # spot-check day). An explicit --date always wins.
+    _lead = max(1, int(os.getenv("LAUNCH_LEAD_DAYS", "1")))
     target = (dt.date.fromisoformat(args.date) if args.date
-              else (dt.datetime.now(KST) + dt.timedelta(days=1)).date())
+              else (dt.datetime.now(KST) + dt.timedelta(days=_lead)).date())
     if args.dry_run:
         for lane, hhmm in day_assignments(target):
             print(f"  {hhmm}  {lane}  → publish_at {publish_at_for(target, hhmm)}")

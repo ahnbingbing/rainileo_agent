@@ -363,8 +363,12 @@ def main() -> int:
     p.add_argument("--slot", default=None, help="single HH:MM slot")
     p.add_argument("--no-upload", action="store_true")
     a = p.parse_args()
+    # Lead time: the 03:00 cron builds a batch LAUNCH_LEAD_DAYS ahead (default 1 = tomorrow).
+    # PD 2026-07-21: set to 2 so a batch is ready two days out, giving a full extra day for
+    # PD spot-check/veto before it goes public. An explicit --date always wins.
+    _lead = max(1, int(os.getenv("LAUNCH_LEAD_DAYS", "1")))
     target = (dt.date.fromisoformat(a.date) if a.date
-              else (dt.datetime.now(KST) + dt.timedelta(days=1)).date())
+              else (dt.datetime.now(KST) + dt.timedelta(days=_lead)).date())
     r = run_with_selfheal(target, max_rounds=a.rounds, lane_filter=a.lane,
                           slot_filter=a.slot, do_upload=not a.no_upload,
                           progress_cb=lambda m: print(m, flush=True))

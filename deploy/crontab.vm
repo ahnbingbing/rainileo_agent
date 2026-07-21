@@ -16,6 +16,9 @@ LOG=/home/rianileo/rianileo-agent/data/logs
 # paid renders (Seedance-capped). cron exports this to every job; only the board picker
 # reads it. Kill: set BOARD_EXEC_MODE=analyze here and reinstall the crontab.
 BOARD_EXEC_MODE=auto
+# Lead time for the 03:00 launch batch (PD 2026-07-21): build TWO days ahead, not one, so a full
+# extra day exists for PD spot-check/veto before it goes public. Only launch_selfheal reads it.
+LAUNCH_LEAD_DAYS=2
 
 # ── short-interval ───────────────────────────────────────────────
 */5  * * * *  $J -m scripts.process_board_escalations            >> $LOG/cron.board_esc.log 2>&1
