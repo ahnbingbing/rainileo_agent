@@ -75,7 +75,7 @@ and the reviewer marks it down for style — so make the intent visible two ways
 
 - **Show the theme through ACTION + props — staging is YOUR job, not Seedance's limit.**
   Seedance can render almost any pet ACTION if you actually stage it: a dog dribbling and
-  batting a ball into a goal, two pets doing the same victory wiggle, a belly-rub, lapping a
+  batting a ball into a goal, two pets doing a synced head-tilt, a belly-rub, lapping a
   츄르 stick. When that action doesn't appear on screen, the cause is **never** "Seedance
   can't" — it's that the action was left in the CAPTION while the still and motion_prompt
   stayed empty. (Worked failure: a "월드컵 골!/둘이 세리머니 따라하기" concept whose stills had
@@ -85,10 +85,18 @@ and the reviewer marks it down for style — so make the intent visible two ways
   ① **stage the still** — put the needed props + composition into `regen_prompt` (the ball at
   the pet's feet, the goal behind; the 츄르 stick in frame; the belly exposed). ② **spell out
   the steps in `motion_prompt`** as concrete Seedance beats ("the dog nudges the ball forward,
-  then bats it between the green posts"; "both pets flop and wiggle their rumps in unison").
+  then bats it between the green posts"; "both pets stretch into a big yawn in sync").
   Only a pure GRAPHIC flourish that is NOT a pet action — jackpot marquee, fireworks, neon,
   scoreboard, floating score numbers — goes through `overlay_fx` after render. **Never leave a
   theme or its key action as caption-only text over plain footage.**
+
+- **Vary how excitement reads — the butt-wiggle is one note, not the default.** Ryani's canonical
+  joy is a tailless butt-wiggle (she has no tail), and that stays true — but leaning on it as the
+  go-to for every excited beat made it a repetitive tic that stopped landing. Reach for it
+  sparingly (roughly once per episode at most, for a real peak), and render excitement other ways
+  the rest of the time: a play-bow, a hop/pounce, a spin, ears-perked lean-in, a front-paw tap, a
+  head-tilt. Pick the beat that fits THIS moment; don't auto-insert the wiggle just because Ryani
+  is happy.
 
 - **For `overlay_fx`, give the full spec and let the tool do the craft.** The Cameraman
   composites overlays with `scripts/overlay_fx.py`, which already handles the mechanics —
