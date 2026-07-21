@@ -2154,6 +2154,118 @@ def _enforce_memorylane_anchors(manifests: dict, anim_dir: Path,
             progress_cb(f":hourglass_flowing_sand: 메모리레인 시점 앵커 복원 — {', '.join(restored)}")
 
 
+def _month_to_season_ko(m: int) -> str:
+    return {12: "겨울", 1: "겨울", 2: "겨울", 3: "봄", 4: "봄", 5: "봄",
+            6: "여름", 7: "여름", 8: "여름", 9: "가을", 10: "가을", 11: "가을"}.get(m, "")
+
+
+_WEATHER_WEAVE_SYS = (
+    "You rewrite ONE opener caption for the Korean pet channel 'Ryani & Leo'. This episode is a "
+    "memory-lane clip shot in a DIFFERENT season than TODAY's real weather.\n"
+    "PRINCIPLE: open by tying today's actual weather to the memory, so a viewer scrolling in THIS "
+    "weather feels WHY we're sharing an off-season clip right now — the season mismatch becomes a "
+    "warm, relatable hook instead of reading as random or mistimed.\n"
+    "HOW: keep it ONE short warm Korean line (+ its English), about the same length as the original "
+    "opener so it still fits the reading window; weave today's weather naturally with the clip's "
+    "season/memory; keep any pet name and the memory-lane 'that year' feel. It is a GENTLE bridge, "
+    "never a weather announcement.\n"
+    "JUDGMENT (this matters most): rewrite ONLY if it reads genuinely natural. If a weather bridge "
+    "would feel forced or cheesy, or the two seasons don't really contrast, return the original "
+    "unchanged with changed=false. Never a fixed template.\n"
+    "EXAMPLE — today='장맛비 내리는 습한 오후', clip='6년 전 겨울 눈밭': "
+    "'장마에 지쳐 문득 꺼내본, 그해 겨울 눈밭의 랴니 ❄️' (natural bridge) — NOT '오늘은 장마인데 겨울 "
+    "영상이에요' (forced announcement).\n"
+    "Return ONLY JSON: {\"ko\":\"..\",\"en\":\"..\",\"changed\":true|false}."
+)
+
+
+def _weave_current_weather_into_opener(manifests: dict, anim_dir: Path,
+                                       progress_cb: ProgressCb = None, dry_run: bool = False) -> None:
+    """Tie an off-season memory-lane OPENER to TODAY's real weather so the mismatch reads as an
+    intentional, relatable hook ('장마에 꺼내보는 그해 겨울') instead of random mistiming — winter
+    memory-lane footage stays usable, the caption just frames it for right now. Opener-only,
+    fires ONLY on a real season contrast, and the weave itself is natural (the model keeps the
+    original when a bridge would feel forced). Runs LAST among caption stages so nothing
+    overwrites it. Env RF_WEATHER_WEAVE=0 disables; fail-safe (never blocks a render)."""
+    if dry_run or os.getenv("RF_WEATHER_WEAVE", "1") == "0":
+        return
+    cap_path = Path(manifests.get("captions") or "")
+    if not cap_path.exists():
+        return
+    try:
+        cap = json.loads(cap_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    ordered = [k for k in cap if not k.startswith("_") and isinstance(cap.get(k), dict)]
+    if not ordered:
+        return
+    opener_tag = ordered[0]
+    scenes = cap[opener_tag].get("scenes") or []
+    if not scenes or not (scenes[0].get("ko") or "").strip():
+        return
+    # opener footage season (from the opener clip's shoot date)
+    concept_cuts = manifests.get("concept_cuts") or (manifests.get("concept") or {}).get("cuts") or []
+    if not concept_cuts:
+        return
+    con = None
+    try:
+        import sqlite3 as _sql
+        _dbp = ROOT / "data" / "agent.db"
+        if _dbp.exists():
+            con = _sql.connect(str(_dbp))
+    except Exception:
+        con = None
+    cc0 = concept_cuts[0]
+    d0 = _asset_shoot_date(con, cc0.get("asset_id") or cc0.get("secondary_asset_id"))
+    if con is not None:
+        try:
+            con.close()
+        except Exception:
+            pass
+    if not d0:
+        return
+    footage_season = _month_to_season_ko(d0.month)
+    # today's real weather
+    try:
+        from scripts.trend_feed import weather_context
+        wx = weather_context()
+    except Exception:
+        wx = None
+    if not wx or not wx.get("season") or not wx.get("phrase"):
+        return
+    if not footage_season or footage_season == wx["season"]:
+        return  # in-season → no bridge needed, stay natural
+    op_ko = scenes[0].get("ko") or ""
+    op_en = scenes[0].get("en") or ""
+    try:
+        from agents.llm_cascade import call_text_cascade
+        _ya = round((dt.date.today() - d0).days / 365.25, 1)
+        user = (f"오늘 날씨: {wx['phrase']} (계절 {wx['season']}"
+                + (f", {wx['note']}" if wx.get("note") else "") + ")\n"
+                f"영상 시점: {footage_season} 영상 (약 {_ya}년 전)\n"
+                f"원래 오프너 KO: {op_ko}\nEN: {op_en}")
+        txt = call_text_cascade(_WEATHER_WEAVE_SYS, user, max_tokens=300).strip()
+        txt = re.sub(r"^```(?:json)?\s*", "", txt)
+        txt = re.sub(r"\s*```$", "", txt)
+        d = json.loads(txt)
+    except Exception as e:
+        log.warning("weather weave failed: %s", e)
+        return
+    if not d.get("changed") or not (d.get("ko") or "").strip():
+        return
+    scenes[0]["ko"] = str(d["ko"]).strip()[:80]
+    scenes[0]["en"] = str(d.get("en") or op_en).strip()[:120]
+    cap[opener_tag]["scenes"] = scenes
+    try:
+        cap_path.write_text(json.dumps(cap, ensure_ascii=False, indent=2), encoding="utf-8")
+        log.info("weather weave: opener bridged %s footage ↔ today %s (%s)",
+                 footage_season, wx["season"], wx["phrase"])
+        if progress_cb:
+            progress_cb(f":cloud_rain: 오늘 날씨 위브 — {footage_season} 영상 ↔ 오늘 '{wx['phrase']}'")
+    except Exception as e:
+        log.warning("weather weave write failed: %s", e)
+
+
 def _decide_tail_trim(times: list, visible: list, dur: float,
                       tail_min: float = 3.0, min_keep_frac: float = 0.4):
     """PURE decision (unit-tested): given per-time pet-visibility samples over a `dur`-second
@@ -5705,6 +5817,12 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
     # the WHEN — deterministically restore the memory-lane time spine (opener/closer) that
     # the Writer set, before burn (retro C13). No-op unless multi-year memory-lane.
     _enforce_memorylane_anchors(manifests, anim_dir, progress_cb, dry_run)
+
+    # Step 1b-weather: if this is off-season memory-lane footage, tie the OPENER to today's real
+    # weather so the mismatch reads as an intentional hook ('장마에 꺼내보는 그해 겨울'), not random
+    # mistiming — winter footage stays usable, just framed for right now. Last caption stage so
+    # nothing overwrites it; RF-only (AV has no real dated footage — its season is concept-chosen).
+    _weave_current_weather_into_opener(manifests, anim_dir, progress_cb, dry_run)
 
     # Step 1c: burn captions on trimmed clips.
     manifests["style"] = "real_footage"  # enables caption reading-time fit (#4)

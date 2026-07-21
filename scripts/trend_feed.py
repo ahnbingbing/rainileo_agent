@@ -96,6 +96,66 @@ def _conn() -> sqlite3.Connection:
     return con
 
 
+_WEATHER_CACHE = ROOT / "data" / "weather_cache.json"
+
+
+def weather_context(today: "dt.date | None" = None, *, max_age_h: float = 6.0) -> dict | None:
+    """Today's REAL Seoul weather as a short, natural Korean phrase + its season — so an RF
+    caption can tie off-season memory-lane footage to what it's actually like outside right now
+    (a 6-years-ago winter clip during monsoon → '장마철에 문득 꺼내보는 그해 겨울'). Cached ~6h in
+    data/weather_cache.json (google_search is rate-limited and weather barely moves within a
+    batch). Returns {'phrase','season','note'} or None on any failure — the caller then just
+    skips the weave, never blocking a render."""
+    today = today or dt.date.today()
+    now = dt.datetime.now()
+    try:
+        if _WEATHER_CACHE.exists():
+            c = json.loads(_WEATHER_CACHE.read_text(encoding="utf-8"))
+            ts = dt.datetime.fromisoformat(c.get("fetched_at"))
+            if c.get("date") == today.isoformat() and (now - ts).total_seconds() < max_age_h * 3600:
+                return c.get("data")
+    except Exception:
+        pass
+    data = None
+    try:
+        from google import genai
+        from google.genai import types as t
+        prompt = (
+            f"오늘은 {today.isoformat()}, 위치는 대한민국 서울. 구글 검색으로 지금 실제 날씨/계절을 "
+            "확인해서 JSON 하나만 줘: {\"phrase\":\"오늘 날씨를 반려동물 영상 캡션에 자연스럽게 넣을 "
+            "짧은 한국어 표현(예: '장맛비 내리는 습한 오후', '올여름 첫 폭염', '쌀쌀한 늦가을 저녁')\", "
+            "\"season\":\"봄|여름|가을|겨울 중 지금 계절\", \"note\":\"장마/폭염/한파/첫눈/미세먼지 등 "
+            "특기할 기상 한 단어(없으면 빈 문자열)\"}. 실제 오늘 서울 기준. JSON만."
+        )
+        for _ in range(3):  # grounding occasionally returns empty/non-JSON — retry
+            try:
+                cli = genai.Client()
+                r = cli.models.generate_content(
+                    model="gemini-flash-latest", contents=prompt,
+                    config=t.GenerateContentConfig(tools=[t.Tool(google_search=t.GoogleSearch())]))
+                txt = (r.text or "").strip()
+                i, j = txt.find("{"), txt.rfind("}")
+                if i >= 0 and j > i:
+                    d = json.loads(txt[i:j + 1])
+                    if d.get("phrase") and d.get("season"):
+                        data = {"phrase": str(d["phrase"])[:60],
+                                "season": str(d["season"])[:4],
+                                "note": str(d.get("note") or "")[:20]}
+                        break
+            except Exception:
+                continue
+    except Exception:
+        data = None
+    if data:
+        try:
+            _WEATHER_CACHE.write_text(json.dumps(
+                {"date": today.isoformat(), "fetched_at": now.isoformat(), "data": data},
+                ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+    return data
+
+
 def _resolve_window(ev: dict, today: dt.date) -> tuple[dt.date, dt.date] | None:
     """Return this year's (start, end) for the event, or None if unparseable."""
     s, e = ev["window"]
