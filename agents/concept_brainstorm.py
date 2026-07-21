@@ -163,7 +163,7 @@ def _overused_format_block(days: int = 21, min_count: int = 3) -> str:
     try:
         import sqlite3
         from collections import Counter
-        con = sqlite3.connect(DB_PATH)
+        con = sqlite3.connect(str(ROOT / "data" / "agent.db"))
         # Anchor the window to the newest CARD date, not the wall clock — the pipeline's
         # timeline (card dates) can differ from the host clock, and date('now') would then
         # match nothing.
