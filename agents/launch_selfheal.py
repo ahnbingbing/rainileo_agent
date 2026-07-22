@@ -298,6 +298,17 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
         lines.append("  ↳ 아래 이 쓰레드에 오늘 영상 전부 올려요. 리뷰는 여기서 — 취소는 "
                      "`veto <파일명>` (예: `veto " + next(iter(done.values())).get("fname", "260705_RF2100")
                      + "`).")
+    # PD 2026-07-22: audit the LIVE YouTube schedule against the DB and warn on ORPHANS
+    # (scheduled-public but no card → they double-book a slot, invisible to arc/veto — the
+    # 07-23 duplicate-slot root). The upload path now vetoes superseded ids on replace; this
+    # is the safety net that surfaces any that still slip. Non-fatal.
+    try:
+        from agents.reconcile import orphan_report
+        _orph = orphan_report()
+        if _orph:
+            lines.append(_orph)
+    except Exception as _oe:
+        log.warning("reconcile orphan_report failed (non-fatal): %s", _oe)
     # Consolidated review thread (PD 2026-07-04): post the summary as the thread PARENT,
     # then upload every produced mp4 as a reply under it — one place to review the whole
     # day. Each upload is labelled with its schedule name and registered so an in-thread

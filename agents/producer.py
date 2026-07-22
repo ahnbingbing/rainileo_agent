@@ -4028,13 +4028,19 @@ def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.dat
     a per-slot timeslot time; daily mode leaves it None → YOUTUBE_PUBLISH_HOUR."""
     _ensure_upload_columns(con)
     row = con.execute(
-        "SELECT card_id, payload_json, theme FROM cards WHERE output_video_path=? "
-        "ORDER BY updated_at DESC LIMIT 1", (str(out_path),),
+        "SELECT card_id, payload_json, theme, youtube_video_id FROM cards "
+        "WHERE output_video_path=? ORDER BY updated_at DESC LIMIT 1", (str(out_path),),
     ).fetchone()
     if not row:
         log.warning("auto-upload: no card for %s", out_path)
         return None
     card_id = row["card_id"]
+    # This card's PREVIOUS scheduled video, if any. A re-render / salvage / re-upload
+    # overwrites youtube_video_id below — without un-scheduling the old one it lingers as
+    # an ORPHAN (private+publishAt but no card), silently double-booking its slot on the
+    # public schedule (root of the 2026-07-23 duplicate slots). Captured now, vetoed after
+    # the NEW upload succeeds (so a failed replacement never takes down the live one).
+    prev_vid = (row["youtube_video_id"] or "").strip() if "youtube_video_id" in row.keys() else ""
     try:
         payload = json.loads(row["payload_json"] or "{}")
     except Exception:
@@ -4110,6 +4116,20 @@ def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.dat
             progress_cb(f":warning: YouTube 업로드 실패 (OAuth 미설정일 수 있음): "
                         f"{str(e)[:120]} — `python -m youtube.oauth` 부트스트랩 필요")
         return None
+    # Replace-not-add: the NEW scheduled video is up, so un-schedule the card's PREVIOUS
+    # one (reversible → private + publishAt cleared). Best-effort: a veto hiccup must never
+    # fail the fresh, good upload. Skips when unchanged or first-time upload.
+    if prev_vid and prev_vid != vid:
+        try:
+            from youtube.upload import veto_video
+            veto_video(prev_vid, delete=False)
+            log.info("auto-upload: vetoed superseded video %s (replaced by %s) for card %s",
+                     prev_vid, vid, card_id[:8])
+            if progress_cb:
+                progress_cb(f":wastebasket: 이전 예약본 정리 — {prev_vid} 비공개 처리(교체됨)")
+        except Exception as _ve:
+            log.warning("auto-upload: failed to veto superseded %s (non-fatal): %s",
+                        prev_vid, _ve)
     con.execute(
         "UPDATE cards SET state='published', uploaded=1, youtube_video_id=?, "
         "youtube_publish_at=?, updated_at=datetime('now') WHERE card_id=?",
