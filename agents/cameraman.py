@@ -7974,6 +7974,27 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                     if light_hint.strip() not in prompt:
                         prompt = prompt + light_hint
 
+        # PD 2026-07-22: the WINK closer is the FINAL cut, so a chained last-frame seed
+        # inherits the whole episode's accumulated Seedance drift — its Ryani/Leo likeness
+        # visibly degrades ("마지막 윙크만 랴니가 좀 달라") while every earlier cut, seeded from
+        # its OWN base_both char-ref still, stays photoreal. The wink already HAS a fresh
+        # best-of-N char-ref still (regen/<tag>.png) — it was just being discarded for the
+        # drifted chain frame. Re-anchor the wink's i2v seed to that fresh still; the
+        # continuity light-hint above keeps pose/lighting in sync. This only refines the
+        # existing chain-drift philosophy (see the regen-from-fresh-still note below) —
+        # continuous-take chains still keep the chain frame (they need the carried scene
+        # state a dry fresh still would drop). Guarded on the still existing + kill switch.
+        _wink_here = ("wink" in (tag or "").lower()
+                      or (cc.get("beat") or "").lower() == "wink_ending"
+                      or (cc.get("function") or "").lower() == "wink_ending")
+        if _wink_here and os.getenv("AV_WINK_FRESH_STILL", "1") != "0":
+            _wink_fresh = regen_dir / f"{tag}.png"
+            if _wink_fresh.exists() and first_frame_path != _wink_fresh:
+                first_frame_path = _wink_fresh
+                if progress_cb:
+                    progress_cb(f":sparkles: 윙크 {tag} — 드리프트 체인프레임 대신 "
+                                f"fresh 캐릭터-ref 스틸에서 i2v (실사감 유지)")
+
         def _seedance_i2v(p: str, image=None):
             cmd = [
                 sys.executable, "scripts/animate_seedance_i2v.py",
