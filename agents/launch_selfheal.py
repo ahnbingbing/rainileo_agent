@@ -121,6 +121,25 @@ def diagnose_failure(category: str, logtext: str, target: dt.date,
         txt = re.sub(r"\s*```$", "", txt)
         d = json.loads(txt)
         d["category"] = category
+        # PD 2026-07-23: the LLM diagnosis is a HINT, not ground truth — it confidently
+        # hallucinates fix locations (07-25 12:30 RF: blamed a non-existent
+        # `agents/real_footage/branding_cards.py` for what was actually a same-clip
+        # collapse → too-short gutting; the real signal, "dropping branding asset", was
+        # normal pool hygiene it latched onto). Verify the named file actually exists and
+        # flag the diagnosis when it doesn't, so PD/the agent distrusts a fabricated path
+        # instead of chasing it. Cheap deterministic check; never blocks.
+        fix_file = str(d.get("fix_file") or "").strip()
+        if fix_file:
+            try:
+                exists = (ROOT / fix_file).exists()
+            except Exception:
+                exists = False
+            d["fix_file_exists"] = exists
+            if not exists:
+                d["low_confidence"] = True
+                d["diag_warning"] = (
+                    f"⚠️ 진단이 지목한 파일 `{fix_file}`이 저장소에 없음 — LLM 환각 가능성 "
+                    f"높음. root_cause를 코드/로그로 재검증하고 지목 경로를 그대로 믿지 말 것.")
         return d
     except Exception as e:
         return {"category": category, "root_cause": f"(LLM diagnose failed: {e})"}
@@ -294,6 +313,8 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
             line += (f"\n     🔍 원인: {str(d.get('root_cause', '?'))[:150]}"
                      f"\n     🛠 수정: {d.get('fix_file', '?')}:{d.get('fix_function', '?')} "
                      f"(risk {d.get('risk', '?')})")
+            if d.get("diag_warning"):
+                line += f"\n     {d['diag_warning']}"
         lines.append(line)
     if failed:
         lines.append("  → 자동 재작업(최대 %d회)으로 못 푼 슬롯이에요. 위 진단대로 코드 수정/재렌더 "

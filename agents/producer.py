@@ -1411,6 +1411,43 @@ def _drop_branding(items: list, branding_ids: set) -> list:
     return out
 
 
+# PD 2026-07-23: iOS Live-Photo / burst captures ingest as sub-second "videos" (burst_*
+# ids, 0.07–0.7s) — they are effectively stills, not clips. When one became the sole
+# material for an RF concept (writer sliced a 0.7s clip into 4 "segment" cuts →
+# _collapse_rf_same_clip_segments merged them back to one 0.7s cut → the episode gutted
+# to 5.2s → too-short guard emptied the slot), the failure only surfaced at burn time and
+# the self-heal LLM then hallucinated a bogus root. Drop clips whose ACTUAL duration is
+# known and below the floor from the candidate pool, so a fragment can never be picked as
+# an RF cut. Unknown-duration clips are kept (can't judge) — the pre-render footage gate
+# in the concept loop is the second net. RF_MIN_CLIP_SECONDS=0 reverts.
+def _tiny_clip_ids(con, min_sec: float) -> set:
+    """Video asset ids whose known duration_sec is a fragment (< min_sec) — unusable as a cut."""
+    if min_sec <= 0:
+        return set()
+    try:
+        return {r[0] for r in con.execute(
+            "SELECT asset_id FROM assets WHERE kind='video' "
+            "AND duration_sec IS NOT NULL AND duration_sec > 0 AND duration_sec < ?",
+            (min_sec,))}
+    except Exception as e:
+        log.warning("tiny-clip asset lookup failed: %s", e)
+        return set()
+
+
+def _drop_tiny_clips(items: list, tiny_ids: set) -> list:
+    """Remove sub-floor fragment clips (iOS burst captures) from a candidate pool."""
+    if not tiny_ids:
+        return list(items or [])
+    out = []
+    for v in (items or []):
+        vid = v.get("id") if isinstance(v, dict) else v
+        if vid in tiny_ids:
+            log.info("RF pool: dropping fragment clip %s (sub-floor duration)", vid)
+            continue
+        out.append(v)
+    return out
+
+
 def _clip_capture_seconds(asset_id: "str | None") -> "float | None":
     """Absolute capture time (epoch seconds) parsed from a med_YYYY_MM_DD_HHMMSS asset id, so two
     clips seconds apart can be recognized as the same moment. None if the id has no timestamp."""
@@ -1475,8 +1512,12 @@ def _rf_long_candidates(context: dict) -> list[dict]:
         except Exception as e:
             log.warning("one-take cooldown lookup failed: %s", e)
     _branding = _branding_asset_ids(_db())
-    pool = _drop_branding((context.get("available_videos") or [])
-                          + (context.get("archive_videos") or []), _branding)
+    # PD 2026-07-23: also drop sub-second burst fragments (see _drop_tiny_clips) so a
+    # Live-Photo capture can't be picked as a one-take clip.
+    _tiny = _tiny_clip_ids(_db(), float(os.getenv("RF_MIN_CLIP_SECONDS", "1.5")))
+    pool = _drop_tiny_clips(
+        _drop_branding((context.get("available_videos") or [])
+                       + (context.get("archive_videos") or []), _branding), _tiny)
     # PD 2026-06-25: a one-take's whole clip can also look identical to recent footage
     # without sharing its id — exclude visual near-dups of recently-shipped clips so the
     # single chosen clip isn't a look-alike of yesterday's ("비슷하게"). Same vis_phash
@@ -2395,7 +2436,11 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     # the same footage isn't reused back-to-back (4-episode cooldown).
     # PD 2026-06-13: drop PD-marked channel branding assets (bumper/promo) from the pool.
     _branding = _branding_asset_ids(_db())
-    avail_videos = _drop_branding(context.get("available_videos", []), _branding)
+    # PD 2026-07-23: also drop sub-second burst fragments so a Live-Photo capture can't
+    # become an RF cut / sole material (the 07-25 0.7s-clip → gutted-slot root).
+    _tiny = _tiny_clip_ids(_db(), float(os.getenv("RF_MIN_CLIP_SECONDS", "1.5")))
+    avail_videos = _drop_tiny_clips(
+        _drop_branding(context.get("available_videos", []), _branding), _tiny)
     # PD 2026-06-11: MERGE old/archive footage into the main candidate pool. It used
     # to be a separate "memory-lane only" field, so RF kept re-using the same recent
     # ~28 clips (med_2026_05_25_144138 appeared in ALL 4 last episodes = "재탕") and
@@ -2403,7 +2448,7 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     # the Ryani-intro). Merging gives a much bigger pool, so the cooldown can exclude
     # reused clips without starving (no more "relax → reuse"), and old footage becomes
     # a first-class pick. years_ago is already stamped for time-grounded captions.
-    _arch = _drop_branding(context.get("archive_videos", []), _branding)
+    _arch = _drop_tiny_clips(_drop_branding(context.get("archive_videos", []), _branding), _tiny)
     _seen = {v.get("id") for v in avail_videos if v.get("id")}
     avail_videos = avail_videos + [v for v in _arch if v.get("id") and v.get("id") not in _seen]
     cooldown: set[str] = set()
@@ -2756,6 +2801,53 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         # PD 2026-06-08: do NOT force finale=video. A photo_i2v finale / Ryani
         # zoom is fine WHEN the quality (marking accuracy) is good — the quality
         # gate decides, not a blanket rule. (Earlier blanket auto-swap removed.)
+    # PD 2026-07-23: deterministic PRE-RENDER footage-sufficiency gate. An RF concept whose
+    # chosen clips can't fill the minimum episode length used to be DISCOVERED only at burn
+    # time (cameraman's too-short guard emptied the slot) — wasting a self-heal round and
+    # yielding a confusing content_gutted the diagnosis LLM then misrooted (07-25 12:30:
+    # 4 cuts all sliced from ONE 0.7s Live-Photo burst → collapsed to a single 0.7s cut →
+    # 5.2s stub). Estimate achievable CONTENT seconds up front — each cut capped by its
+    # clip's ACTUAL duration when known — and re-propose ONCE if a concept can't reach the
+    # floor. Pairs with the pool-level fragment drop (_drop_tiny_clips). "[재료검증]" bounds
+    # the retry; the burn-time guard remains the final net. RF_FOOTAGE_GATE=0 reverts.
+    if (os.getenv("RF_FOOTAGE_GATE", "1") == "1"
+            and "[재료검증]" not in prior_feedback):
+        _floor = float(os.getenv("RF_MIN_CONTENT_SECONDS", "8"))
+        _thin: list = []
+        try:
+            _acon = _db()
+            _aids = {cut.get("asset_id") for c in concepts for cut in (c.get("cuts") or [])
+                     if cut.get("asset_id")}
+            _adur: dict = {}
+            if _aids:
+                _q = ",".join("?" * len(_aids))
+                for r in _acon.execute(
+                        f"SELECT asset_id, duration_sec FROM assets WHERE asset_id IN ({_q})",
+                        list(_aids)):
+                    if r[1] and float(r[1]) > 0:
+                        _adur[r[0]] = float(r[1])
+            for c in concepts:
+                _got = 0.0
+                for cut in (c.get("cuts") or []):
+                    _req = float(cut.get("duration_seconds") or cut.get("trim_dur") or 4)
+                    _act = _adur.get(cut.get("asset_id"))
+                    _got += min(_req, _act) if _act is not None else _req
+                if _got < _floor:
+                    _thin.append((c.get("title", ""), round(_got, 1)))
+        except Exception as e:
+            log.warning("RF footage-sufficiency check failed: %s", e)
+            _thin = []
+        if _thin:
+            if progress_cb:
+                progress_cb(f":film_frames: 재료검증 — 실현 길이 부족 {len(_thin)}건 "
+                            f"(< {_floor:.0f}s content) → 재작성")
+            _vs = "; ".join(f"'{t}' (실현 ~{s}s)" for t, s in _thin)
+            _fb = ("[재료검증] 아래 컨셉은 고른 클립의 실제 길이로는 최소 분량을 못 채운다(자투리·버스트 "
+                   "클립을 잘라 여러 컷으로 쓴 경우 포함). 각 컷은 서로 다른, 충분히 긴 클립이어야 하고, "
+                   f"전체 content가 최소 {_floor:.0f}s 이상 되게 짜라:\n" + _vs
+                   + (("\n\n[이전 피드백]\n" + prior_feedback) if prior_feedback else ""))
+            return _propose_realfootage_singlepass(target, context, progress_cb,
+                                                   prior_feedback=_fb)
     # PD 2026-07-02: deterministic CONCEPT-DEDUP gate. exclude_concepts (sibling slots +
     # last-14d public uploads, seeded by launch) is injected into the Writer prompt as a
     # "diverge from these" note (_exclude_block) — but that is LLM-advisory and the Writer
