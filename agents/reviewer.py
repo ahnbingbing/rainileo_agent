@@ -1750,7 +1750,10 @@ def main() -> int:
     report = review(video, storyboard=storyboard, concept=concept)
 
     if args.json:
-        print(json.dumps(report, ensure_ascii=False, indent=2))
+        # default=str: the report can carry numpy bools/scalars from the gates, which
+        # the stock JSON encoder rejects — the production path consumes the dict directly,
+        # only this debug CLI serializes it, so coerce non-native types to str.
+        print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
     else:
         print_report(report)
 
