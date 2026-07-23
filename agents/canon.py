@@ -123,11 +123,36 @@ def _snap_birth_year(y: int) -> int:
     return min(_CANON_BIRTH_YEARS, key=lambda c: (abs(y - c), c))  # tie → older
 
 
+# PD 2026-07-23: the EN caption sometimes romanizes 랴니 as a NON-canonical spelling
+# ("Lani" — 07-25 21:00 RF cut2 wrote "Lani, professional Leo-meal observer" for KO 랴니).
+# The canonical romanizations are FIXED: 랴니 = "Ryani" (the dog), 레오 = "Leo" (the cat). A
+# wrong spelling reads to a viewer as a name error / a different character, and the reviewer
+# bounced the episode over it (caption-vs-clip "name error"). Snap known misromanizations of
+# Ryani back to canon deterministically — the Writer/LLM drifts, the corrector doesn't.
+_CANON_NAME_FIX = (
+    (_re_canon.compile(r"\b(?:Lani|Lanni|Riani|Ryanie|Ryany|Ryanni)\b",
+                       _re_canon.IGNORECASE), "Ryani"),
+)
+
+
+def correct_canon_names_text(text: str) -> str:
+    """Snap non-canonical pet-name romanizations in viewer-facing text to canon
+    (랴니 → 'Ryani'). Idempotent on already-canonical text ('Ryani'/'Leo' are untouched).
+    Folded into correct_canon_age_text so it runs at every canon-text chokepoint."""
+    if not text:
+        return text
+    for rx, canon_name in _CANON_NAME_FIX:
+        text = rx.sub(canon_name, text)
+    return text
+
+
 def correct_canon_age_text(text: str) -> str:
-    """Force the pets' age-gap and birth-year to canon in viewer-facing text.
+    """Force the pets' age-gap, birth-year, AND name romanization to canon in viewer-facing
+    text.
 
     Ryani 2015 / Leo 2025 → gap is always 10y; a "N살 차이"/"N-year gap" other than that,
-    or a "N년생"/"born YYYY" that isn't 2015/2025, is a fabricated canon violation. Idempotent
+    or a "N년생"/"born YYYY" that isn't 2015/2025, is a fabricated canon violation. A non-
+    canonical name spelling (e.g. "Lani" for Ryani) is likewise snapped to canon. Idempotent
     on already-correct text. Call at each output chokepoint (burn captions, upload title)."""
     if not text:
         return text
@@ -137,6 +162,7 @@ def correct_canon_age_text(text: str) -> str:
     if "년생" in text:
         text = _BIRTH_YEAR_KO.sub(lambda m: f"{_snap_birth_year(int(m.group(1)))}년생", text)
     text = _BIRTH_YEAR_EN.sub(lambda m: f"{m.group(1)} {_snap_birth_year(int(m.group(2)))}", text)
+    text = correct_canon_names_text(text)
     return text
 
 # ──────────────────────────────────────────────────────────────────────
