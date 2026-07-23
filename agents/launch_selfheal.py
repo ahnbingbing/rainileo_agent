@@ -76,8 +76,12 @@ def _remediate(category: str, round_no: int) -> str:
     (validator block / asset / no-concept — rejected BEFORE Seedance) get a wider
     re-propose. EXPENSIVE failures (render/giri/face — Seedance already spent) get
     NO retry bump — re-rendering them ×N compounded into the ~$100 runaway. They are
-    left for the next self-heal round at the SAME (low) render budget, and the hard
-    SEEDANCE_MAX_CALLS ceiling backstops the whole run."""
+    left for the next self-heal round at the SAME (low) render budget. Cost across the
+    self-heal run is bounded by the round count (R1/R2/R3) × AV_MAX_RETRIES=0 (one
+    render per slot per round); the hard SEEDANCE_MAX_CALLS ceiling backstops each
+    EPISODE render (PD 2026-07-23 the counter resets per render_card, so it no longer
+    accumulates across rounds/slots — that accumulation used to let a passed slot's
+    re-render starve a failed slot's budget and empty a good slot)."""
     if category == "content_gutted":
         # A deterministic content gate gutted the episode — the SAME clips will re-drop the
         # same way, so retrying this concept is futile. Widen re-propose AND (below) route to

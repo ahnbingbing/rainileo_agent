@@ -38,9 +38,28 @@ ROOT = Path(__file__).resolve().parent.parent
 # character/face gate re-renders × AV_MAX_RETRIES (whole-episode) × self-heal
 # rounds → 246 Seedance cuts in one run. This counter is the absolute backstop:
 # once a run exceeds SEEDANCE_MAX_CALLS it REFUSES further Seedance dispatches
-# (raises) instead of silently burning money. A normal 4-episode batch is ~24
-# cuts; 40 leaves headroom for modest retries but kills a runaway.
+# (raises) instead of silently burning money.
+#
+# PD 2026-07-23 SCOPE FIX — this ceiling is PER AV EPISODE RENDER, not per process.
+# It used to be a bare module global that never reset, so a single process that
+# renders several AV episodes (a launch batch runs both AV timeslots per lane
+# sequentially; the self-heal loop re-renders AV across R1/R2/R3 rounds) accumulated
+# every episode's cuts against one 40-cap — the LATER episodes then tripped the
+# ceiling mid-render even though each on its own is only ~10-15 cuts, silently
+# emptying a good slot (07-25 08:00 AV died at 41 = two+ episodes stacked, not a
+# runaway). `render_card` now resets it via _reset_seedance_budget() before each
+# ai_vtuber render, so 40 is per-episode headroom that still kills a true single-
+# episode loop. RF never dispatches Seedance, so it never touches this counter —
+# the reset lives in the AV branch only to avoid a cross-thread race with the RF
+# lane (launch runs the two lanes on parallel threads).
 _SEEDANCE_CALL_COUNT = 0
+
+
+def _reset_seedance_budget() -> None:
+    """Reset the per-episode Seedance runaway counter at the start of an AV render.
+    See the _SEEDANCE_CALL_COUNT note above for why this is per-episode, not per-process."""
+    global _SEEDANCE_CALL_COUNT
+    _SEEDANCE_CALL_COUNT = 0
 load_dotenv(ROOT / ".env")
 log = logging.getLogger("agents.cameraman")
 
@@ -8676,8 +8695,10 @@ def render_card(card_id_prefix: str, *,
         elif style == "cartoon_sticker":
             # Legacy — redirect to ai_vtuber
             log.info("cartoon_sticker redirected to ai_vtuber")
+            _reset_seedance_budget()
             out = run_ai_vtuber_pipeline(manifests, card, work_dir, progress_cb, dry_run)
         elif style == "ai_vtuber":
+            _reset_seedance_budget()
             out = run_ai_vtuber_pipeline(manifests, card, work_dir, progress_cb, dry_run)
         else:
             raise RuntimeError(f"Unknown style: {style}")

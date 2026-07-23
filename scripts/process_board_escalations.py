@@ -67,12 +67,14 @@ AUTO_PUSH = os.getenv("BOARD_AUTO_PUSH", "1") == "1"
 # hard Seedance-call ceiling so a runaway loop can't drain the account. Everyone else stays
 # code-only (paid keys stripped, below). Layers that bound the blast radius:
 #   • author gate — render env is granted only when the escalation author is PD.
-#   • SEEDANCE_MAX_CALLS ceiling — cameraman refuses further Seedance past it (per process;
-#     the 25-min per-escalation timeout + single-flight lock bound how many can run).
+#   • SEEDANCE_MAX_CALLS ceiling — cameraman refuses further Seedance past it (per RENDER;
+#     PD 2026-07-23 the counter resets at each render_card, so this bounds one episode's
+#     runaway, not the whole process. The 25-min timeout + single-flight lock still cap how
+#     many renders run per escalation).
 #   • smoke gate + kill switch (BOARD_EXEC_RENDER=0) + api_ledger visibility unchanged.
 PD_USER = os.getenv("SLACK_PD_USER_ID", "U0B166M9C9F")
 RENDER_ENABLED = os.getenv("BOARD_EXEC_RENDER", "1") == "1"
-RENDER_SEEDANCE_CAP = os.getenv("BOARD_EXEC_SEEDANCE_CAP", "12")  # ~2 slots' worth of cuts
+RENDER_SEEDANCE_CAP = os.getenv("BOARD_EXEC_SEEDANCE_CAP", "12")  # ~1 episode (6 cuts + heals); per-render now
 
 # Paid / destructive credentials stripped from the executor subprocess. This is the
 # hard money/destruction guard — without these the pipeline's render and YouTube-write
