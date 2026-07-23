@@ -213,12 +213,20 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
     # before giving up. One extra ~$50 AV render buys the 4th slot — PD's call. Kill: SELFHEAL_REROLL=0.
     rerolled: set = set()
     reroll_on = os.getenv("SELFHEAL_REROLL", "1") != "0"
+    # PD 2026-07-23: real_footage renders are FREE (ffmpeg + Gemini, no Seedance $), so an RF
+    # slot that fails Giri should keep rerolling FRESH concepts until one lands — the 3-round
+    # cap that suits the PAID AV lane shipped a hard RF slot EMPTY after 3 tries (07-25 21:00
+    # exhausted 3 rounds of 4-6/10 rejects). Give RF a higher round budget; the AV lane still
+    # terminals out early on cost (EXPENSIVE below), so the extra rounds only exercise RF.
+    # RF_SELFHEAL_ROUNDS=3 reverts to the old shared cap.
+    _rounds = max(max_rounds, int(os.getenv("RF_SELFHEAL_ROUNDS", "6"))) \
+        if any(l == "real_footage" for l, _ in want) else max_rounds
 
-    for rnd in range(1, max_rounds + 1):
+    for rnd in range(1, _rounds + 1):
         pending = [(l, h) for (l, h) in want if (l, h) not in done and (l, h) not in terminal]
         if not pending:
             break
-        cap(f":arrows_counterclockwise: [self-heal R{rnd}/{max_rounds}] 대상 슬롯: "
+        cap(f":arrows_counterclockwise: [self-heal R{rnd}/{_rounds}] 대상 슬롯: "
             f"{', '.join(f'{h} {l}' for l, h in pending)}")
         for (lane, slot) in pending:
             buf: list[str] = []
@@ -254,22 +262,29 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
                 # ALSO reroll to a fresh concept — but EVERY remaining round, not just once: the
                 # concept is cheap to re-render and the ONLY recovery is different clips, so keep
                 # cycling the pool until a coherent/face-clean concept lands (or rounds run out).
+                # PD 2026-07-23: real_footage spends NO Seedance, so an RF failure of ANY kind
+                # (giri_fail / content_gutted / …) is CHEAP — reroll a fresh concept every
+                # remaining round, never cost-terminal. Only the AV lane keeps the EXPENSIVE
+                # (Seedance-spent) terminal cap.
+                _rf_free = (lane == "real_footage")
                 _exp_reroll = (cat in EXPENSIVE and reroll_on
-                               and (lane, slot) not in rerolled and rnd < max_rounds)
-                _content_reroll = (cat == "content_gutted" and reroll_on and rnd < max_rounds)
-                _reroll_now = _exp_reroll or _content_reroll
-                is_terminal = cat in EXPENSIVE and not _reroll_now
+                               and (lane, slot) not in rerolled and rnd < _rounds)
+                _content_reroll = (cat == "content_gutted" and reroll_on and rnd < _rounds)
+                _rf_reroll = (_rf_free and reroll_on and rnd < _rounds)
+                _reroll_now = _exp_reroll or _content_reroll or _rf_reroll
+                is_terminal = (not _rf_free) and cat in EXPENSIVE and not _reroll_now
                 fail_info[(lane, slot)] = {"cat": cat, "rem": rem, "terminal": is_terminal}
                 if _reroll_now:
                     rerolled.add((lane, slot))
-                    _why = ("결정론 게이트 gutting" if cat == "content_gutted" else "비용 실패")
+                    _why = ("결정론 게이트 gutting" if cat == "content_gutted"
+                            else "미통과(무비용 RF)" if _rf_free else "비용 실패")
                     cap(f":game_die: [self-heal] {slot} {lane} {_why} → **완전히 새 컨셉으로 재롤** "
                         f"(같은 컨셉 재렌더 아님 — 다른 클립)")
-                elif cat in EXPENSIVE:
+                elif cat in EXPENSIVE and not _rf_free:
                     terminal.add((lane, slot))
                     cap(f":coin: [self-heal] {slot} {lane} 비용 발생 실패 → 재렌더 중단 "
                         f"(영상 저장됨, 추가 Seedance 안 씀)")
-                if rnd == max_rounds or (lane, slot) in terminal:
+                if rnd == _rounds or (lane, slot) in terminal:
                     diag = diagnose_failure(cat, logtext, target, lane, slot)
                     diagnoses.append({"lane": lane, "slot": slot, **diag})
                     cap(f":mag: [self-heal] {slot} {lane} 진단: "
@@ -282,7 +297,7 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
         ART.mkdir(parents=True, exist_ok=True)
         ap = ART / f"selfheal_{target.isoformat()}.json"
         ap.write_text(json.dumps(
-            {"date": str(target), "rounds": max_rounds,
+            {"date": str(target), "rounds": _rounds,
              "failed": [f"{h} {l}" for l, h in failed], "diagnoses": diagnoses},
             ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -300,7 +315,7 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
     if failed:
         _empties = ", ".join(f"{h} {_lbl(l)}" for (l, h) in failed)
         lines.insert(1, f":rotating_light: *빈 슬롯 {len(failed)}개 — 손수정 필요*: {_empties} "
-                        f"(self-heal이 {max_rounds}회 시도 후 junk 대신 비움)")
+                        f"(self-heal이 {_rounds}회 시도 후 junk 대신 비움)")
     for (l, h), v in done.items():
         lines.append(f"  ✅ {h} {_lbl(l)} — `{v.get('video_id', '-')}` "
                      f"(공개 {v.get('publish_at', '?')})")
@@ -318,7 +333,7 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
         lines.append(line)
     if failed:
         lines.append("  → 자동 재작업(최대 %d회)으로 못 푼 슬롯이에요. 위 진단대로 코드 수정/재렌더 "
-                     "필요" % max_rounds + (f" — 상세 {ap.name}" if ap else "") + ".")
+                     "필요" % _rounds + (f" — 상세 {ap.name}" if ap else "") + ".")
     if done:
         lines.append("  ↳ 아래 이 쓰레드에 오늘 영상 전부 올려요. 리뷰는 여기서 — 취소는 "
                      "`veto <파일명>` (예: `veto " + next(iter(done.values())).get("fname", "260705_RF2100")
