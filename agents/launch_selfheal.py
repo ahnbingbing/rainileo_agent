@@ -195,6 +195,34 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
     if slot_filter:
         assignments = [(l, h) for l, h in assignments if h == slot_filter]
     want = list(dict.fromkeys(assignments))  # ordered-unique (lane, slot)
+    # PD 2026-07-24: DON'T re-make a slot that ALREADY has a video scheduled. The batch
+    # rendered all 4 day_assignments blindly, so any slot already filled — by a prior batch,
+    # a re-run, or a manual fill — got a SECOND video piled on the same timeslot (07-25 hit
+    # 9 videos across 4 slots; 07-24 had 6). The schedule is ground truth: read the LIVE
+    # YouTube schedule for the target day and drop already-filled slots so ONLY empty slots
+    # are produced. Scoped to the unfiltered daily batch (the 03:00 cron) — an explicit
+    # --slot/--lane redo is a deliberate replace and bypasses this. LAUNCH_SKIP_FILLED=0 reverts.
+    if (os.getenv("LAUNCH_SKIP_FILLED", "1") != "0" and do_upload
+            and not slot_filter and not lane_filter):
+        try:
+            from agents import reconcile as _rec
+            _filled = set()
+            for _s in _rec.list_scheduled_videos():
+                _pa = _s.get("publish_at") or ""
+                if not _pa:
+                    continue
+                _t = dt.datetime.fromisoformat(_pa.replace("Z", "+00:00")) + dt.timedelta(hours=9)
+                if _t.date() == target:
+                    _filled.add(_t.strftime("%H:%M"))
+            if _filled:
+                _kept = [(l, h) for (l, h) in want if h not in _filled]
+                if len(_kept) < len(want):
+                    cap(f":information_source: {target.isoformat()} 이미 예약된 슬롯 "
+                        f"{sorted(_filled)} 건너뜀 — 빈 슬롯 "
+                        f"{[h for _, h in _kept] or '없음(전부 채워짐)'}만 생성 (중복 방지)")
+                want = _kept
+        except Exception as e:
+            log.warning("slot-fill check failed (making all slots): %s", e)
     done: dict[tuple, dict] = {}
     diagnoses: list[dict] = []
     fail_info: dict[tuple, dict] = {}  # (lane,slot) → {cat, rem, terminal} for the final summary
