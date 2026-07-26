@@ -1417,12 +1417,12 @@ def _enforce_wink_empty_captions(c: dict) -> None:
     _lane = (c.get("render_style") or "").lower()
     _lead = []
     if _lane != "real_footage":
-        for _cap in (closer.get("captions") or []):
-            _ko = str(_cap.get("ko", "")).strip()
-            if not _ko or "햅삐" in _ko or "happy as ever" in str(_cap.get("en", "")).lower():
-                continue
-            _lead = [dict(_cap)]
-            break
+        _cands = [cp for cp in (closer.get("captions") or [])
+                  if str(cp.get("ko", "")).strip()
+                  and "햅삐" not in str(cp.get("ko", ""))
+                  and "happy as ever" not in str(cp.get("en", "")).lower()]
+        if _cands:
+            _lead = [dict(_cands[-1])]  # the payoff/punchline (last), not an earlier setup beat
     if _lead:
         _dur = float(closer.get("duration_seconds") or 5)
         _sign = dict(canonical)
@@ -3128,18 +3128,21 @@ def _fold_wink_into_closer(c: dict, cuts: list, wink_subject: str,
     # (a story-less ending), author a grounded payoff so the ending still tells a story.
     signoff = dict(template["captions"][0])
     signoff["start"], signoff["end"] = round(_wd - 1.5, 1), round(_wd - 0.1, 1)
+    # Keep ONE lead-in — the PAYOFF/punchline, which sits LAST in the closer (closest to the
+    # wink); a tight closer has room for one line + the sign-off, and the punchline is the
+    # line worth keeping (not an earlier setup beat).
+    _cands = [cap for cap in (closer.get("captions") or [])
+              if str(cap.get("ko", "")).strip()
+              and "햅삐" not in str(cap.get("ko", ""))
+              and "happy as ever" not in str(cap.get("en", "")).lower()]
     lead = []
-    for cap in (closer.get("captions") or []):
-        ko = str(cap.get("ko", "")).strip()
-        if not ko or "햅삐" in ko or "happy as ever" in str(cap.get("en", "")).lower():
-            continue
-        cap = dict(cap)
+    if _cands:
+        cap = dict(_cands[-1])
         cap["start"] = min(float(cap.get("start", 0.4) or 0.4), max(0.4, _wd - 3.0))
         cap["end"] = min(float(cap.get("end", _wd - 2.0) or (_wd - 2.0)), round(_wd - 1.7, 1))
         if cap["end"] <= cap["start"]:
             cap["end"] = round(cap["start"] + 1.4, 1)
-        lead.append(cap)
-        break  # one lead-in caption is enough for a tight closer
+        lead = [cap]
     if not lead:
         payoff = _resolution_caption(c, wink_subject)
         lead = [{"start": 0.4, "end": round(_wd - 1.7, 1),
