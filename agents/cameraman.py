@@ -7422,6 +7422,35 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         except Exception:
             pass
 
+        # PROP LOCK (PD 2026-07-26): a per-episode recurring prop the pets handle (a tug toy, a
+        # ball) has NO image anchor in object_refs, so i2v regenerates it per cut from text alone
+        # and it MORPHS (a teal dumbbell-shaped tug toy became a round rubber ball across cuts).
+        # The Director declares such props in concept `key_props` [{name, description}]; lock every
+        # one this cut mentions to a SINGLE identical object so Seedance can't reshape or swap it.
+        try:
+            _kp = ((manifests or {}).get("concept") or {}).get("key_props") or []
+            if not _kp and card is not None:
+                _plk = json.loads(dict(card).get("payload_json") or "{}")
+                _kp = _plk.get("key_props") or (_plk.get("concept") or {}).get("key_props") or []
+            if _kp and "PROP LOCK" not in prompt:
+                _blob = (str(prompt or "") + " " + str(cc.get("motion_prompt") or "")
+                         + " " + str(cc.get("description") or "")).lower()
+                _locks = [str(p.get("description") or p.get("name") or "").strip()
+                          for p in _kp if isinstance(p, dict)
+                          and str(p.get("name") or "").strip()
+                          and str(p.get("name")).strip().lower() in _blob]
+                if _locks:
+                    prompt = prompt + (
+                        " PROP LOCK: " + "; ".join(_locks) + " — each is the SAME single identical "
+                        "object in every shot of this episode; keep its exact silhouette, color, "
+                        "size and material constant and do NOT reshape, restyle, or swap it "
+                        "(e.g. a dumbbell-shaped toy must never become a ball).")
+                    if progress_cb:
+                        progress_cb(":lock: 소품 lock 주입: " + ", ".join(
+                            str(p.get("name")) for p in _kp if isinstance(p, dict)))
+        except Exception as _ple:
+            log.warning("prop lock inject failed: %s", _ple)
+
         # Sanctioned costume (PD 2026-06-30): when an episode's whole premise IS an
         # outfit (e.g. 우비 패션쇼 = raincoat fashion show), the garment is the payoff,
         # not anthropomorphization — so the bare-furred default must NOT strip it.

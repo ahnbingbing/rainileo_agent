@@ -90,6 +90,18 @@ and the reviewer marks it down for style — so make the intent visible two ways
   scoreboard, floating score numbers — goes through `overlay_fx` after render. **Never leave a
   theme or its key action as caption-only text over plain footage.**
 
+- **A recurring interactive prop MUST be declared and locked — or Seedance morphs it.** When
+  the pets handle the SAME object across cuts (a tug toy, a ball, a specific snack), i2v
+  regenerates that object per cut from text alone and it drifts — a teal dumbbell-shaped tug
+  toy turned into a round rubber ball mid-episode. Vague text ("the toy") can't hold a shape.
+  So: declare each such prop ONCE at the concept level in
+  `key_props: [{"name": "터그 장난감", "description": "<specific silhouette + color + material>"}]`,
+  and write that SAME specific description into every cut's `motion_prompt` where it appears
+  (never a bare "the toy"). The pipeline auto-appends a consistency lock for declared props so
+  the object can't be reshaped. One vague prop repeated = drift; one specific prop declared =
+  consistency. This is the interactive-prop cousin of the `set_objects` rule above: set_objects
+  locks the furniture, `key_props` locks the object the pets carry.
+
 - **Vary how excitement reads — the butt-wiggle is one note, not the default.** Ryani's canonical
   joy is a tailless butt-wiggle (she has no tail), and that stays true — but leaning on it as the
   go-to for every excited beat made it a repetitive tic that stopped landing. Reach for it

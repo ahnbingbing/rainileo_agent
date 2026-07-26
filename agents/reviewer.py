@@ -133,6 +133,15 @@ looks. These are CAPS (a ceiling), not soft notes:
   elongating, or warping between cuts — typically from a shot_size jump (one cut going
   wider re-generates room area Seedance never saw, e.g. a sofa stretching past the couch
   end). Same defect, same cap ≤6 → flag "가구/배경 morph".
+- **소품(상호작용 오브젝트) 드리프트 (ai_vtuber)**: a physical prop the pets HANDLE across cuts
+  — a toy, a ball, a snack — must keep the SAME identifiable shape/type in every cut it appears.
+  i2v regenerates an unanchored prop per cut and it morphs (the actual defect: a teal dumbbell-
+  shaped tug toy became a round rubber ball mid-episode; a stick snack becoming a pellet is the
+  same failure). Compare the prop across ALL cuts that show it — not one frame — and if its
+  shape/type changes, flag "소품 드리프트" and cap ≤6. Why it matters: the story says the pets
+  play with / eat the SAME object, so a prop that changes shape mid-episode breaks that
+  continuity. (Interactive-prop cousin of 가구 morph above; RF real footage never morphs, so
+  this is AV-only.)
   (EXCEPTION: a concept's INTENTIONAL space transition — 현실→상상→현실, a deliberate
   fantasy realm like 무릉도원 — is NOT drift; do not penalize a scripted scene change.)
 - **펫 순간이동 / 위치 불일치 (ai_vtuber)**: distinct from background drift (that's the
