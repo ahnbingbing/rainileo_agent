@@ -8006,6 +8006,14 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         _wink_here = ("wink" in (tag or "").lower()
                       or (cc.get("beat") or "").lower() == "wink_ending"
                       or (cc.get("function") or "").lower() == "wink_ending")
+        # A FOLDED wink is the story's OWN closing beat (not a separate bolted-on cut), so it
+        # must continue that beat's real frame — the real set, the real photo-grounded body.
+        # Re-seeding it from a separately generated char-ref still is exactly what drifted the
+        # old standalone wink into idealized/chubby pets in a hallucinated garden. Folding
+        # removed the accumulated-drift rationale (the closer chains off ONE prior cut now, not
+        # the whole episode), so keep the real chain frame and skip the fresh-still override.
+        if cc.get("wink_folded"):
+            _wink_here = False
         if _wink_here and os.getenv("AV_WINK_FRESH_STILL", "1") != "0":
             _wink_fresh = regen_dir / f"{tag}.png"
             if _wink_fresh.exists() and first_frame_path != _wink_fresh:

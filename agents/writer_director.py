@@ -1409,7 +1409,32 @@ def _enforce_wink_empty_captions(c: dict) -> None:
         _strip_wink_language(cuts[i])
     closer = cuts[closer_idx]
     closer["function"] = "wink_ending"
-    closer["captions"] = [dict(canonical)]
+    # The wink now lives ON the story's closing beat (folded into it, not a content-blind
+    # extra cut), so the closer legitimately carries its own payoff/여운 caption AS WELL as
+    # the sign-off. Keep ONE non-sign-off lead-in line, then land exactly one canonical 햅삐
+    # sign-off last. RF winks are optional reveals with their own captions — keep their
+    # historical behavior (sign-off only) untouched.
+    _lane = (c.get("render_style") or "").lower()
+    _lead = []
+    if _lane != "real_footage":
+        for _cap in (closer.get("captions") or []):
+            _ko = str(_cap.get("ko", "")).strip()
+            if not _ko or "햅삐" in _ko or "happy as ever" in str(_cap.get("en", "")).lower():
+                continue
+            _lead = [dict(_cap)]
+            break
+    if _lead:
+        _dur = float(closer.get("duration_seconds") or 5)
+        _sign = dict(canonical)
+        _sign["start"], _sign["end"] = round(_dur - 1.5, 1), round(_dur - 0.1, 1)
+        _lead[0]["start"] = min(float(_lead[0].get("start", 0.4) or 0.4), max(0.4, _dur - 3.0))
+        _lead[0]["end"] = min(float(_lead[0].get("end", _dur - 2.0) or (_dur - 2.0)),
+                              round(_dur - 1.7, 1))
+        if _lead[0]["end"] <= _lead[0]["start"]:
+            _lead[0]["end"] = round(_lead[0]["start"] + 1.4, 1)
+        closer["captions"] = _lead + [_sign]
+    else:
+        closer["captions"] = [dict(canonical)]
     # Drop any stray function-tagged wink_ending cuts that aren't the closer,
     # then force the closer to be the very last cut.
     new_cuts = [cut for i, cut in enumerate(cuts)
@@ -2701,30 +2726,28 @@ def _consolidate_short_to_one_take(c: dict) -> None:
             if cap.get("start", 0) < 2.0:
                 cap["start"] = 2.0
 
-    # Wink ending auto-append (PD 2026-06-01 PM): each short episode ends
-    # with a story-driven wink. Subject = whoever the punchline lands on.
-    # PD 2026-06-14: never double-wink — if the Writer already ended on a wink,
-    # drop it before appending so exactly one closing wink survives. (The sweep
-    # _enforce_wink_empty_captions also dedupes, but guard at the source too.)
-    cuts = [cc for cc in cuts if cc.get("function") != "wink_ending"]
+    # Wink ending: the channel sign-off wink is the button on the story's OWN closing (결)
+    # beat — folded INTO the final cut, never a separate content-blind cut stapled on after
+    # the story resolved (that redundant generic closer is what makes an ending feel thin).
+    # The Director authors WHERE the story ends (reality-return OR imagination-high); the
+    # wink follows the story. Drop any stray/duplicate wink cuts beyond the last, then fold.
+    _wink_idxs = [i for i, cc in enumerate(cuts) if cc.get("function") == "wink_ending"]
+    if len(_wink_idxs) > 1:
+        _keep = _wink_idxs[-1]
+        cuts = [cc for i, cc in enumerate(cuts)
+                if cc.get("function") != "wink_ending" or i == _keep]
     wink_subject = _pick_wink_subject(c)
-    # PD 2026-06-17: if BOTH pets are in the episode, the ending is a two-pet wink
-    # EXCHANGE — the OTHER pet winks first, then wink_subject (story winner) gives the
-    # final 햅삐 wink. Solo episode → single wink.
+    # PD 2026-06-17: if BOTH pets are in the closing frame, the wink is a two-pet EXCHANGE —
+    # the OTHER pet winks first, then wink_subject (story winner) gives the final 햅삐 wink.
     _subs = [str(s).lower() for s in (c.get("subjects") or [])]
     _has_r = any(("ryani" in s or "랴니" in s) for s in _subs)
     _has_l = any(("leo" in s or "레오" in s) for s in _subs)
     _other = ("leo" if wink_subject == "ryani" else "ryani") if (_has_r and _has_l) else None
-    wink_cut = _build_wink_cut(wink_subject, cuts[-1], other=_other)
-    # Closer-integrity gate: if the Writer ended the story on a fantasy/imagination climax
-    # with no reality-return payoff cut, fold that resolution into the wink so the ending
-    # isn't story-less (PD 2026-07-04). No-op when a real payoff cut already precedes it.
-    _ensure_resolution_before_wink(c, cuts, wink_cut, wink_subject)
-    cuts.append(wink_cut)
+    _fold_wink_into_closer(c, cuts, wink_subject, other=_other)
     c["cuts"] = cuts
     log.info(
-        "chain-mode short: %d cuts × 5s + 1 wink (%s) = %d total",
-        len(cuts) - 1, wink_subject, len(cuts),
+        "chain-mode short: %d cuts, wink folded into closer (%s)",
+        len(cuts), wink_subject,
     )
 
     # Scene-setter prepend (PD 2026-06-01 PM): "지금은 새벽 4시" 같은 시간/
@@ -3039,6 +3062,90 @@ def _build_wink_cut(subject: str, prev_cut: dict, other: str | None = None) -> d
         "angle": "pet_eye_level",
         "lighting": prev_cut.get("lighting", ""),
     }
+
+
+def _fold_wink_into_closer(c: dict, cuts: list, wink_subject: str,
+                           other: str | None = None) -> dict:
+    """Fold the channel wink sign-off INTO the story's final (결/closer) cut instead of
+    stapling a separate content-blind wink cut on after the story already resolved.
+
+    PD: the wink FOLLOWS the story and lives on its closing beat — reality-return OR
+    imagination-high, whichever the Director chose. A generic "push in and wink at camera"
+    6th cut, bolted on after a complete story, is exactly what makes an ending feel thin.
+
+    Two cases on the final cut:
+      • Director authored it as the wink closer (function=="wink_ending", real content) →
+        keep its content; only guarantee the mechanics.
+      • Plain story closer → continue its own action, then land the wink at its end.
+    Either way the cut is marked function=="wink_ending" so the whole wink pipeline applies:
+    the fresh char-ref still seed (kills the final-cut chain drift), and the caption-agent
+    skip that FREEZES this cut's captions — so we author [closing payoff/여운 lead-in] +
+    [the fixed 오늘도 햅삐 ♥ sign-off] here, or the story-caption is lost.
+    """
+    if not cuts:
+        cuts.append(_build_wink_cut(wink_subject, {}, other=other))
+        return cuts[-1]
+    closer = cuts[-1]
+    director_authored = (closer.get("function") == "wink_ending"
+                         and bool(closer.get("motion_prompt") or closer.get("veo_prompt")))
+    # Two-pet wink EXCHANGE only when BOTH pets are actually in the closer frame.
+    _who = str(closer.get("who") or "").lower()
+    _both = (("ryani" in _who or "랴니" in _who) and ("leo" in _who or "레오" in _who))
+    _other = other if _both else None
+    template = _build_wink_cut(wink_subject, closer, other=_other)
+    _wd = int(template["duration_seconds"])
+    if not director_authored:
+        # Continue the closer's OWN action, then land the wink — never discard the story.
+        _own = (closer.get("motion_prompt") or closer.get("veo_prompt") or "").strip()
+        if _own and "wink" not in _own.lower():
+            merged = _own.rstrip(". ") + ".\n\nTHEN, to close the episode: " + template["motion_prompt"]
+        else:
+            merged = template["motion_prompt"]
+        closer["motion_prompt"] = merged
+        closer["veo_prompt"] = merged
+        closer["who"] = template["who"]
+        closer["camera_move"] = "push_in"          # the signature land-on-the-wink push-in
+        closer["duration_seconds"] = _wd           # tight closer (retention); no long linger
+    else:
+        # Respect the Director's closer duration, but keep it a tight button.
+        closer["duration_seconds"] = min(int(closer.get("duration_seconds") or _wd), _wd + 1)
+    # Mechanics that apply in BOTH cases.
+    closer["function"] = "wink_ending"
+    closer["beat"] = "wink_ending"
+    closer["seedance_mode"] = "i2v"
+    closer["chain_from_prev"] = True
+    closer.setdefault("tag", "cut_wink_ending")
+    # A FOLDED wink continues the story's real closing beat, so it must render from that
+    # beat's own frame — the real set, the real photo-grounded body. It must NOT be re-seeded
+    # from a separately GENERATED char-ref still: that separate injection is what drifted the
+    # final cut into idealized/chubby pets in a hallucinated fantasy garden (every story cut
+    # stayed photoreal, only the bolted-on wink diverged). The accumulated-drift rationale for
+    # that fresh-still seed was the SEPARATE-final-cut architecture, which folding removes —
+    # the closer now chains off one prior cut, not the whole episode. Cameraman reads this flag.
+    closer["wink_folded"] = True
+    # Captions: keep the closer's own payoff/여운 line as the lead-in (clamped to end before
+    # the sign-off), then land the fixed sign-off last. If the closer had no real caption
+    # (a story-less ending), author a grounded payoff so the ending still tells a story.
+    signoff = dict(template["captions"][0])
+    signoff["start"], signoff["end"] = round(_wd - 1.5, 1), round(_wd - 0.1, 1)
+    lead = []
+    for cap in (closer.get("captions") or []):
+        ko = str(cap.get("ko", "")).strip()
+        if not ko or "햅삐" in ko or "happy as ever" in str(cap.get("en", "")).lower():
+            continue
+        cap = dict(cap)
+        cap["start"] = min(float(cap.get("start", 0.4) or 0.4), max(0.4, _wd - 3.0))
+        cap["end"] = min(float(cap.get("end", _wd - 2.0) or (_wd - 2.0)), round(_wd - 1.7, 1))
+        if cap["end"] <= cap["start"]:
+            cap["end"] = round(cap["start"] + 1.4, 1)
+        lead.append(cap)
+        break  # one lead-in caption is enough for a tight closer
+    if not lead:
+        payoff = _resolution_caption(c, wink_subject)
+        lead = [{"start": 0.4, "end": round(_wd - 1.7, 1),
+                 "ko": payoff["ko"], "en": payoff["en"]}]
+    closer["captions"] = lead + [signoff]
+    return closer
 
 
 # ──────────────────────────────────────────────────────────────────────

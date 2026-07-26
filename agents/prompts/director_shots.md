@@ -132,7 +132,12 @@ nothing happens." (관찰왕: the arc's 전 was the joyful 하비 reunion, but t
 footsteps-tension → wink with no greeting cut — flat, "문 열고 아무것도 안 한다.") So before
 finalizing, check the cut list against the arc: is the 결/payoff a distinct cut whose
 action delivers it (the greeting actually happens, the treat is actually grabbed)? The
-wink/closer is a separate button AFTER the payoff, not a substitute for it.
+payoff must visibly HAPPEN on its own cut — the wink never SUBSTITUTES for it. But the
+wink is not a detached tail either: it is the button that ENDS the story's own closing
+(결) beat, folded into that cut — never a separate, content-blind "push in and wink at
+camera" shot stapled on after the story already resolved (that redundant generic closer
+is what makes an ending feel thin). See "The closer carries the wink" below for where the
+wink lands.
 
 - **`short`** (~25-30s): keep the Writer's cut count — it follows the story's beats (up
   to ~8 video cuts; readability floor ~2.5s per captioned video cut). Set each cut's
@@ -273,12 +278,29 @@ Rules:
 - The **last cut (결)** lands its wink + caption then ends — held tail ≤ ~1s, like the others. Do NOT pad it with a long held-pose linger (that drawn-out tail is the back-half sag — see "Last cut = a TIGHT close").
 - If your action_beats describe < 3s of motion in a 6s cut, EXTEND the motion_beats with secondary actions (ear flick, eye blink, slight head tilt, paw shuffle) OR shorten duration.
 
-### Last cut = a TIGHT close, not a long linger
-The final cut is the 결 — the emotional button. The retention curve is decisive here:
-viewers are won early but LEAK in the back half (~15s onward, below the average Short),
-while the opening holds fine. A long slow 여운 IS that sag — a 7-8s slow-mo closer drags
-the tail viewers are already leaving during, and the warmth it's protecting lands too late
-to matter. So land the warmth FAST and end:
+### The closer carries the wink — and YOU decide where the story ends
+The final cut is the 결 — the emotional button — and the channel wink (one-eye wink +
+`오늘도 햅삐 ♥` sign-off) lives ON that beat, not on a separate tacked-on cut. Author the
+last cut as the closer AND the wink in one: mark it `function: "wink_ending"`, let its
+action deliver the closing beat, and land the wink at its end. The pipeline keeps this cut
+(it no longer strips it and appends a generic wink) and applies the wink mechanics — the
+fresh character-ref still seed, the sign-off caption — to whatever closer you wrote.
+
+**Where the story ends is YOUR call, driven by the story — there is no fixed ending
+shape.** Some episodes resolve best by returning to reality (현실→상상→현실복귀: the payoff
+IS the snap back home, and the wink buttons it there). Others land best ending ON the
+imagination/fantasy high — if the daydream is the emotional peak and returning to reality
+would only deflate it, close ON the dream and wink there. Why: forcing every episode
+through the same "return to reality, then wink" template flattens stories whose punch is
+the fantasy itself. Pick the ending the arc calls for; the wink follows the story, the
+story doesn't bend to a fixed closer. The one non-negotiable: the ending must still have a
+STORY — a captioned closing beat (payoff or 여운), never a captionless "그냥 끝" where the
+wink is the only content.
+
+Retention still governs HOW the closer is shot. Viewers are won early but LEAK in the back
+half (~15s onward, below the average Short) while the opening holds fine. A long slow 여운
+IS that sag — a 7-8s slow-mo closer drags the tail viewers are already leaving during, and
+the warmth it's protecting lands too late to matter. So land the warmth FAST and end:
 - `duration_seconds`: **3-5s** short, **5-6s** mid — enough for the wink + its caption to
   appear and read, no more. Do NOT pad to 7-8s.
 - `tempo_factor`: **1.0** — the wink carries a burned caption and must read at real time;
