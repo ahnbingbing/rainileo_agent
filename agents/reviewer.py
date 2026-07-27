@@ -976,6 +976,69 @@ def _canon_honorific_gate(concept: "dict | None", report: dict) -> None:
              report.get("판정"), report.get("점수"))
 
 
+_COINED_GATE_SYS = (
+    "You judge ONE Korean YouTube-Shorts title/theme for COMPREHENSIBILITY. A viewer must "
+    "grasp what the video is in a 2-second glance. FLAG only genuinely OPAQUE coined words / "
+    "invented mashups whose meaning does not come across (지어낸 조어·뜻이 안 통하는 억지 "
+    "합성어). Example to flag: '관조봇' (관조+봇 — not a real word, a viewer can't tell what it "
+    "means). ALLOW and do NOT flag: real standard Korean words; proper names / pet names "
+    "(삐용이, 남산이); loanwords (챌린지, 브이로그); and understandable playful compounds whose "
+    "meaning is obvious (간식 심사위원, 낮잠 요정, 꼬리 댄스). When in doubt that a viewer WOULD "
+    "understand it, do NOT flag — precision over recall. Return ONLY JSON: "
+    "{\"coined\":[\"<opaque word>\", ...], \"comprehensible\": true|false}.")
+
+
+def _coined_concept_gate(concept: dict | None, report: dict) -> None:
+    """Deterministic-ish coined-concept gate (both lanes): the title/theme must be real,
+    instantly-understood Korean — a coined nonsense word ('관조봇') makes the hook unreadable
+    in the 2s Shorts glance. The holistic reviewer rubber-stamps such titles (관조봇 shipped
+    9/10), so a focused single-purpose classifier on JUST the title/theme text fires reliably
+    where the whole-episode rubric doesn't. Fail-safe: any API/parse error → no-op (never a
+    false fail from an infra hiccup); precision-tuned to allow proper names + clear compounds."""
+    if not concept:
+        return
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        return
+    fields = [str(concept.get(k, "")) for k in ("title", "theme", "narrative_oneliner")]
+    text = " · ".join(f for f in fields if f).strip()
+    if not text:
+        return
+    try:
+        from google import genai as _g
+        from google.genai import types as _gt
+        client = _g.Client(api_key=api_key, http_options=_gt.HttpOptions(
+            timeout=int(os.getenv("VLM_TIMEOUT_MS", "90000"))))
+        resp = client.models.generate_content(
+            model=os.getenv("VLM_MODEL", "gemini-2.5-flash"),
+            contents=[f"제목/테마: {text}"],
+            config=_gt.GenerateContentConfig(
+                system_instruction=_COINED_GATE_SYS, response_mime_type="application/json",
+                thinking_config=_gt.ThinkingConfig(thinking_budget=0)))
+        d = json.loads((resp.text or "{}").strip())
+    except Exception as e:
+        log.warning("coined-concept gate skipped (fail-safe): %s", e)
+        return
+    coined = [w for w in (d.get("coined") or []) if isinstance(w, str) and w.strip()]
+    if not coined and d.get("comprehensible", True) is not False:
+        return
+    note = ("제목/컨셉 조어(결정론적 게이트): " + ", ".join(coined or ["말이 안 통하는 제목"]) +
+            " — 뜻이 안 통하는 지어낸 말이라 2초 안에 무슨 영상인지 안 잡힌다. 실재하고 바로 "
+            "이해되는 말로 고쳐라 (예: '관조봇 따라하기'→'명상하는 누나 따라하기').")
+    prev = report.get("가장_큰_문제", "") or ""
+    report["가장_큰_문제"] = note if (not prev or "없" in prev[:6]) else f"{note} / {prev}"
+    try:
+        report["점수"] = min(int(report.get("점수", 10)), 6)
+    except Exception:
+        report["점수"] = 6
+    if report.get("판정", "") in ("업로드", "즉시 업로드", "소폭 수정 후 업로드", ""):
+        report["판정"] = "수정 필요"
+    report["최종_결정"] = report.get("판정", "수정 필요")
+    report["_coined_gate_override"] = note
+    log.info("coined-concept gate FIRED: %s → 판정=%s 점수=%s", coined,
+             report.get("판정"), report.get("점수"))
+
+
 # False "first swim/water" framing about Ryani (PD 2026-06-28). Ryani is a lifelong
 # water-maniac / strong swimmer (canon), so any caption that frames a swim/water beat
 # as her FIRST is a factual lie — even on genuine 2016 baby footage (that era she was
@@ -1569,6 +1632,13 @@ def review(video: Path, storyboard: list[dict] | None = None,
         _canon_honorific_gate(concept, report)
     except Exception as e:
         log.warning("Honorific canon gate failed: %s", e)
+
+    # Coined-concept gate (both lanes): title/theme must be real, instantly-understood Korean
+    # — a nonsense coinage ('관조봇') the holistic reviewer rubber-stamped as on-brand (9/10).
+    try:
+        _coined_concept_gate(concept, report)
+    except Exception as e:
+        log.warning("Coined-concept gate failed: %s", e)
 
     # False "first swim/water" framing about Ryani (PD 2026-06-28): she is a lifelong
     # swimmer, so a '첫 수영/인생 첫 풍덩' hook on old pool footage is a lie. RF-scoped.
