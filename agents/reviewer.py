@@ -982,7 +982,8 @@ _COINED_GATE_SYS = (
     "invented mashups whose meaning does not come across (지어낸 조어·뜻이 안 통하는 억지 "
     "합성어). Example to flag: '관조봇' (관조+봇 — not a real word, a viewer can't tell what it "
     "means). ALLOW and do NOT flag: real standard Korean words; proper names / pet names "
-    "(삐용이, 남산이); loanwords (챌린지, 브이로그); and understandable playful compounds whose "
+    "(삐용이, 남산이); this channel's fixed family terms (랴니엄마 = what Leo calls Ryani, "
+    "함미/하비 = grandma/grandpa); loanwords (챌린지, 브이로그); and understandable playful compounds whose "
     "meaning is obvious (간식 심사위원, 낮잠 요정, 꼬리 댄스). When in doubt that a viewer WOULD "
     "understand it, do NOT flag — precision over recall. Return ONLY JSON: "
     "{\"coined\":[\"<opaque word>\", ...], \"comprehensible\": true|false}.")
