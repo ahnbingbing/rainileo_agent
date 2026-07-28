@@ -3042,6 +3042,11 @@ def _build_wink_cut(subject: str, prev_cut: dict, other: str | None = None) -> d
         # slow wink was the back-half sag (viewers bleed ~15s onward). Enough for the ~2s
         # push-in + wink + caption to read, no more. Solo 5s; two-pet exchange 6s (see _wd).
         "duration_seconds": _wd,
+        # Play the wink at NATIVE speed. assemble_episode speeds every cut by its 1.3x
+        # default UNLESS a tempo_factor pins it; without this the ~7s rendered wink was
+        # compressed to ~5.4s and the wink flashed by ("윙크가 너무 짧다"). 1.0 lets the
+        # push-in + wink + sign-off breathe — the closer's beat, not a longer linger.
+        "tempo_factor": 1.0,
         "seedance_mode": "i2v",
         "chain_from_prev": True,
         "motion_prompt": motion,
@@ -3114,6 +3119,8 @@ def _fold_wink_into_closer(c: dict, cuts: list, wink_subject: str,
     closer["beat"] = "wink_ending"
     closer["seedance_mode"] = "i2v"
     closer["chain_from_prev"] = True
+    # Native speed so the wink isn't compressed by assemble's 1.3x default (see _build_wink_cut).
+    closer["tempo_factor"] = 1.0
     closer.setdefault("tag", "cut_wink_ending")
     # A FOLDED wink continues the story's real closing beat, so it must render from that
     # beat's own frame — the real set, the real photo-grounded body. It must NOT be re-seeded
