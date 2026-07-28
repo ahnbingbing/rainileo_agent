@@ -839,6 +839,22 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   (실패 컨셉은 exclude set이라 안 반복). AV는 EXPENSIVE terminal 캡 유지. **교훈: 자동복구의 '몇 번 재시도하나'는
   비용 구조로 갈린다 — 공짜 레인(RF)은 통과작이 나올 때까지 끈질기게, 유료 레인(AV)은 일찍 끊어라. 하나의 상수로
   두 레인을 묶으면 한쪽이 손해다(availability≠usage처럼, cost≠uniform).**
+- **C19. 선택은 게이트가 무엇을 버릴지 알아야 한다 — 원시 길이로 고르면 렌더가 gutting한다(7/30, C16 연장)** —
+  7/30 18:00·21:00 RF가 self-heal 6라운드 다 쓰고 빈 슬롯. self-heal LLM 진단은 또 환각(없는 파일
+  `real_footage_storyteller.py`/`vlm_tagger.py` 지목 — C16 가드가 low_confidence로 잡음). 배치 로그 원문이
+  진짜 원인: RF 선택이 **게이트를 통과할 클립인지 미리 안 보고** 골라 매 라운드 다른 게이트에 gutting됐다 —
+  "face-leaking cuts (0)"(사람얼굴 클립 face-crop 전량드롭)·"too short 12.4/12.6s < 14"(collapse후 짧음)·
+  "unavailable photos (0)"(파일 미보유). 게이트는 다 정상, **선택이 눈뜬 장님**. pre-render footage 게이트
+  (C16, 4698875)마저 원시 clip길이로 추정하고 floor가 8s(렌더 min 14s보다 느슨)라 8~14s 컨셉을 통과시켜
+  렌더서 too-short로 죽였다. Fix(0b28d31): ①게이트 floor 8→11(렌더 min에 정렬) ②has_human 컷 usable 할인
+  0.6(원시추정이 face-leak 드롭을 못 봄 → 사람컷 discount해 재제안을 no-human으로, croppable 장클립은
+  hard-block 안 함). 유닛검증: good no-human 장클립 PASS·human 11s REJECT·human 85s PASS(과반려 없음).
+  ★교훈: 파이프라인 뒤쪽 게이트가 버리는 것을 **앞쪽 선택이 모르면** 통과작이 나올 때까지 헛돈다 —
+  선택-시점 추정은 렌더가 실제로 살릴 길이를 근사해야 하고, front-run 게이트의 floor는 자기가 front-run하는
+  가드의 기준과 **같아야** 한다(느슨하면 무의미). 남은 갭: 손필 때도 (a)6월 클립 일부 미보유(availability)
+  (b)내 하드코딩 제목이 클립과 모순(여름'밤'인데 아침·'랴니 발라당'인데 레오)→Giri가 정확히 반려 = 손큐레이션도
+  **시간/포즈 안 박은 중립 제목**이라야 안전(캡션 arc는 생성기가 프레임서 씀). cf C16(footage 게이트 탄생),
+  C18(재시도 예산).
 
 ### 4.5 인프라 / 파이프라인
 - **D_salvage. 캡션-salvage가 카드 링크를 끊어 렌더·Giri-통과 에피소드가 조용히 예약 실패했다(7/21)** — 빈 슬롯의
