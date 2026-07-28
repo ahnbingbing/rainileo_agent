@@ -2812,7 +2812,18 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     # the retry; the burn-time guard remains the final net. RF_FOOTAGE_GATE=0 reverts.
     if (os.getenv("RF_FOOTAGE_GATE", "1") == "1"
             and "[재료검증]" not in prior_feedback):
-        _floor = float(os.getenv("RF_MIN_CONTENT_SECONDS", "8"))
+        # Floor must clear the RENDER minimum, not sit below it: the burn-time guard fails an
+        # assembled RF episode under RF_MIN_SECONDS (14s incl. ~4s bumpers), so the CONTENT
+        # floor is ~RF_MIN_SECONDS − bumpers + margin. A floor of 8 passed concepts that then
+        # rendered to 12.4/12.6s and failed — the gate was looser than the guard it front-ran.
+        _floor = float(os.getenv("RF_MIN_CONTENT_SECONDS", "11"))
+        # The raw-duration estimate OVERCOUNTS: the deterministic render drops chunks a concept's
+        # clips won't survive. The biggest such drop is FACE-LEAK — a cut whose owner-face can't
+        # be cropped is removed whole (7/30 18:00/21:00 lost 6 self-heal rounds to "dropping
+        # face-leaking cuts (0)"). So DISCOUNT a has_human cut's usable seconds: it biases the
+        # ONE re-proposal toward no-human clips (which also matches the pool's has_human demotion)
+        # without hard-blocking a croppable human clip. RF_HUMAN_DISCOUNT=1.0 reverts.
+        _human_disc = float(os.getenv("RF_HUMAN_DISCOUNT", "0.6"))
         _thin: list = []
         try:
             _acon = _db()
@@ -2822,16 +2833,20 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
             if _aids:
                 _q = ",".join("?" * len(_aids))
                 for r in _acon.execute(
-                        f"SELECT asset_id, duration_sec FROM assets WHERE asset_id IN ({_q})",
+                        f"SELECT asset_id, duration_sec, has_human FROM assets WHERE asset_id IN ({_q})",
                         list(_aids)):
-                    if r[1] and float(r[1]) > 0:
-                        _adur[r[0]] = float(r[1])
+                    _adur[r[0]] = (float(r[1]) if r[1] and float(r[1]) > 0 else None,
+                                   bool(r[2]))
             for c in concepts:
                 _got = 0.0
                 for cut in (c.get("cuts") or []):
                     _req = float(cut.get("duration_seconds") or cut.get("trim_dur") or 4)
-                    _act = _adur.get(cut.get("asset_id"))
-                    _got += min(_req, _act) if _act is not None else _req
+                    _meta = _adur.get(cut.get("asset_id"))
+                    _act, _human = _meta if _meta is not None else (None, False)
+                    _use = min(_req, _act) if _act is not None else _req
+                    if _human:
+                        _use *= _human_disc
+                    _got += _use
                 if _got < _floor:
                     _thin.append((c.get("title", ""), round(_got, 1)))
         except Exception as e:
