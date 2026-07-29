@@ -1571,12 +1571,38 @@ def review(video: Path, storyboard: list[dict] | None = None,
         #    over-calls on natural sleeping/belly-up poses. It kills ONLY when the MAIN
         #    holistic review did NOT independently call the episode upload-clean — i.e. two
         #    signals must agree before a borderline smear discards a paid render.
-        is_hard = bool(re.search(
-            r"orb|blob|melt|deform|warp|fused|floating|duplicat|mismatch|"
-            r"extra[ -]?(eye|limb|leg|head|paw)", detail, re.IGNORECASE))
+        _HARD_RE = (r"orb|blob|melt|deform|warp|fused|floating|duplicat|mismatch|"
+                    r"extra[ -]?(eye|limb|leg|head|paw)")
+        is_hard = bool(re.search(_HARD_RE, detail, re.IGNORECASE))
         is_soft = bool(re.search(
             r"smear|blend|distort|asymmetr|blurr|soft", detail, re.IGNORECASE))
         holistic_clean = str(report.get("판정", "")).strip() in ("업로드", "즉시 업로드")
+        # A HARD defect fails the episode ALONE, overriding a clean holistic 9/10 — so it
+        # must be REAL, not a flaky single-call VLM hallucination. This VLM face check is
+        # non-deterministic: it intermittently reports a "floating orb/blob" (a light bokeh,
+        # a lens highlight, a fantasy sparkle misread as an artifact) that FAILS a Giri-9 AV
+        # and empties the slot, yet the SAME mp4 passes cleanly on re-review (the recurring
+        # empty-AV-slot root). So CORROBORATE a hard defect with a second independent face
+        # check before letting it alone-fail: a genuine structural collapse (melted face)
+        # is persistent and both calls catch it; a flaky hallucination isn't confirmed and
+        # is demoted (→ soft path, which still needs holistic disagreement to fail). This
+        # preserves the "melted face can pass holistic" guard while killing the false fails.
+        # AV_FACE_CORROBORATE=0 reverts to single-call alone-fail.
+        if (is_hard and fi.get("face_defect")
+                and os.getenv("AV_FACE_CORROBORATE", "1") == "1"):
+            try:
+                fi2 = _check_face_integrity(client, model_name, frames, _types)
+                d2 = (fi2.get("detail") or "")
+                hard2 = bool(fi2.get("face_defect") and re.search(_HARD_RE, d2, re.IGNORECASE))
+                if not hard2:
+                    log.info("face-integrity: hard defect NOT corroborated on 2nd check "
+                             "(fi=%r fi2=%r) — demoting flaky hit", detail, d2)
+                    is_hard = False
+                    if not fi2.get("face_defect"):
+                        fi["face_defect"] = False   # both-clean-ish → dismiss flaky orb
+                        report["face_integrity"] = {**fi, "_corroboration": "cleared"}
+            except Exception as _e:
+                log.warning("face-integrity corroboration failed (keeping 1st): %s", _e)
         if fi.get("face_defect") and (sev in ("minor", "major") or is_hard or is_soft):
             fail = is_hard or (sev == "major" and not (is_soft and holistic_clean))
             note = (f"AI 얼굴 무결성 결함({'major' if fail else sev}): {detail}"
