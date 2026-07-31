@@ -4175,6 +4175,23 @@ def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.dat
         concept["content_era"] = _content_era_note(con, concept.get("cuts") or [])
         pkg = make_packaging(concept, card_id=card_id)
         title, desc = pkg["title"], pkg["description"]
+        # PD 2026-08-01: deterministic backstop at the title/desc chokepoint — a clip that
+        # predates a pet must not name it (a pre-Leo café cat is 원두, not 레오). Use the
+        # earliest cut's capture date; mirrors the burn-time _rf_existence_caption_gate so the
+        # title can't say '레오' over 2024 footage even if packaging re-introduced it.
+        try:
+            from agents import canon as _canon_pre
+            _cut_dates = []
+            for _c in (concept.get("cuts") or []):
+                _m = re.search(r"med_(\d{4})_(\d{2})_(\d{2})", str(_c.get("asset_id") or ""))
+                if _m:
+                    _cut_dates.append(f"{_m.group(1)}-{_m.group(2)}-{_m.group(3)}")
+            if _cut_dates:
+                _earliest = min(_cut_dates)
+                title = _canon_pre.correct_preleo_pet_names_text(title, _earliest)
+                desc = _canon_pre.correct_preleo_pet_names_text(desc, _earliest)
+        except Exception:
+            pass
         tags = [str(t).lstrip("#") for t in pkg["hashtags"]]
         draft["packaging_arm"] = pkg["arm"]          # record arm for perf attribution
         payload["draft"] = draft

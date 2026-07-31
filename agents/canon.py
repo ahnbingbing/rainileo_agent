@@ -54,6 +54,24 @@ LEO = {
     "exists_from": "2025-09-25",
 }
 
+# ── Pre-Leo cat canon (PD 2026-08-01) ─────────────────────────────────
+# Before Leo was rescued (2025-09), the cat in Ryani's life was 원두(Wondu) — the
+# resident cat at Ryani's favourite café, whom she adored. 원두 has since crossed the
+# rainbow bridge. This is why a grey/tabby cat in PRE-2025-09 footage is NOT Leo (orange
+# tabby, born 2025-09): it is 원두. The RF caption pipeline reads only the frame and is
+# told "name the cat 레오" — so a café-cat clip from 2024 got captioned "레오", a factual
+# lie PD caught twice (카페편 "2024 신참 레오" → RF0800 "1.6년 전 레오"). Naming the
+# pre-Leo cat 원두 turns the boundary into a warm story instead of a hole. The tone is
+# fond/memorial (like 삐용이) — never morbid.
+WONDU = {
+    "name_ko": "원두",
+    "who": "레오를 만나기 전, 랴니가 가장 좋아하던 카페에 살던 고양이 (지금은 무지개다리를 건넘)",
+    "tone": "그립고 다정하게 — 슬픔을 전시하지 말 것",
+}
+# What a temporally-impossible pet name should become in a caption (deterministic backstop).
+# The cat before Leo is 원두; a pre-2015 'dog' (essentially never happens) falls back generic.
+PRELEO_CAT_NAME = WONDU["name_ko"]     # 원두
+
 
 def pet_exists_on(pet: str, captured_iso: "str | None") -> bool:
     """Could `pet` (canonical key 'ryani'/'leo') appear in footage captured at
@@ -163,6 +181,36 @@ def correct_canon_age_text(text: str) -> str:
         text = _BIRTH_YEAR_KO.sub(lambda m: f"{_snap_birth_year(int(m.group(1)))}년생", text)
     text = _BIRTH_YEAR_EN.sub(lambda m: f"{m.group(1)} {_snap_birth_year(int(m.group(2)))}", text)
     text = correct_canon_names_text(text)
+    return text
+
+
+# ── Temporally-impossible pet-name corrector (PD 2026-08-01, RF0800) ───
+# A caption over a clip that PREDATES a pet's existence must not name that pet. The RF
+# caption VLM reads only the frame and is told to name our pets — so a café cat in a 2024
+# clip (before Leo's 2025-09 birth) got captioned "레오". This is the deterministic
+# backstop the frame-blind VLM stages lack: given a caption + the clip's capture date,
+# swap an impossible pet name for the right one (the pre-Leo cat is 원두; a pre-2015 dog is
+# generic 강아지). pet_exists_on is the single boundary. Idempotent on already-correct text.
+_LEO_TOKEN_KO = _re_canon.compile(r"레오")
+_LEO_TOKEN_EN = _re_canon.compile(r"\bLeo\b")
+_RYANI_TOKEN_KO = _re_canon.compile(r"랴니")
+_RYANI_TOKEN_EN = _re_canon.compile(r"\bRyani\b")
+
+
+def correct_preleo_pet_names_text(text: str, captured_iso: "str | None") -> str:
+    """If `captured_iso` predates a pet's existence, replace that pet's name in `text`.
+    레오/Leo → 원두/Wondu (the pre-Leo café cat); 랴니/Ryani → 강아지/the dog (pre-2015,
+    essentially never). No date, or a date within existence → unchanged. Deterministic —
+    call at the burn chokepoint after any VLM caption rewrite so an impossible name can't
+    survive to screen. See canon.WONDU."""
+    if not text or not captured_iso:
+        return text
+    if not pet_exists_on("leo", captured_iso):
+        text = _LEO_TOKEN_KO.sub(PRELEO_CAT_NAME, text)
+        text = _LEO_TOKEN_EN.sub("Wondu", text)
+    if not pet_exists_on("ryani", captured_iso):
+        text = _RYANI_TOKEN_KO.sub("강아지", text)
+        text = _RYANI_TOKEN_EN.sub("the dog", text)
     return text
 
 # ──────────────────────────────────────────────────────────────────────

@@ -1424,6 +1424,10 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
                 # PD 2026-06-07 efficient model: uuid lets the trim step
                 # re-download the original on demand if it was pruned.
                 "source_uuid": a.get("source_uuid") or "",
+                # PD 2026-08-01: carry asset_id so the post-caption existence gate can read
+                # each cut's capture date (med_YYYY_MM_DD) and strip a pet named over a clip
+                # that predates it (원두 café-cat clip captioned "레오"). See canon.WONDU.
+                "asset_id": a.get("asset_id") or "",
             }
             # PD 2026-06-03: split_screen modes need a SECOND asset for the
             # other half of the split. Writer sets cc.secondary_asset_id.
@@ -1994,7 +1998,12 @@ _RF_ACTION_SYS = (
     "dirt. Look at what the mouth/paws are DOING, not just where the head is. Don't let the "
     "episode's theme (e.g. a '킁킁이/sniffing' concept) override a beat that clearly shows a "
     "different action — caption the FRAME, not the concept.\n"
-    "• Name our pets (레오/랴니), never generic '고양이/강아지'. A pet's playful inner voice "
+    "• Name our pets (레오/랴니), never generic '고양이/강아지' — EXCEPT when the clip's "
+    "capture date (given below as [clip captured YYYY-MM-DD]) predates that pet's existence. "
+    "Leo the orange tabby was born 2025-09; any cat in footage from BEFORE 2025-09 is NOT Leo "
+    "— it is 원두, the café cat Ryani loved before Leo (now passed; keep the tone fond, never "
+    "morbid). Caption that cat '원두', never '레오'. (Ryani the dog exists from 2015.) If no "
+    "date is given, name our pets normally. A pet's playful inner voice "
     "(랴니 속마음: '나도 마킹! 나도 왔다감!') is welcome WHEN it fits that beat's action.\n"
     "• NO over-specification the frames can't confirm: no exact clock time (한밤중/자정 — "
     "say just 밤/낮), no exact body-spot you can't see (무릎 vs just 품), no absent props. "
@@ -2563,6 +2572,21 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
             and isinstance(cap.get(k), dict) and cap[k].get("scenes")]
     if not tags:
         return
+    # PD 2026-08-01: per-clip capture date so the VLM won't name a pet that didn't exist yet
+    # (a pre-2025-09 café cat is 원두, not 레오). Read from the sources manifest's asset_id.
+    _src_map = {}
+    try:
+        _sp = Path(manifests.get("sources") or "")
+        if _sp.exists():
+            _src_map = json.loads(_sp.read_text(encoding="utf-8"))
+    except Exception:
+        _src_map = {}
+
+    def _clip_date(tag: str) -> "str | None":
+        s = _src_map.get(tag)
+        probe = (s.get("asset_id") if isinstance(s, dict) else s) or ""
+        m = re.search(r"med_(\d{4})_(\d{2})_(\d{2})", str(probe))
+        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else None
     try:
         from google import genai as _g
         from google.genai import types as _gt
@@ -2608,6 +2632,9 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
                 except Exception:
                     pass
             continue
+        _cd = _clip_date(tag)
+        if _cd:
+            parts.append(f"[clip captured {_cd}]")
         parts.append(f"Clip length ≈ {dur:.1f}s. Caption the action beats.")
         # A caption-fix re-render carries PD's specific caption direction via env — honor it
         # while still grounding to the real on-screen beats (roadmap A2 caption mode).
@@ -3055,6 +3082,76 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
                     f"화면 기준 재작성 (주인공 부재/오인 교정)")
     log.info("grounding gate: rewrote %d/%d mismatched scenes (of %d)",
              n_fixed, len(mismatched), n_scenes)
+
+
+def _rf_existence_caption_gate(work_dir: Path, manifests: dict,
+                               progress_cb=None, dry_run: bool = False) -> None:
+    """PD 2026-08-01 (RF0800 원두 재발): DETERMINISTIC backstop — after ALL VLM caption
+    rewrites, strip a pet named over a clip that PREDATES that pet's existence.
+
+    Root cause: the action-caption + grounding VLMs read only the FRAME and are told
+    "name our pets 레오/랴니, never 고양이/강아지" — so a grey café cat in a 2024 clip
+    (before Leo's 2025-09 birth) is captioned "레오". The concept-stage temporal gate
+    (producer.py:_rf_temporal_coherence, gate E) runs BEFORE these render-time rewrites,
+    so the name is re-introduced downstream with nothing left to catch it. This runs LAST,
+    reads each cut's capture date from its asset_id (via the sources manifest), and swaps
+    the impossible name deterministically (레오→원두 the café cat, 랴니→강아지) in KO+EN.
+    No VLM → can't be rubber-stamped. canon.pet_exists_on is the single boundary.
+    RF_EXISTENCE_GATE=0 disables; failures are silent (keep captions)."""
+    if dry_run or os.getenv("RF_EXISTENCE_GATE", "1") == "0":
+        return
+    cap_path = Path(manifests.get("captions") or "")
+    src_path = Path(manifests.get("sources") or "")
+    if not cap_path.exists() or not src_path.exists():
+        return
+    try:
+        cap = json.loads(cap_path.read_text(encoding="utf-8"))
+        sources = json.loads(src_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        log.warning("existence gate: manifest unreadable: %s", e)
+        return
+    from agents import canon as _canon
+
+    def _date_for(tag: str) -> "str | None":
+        s = sources.get(tag)
+        aid = ""
+        if isinstance(s, dict):
+            aid = s.get("asset_id") or ""
+        # asset_id (or a source path) both embed med_YYYY_MM_DD
+        probe = aid or (s if isinstance(s, str) else "")
+        m = re.search(r"med_(\d{4})_(\d{2})_(\d{2})", probe or "")
+        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else None
+
+    n_fixed = 0
+    for tag, entry in cap.items():
+        if tag.startswith("_") or not isinstance(entry, dict):
+            continue
+        cdate = _date_for(tag)
+        if not cdate:
+            continue
+        for sc in (entry.get("scenes") or []):
+            if not isinstance(sc, dict):
+                continue
+            for k in ("ko", "en"):
+                orig = sc.get(k) or ""
+                fixed = _canon.correct_preleo_pet_names_text(orig, cdate)
+                if fixed != orig:
+                    sc[k] = fixed
+                    n_fixed += 1
+        # a per-cut title can also carry the impossible name
+        if entry.get("title"):
+            entry["title"] = _canon.correct_preleo_pet_names_text(entry["title"], cdate)
+    if n_fixed and not dry_run:
+        try:
+            cap_path.write_text(json.dumps(cap, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as e:
+            log.warning("existence gate: write-back failed: %s", e)
+            return
+    if progress_cb and n_fixed:
+        progress_cb(f":no_entry: 존재-시점 게이트 — 클립 촬영 시점에 없던 펫 호명 {n_fixed}건 교정 "
+                    f"(예: 2024 클립의 '레오' → '원두')")
+    if n_fixed:
+        log.info("existence gate: corrected %d impossible pet-name mentions", n_fixed)
 
 
 def _rf_caption_punchup(work_dir: Path, manifests: dict, anim_dir: Path,
@@ -5863,6 +5960,16 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
     # mistiming — winter footage stays usable, just framed for right now. Last caption stage so
     # nothing overwrites it; RF-only (AV has no real dated footage — its season is concept-chosen).
     _weave_current_weather_into_opener(manifests, anim_dir, progress_cb, dry_run)
+
+    # Step 1b-existence (PD 2026-08-01): LAST caption mutation before burn — strip any pet
+    # named over a clip that predates its existence (a pre-Leo café cat captioned '레오' →
+    # '원두'). Deterministic backstop for the frame-blind VLM caption stages above; runs
+    # after every rewrite/anchor/weather stage so nothing can re-introduce the name. RF-only
+    # (asset dates); AV cuts carry no real capture date. See canon.WONDU / _rf_existence_caption_gate.
+    if manifests.get("style") == "real_footage" or (
+            manifests.get("concept") or {}).get("render_style") == "real_footage":
+        _rf_existence_caption_gate(manifests=manifests, work_dir=work_dir,
+                                   progress_cb=progress_cb, dry_run=dry_run)
 
     # Step 1c: burn captions on trimmed clips.
     manifests["style"] = "real_footage"  # enables caption reading-time fit (#4)
