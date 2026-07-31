@@ -198,16 +198,21 @@ _RYANI_TOKEN_EN = _re_canon.compile(r"\bRyani\b")
 
 
 def correct_preleo_pet_names_text(text: str, captured_iso: "str | None") -> str:
-    """If `captured_iso` predates a pet's existence, replace that pet's name in `text`.
-    레오/Leo → 원두/Wondu (the pre-Leo café cat); 랴니/Ryani → 강아지/the dog (pre-2015,
-    essentially never). No date, or a date within existence → unchanged. Deterministic —
-    call at the burn chokepoint after any VLM caption rewrite so an impossible name can't
-    survive to screen. See canon.WONDU."""
+    """If `captured_iso` predates a pet's existence, neutralize that pet's name in `text`.
+    레오/Leo → 고양이/the cat; 랴니/Ryani → 강아지/the dog (pre-2015, essentially never).
+    No date, or a date within existence → unchanged. Deterministic backstop — call at the
+    burn chokepoint after any VLM caption rewrite so an impossible name can't survive.
+
+    NOTE (PD 2026-08-01): the safe default is GENERIC (고양이), NOT 원두. One pre-Leo cat is
+    원두 (the café cat, see canon.WONDU) but NOT every pre-Leo cat is — don't over-attribute.
+    When PD/context confirms a clip IS 원두, name it 원두 explicitly in the caption (that name
+    exists, so this backstop leaves it untouched); this function only strips the impossible
+    '레오'."""
     if not text or not captured_iso:
         return text
     if not pet_exists_on("leo", captured_iso):
-        text = _LEO_TOKEN_KO.sub(PRELEO_CAT_NAME, text)
-        text = _LEO_TOKEN_EN.sub("Wondu", text)
+        text = _LEO_TOKEN_KO.sub("고양이", text)
+        text = _LEO_TOKEN_EN.sub("the cat", text)
     if not pet_exists_on("ryani", captured_iso):
         text = _RYANI_TOKEN_KO.sub("강아지", text)
         text = _RYANI_TOKEN_EN.sub("the dog", text)
