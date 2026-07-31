@@ -477,8 +477,8 @@ the whole concept on ONE Ryani reference unless the story deliberately time-trav
 the 침입자 (present-day living room) cuts must all use `ryani_solo`; a "11년 전 첫 질주"
 flashback is the only kind of cut that uses `ryani_young`.
 
-### Character marking — Leo (레오, ~8mo orange tabby)
-> "An orange tabby cat (Leo, ~8 months old, young adult, pale yellow-green / chartreuse eyes, white chin tuft, lean and agile body, paler cream-orange cheeks and belly). Tail often raised in question mark shape."
+### Character marking — Leo (레오, ~10mo orange tabby)
+> "An orange tabby cat (Leo, ~10 months old, full-grown young adult now roughly the SAME size as Ryani the French Bulldog — render him COMPARABLE in size to her, NOT a tiny kitten; pale yellow-green / chartreuse eyes, white chin tuft, lean and agile body, paler cream-orange cheeks and belly). Tail often raised in question mark shape."
 
 **Do NOT mention Leo's nose scar in motion_prompt by default.** Real Leo does have a faint scar from a rooftop adventure, but Seedance reliably exaggerates it into a visible wound. Omit "scar" from prompts unless this episode is specifically a Memory Lane / origin-story flashback about that incident.
 

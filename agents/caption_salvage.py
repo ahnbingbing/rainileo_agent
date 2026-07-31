@@ -153,7 +153,7 @@ def _rewrite_caption(actual: str, old_ko: str, lane: str) -> tuple[str, str] | N
         system = (
             "You rewrite ONE burned-in caption for the 'Ryani & Leo' pet Shorts so it "
             "matches what the clip ACTUALLY shows. Rules: Korean line + English line; "
-            "no parentheses, no emoji, no script notes; " + tone + "; 레오=8개월 고양이, "
+            "no parentheses, no emoji, no script notes; " + tone + "; 레오=10개월 고양이, "
             "랴니=11살 강아지(꼬리 없음) — NEVER swap ages/species. If the clip shows "
             "nothing caption-worthy, return empty strings. Return ONLY JSON: "
             "{\"ko\":str,\"en\":str}.")

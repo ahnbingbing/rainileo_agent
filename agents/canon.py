@@ -45,7 +45,7 @@ LEO = {
     "species_en": "orange tabby cat",
     "sex_en": "MALE",                # he/him
     "sex_ko": "수컷",
-    "age_months": 8,                 # NEVER "veteran"/senior/11년차
+    "age_months": 10,                # grown young-adult now (~Ryani-sized). NEVER "veteran"/senior/11년차
     "eyes_en": "pale yellow-green / chartreuse",  # NOT gold, NOT amber
     # Born ~2025-09-25, rescued 2025-11-15. He CANNOT appear in any earlier footage —
     # an orange cat in pre-2025 clips is a different/stray cat, NOT Leo. (PD 2026-06-22:
@@ -248,9 +248,11 @@ RYANI_MARKING = (
     "Only black/white/grey — no brown. Above each eye she has a FAINT, subtle "
     "eyebrow-like white mark (small and thin, brow-like — present but understated; "
     "NOT a bold or large round dot). "
-    "SIZE (PD 2026-06-21): she is a stocky, solid adult French Bulldog — in any frame "
-    "shared with Leo the cat she reads HEAVIER and a bit LARGER than him (he is a small "
-    "lean young cat), never smaller than the cat. "
+    "SIZE: she is a stocky, solid adult French Bulldog. Leo has now grown into a young-"
+    "adult cat of roughly HER size, so in a present-day two-shot the two read COMPARABLE — "
+    "she may look a touch heavier/broader in build, but NOT dramatically larger. Render "
+    "Leo as a full-grown cat beside her, never a tiny kitten (a kitten-sized Leo is correct "
+    "ONLY in an explicit baby/past-era memory-lane cut). "
     "★The center forehead blaze must stay a THIN pencil-width line in EVERY cut — it "
     "must NEVER thicken or widen into a broad white stripe/patch (a thick or wide "
     "center blaze is WRONG; keep it a fine narrow line). Keep the face "
@@ -266,10 +268,12 @@ LEO_MARKING = (
     "generated: pale yellow-green / chartreuse eyes (NOT gold or amber), white chin "
     "tuft, lean young-adult body, natural real-cat face and proportions. Do not "
     "warp, plasticize, or redraw his face."
-    " SIZE (PD 2026-06-21): Leo is a SMALL, slim young cat (~8 months, ~3kg) — when he "
-    "shares the frame with Ryani he must read NOTICEABLY SMALLER and lighter than her: "
-    "she is a stocky, heavy adult French Bulldog and he is a lean young cat. Do NOT "
-    "render Leo large, chunky, or bigger than the dog.")
+    " SIZE: Leo has grown into a young-adult cat (~10 months) roughly the SAME size as "
+    "Ryani — in a present-day two-shot render him COMPARABLE in size to the small French "
+    "Bulldog, a full-grown cat, NOT a tiny kitten (the wink-cut failure was a baby-sized "
+    "Leo dwarfed by adult Ryani). He stays lean and agile against her stocky build, so she "
+    "may read a touch broader, but he is NOT dramatically smaller. A kitten-small Leo is "
+    "correct ONLY when the cut is explicitly his baby/past era.")
 
 # generate_character_scene.py image-generation identity canon.
 RYANI_IMAGE_CANON = (
@@ -291,21 +295,24 @@ RYANI_IMAGE_CANON = (
     "hallucinated white dot/patch on the BACK of the neck is WRONG — the nape is pure black). "
     "Only black/white/grey — NO brown. Petite, "
     "refined, feminine build (NOT a muscular barrel-chested male) — but still a stocky, "
-    "solid adult French Bulldog: in any two-shot with Leo she is HEAVIER and a bit "
-    "LARGER than the small young cat, never smaller than him. A REAL dog, not "
-    "a cartoon. POSE = MATCH THE SCENE'S ACTION (PD 2026-06-12): render exactly the "
+    "solid adult French Bulldog: Leo is now a young-adult cat of comparable size, so in a "
+    "present-day two-shot the two read SIMILAR — she may be a touch heavier in build but "
+    "NOT dramatically larger, and Leo is never rendered kitten-tiny beside her (except in "
+    "an explicit baby-era cut). A REAL dog, not a cartoon. POSE = MATCH THE SCENE'S ACTION (PD 2026-06-12): render exactly the "
     "action this cut describes (splashing in waves, sitting, looking up, leaping, "
     "being held, etc.). Do NOT auto-insert a nose-down sniffing/licking-the-floor "
     "pose when the action is something else — floor-sniffing is correct ONLY when "
     "this scene's action actually calls for it; otherwise keep her head/face up.")
 
 LEO_IMAGE_CANON = (
-    "Leo — REAL orange tabby cat, MALE (he/him, young ~8 months). Pale "
+    "Leo — REAL orange tabby cat, MALE (he/him, young ~10 months). Pale "
     "YELLOW-GREEN / chartreuse eyes (NOT amber, NOT gold), white chin tuft, white "
     "whiskers, lean agile young-adult body, paler cream-orange cheeks and belly "
-    "than the back. A REAL cat, not a cartoon. SIZE: a SMALL slim young cat (~3kg) — "
-    "in any shot with Ryani he is NOTICEABLY SMALLER and lighter than her stocky adult "
-    "French Bulldog build; never render him large, chunky, or bigger than the dog.")
+    "than the back. A REAL cat, not a cartoon. SIZE: a young-adult cat now grown to roughly "
+    "Ryani's size — in a present-day two-shot render him COMPARABLE in size to the small "
+    "French Bulldog, a full-grown lean cat, NOT a tiny kitten. He is leaner than her stocky "
+    "build (so she can read a touch broader), but not dramatically smaller. Kitten-small is "
+    "correct ONLY in an explicit baby/past-era cut.")
 
 # arc.py showrunner authority block (Korean). Personality/ability/fear facts.
 CHARACTER_FACTS = (
@@ -313,7 +320,7 @@ CHARACTER_FACTS = (
     "⚠️ **종 절대 혼동 금지: 레오 = 고양이(cat, 주황 태비). 랴니 = 개(dog, 프렌치불독). "
     "절대 뒤바꾸지 마라.** 레오를 개로/랴니를 고양이로 쓰면 치명적 오류. "
     "('랴니엄마' = 레오가 랴니(개)를 부르는 애칭, 사람도 고양이도 아님.)\n"
-    "- **레오(레오)**: 8개월 **수컷** 고양이(주황 태비). 2025-11-15 떠돌이로 구조됨 → "
+    "- **레오(레오)**: 10개월 **수컷** 고양이(주황 태비). 2025-11-15 떠돌이로 구조됨 → "
     "랴니를 엄마로 여김('랴니엄마'는 레오 POV 호칭). 장난꾸러기·사냥꾼·매복 전문. "
     "**가끔 자기 꼬리를 잡으려고 빙빙 도는 꼬리잡기 놀이를 한다 (PD 2026-06-13, 귀여운 습성 — "
     "에피소드 소재로 활용 가능).** "
@@ -394,7 +401,7 @@ CHARACTER_FACTS = (
     "**할머니**다. 펫이나 '아이들/친구들'로 절대 뭉뚱그리지 말고, 캡션·스토리에서도 사람 어르신으로 "
     "다뤄라(예: '하비를 기다리는 랴니와 레오'=할아버지를 기다림, '하비가 못살게 한다'=할아버지가 "
     "장난친다). 얼굴은 다른 사람들처럼 노출하지 않는다.\n"
-    "- ⚠️ 위 목록에 없는 공포·능력·트레잇을 새로 지어내지 마라. 나이도 정확히(레오 8개월/"
+    "- ⚠️ 위 목록에 없는 공포·능력·트레잇을 새로 지어내지 마라. 나이도 정확히(레오 10개월/"
     "랴니 11살) — 뒤바꾸지 마라.\n"
 )
 
@@ -432,18 +439,20 @@ REVIEW_RYANI = (
     "distorted / melted / uncanny face, mismatched or asymmetric eyes, or a floating "
     "white blob/orb artifact on the face — these are common when a still photo is "
     "animated (photo_i2v) and MUST lower the verdict, not pass. "
-    "RELATIVE SIZE: she is a stocky, heavy adult French Bulldog and reads BIGGER and "
-    "heavier than Leo the cat — in any AI-rendered cut sharing the frame with Leo, flag "
-    "as a defect any frame where Leo appears as large as or larger than Ryani (Seedance "
-    "tends to over-size the cat). Real-clip cuts are exempt — there the sizes are real, "
-    "and camera perspective can make either pet look big; judge size only on AI cuts.")
+    "RELATIVE SIZE: Leo has grown to roughly Ryani's size, so in a PRESENT-day AI cut the "
+    "two should read COMPARABLE — flag a defect when Leo is rendered as a tiny KITTEN "
+    "dwarfed by adult Ryani (baby-Leo drift), or grossly larger than her; comparable sizes "
+    "are CORRECT, not a defect. In an explicit baby/past-era cut Leo SHOULD read noticeably "
+    "smaller. Real-clip cuts are exempt — there the sizes are real, and camera perspective "
+    "can make either pet look big; judge size only on AI cuts.")
 REVIEW_LEO = (
-    "**Leo (orange tabby, ~8mo, MALE)**: pale yellow-green chartreuse eyes (NOT "
+    "**Leo (orange tabby, ~10mo, MALE)**: pale yellow-green chartreuse eyes (NOT "
     "gold-amber), faint scar across nose bridge, white chin tuft. Tail often in a "
     "question-mark shape. Lean agile body, paler cream-orange cheeks/belly than the back. "
-    "RELATIVE SIZE: he is a SMALL, slim young cat — in any AI-rendered cut he must read "
-    "NOTICEABLY SMALLER and lighter than the stocky adult Frenchie Ryani; flag Leo "
-    "rendered large, chunky, or bigger than the dog as a defect (real-clip cuts exempt).")
+    "RELATIVE SIZE: now a young-adult cat grown to roughly Ryani's size — in a present-day "
+    "AI cut he reads COMPARABLE to the Frenchie; flag as a defect a kitten-tiny Leo (baby "
+    "drift) or one grossly larger than her, not comparable sizing. Noticeably smaller is "
+    "correct only in an explicit baby/past-era cut (real-clip cuts exempt).")
 
 
 def image_canon(subjects: str) -> str:

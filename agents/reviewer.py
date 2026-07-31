@@ -302,7 +302,7 @@ IMPORTANT STYLE RULES:
   - Motion prompts must use specific animal behaviors, not vague "gentle motion"
 - **Safety**: Pets outside or in vehicles MUST wear harness. Ryani: in carrier on passenger seat. Leo: back seat with long leash. Penalize if harness not visible in outdoor/vehicle scenes.
 - **Mixed media OK**: ai_vtuber episodes CAN include real footage clips (e.g., real car wash video mixed with AI character scenes). This is intentional, not a bug.
-- **Size consistency**: If the episode references an earlier time period, Leo should be noticeably smaller (S1-S3 growth segments).
+- **Size consistency**: Leo has grown to roughly Ryani's size — present-day cuts should read them as COMPARABLE (a kitten-tiny Leo beside adult Ryani is a defect, "baby-Leo drift"). Only when the episode references an EARLIER time period should Leo read noticeably smaller (past growth segments).
 
 Follow the scoring rubric from above (1-10 scale) and evaluate ALL dimensions:
 A. Opening hook, B. Character clarity, C. Motion quality, D. Emotional hook,

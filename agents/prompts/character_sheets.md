@@ -59,10 +59,11 @@ Pick the segment matching the story's time setting:
 | **S1 baby** | 2025-11 ~ 2025-12 | 2-3 months | ~35-40% | tiny kitten | Very small, round head, oversized ears relative to body, wobbly movements, huge curious eyes. Fits in one hand. |
 | **S2 junior** | 2026-01 ~ 2026-02 | 4-5 months | ~50-55% | lanky kitten | Growing fast, legs getting longer, still kittenish face but body stretching out. Playful and clumsy. |
 | **S3 teen** | 2026-03 ~ 2026-04 | 6-7 months | ~60-65% | adolescent | Almost adult proportions but still lean. Face maturing, losing baby roundness. Confident and athletic. |
-| **S4 young adult** | 2026-05 ~ present | 8+ months | ~70-75% | young adult | Nearly full-sized, muscular, sleek coat. Adult face shape but still youthful energy. Slightly smaller than Ryani. |
+| **S4 young adult** | 2026-05 ~ 2026-06 | 8-9 months | ~80-85% | young adult | Muscular, sleek coat, adult face shape, still youthful energy. Almost caught up to Ryani. |
+| **S5 grown (now)** | 2026-07 ~ present | 10+ months | ~95-100% (comparable) | full-grown cat | Grown to roughly Ryani's size — the two now read as COMPARABLE in a two-shot. Leo is leaner/lither, Ryani stockier/broader, but he is NOT dramatically smaller and NEVER a tiny kitten. |
 
-**Default for new content**: S4 (young adult) — current appearance.
-**For Memory Lane / flashback**: Use S1-S3 depending on the date being referenced.
+**Default for new content**: S5 (grown) — current appearance, Leo ≈ Ryani in size.
+**For Memory Lane / flashback**: Use S1-S4 depending on the date being referenced.
 
 ---
 
@@ -191,8 +192,8 @@ Pick the segment matching the story's time setting:
 - veo_prompt 예: "Leo grabs a chive leaf, Ryani approaches and nudges Leo's face with her nose, Leo swats with his paw, Ryani snatches the chive from Leo's mouth and walks away"
 
 ### Size relationship
-- Leo is about 60% of Ryani's height when sitting
-- Leo is lighter and more agile; Ryani is solid and grounded
+- Leo has grown to roughly Ryani's size — in present-day cuts they read as COMPARABLE, not kitten-vs-dog (render Leo full-grown, never tiny). Only in Memory-Lane/flashback cuts (S1–S4) is he noticeably smaller.
+- Leo is leaner and more agile; Ryani is stockier and grounded — so she can read a touch broader in build, but not dramatically larger
 - When cuddling, Leo often drapes over or curls against Ryani
 
 ### Interaction patterns (for cut composition)
