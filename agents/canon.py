@@ -148,7 +148,7 @@ def _snap_birth_year(y: int) -> int:
 # bounced the episode over it (caption-vs-clip "name error"). Snap known misromanizations of
 # Ryani back to canon deterministically — the Writer/LLM drifts, the corrector doesn't.
 _CANON_NAME_FIX = (
-    (_re_canon.compile(r"\b(?:Lani|Lanni|Riani|Ryanie|Ryany|Ryanni)\b",
+    (_re_canon.compile(r"\b(?:Lani|Lanni|Riani|Ryanie|Ryany|Ryanni|Rhyani|Rhyanni|Rihani|Ryanee)\b",
                        _re_canon.IGNORECASE), "Ryani"),
 )
 
