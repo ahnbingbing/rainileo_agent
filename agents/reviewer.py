@@ -235,6 +235,24 @@ looks. These are CAPS (a ceiling), not soft notes:
   나열이면 false. 홀리스틱 점수에 묻지 말고 이 필드로 또렷이 답하라 — false면 시스템이 자동으로 cap≤5로
   내린다(러버스탬프 방지). "거실이 커진다면", "~하는 이유" 같은 추상 무드·가정형 컨셉이 화면에서 구체 사건으로
   전개되지 못하면 false다.
+- **RF도 자기 레인을 정당화해야 — 단발 소재는 부적합 (real_footage, PD 2026-08-02)**: 이건 AV
+  무훅 캡의 real_footage 짝이다. RF의 일은 '실제 순간'을 관찰자 내레이션으로 끝까지 보게 만드는 것 —
+  그런데 클립이 **하나의 얇은 갸그(한 동작의 반복)뿐이고 원인→행동→반응/전개·대비·변화가 전혀 없이**
+  같은 장면만 20초를 끄는 경우(예: 더워서 혀를 내밀었다 넣었다만 반복 — 그 이상 아무 일도 없음), 캡션을
+  아무리 붙여도 볼 이유가 안 생긴다. 그럴 때 flag "RF 내용 빈약 — 단발 소재(스토리 없음)", cap ≤6,
+  verdict ≤ 수정 필요. 판단 기준 = 이 클립이 시작→전개→마무리의 작은 아크나 뚜렷한 대비/반전을 담고
+  있는가. 담고 있으면(짧아도) 통과 — 얇은 단발이면 컨셉을 다시 짜거나 AV로 돌리는 게 맞다. (일상의
+  잔잔함 자체는 결함이 아니다 — '아무 사건도 없는 한 동작 반복'만 잡는다.)
+- **랴니 목뒤 흰마킹 금지 (ai_vtuber, PD 2026-08-02)**: 랴니의 목뒤(nape)·척추·등은 canon상 **순검정**
+  이다 — 흰색은 오직 이마 블레이즈(얇은 선)·턱·목앞→가슴·발끝뿐. i2v가 목 뒤에 흰 점/패치를 만들면
+  그건 삐용이(턱시도)의 흰색이 번진 것이라 틀렸다. 목뒤/등/척추에 흰 점·줄이 보이면 flag "랴니 목뒤
+  흰마킹" 하고 캐릭터 충실도를 낮춰라(목앞·턱·가슴 흰색은 정상이니 절대 감점 금지). (결정론 nape 게이트가
+  실제 enforcer지만, 프레임에 또렷이 보이면 홀리스틱에서도 반드시 짚어라.)
+- **최근 회차와 컨셉 중복 — 우려먹기 금지 (both lanes, PD 2026-08-02)**: 아래 컨텍스트의 "최근 공개/예약
+  회차" 목록과 이 회차의 theme/컨셉을 비교하라. 소재·구도·훅이 최근(특히 하루 이틀 사이) 회차와 사실상
+  같은데 새로운 각도가 없으면(예: 이틀 연속 '거실에서 서로 눈치/평행 무빙 밈') flag "최근 회차와 컨셉
+  중복 — 우려먹기", cap ≤6. ★예외: **의도된 시리즈/후속편**(제목이 '~1탄/2탄', 명시적 시즌·연작)이며
+  실제로 새 장면·새 전개를 담으면 우려먹기가 아니다 — 통과. 즉 라벨이 아니라 '새 내용이 있는가'로 가른다.
 - **상상 컷이 상상으로 안 읽힘 (ai_vtuber)**: a beat meant as a daydream/상상 (the caption says
   so, or the action is impossible-on-purpose) must READ as imagination — a dreamy look
   (misty haze OR a vivid, luminous, magical dreamscape — a wonder-fantasy SHOULD look lush
@@ -687,6 +705,69 @@ def _check_face_integrity(client, model_name, frames, _types) -> dict:
     except Exception as e:
         log.warning("face integrity check failed: %s", e)
         return {"face_defect": False, "severity": "none", "worst_frame": 0, "detail": ""}
+
+
+def _check_ryani_nape(client, model_name, frames, _types) -> dict:
+    """PD 2026-08-02: Ryani's NAPE (back of neck) / spine / back are canon SOLID BLACK —
+    her white is ONLY the thin forehead blaze, chin, FRONT-of-throat→chest patch and toes.
+    Seedance/i2v intermittently hallucinates a white spot/patch on the BACK of her neck
+    (삐용이's tuxedo marking bleeding over). The render-time gate (_cut_character_ok) samples
+    only a few frames and let a white-nape AV ship; the holistic reviewer had NO nape lens at
+    all, so it rubber-stamped it at 9/10. This is the reviewer-side deterministic backstop: a
+    FOCUSED call (undivided attention — the proven don't-bundle lesson) comparing the rendered
+    Ryani's nape against her clean ryani_solo.png reference. Fail-open (no defect) on error /
+    no ref. AV-scoped by the caller (real footage of the real dog already has a black nape).
+    Returns {nape_white, worst_frame, detail}."""
+    from PIL import Image
+    ref = ROOT / "assets" / "character_ref" / "ryani_solo.png"
+    try:
+        parts = []
+        for fp in frames:
+            img = Image.open(fp)
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            if max(img.size) > 1024:
+                r = 1024 / max(img.size)
+                img = img.resize((int(img.width * r), int(img.height * r)))
+            buf = BytesIO()
+            img.save(buf, format="JPEG", quality=88)
+            parts.append(_types.Part.from_bytes(data=buf.getvalue(),
+                                                mime_type="image/jpeg"))
+        ref_note = ""
+        if ref.exists():
+            parts.append(_types.Part.from_bytes(data=ref.read_bytes(),
+                                                mime_type="image/png"))
+            ref_note = (" The LAST image is the REFERENCE of the black French Bulldog "
+                        "(Ryani): her nape, spine and back are SOLID BLACK; her white is "
+                        "ONLY the thin forehead blaze, chin, front-of-throat→chest patch "
+                        "and toes.")
+        prompt = (
+            "These are frames from an animal video featuring a black French Bulldog "
+            "(Ryani) and an orange tabby cat." + ref_note + " Examine the DOG. Her BACK, "
+            "the NAPE (back of the neck / behind the head) and spine must be PURE BLACK. "
+            "Set nape_white=true ONLY if you clearly see a WHITE spot, dot, patch, stripe "
+            "or line on the BACK of her neck / nape / spine / back in a frame where that "
+            "area is clearly visible. Her FRONT-of-throat / chin / chest white is CORRECT "
+            "— do NOT flag that. If her back/nape is black, or is not clearly visible, set "
+            'false. Return ONLY JSON: {"nape_white": true|false, "worst_frame": <1-based '
+            'int, or 0>, "detail": "<where the white appears, or empty>"}.')
+        parts.append(prompt)
+        resp = client.models.generate_content(
+            model=model_name, contents=parts,
+            config=_types.GenerateContentConfig(response_mime_type="application/json"))
+        t = (resp.text or "").strip()
+        t = re.sub(r"^```(?:json)?\s*", "", t)
+        t = re.sub(r"\s*```$", "", t)
+        data = json.loads(t)
+        if isinstance(data, list):
+            hit = next((d for d in data
+                        if isinstance(d, dict) and d.get("nape_white")), None)
+            data = hit or {"nape_white": False, "worst_frame": 0, "detail": ""}
+        return data if isinstance(data, dict) else {
+            "nape_white": False, "worst_frame": 0, "detail": ""}
+    except Exception as e:
+        log.warning("nape-white check failed: %s", e)
+        return {"nape_white": False, "worst_frame": 0, "detail": ""}
 
 
 # Tokens that mark a caption as narrating an archive clip's time-distance
@@ -1392,6 +1473,24 @@ def review(video: Path, storyboard: list[dict] | None = None,
     # each clip actually is (삐용이 friend / car-seat day / Leo's tantrum …).
     context += _pd_groundtruth_block(concept)
 
+    # Recent-episode context for the cross-day concept-dedup check (PD 2026-08-02): give the
+    # reviewer the themes of episodes published/scheduled in the last few days so it can flag
+    # a near-rerun. An intentional 1탄/2탄 series is exempted in the rubric (not by this list).
+    try:
+        _rc = sqlite3.connect(ROOT / "data" / "agent.db")
+        _this_id = str((concept or {}).get("card_id") or "")
+        _recent = _rc.execute(
+            "SELECT date, theme FROM cards WHERE youtube_video_id IS NOT NULL "
+            "AND state != 'archived' AND date >= date('now','-3 day') "
+            "AND card_id != ? ORDER BY date DESC LIMIT 12", (_this_id,)).fetchall()
+        _rc.close()
+        if _recent:
+            context += "\n## 최근 공개/예약 회차 (컨셉 중복 체크용):\n"
+            for _d, _th in _recent:
+                context += f"  - [{_d}] {(_th or '')[:70]}\n"
+    except Exception as e:
+        log.warning("recent-episode context build failed: %s", e)
+
     # Phase E — prop fidelity: list expected canonical objects for this set
     if concept and concept.get("set_anchor"):
         try:
@@ -1625,6 +1724,30 @@ def review(video: Path, storyboard: list[dict] | None = None,
                      report["판정"], report["점수"])
     except Exception as e:
         log.warning("Face integrity gate failed: %s", e)
+
+    # Ryani nape-white gate (PD 2026-08-02): her nape/spine/back are canon SOLID BLACK; a
+    # white spot there is 삐용이's tuxedo bleeding over. The render gate samples few frames and
+    # let a white-nape AV ship, and the holistic reviewer had no nape lens — it rubber-stamped
+    # it. Focused ref-compare backstop, AV-scoped (real footage already has a black nape) →
+    # cap ≤5, verdict 수정 필요 (canon violation, on the same tier as a blaze/marking drift).
+    try:
+        if (concept or {}).get("render_style", "") == "ai_vtuber":
+            nz = _check_ryani_nape(client, model_name, frames, _types)
+            report["nape_check"] = nz
+            if nz.get("nape_white"):
+                report["점수"] = min(int(report.get("점수", 10) or 10), 5)
+                if report.get("판정") in ("업로드", "즉시 업로드", "소폭 수정 후 업로드"):
+                    report["판정"] = "수정 필요"
+                report["최종_결정"] = report["판정"]
+                _wf = nz.get("worst_frame")
+                _note = ("랴니 목뒤 흰마킹(삐용이 마킹 번짐) — 목뒤/척추/등은 순검정이어야 함"
+                         + (f" [frame {_wf}]" if _wf else ""))
+                _prev = report.get("가장_큰_문제", "") or ""
+                report["가장_큰_문제"] = _note if (not _prev or "없" in _prev[:6]) else f"{_note} / {_prev}"
+                report["_nape_white_override"] = _note
+                log.info("nape-white gate: → 판정=%s 점수=%s", report["판정"], report["점수"])
+    except Exception as e:
+        log.warning("nape-white gate failed: %s", e)
 
     # Deterministic no-story cap (PD 2026-07-12): the '무훅·무사건' rule existed but the
     # holistic reviewer kept rubber-stamping an eventless AV (a '거실이 커진다면' abstract mood
