@@ -40,24 +40,21 @@
 
 ## ✅ 9/9 전부 완료 (헬리콥터 포함 라이브 예약됨)
 
-## ★ durable fix 필요 (이번 세션은 수동 수습만 — 코드 근본수정 미완)
-회고 D31·E10 참조. 우선순위 순:
-1. **제목 캡션파생 (E10)** — 제목/설명이 컨셉 브레인스톰 상상에서 나와 그라운드된 캡션과 어긋남(참외 대소동 vs 휴식클립).
-   Fix 방향: RF/AV 업로드 제목을 **번인된 captions.json의 실제 씬 캡션**에서 파생(또는 캡션 확정 후 제목 재생성).
-   canon 나이/이름은 이미 chokepoint서 결정론 교정(canon.correct_canon_age_text) — 제목-내용 **정합**만 생성기 신뢰에 남음.
-   위치: producer 업로드 경로(`_auto_upload_episode` title 소스) + writer/director 제목 생성.
-2. **directive 리드타임 catch-up (D31)** — `LAUNCH_LEAD_DAYS=2`라 배치 뒤 도착한 `/concept` directive는 침묵 드롭(used_at=None).
-   Fix 방향: directive 생성시 타겟 날짜 배치가 이미 났으면(launch_batch_videos에 그 날짜 있음) **다음 열린 날짜로 롤** 하거나
-   board가 그 슬롯 재렌더 트리거. 위치: `arc.set_concept_directive`/board directive 핸들러 + `agents/launch.py`.
-3. **orphan-fill 카드경유 (D31)** — 빈슬롯이 카드 파이프라인 밖(재사용 재업로드)으로 채워지면 clip-cooldown·슬롯 중복가드 우회.
-   Fix 방향: 슬롯 채움/리필은 반드시 카드 생성→cooldown seed→예약 경로만. 위치: 빈슬롯 채우는 코드(board/self-heal fill).
-4. **교차일 컨셉 dedup 생성기측** — Giri backstop은 배포(cap≤6)됐지만 **생성기 예방**은 미완. `_concept_lexical_collision`
-   (intra-batch)을 최근 공개/예약 회차(last ~3d)까지 확장. 위치: `agents/producer.py` 컨셉 선정.
-5. **nape 게이트 강화(선택)** — 현 게이트는 명백한 nape환각만 잡고 subtle은 못 잡음. 강화하려면 nape 전용 **밀도 높은 프레임 샘플**
-   필요하되 정상 앞목흰색 오탐(false-fail) 절대 금지가 우선. 저위험이면 보류 권장.
+## ✅ durable fix 4건 코드 완료 (배포 4473d19, 회고 D31·E11·B21)
+검증까지 완료 — 다음 03:00 배치가 첫 실전:
+1. **directive 리드타임 롤** — `arc.set_concept_directive(roll_if_late=True)`(slack/board만): 타겟 배치 이미
+   났으면 다음 열린 날짜로 롤+PD 안내. 수동 렌더 스크립트는 roll_if_late=False라 무영향. `CONCEPT_DIRECTIVE_ROLL=0`.
+   검증: `_next_open_batch_date(2026-08-03)=2026-08-05`.
+2. **AV 결정론 concept-dedup** — `producer` AV 경로에 RF와 동일 렉시컬 게이트+1회 재제안(LLM콜). `AV_DEDUP_GATE=0`.
+   의미적 재탕(밈vs무빙밈)은 Giri 교차일 캡이 담당(짝).
+3. **제목↔캡션 결정론 guard** — `_auto_upload_episode` `TITLE_CAPTION_GUARD`: 제목이 번인 캡션과 content
+   명사 공유 0이면 캡션 유래 제목 폴백. 보수적. 검증: 참외제목∩휴식캡션=∅→발화, 정상제목→미발화.
+4. **orphan-슬롯 surfacing** — `launch_selfheal` SKIP_FILLED이 카드백킹 vs orphan 구분: orphan-슬롯은
+   loud 경고(재사용 의심·`reconcile --veto` 안내). 자동삭제는 PD 수동배치 삭제 위험이라 안 함.
+- **미착수(선택)**: nape 게이트 강화(subtle 케이스) — 정상 앞목흰색 오탐 위험이라 저위험이면 보류 권장.
 
 ## ★NEXT
 - 9/9 전부 라이브 예약 완료 — 8/3·8/4 슬롯 spot-check(PD).
-- 회고(B21/D31/E10)·handoff 푸시됨.
-- 다음 03:00 배치서 Giri nape/RF빈약/교차일중복 캡 첫 실전 스팟체크(**과반려 X** 감시 — 특히 정상 앞목흰색·잔잔한 RF).
-- durable fix 1~4 착수(PD 우선순위 확인).
+- durable fix 4건 코드 완료·배포(4473d19). **다음 03:00 배치가 첫 실전** — 스팟체크:
+  · Giri nape/RF빈약/교차일중복 캡 **과반려 X**(특히 정상 앞목흰색·잔잔한 RF).
+  · directive 롤(board /concept 늦게 주고 이동 안내 뜨는지)·AV dedup·제목guard·orphan 경고 발화 확인.
