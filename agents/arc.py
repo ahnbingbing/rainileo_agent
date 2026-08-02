@@ -84,14 +84,58 @@ def ensure_tables(con: sqlite3.Connection) -> None:
 
 
 # ── PD-scheduled concept (/concept <date> <text>) ─────────────────────
-def set_concept_directive(con: sqlite3.Connection, target_date: str, directive: str) -> None:
-    """Store a PD-authored concept direction for a specific date (latest wins)."""
+def _batch_already_ran(con: sqlite3.Connection, date_iso: str) -> bool:
+    """Has the launch batch for `date_iso` already been produced? (launch_batch_videos
+    gets a row per rendered slot.) If so, a directive for that date arrived too late."""
+    try:
+        return con.execute(
+            "SELECT 1 FROM launch_batch_videos WHERE target=? LIMIT 1",
+            (date_iso[:10],)).fetchone() is not None
+    except Exception:
+        return False
+
+
+def _next_open_batch_date(con: sqlite3.Connection, start_iso: str, horizon: int = 21) -> str:
+    """Earliest date >= start whose batch has NOT been produced yet (so a directive can
+    still land on it). Falls back to start if all within horizon already ran."""
+    import datetime as dt
+    d = dt.date.fromisoformat(start_iso[:10])
+    for _ in range(horizon):
+        if not _batch_already_ran(con, d.isoformat()):
+            return d.isoformat()
+        d += dt.timedelta(days=1)
+    return start_iso[:10]
+
+
+def set_concept_directive(con: sqlite3.Connection, target_date: str, directive: str,
+                          *, roll_if_late: bool = False) -> str:
+    """Store a PD-authored concept direction for a date (latest wins). Returns the
+    EFFECTIVE date it will apply to.
+
+    `roll_if_late` (PD 2026-08-02): a directive that arrives AFTER its target date's batch
+    already ran (LAUNCH_LEAD_DAYS lead = batch produced ~2 days early) used to be stored
+    with used_at=None and silently NEVER applied — the board's "아이스크림 행성" request landed
+    the same morning its target batch had already been produced. When True (the interactive
+    /concept path, which relies on the batch to pick the directive up), detect that and roll
+    the directive to the next date whose batch hasn't been produced yet, so a late request
+    still lands and the caller can tell PD the effective date. Default False so the manual
+    render scripts — which set the directive for a date they then render IMMEDIATELY, batch
+    or no batch — keep storing verbatim. CONCEPT_DIRECTIVE_ROLL=0 also reverts."""
     ensure_tables(con)
+    eff = target_date[:10]
+    if (roll_if_late and os.getenv("CONCEPT_DIRECTIVE_ROLL", "1") == "1"
+            and _batch_already_ran(con, eff)):
+        rolled = _next_open_batch_date(con, eff)
+        if rolled != eff:
+            log.info("concept directive for %s: batch already produced → rolled to %s",
+                     eff, rolled)
+            eff = rolled
     con.execute(
         "INSERT INTO pd_concept_directives (target_date, directive) VALUES (?,?)",
-        (target_date[:10], directive),
+        (eff, directive),
     )
     con.commit()
+    return eff
 
 
 def get_concept_directive(con: sqlite3.Connection, target_date: str) -> str | None:

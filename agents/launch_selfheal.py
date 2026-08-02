@@ -206,14 +206,38 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
             and not slot_filter and not lane_filter):
         try:
             from agents import reconcile as _rec
+            from agents.producer import _db as _pdb
+            _all_sched = _rec.list_scheduled_videos()
+            with _pdb() as _con:
+                _known_vids = _rec._card_video_ids(_con)
             _filled = set()
-            for _s in _rec.list_scheduled_videos():
+            _orphan_slots: list = []      # slots filled by a card-LESS video (재사용/수동 의심)
+            for _s in _all_sched:
                 _pa = _s.get("publish_at") or ""
                 if not _pa:
                     continue
                 _t = dt.datetime.fromisoformat(_pa.replace("Z", "+00:00")) + dt.timedelta(hours=9)
-                if _t.date() == target:
-                    _filled.add(_t.strftime("%H:%M"))
+                if _t.date() != target:
+                    continue
+                _slot = _t.strftime("%H:%M")
+                if _s["video_id"] in _known_vids:
+                    _filled.add(_slot)            # legit card-backed episode → skip (correct)
+                else:
+                    _orphan_slots.append((_slot, _s["video_id"], _s.get("title", "")))
+            # PD 2026-08-02: a slot filled by a card-LESS ORPHAN (a reused/manual upload that
+            # bypassed the card pipeline — clip-cooldown & dedup never ran on it) used to be
+            # counted as a normal fill and SILENTLY skipped, so the orphan stayed live (8/3
+            # 08:00 = a re-used swimming clip). Surface it LOUDLY so PD can veto and let the
+            # next batch produce a proper episode. We still skip producing over it here (a
+            # second video would double-book the slot) — but auto-vetoing is intentionally
+            # NOT done, since a rare PD-placed manual video is also card-less and must not be
+            # auto-deleted. `python -m agents.reconcile --veto` is the deliberate cleanup.
+            for _sl, _vid, _tt in _orphan_slots:
+                _filled.add(_sl)
+                cap(f":rotating_light: {target.isoformat()} {_sl} 슬롯이 *카드 없는 orphan* "
+                    f"영상으로 차 있음(재사용/수동 업로드 의심 — cooldown·중복가드 우회): "
+                    f"`{_vid}` '{_tt[:40]}'. PD가 veto하면 다음 배치가 정상 영상으로 채웁니다 "
+                    f"(`python -m agents.reconcile --veto`).")
             if _filled:
                 _kept = [(l, h) for (l, h) in want if h not in _filled]
                 if len(_kept) < len(want):

@@ -298,14 +298,16 @@ def _act_concept(params: dict, db) -> str:
         text += ("\n★적용 범위: 이 컨셉은 ai_vtuber 슬롯에만 적용한다. real_footage 슬롯은 "
                  "무시하고 평소대로 제작하라.")
     with db() as con:
-        arc.set_concept_directive(con, d.isoformat(), text)
+        eff = arc.set_concept_directive(con, d.isoformat(), text, roll_if_late=True)
+    rolled = "" if eff == d.isoformat() else (
+        f" (요청한 {d.isoformat()} 배치는 이미 제작돼 다음 열린 날 {eff}로 이동)")
     try:
         from agents.progress_log import log_progress
-        log_progress("board", f"PD 컨셉 예약 {d.isoformat()}"
+        log_progress("board", f"PD 컨셉 예약 {eff}"
                      f"{f'({lane})' if lane else ''}: {text[:50]}")
     except Exception:
         pass
-    return (f":white_check_mark: `{d.isoformat()}` 컨셉 예약 완료{note}\n  → {text[:240]}"
+    return (f":white_check_mark: `{eff}` 컨셉 예약 완료{note}{rolled}\n  → {text[:240]}"
             f"{'…' if len(text) > 240 else ''}\n_그날 03:00 배치가 이 방향을 최우선으로 만듭니다._")
 
 

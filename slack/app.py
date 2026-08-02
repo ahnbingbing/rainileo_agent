@@ -719,9 +719,12 @@ def concept_cmd(ack, body, respond):
     directive = parts[1].strip()
     try:
         with db() as con:
-            arc.set_concept_directive(con, d.isoformat(), directive)
+            eff = arc.set_concept_directive(con, d.isoformat(), directive, roll_if_late=True)
         warn = "" if d >= _dt.date.today() else " :warning: (과거 날짜)"
-        respond(f":white_check_mark: `{d.isoformat()}` 컨셉 예약됨{warn}\n  → {directive}\n"
+        rolled = "" if eff == d.isoformat() else (
+            f" :information_source: (요청한 {d.isoformat()} 배치는 이미 제작돼 다음 열린 날 "
+            f"*{eff}*로 이동했어요)")
+        respond(f":white_check_mark: `{eff}` 컨셉 예약됨{warn}{rolled}\n  → {directive}\n"
                 f"_그날 4슬롯 모두 이 방향을 최우선으로 제작합니다._")
     except Exception as e:
         log.exception("concept cmd failed")

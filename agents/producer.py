@@ -797,6 +797,43 @@ def propose_concepts(target: dt.date, context: dict, style_filter: str | None = 
             if concepts and not good and progress_cb:
                 progress_cb(":x: 재시도 후에도 컷 없는 컨셉만 — LLM 불안정, 슬롯 비움(churn 방지)")
             good = [_backfill_av_set_anchor(c, style_filter) for c in good]
+            # PD 2026-08-02: deterministic AV concept-dedup (mirrors the RF gate at
+            # _propose_realfootage_singlepass). exclude_concepts is injected only as an
+            # LLM-advisory "diverge from these" note for AV — and the Writer re-treaded it
+            # (8/4 0800AV ≈ 8/3 1230AV, both a 거실 밈 with the two pets). If a proposed AV
+            # shares an excluded episode's core content nouns, re-propose ONCE with the
+            # collision named (a concept re-run is an LLM call, not the $3 render). Semantic
+            # near-dups the lexical gate can't see (밈 vs 무빙 밈) are caught by Giri's
+            # cross-day cap. AV_DEDUP_GATE=0 reverts.
+            if (good and os.getenv("AV_DEDUP_GATE", "1") == "1"
+                    and (context.get("exclude_concepts") or [])
+                    and "[재탕검증]" not in (context.get("arc_directive") or "")):
+                try:
+                    from agents import concept_brainstorm as _cbd
+                    _excl = context["exclude_concepts"]
+                    _dups = [(c.get("title"), _cbd._concept_lexical_collision(c, _excl))
+                             for c in good]
+                    _dups = [(t, v) for t, v in _dups if v.get("collision")]
+                    if _dups:
+                        if progress_cb:
+                            progress_cb(f":recycle: AV 재탕검증 — 최근 회차와 컨셉 재탕 "
+                                        f"{len(_dups)}건 → 재작성")
+                        _vs = "; ".join(
+                            f"'{t}' ↔ 기존 '{v['vs']}' (공유 소재: {', '.join(v['shared'])})"
+                            for t, v in _dups)
+                        context["arc_directive"] = (
+                            (context.get("arc_directive") or "")
+                            + "\n\n[재탕검증] 위 컨셉이 최근 공개된 회차와 사실상 같은 이야기(핵심 "
+                            "소재·사건이 겹침)다. 장소·클립만 바꾼 재탕 금지 — 겹친 소재 자체를 피하고 "
+                            "완전히 다른 사건·활동·앵글로 새로 짜라:\n" + _vs)
+                        _retry = propose_concepts_v2(
+                            target, context, style_filter=style_filter,
+                            progress_cb=progress_cb) or []
+                        _rg = [c for c in _retry if (c.get("cuts") or [])]
+                        if _rg:
+                            good = [_backfill_av_set_anchor(c, style_filter) for c in _rg]
+                except Exception as e:
+                    log.warning("AV concept-dedup gate failed: %s", e)
             return good
         except Exception as e:
             log.warning("writer_director failed (%s) — falling back to legacy", e)
@@ -4192,6 +4229,31 @@ def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.dat
                 desc = _canon_pre.correct_preleo_pet_names_text(desc, _earliest)
         except Exception:
             pass
+        # PD 2026-08-02: deterministic title↔caption backstop. make_packaging IS fed the
+        # grounded captions (actual_captions), but the LLM can still drift to a concept-
+        # imagined title the video doesn't show (a '밭집 참외 냄새 대소동' title over a cozy-rest
+        # clip). If the final title shares ZERO distinctive content nouns with the burned
+        # captions, it's ungrounded → fall back to a caption-derived title. Conservative
+        # (fires ONLY on zero overlap) so it never fights a legit abstraction that shares a
+        # noun. TITLE_CAPTION_GUARD=0 reverts.
+        try:
+            if title and os.getenv("TITLE_CAPTION_GUARD", "1") == "1":
+                _caps = concept.get("actual_captions") or []
+                _captxt = " ".join(_caps) if isinstance(_caps, list) else str(_caps)
+                if _captxt.strip():
+                    from agents.concept_brainstorm import _dedup_tokens
+                    _tt = _dedup_tokens(str(title), "")
+                    _ct = _dedup_tokens(_captxt, "")
+                    if _tt and _ct and not (_tt & _ct):
+                        _alt = (_caps[0] if isinstance(_caps, list) and _caps else "").strip()
+                        log.warning("title-caption guard: '%s' shares no content noun with "
+                                    "the burned captions — ungrounded title", title)
+                        if progress_cb:
+                            progress_cb(":warning: 제목이 캡션(=실제 화면)과 안 맞음 — 캡션 기반으로 교정")
+                        if _alt:
+                            title = _alt.split("\n")[0][:100]
+        except Exception as e:
+            log.warning("title-caption guard failed: %s", e)
         tags = [str(t).lstrip("#") for t in pkg["hashtags"]]
         draft["packaging_arm"] = pkg["arm"]          # record arm for perf attribution
         payload["draft"] = draft
