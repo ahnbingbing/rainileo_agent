@@ -38,8 +38,35 @@
 - `veto_video(delete=True)`는 **영구 삭제** — 재캡션할 원본을 지우면 복구불가. 재렌더/veto 전 재캡션 가능성 먼저 판정.
 - 렌더 workdir prefix = card_id(`cameraman_<card>_<ts>`). produce_and_render가 Giri 수정필요면 RENDER_OUTS=[]지만 mp4는 디스크에 있음(직접 예약 우회).
 
+## ★★ IN-FLIGHT (네트워크 끊김 대비 — 다음 세션이 반드시 마무리)
+**헬리콥터 혓바닥 (8/4 21:00, RF→AV 전환) 렌더 중** — PD 승인된 전환(2100RF 혀 타이밍 어긋남+내용 얇음 → AV).
+- 렌더 스크립트: `scripts._pd_av_render helicopter_tongue 2026-08-04` (체인 `_pd_av_chain.sh`가 실행).
+- 완료 확인: `data/tmp/pd_helicopter.log`에 `Rendered <card> → episode_av_<ts>.mp4`. mp4는 `data/output/episodes/`.
+  (Giri 수정필요여도 RENDER_OUTS=[]지만 mp4는 디스크에 있음 — 아이스크림처럼 스팟체크 후 직접 예약.)
+- **예약 명령**: 스팟체크(프레임: 랴니 꼬리없음·혀 자연스러움·마킹) 후 —
+  `sudo -u rianileo ./_pd_launch.sh -m scripts._pd_schedule --card <helicopter_card_8자> --video <mp4> \
+   --at 2026-08-04T12:00:00Z --veto s8hi3-899Ig --title '헬리콥터 혓바닥이 된 랴니 🚁👅 폭염 여름 코미디'`
+  (card = 렌더 workdir `cameraman_<card>_<ts>` prefix 또는 pd_helicopter.log의 `Rendered <card>`.)
+- s8hi3-899Ig = 기존 혀 RF(veto 대상). 8/4 21:00 KST = `2026-08-04T12:00:00Z`.
+
+## ★ durable fix 필요 (이번 세션은 수동 수습만 — 코드 근본수정 미완)
+회고 D31·E10 참조. 우선순위 순:
+1. **제목 캡션파생 (E10)** — 제목/설명이 컨셉 브레인스톰 상상에서 나와 그라운드된 캡션과 어긋남(참외 대소동 vs 휴식클립).
+   Fix 방향: RF/AV 업로드 제목을 **번인된 captions.json의 실제 씬 캡션**에서 파생(또는 캡션 확정 후 제목 재생성).
+   canon 나이/이름은 이미 chokepoint서 결정론 교정(canon.correct_canon_age_text) — 제목-내용 **정합**만 생성기 신뢰에 남음.
+   위치: producer 업로드 경로(`_auto_upload_episode` title 소스) + writer/director 제목 생성.
+2. **directive 리드타임 catch-up (D31)** — `LAUNCH_LEAD_DAYS=2`라 배치 뒤 도착한 `/concept` directive는 침묵 드롭(used_at=None).
+   Fix 방향: directive 생성시 타겟 날짜 배치가 이미 났으면(launch_batch_videos에 그 날짜 있음) **다음 열린 날짜로 롤** 하거나
+   board가 그 슬롯 재렌더 트리거. 위치: `arc.set_concept_directive`/board directive 핸들러 + `agents/launch.py`.
+3. **orphan-fill 카드경유 (D31)** — 빈슬롯이 카드 파이프라인 밖(재사용 재업로드)으로 채워지면 clip-cooldown·슬롯 중복가드 우회.
+   Fix 방향: 슬롯 채움/리필은 반드시 카드 생성→cooldown seed→예약 경로만. 위치: 빈슬롯 채우는 코드(board/self-heal fill).
+4. **교차일 컨셉 dedup 생성기측** — Giri backstop은 배포(cap≤6)됐지만 **생성기 예방**은 미완. `_concept_lexical_collision`
+   (intra-batch)을 최근 공개/예약 회차(last ~3d)까지 확장. 위치: `agents/producer.py` 컨셉 선정.
+5. **nape 게이트 강화(선택)** — 현 게이트는 명백한 nape환각만 잡고 subtle은 못 잡음. 강화하려면 nape 전용 **밀도 높은 프레임 샘플**
+   필요하되 정상 앞목흰색 오탐(false-fail) 절대 금지가 우선. 저위험이면 보류 권장.
+
 ## ★NEXT
-- 헬리콥터 혓바닥(8/4 21:00) 렌더 완료 → 스팟체크 → PD 확인 후 예약(기존 `s8hi3` RF veto).
-- 회고(B21/D31/E10)·이 handoff 푸시(로컬 커밋 `docs(retro)` 대기중).
-- 다음 03:00 배치서 Giri nape/RF빈약/교차일중복 캡 첫 실전 스팟체크(과반려X).
-- durable 미완: directive 리드타임 catch-up·orphan-fill 카드경유·제목 캡션파생.
+- (위 IN-FLIGHT) 헬리콥터 예약 마무리.
+- 회고(B21/D31/E10)·handoff 푸시됨(`a264011`).
+- 다음 03:00 배치서 Giri nape/RF빈약/교차일중복 캡 첫 실전 스팟체크(**과반려 X** 감시 — 특히 정상 앞목흰색·잔잔한 RF).
+- durable fix 1~4 착수(PD 우선순위 확인).
