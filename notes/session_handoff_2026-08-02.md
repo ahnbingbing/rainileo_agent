@@ -26,7 +26,7 @@
 - 08:00 AV `ub3OUWgjMas` — 제목 "찝쩍거리는 레오 2탄!". ★★내 실수: PD는 캡션/제목만 바꾸라 했는데(내용이 1230AV와 유사=이미 찝쩍) 내가 **재렌더**($3)+원본 eTh1s veto·삭제(복구불가). PD 지적→재렌더본 유지+제목단순화로 수습. [[recaption_not_rerender]].
 - 12:30 RF `g_iH2SO4uh8` — "사료 타이틀 방어전"(원본 173s에서 사료먹는 104~152s 재트림 하드빌드+코믹 재캡션+리타이틀).
 - 18:00 RF `SA8CFlvD0z8` — "랴니 축구 모음집"(단일클립 리프레이밍 재캡션).
-- 21:00 RF→AV `<PENDING>` — 헬리콥터 혓바닥(RF 혀타이밍 어긋남+내용 얇음 → AV 전환). 렌더중, 예약 전 PD 확인.
+- 21:00 RF→AV `7v2lmZpJ4-Q` — 헬리콥터 혓바닥(RF 혀타이밍 어긋남+내용 얇음 → AV 전환). PD가 "헬리콥터/프로펠러 느낌 더" 요청 → 항공 코미디로 재캡션(이륙준비/관제탑 레오/활주로 발라당 착륙). 기존 s8hi3 veto.
 
 ## durable (배포 49da5ba) — 회고 B21/D31/E10
 - **Giri nape-white 게이트(reviewer `_check_ryani_nape`)**: 랴니 목뒤 흰마킹(삐용이 번짐)을 렌더게이트(3프레임)+홀리스틱 둘 다 놓쳐 9점 러버스탬프 → 최종 렌더 프레임을 ryani_solo.png ref와 비교, AV한정, cap≤5. ★한계: 회귀서 이 1230AV의 subtle 마킹은 못 잡음(정상 앞목흰색 오탐은 안 함=known-good pass). 명백한 nape환각용.
@@ -38,16 +38,7 @@
 - `veto_video(delete=True)`는 **영구 삭제** — 재캡션할 원본을 지우면 복구불가. 재렌더/veto 전 재캡션 가능성 먼저 판정.
 - 렌더 workdir prefix = card_id(`cameraman_<card>_<ts>`). produce_and_render가 Giri 수정필요면 RENDER_OUTS=[]지만 mp4는 디스크에 있음(직접 예약 우회).
 
-## ★★ IN-FLIGHT (네트워크 끊김 대비 — 다음 세션이 반드시 마무리)
-**헬리콥터 혓바닥 (8/4 21:00, RF→AV 전환) 렌더 중** — PD 승인된 전환(2100RF 혀 타이밍 어긋남+내용 얇음 → AV).
-- 렌더 스크립트: `scripts._pd_av_render helicopter_tongue 2026-08-04` (체인 `_pd_av_chain.sh`가 실행).
-- 완료 확인: `data/tmp/pd_helicopter.log`에 `Rendered <card> → episode_av_<ts>.mp4`. mp4는 `data/output/episodes/`.
-  (Giri 수정필요여도 RENDER_OUTS=[]지만 mp4는 디스크에 있음 — 아이스크림처럼 스팟체크 후 직접 예약.)
-- **예약 명령**: 스팟체크(프레임: 랴니 꼬리없음·혀 자연스러움·마킹) 후 —
-  `sudo -u rianileo ./_pd_launch.sh -m scripts._pd_schedule --card <helicopter_card_8자> --video <mp4> \
-   --at 2026-08-04T12:00:00Z --veto s8hi3-899Ig --title '헬리콥터 혓바닥이 된 랴니 🚁👅 폭염 여름 코미디'`
-  (card = 렌더 workdir `cameraman_<card>_<ts>` prefix 또는 pd_helicopter.log의 `Rendered <card>`.)
-- s8hi3-899Ig = 기존 혀 RF(veto 대상). 8/4 21:00 KST = `2026-08-04T12:00:00Z`.
+## ✅ 9/9 전부 완료 (헬리콥터 포함 라이브 예약됨)
 
 ## ★ durable fix 필요 (이번 세션은 수동 수습만 — 코드 근본수정 미완)
 회고 D31·E10 참조. 우선순위 순:
@@ -66,7 +57,7 @@
    필요하되 정상 앞목흰색 오탐(false-fail) 절대 금지가 우선. 저위험이면 보류 권장.
 
 ## ★NEXT
-- (위 IN-FLIGHT) 헬리콥터 예약 마무리.
-- 회고(B21/D31/E10)·handoff 푸시됨(`a264011`).
+- 9/9 전부 라이브 예약 완료 — 8/3·8/4 슬롯 spot-check(PD).
+- 회고(B21/D31/E10)·handoff 푸시됨.
 - 다음 03:00 배치서 Giri nape/RF빈약/교차일중복 캡 첫 실전 스팟체크(**과반려 X** 감시 — 특히 정상 앞목흰색·잔잔한 RF).
 - durable fix 1~4 착수(PD 우선순위 확인).
