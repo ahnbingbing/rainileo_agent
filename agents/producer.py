@@ -1471,6 +1471,42 @@ def _tiny_clip_ids(con, min_sec: float) -> set:
         return set()
 
 
+def _probe_clip_seconds(asset_id: str | None, con: sqlite3.Connection) -> float | None:
+    """Actual video duration for a clip whose assets.duration_sec is NULL — fetch it
+    (GCS on-demand) + ffprobe, and BACKFILL the DB. The footage-sufficiency gate was BLIND
+    to unknown-length clips: a cut whose clip has NULL duration_sec was credited its full
+    requested seconds (8/5 18:00 root — a 6.3s clip credited its 43s request → cleared the
+    floor → gutted stub). Best-effort: returns None if the clip can't be fetched/probed
+    (caller then keeps the requested estimate; the pre-upload floor remains the final net)."""
+    if not asset_id:
+        return None
+    try:
+        row = con.execute("SELECT file_path, source_uuid FROM assets WHERE asset_id=?",
+                          (asset_id,)).fetchone()
+        if not row:
+            return None
+        from agents.cameraman import _ensure_local
+        import subprocess as _sp
+        local = _ensure_local(row[0], row[1] if len(row) > 1 else None)
+        if not local or not Path(local).exists():
+            return None
+        dur = float((_sp.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nw=1:nk=1", str(local)],
+            capture_output=True, text=True, timeout=20).stdout or "").strip() or 0)
+        if dur > 0:
+            try:
+                con.execute("UPDATE assets SET duration_sec=? WHERE asset_id=? AND "
+                            "(duration_sec IS NULL OR duration_sec<=0)", (dur, asset_id))
+                con.commit()
+            except Exception:
+                pass
+            return dur
+    except Exception as e:
+        log.debug("clip-duration probe failed for %s: %s", asset_id, e)
+    return None
+
+
 def _drop_tiny_clips(items: list, tiny_ids: set) -> list:
     """Remove sub-floor fragment clips (iOS burst captures) from a candidate pool."""
     if not tiny_ids:
@@ -2880,6 +2916,11 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
                     _req = float(cut.get("duration_seconds") or cut.get("trim_dur") or 4)
                     _meta = _adur.get(cut.get("asset_id"))
                     _act, _human = _meta if _meta is not None else (None, False)
+                    # NULL duration_sec used to be credited the full request (blind spot that
+                    # passed the 6.3s→43s clip). Probe the real length + backfill, so the floor
+                    # sees actual achievable seconds. Probe failure keeps the estimate.
+                    if _act is None:
+                        _act = _probe_clip_seconds(cut.get("asset_id"), _acon)
                     _use = min(_req, _act) if _act is not None else _req
                     if _human:
                         _use *= _human_disc
@@ -4267,6 +4308,32 @@ def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.dat
             title = title.get("ko") or "Ryani & Leo"
         desc = draft.get("description", "") or ""
         tags = [str(t).lstrip("#") for t in (draft.get("hashtags") or [])]
+    # PD 2026-08-03: deterministic pre-upload floor for real_footage. An RF episode under
+    # RF_MIN_SECONDS is a gutted stub — most cuts dropped or the sole clip was seconds long
+    # (8/5 18:00: a 6.3s '랴니가 카메라에서 멀어지는 뒷모습' clip → 10.3s salvaged stub → shipped
+    # LIVE; PD "이게 통과된게 맞아?"). run_realfootage_pipeline HAS a 14s floor, but caption-
+    # salvage RE-ASSEMBLES without it and manual builds skip it — so guard at the UPLOAD choke
+    # point instead, where render + salvage + manual all funnel. Refuse to SCHEDULE (leave the
+    # slot empty > publish a stub); self-heal/PD then rebuild from the bigger pool. Only RF
+    # (AV length is fixed by its own render). RF_UPLOAD_MIN_GUARD=0 reverts.
+    if (payload.get("render_style") == "real_footage"
+            and os.getenv("RF_UPLOAD_MIN_GUARD", "1") == "1"):
+        try:
+            import subprocess as _sp_dur
+            _rfdur = float(_sp_dur.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=nw=1:nk=1", str(out_path)],
+                capture_output=True, text=True, timeout=15).stdout.strip() or 0)
+        except Exception:
+            _rfdur = 0.0
+        _rfmin = float(os.getenv("RF_MIN_SECONDS", "14"))
+        if 0 < _rfdur < _rfmin:
+            log.warning("RF upload guard: card %s is %.1fs < %.0fs — gutted stub, refusing to schedule",
+                        card_id[:8], _rfdur, _rfmin)
+            if progress_cb:
+                progress_cb(f":x: RF 에피소드 너무 짧음 ({_rfdur:.1f}s < {_rfmin:.0f}s) — gutted "
+                            f"stub 예약 거부(슬롯 비움 > stub 공개). 재료 부족 의심 — 재빌드 필요.")
+            return None
     publish_at = publish_at_iso or _compute_publish_at(target)
     try:
         from youtube.upload import upload_short
