@@ -916,6 +916,25 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   **중립("고양이")**으로 되돌리고, 원두는 확정된 클립에 캡션에서 직접 명시(이미 존재하는 이름이라 backstop이 안 건드림).
   즉 **결정론 치환의 대체값은 항상-안전한 중립값이어야 하고, 특정 고유명은 확정시 hand-injection** — "레오가 아닌 것"을
   막는 건 결정론, "무엇인지"는 사람이 안다. cf C17(canon 이름 로마자 교정), B15(Giri 환각-반려).
+- **C21. 결정론 가드는 모든 경로가 수렴하는 choke point에 둬야 한다 — render-only 가드는 salvage가 우회하고,
+  사전 추정은 데이터 공백에 blind다(8/5)** — 8/5 18:00 RF이 6.3초짜리 "랴니가 카메라에서 멀어지는 뒷모습" 클립
+  하나를 43초 컷으로 배정 → 10.3초 gutted stub로 라이브에 올라감(PD "랴니 다 잘려서 안 보여 + 이게 통과된 게
+  맞아?"). 두 겹이 다 놓쳤다. **근본①(선택-시점 blind spot):** pre-render footage-sufficiency 게이트(C16/C19)가
+  `_use = min(_req, _act) if _act else _req` — 클립 `duration_sec`가 NULL이면 요청한 43초를 그대로 achievable로
+  크레딧해 floor(11s)를 통과. iCloud 인제스트가 길이를 못 채운 클립에 게이트가 눈뜬 장님이었다. Fix: `_probe_clip_
+  seconds`가 NULL이면 실제 길이를 ffprobe(+DB 백필)해 반영(프로브 실패 시 추정치 유지 — 최종 net이 잡음).
+  **근본②(render-only 가드를 salvage가 우회):** `run_realfootage_pipeline`엔 14초 min-length 가드가 있었지만,
+  caption-salvage가 **재조립할 때 그 가드를 안 거쳐** 10.3초 stub를 만들었고 그게 `_auto_upload_episode`로 그대로
+  예약됐다 — 가드가 한 렌더 경로에만 있어 salvage·수동 빌드는 무방비. Fix: 가드를 **업로드 choke point**
+  (`_auto_upload_episode` — render·salvage·수동이 전부 funnel)로 옮겨 RF < RF_MIN_SECONDS면 예약 거부(슬롯 비움 >
+  stub 공개). AV는 render_style 가드로 면제. 회귀검증: 10s REJECT·15s 통과(오탐 0). (배포 70eb06a) ★교훈:
+  **결정론 가드는 "정상 경로"가 아니라 모든 경로가 수렴하는 마지막 choke point에 둬야 우회가 없다** — C20의
+  "마지막 mutation *뒤*"가 시간축 원리라면, 이건 그 경로축(spatial) 짝: 시간상 마지막이 아니라 *경로상* 마지막.
+  그리고 사전 추정 게이트(C19)의 입력에 공백(NULL)이 있으면 "모르면 통과"가 아니라 **"모르면 측정"**해야 한다 —
+  blind default가 관대하면 게이트가 없는 것과 같다. 남은 갭(미착수): RF 캡션 생성기가 움직이는 클립(자며 발
+  꼼지락)에 "미동도 없음"을 써 프레임과 정반대 — 절대-무동작 단정은 video 컷에서 프레임 오독 위험이 높으니
+  긍정 관찰로 유도할 생성기-측 가이드가 필요(soft, 오탐 위험이라 결정론화는 보류). cf C16(footage 게이트 탄생),
+  C19(선택이 게이트를 알아야), C20(backstop 위치).
 
 ### 4.5 인프라 / 파이프라인
 - **D_salvage. 캡션-salvage가 카드 링크를 끊어 렌더·Giri-통과 에피소드가 조용히 예약 실패했다(7/21)** — 빈 슬롯의
