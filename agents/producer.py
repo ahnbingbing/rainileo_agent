@@ -2886,10 +2886,14 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     if (os.getenv("RF_FOOTAGE_GATE", "1") == "1"
             and "[재료검증]" not in prior_feedback):
         # Floor must clear the RENDER minimum, not sit below it: the burn-time guard fails an
-        # assembled RF episode under RF_MIN_SECONDS (14s incl. ~4s bumpers), so the CONTENT
+        # assembled RF episode under RF_MIN_SECONDS (16s incl. ~4.5s bumpers), so the CONTENT
         # floor is ~RF_MIN_SECONDS − bumpers + margin. A floor of 8 passed concepts that then
         # rendered to 12.4/12.6s and failed — the gate was looser than the guard it front-ran.
-        _floor = float(os.getenv("RF_MIN_CONTENT_SECONDS", "11"))
+        # 8/6: floor 11 let an 11.5s single clip through → a 15.5s episode PD called "너무 짧아".
+        # Recent RF episodes are 17–61s (median 36, 0% under 16s), so raising the floor to 13
+        # (=16 − ~4.5 + margin) pushes the rare thin single-clip concept to re-select a longer
+        # clip from the rich pool WITHOUT rejecting any normal concept. RF_MIN_CONTENT_SECONDS.
+        _floor = float(os.getenv("RF_MIN_CONTENT_SECONDS", "13"))
         # The raw-duration estimate OVERCOUNTS: the deterministic render drops chunks a concept's
         # clips won't survive. The biggest such drop is FACE-LEAK — a cut whose owner-face can't
         # be cropped is removed whole (7/30 18:00/21:00 lost 6 self-heal rounds to "dropping
@@ -4326,7 +4330,7 @@ def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.dat
                 capture_output=True, text=True, timeout=15).stdout.strip() or 0)
         except Exception:
             _rfdur = 0.0
-        _rfmin = float(os.getenv("RF_MIN_SECONDS", "14"))
+        _rfmin = float(os.getenv("RF_MIN_SECONDS", "16"))
         if 0 < _rfdur < _rfmin:
             log.warning("RF upload guard: card %s is %.1fs < %.0fs — gutted stub, refusing to schedule",
                         card_id[:8], _rfdur, _rfmin)

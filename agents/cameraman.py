@@ -6022,7 +6022,8 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
     # 9.4s episode_rf_..._010216) = most cuts were DROPPED (failed asset download /
     # missing clip), even though the concept had 6 cuts × 7-8s. Don't publish a stub
     # — FAIL so the slot stays empty and self-heal/retry can rebuild it from the now
-    # much-bigger pool. Floor via RF_MIN_SECONDS (default 14s incl. ~5s bumpers).
+    # much-bigger pool. Floor via RF_MIN_SECONDS (default 16s incl. ~4.5s bumpers — raised
+    # from 14 on 8/6 after a 15.5s episode read "너무 짧아"; recent RF is 17–61s so 0% false-hit).
     if not dry_run and out.exists():
         try:
             _dur = float(subprocess.run(
