@@ -5051,14 +5051,26 @@ def _trim_real_footage_clips(manifests: dict, anim_dir: Path,
         src = entry.get("source", "")
         if src in ("__interp_pending__", "__photo_i2v__", "__chain_from_prev__"):
             continue
-        # PD 2026-06-07 efficient model: if the original was pruned, re-download
-        # it on demand using its Photos UUID.
-        if src and not Path(src).exists() and entry.get("source_uuid"):
-            if progress_cb:
-                progress_cb(f":arrow_down: {tag} 원본 재다운로드 (on-demand)")
-            restored = _ensure_local(src, entry.get("source_uuid"))
-            if restored:
-                src = restored
+        # On-demand fetch from the GCS mirror if the source isn't already on this VM.
+        # The blob is derivable from file_path alone (icloud.gcs.download_to), so this
+        # must NOT be gated on a Photos UUID — most clips carry none, and gating on it
+        # dropped GCS-available clips as "unavailable" (the RF-lane gutting root that
+        # left days with empty slots despite a full GCS mirror). Map any foreign-host
+        # (e.g. old Mac) path to this VM's local path first, then fetch if still absent.
+        if src:
+            try:
+                from icloud import gcs as _gcs
+                _lp = _gcs.local_path(src)
+                if _lp and _lp.exists():
+                    src = str(_lp)
+            except Exception:
+                pass
+            if not Path(src).exists():
+                if progress_cb:
+                    progress_cb(f":arrow_down: {tag} 원본 재다운로드 (on-demand)")
+                restored = _ensure_local(src, entry.get("source_uuid"))
+                if restored:
+                    src = restored
         src_path = Path(src)
         if not src_path.exists():
             log.warning("trim: source missing for %s: %s", tag, src)
@@ -8694,8 +8706,19 @@ def _prestage_concept_assets(concept: dict | None, card: dict | None,
         fp, uuid = r[0], r[1]
         if fp and not Path(fp).is_absolute():
             fp = str(ROOT / fp)
-        if fp and uuid and not Path(fp).exists():
-            need.append((aid, fp, uuid))
+        # Map a foreign-host (Mac) path to this VM's local path, then queue for fetch if
+        # absent. NOT gated on a Photos UUID — download_to derives the blob from the path,
+        # and gating on uuid stranded UUID-less GCS-mirrored clips (RF gutting root).
+        if fp:
+            try:
+                from icloud import gcs as _gcs0
+                _lp = _gcs0.local_path(fp)
+                if _lp:
+                    fp = str(_lp)
+            except Exception:
+                pass
+            if not Path(fp).exists():
+                need.append((aid, fp, uuid or ""))
     if not need:
         return
     # GCS-first bulk prefetch (PD 2026-06-21): pull whatever is mirrored to GCS —
