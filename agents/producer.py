@@ -4222,6 +4222,8 @@ def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.dat
     ).fetchone()
     if not row:
         log.warning("auto-upload: no card for %s", out_path)
+        log.error("[ORPHAN-SKIP] out=%s reason=no-card-for-output "
+                  "(rendered mp4 whose path matches no card row → cannot schedule)", out_path)
         return None
     card_id = row["card_id"]
     # This card's PREVIOUS scheduled video, if any. A re-render / salvage / re-upload
@@ -4334,6 +4336,8 @@ def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.dat
         if 0 < _rfdur < _rfmin:
             log.warning("RF upload guard: card %s is %.1fs < %.0fs — gutted stub, refusing to schedule",
                         card_id[:8], _rfdur, _rfmin)
+            log.error("[ORPHAN-SKIP] card=%s out=%s reason=rf-too-short(%.1fs<%.0fs, gutted-stub)",
+                      card_id[:8], out_path, _rfdur, _rfmin)
             if progress_cb:
                 progress_cb(f":x: RF 에피소드 너무 짧음 ({_rfdur:.1f}s < {_rfmin:.0f}s) — gutted "
                             f"stub 예약 거부(슬롯 비움 > stub 공개). 재료 부족 의심 — 재빌드 필요.")
@@ -4369,6 +4373,8 @@ def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.dat
             log.warning("bgm snapshot failed for %s (non-fatal): %s", vid, _be)
     except Exception as e:
         log.warning("auto-upload failed for %s: %s", card_id[:8], e)
+        log.error("[ORPHAN-SKIP] card=%s out=%s reason=upload-exception: %s",
+                  card_id[:8], out_path, str(e)[:200])
         if progress_cb:
             progress_cb(f":warning: YouTube 업로드 실패 (OAuth 미설정일 수 있음): "
                         f"{str(e)[:120]} — `python -m youtube.oauth` 부트스트랩 필요")

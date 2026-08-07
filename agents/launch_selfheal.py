@@ -300,7 +300,18 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
                 buf.append(f"EXC: {e}")
             if res and res[0].get("output"):
                 done[(lane, slot)] = res[0]
-                cap(f":white_check_mark: [self-heal] {slot} {lane} 성공 (R{rnd})")
+                if res[0].get("video_id"):
+                    cap(f":white_check_mark: [self-heal] {slot} {lane} 성공 (R{rnd})")
+                else:
+                    # Rendered a valid mp4 but the upload/schedule step returned no video_id
+                    # → the slot goes live-empty (orphan). Do NOT report a silent ✅ — surface
+                    # it loudly; the concrete reason is logged as [ORPHAN-SKIP] at the upload
+                    # choke point (_auto_upload_episode): no-card / rf-too-short / upload-exception.
+                    log.error("[ORPHAN] %s/%s rendered %s but video_id is None — upload/schedule "
+                              "failed; grep [ORPHAN-SKIP] in this log for the reason",
+                              lane, slot, res[0].get("output"))
+                    cap(f":rotating_light: [self-heal] {slot} {lane} 렌더OK·예약실패(고아) — "
+                        f"이유는 로그 `[ORPHAN-SKIP]` 참조")
             else:
                 logtext = "\n".join(buf)
                 cat = classify_failure(logtext)
