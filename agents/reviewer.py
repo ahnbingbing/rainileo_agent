@@ -188,6 +188,20 @@ looks. These are CAPS (a ceiling), not soft notes:
 - **주체 저노출/트림 누락 (both)**: if a pet the concept centers on (or that PD wants more
   of — e.g. Leo) barely appears, OR the clip's payoff (the subject entering/acting) is
   trimmed off so the good part never shows → flag "주체 저노출/트림", cap ≤6.
+- **훅 묻힘 — 사건이 뒤로, 정적이 앞 (real_footage)**: RF 편집의 첫 판단은 "가장 볼거리 있는 비트를
+  앞세웠나"다. 한 컷은 뭔가 벌어지는 사건(먹방·물놀이·놀이·간식 쟁탈·재롱)이고 다른 컷은 정적(자는·눕는·
+  멍하니 앉음)인데, **오프닝(cut1)이 정적 컷이고 더 사건성 있는 비트가 뒤에 짧게 묻혀 있으면** 볼거리가
+  다 지난 뒤에야 훅이 나와 이미 이탈한 뒤다 → flag "훅 묻힘 — 사건을 앞·길게, 정적을 뒤로", cap ≤6.
+  (Worked example: 레오 청어 먹방을 맨 뒤 10초에 묻고 발라당 누운 정적 컷을 앞 30초로 깐 회차 — 먹방이
+  이 소재의 훅인데 숨었다.) 어느 컷이 능동적 사건이고 어느 컷이 정적인지는 프레임에 보인다. ★구분: 전 컷이
+  다 잔잔한 관찰이면 이 캡은 안 쓴다(그건 '킥 부족'/'RF 내용 빈약' 축) — 사건 컷이 분명히 존재하는데 순서가
+  뒤로 밀린 경우에만.
+- **주체 원거리·정체 불명 — 매력 부족 (real_footage)**: RF의 주인공은 레오·랴니이므로 그게 **누구인지
+  프레임에서 또렷이 읽혀야** 한다. 피사체가 너무 작고 멀거나(원거리 wide/overhead) 배경 잡동사니에 묻혀
+  **레오·랴니인지조차 분간이 안 되고 "관계없는 아무 길고양이/강아지"처럼 보이면** → flag "주체 원거리·정체
+  불명 — close 클립 필요", cap ≤6. (Worked example: 랴니가 멀찍이 작게 걸어가는 원거리 산책 클립 → PD
+  "아예 관계없는 길고양이 같다".) ★구분: 주체가 또렷이 우리 애로 읽히는데 단지 넓은 구도인 건 문제 아님 —
+  정체가 안 읽힐 때만 문다('주체 저노출'과도 다름: 저노출은 거의 안 나옴, 이건 나오지만 너무 작아 정체불명).
 - **테마/비주얼 훅이 화면에 없음 — 캡션-only 테마 (ai_vtuber)**: if the concept's title/captions
   promise a distinctive THEME or visual hook (카지노·잭팟, 무대, 우주, 폭죽 등) but the frames
   show only ordinary pets with NO sign of that theme (no themed prop/set/effect/overlay), that
@@ -203,6 +217,14 @@ looks. These are CAPS (a ceiling), not soft notes:
   there the SCREEN lacks the theme; here the CAPTIONS fail to name it — a concept needs both
   (named in the opening caption AND shown on screen). An episode shipped 8/10 with a
   `댄스 챌린지` concept whose captions never said "댄스 챌린지" — exactly this miss.
+- **쇼케이스 스포트라이트 오프레이밍 (양레인, 특히 ai_vtuber)**: 컨셉이 한 주체의 쇼/실력/자랑/도전(예:
+  "레오의 참치 해체쇼", "랴니 칼각 댄스", "○○의 먹방왕 등극")이면 빌드업·절정 캡션의 스포트라이트가 그
+  **퍼포머의 솜씨·활약**에 있어야 한다. 절정(payoff) 캡션이 엉뚱하게 **다른 주체의 '운명/위기'로 프레이밍**되면
+  (퍼포머 쇼케이스인데 조연의 불길한 운명을 물음) 스포트라이트가 딴 데로 새고 컨셉에 없던 불길한 톤이 얹힌다 →
+  flag "스포트라이트 오프레이밍 — 퍼포머 아닌 조연 위기로", cap ≤6. (Worked example: "오마카세 셰프 레오의
+  참치 해체쇼"의 해체 직전 컷을 "과연 랴니의 운명은?"으로 써 스포트라이트가 셰프 레오 실력에서 손님 랴니 위기로
+  샜다 — "과연 레오의 실력은?"이 옳다.) ★구분: 조연이 payoff를 받는 결말(랴니가 완성된 한 점을 대접받음)은
+  퍼포머의 성과를 완성하는 정상 전개라 캡 사유 아님 — 절정 자체를 조연의 위기/운명으로 바꾼 캡션만 문다.
 - **제목·theme이 말이 안 되는 조어 (양레인)**: the `title`/`theme` (and any concept name a
   caption states) must read as real, instantly-comprehensible Korean. If it hangs on a coined
   or invented word / forced mashup a cold viewer can't parse (지어낸 조어·억지 합성어), the hook
