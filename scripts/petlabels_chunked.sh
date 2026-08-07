@@ -25,6 +25,7 @@ LOG="${LOG:-data/logs/petlabels_chunked_$(date +%Y%m%d).log}"
 
 echo "pet-label backlog: ${BATCH_GB}GB/round (≈$((BATCH_GB*2))GB peak), max ${MAX_ROUNDS} rounds, log=$LOG"
 zero_streak=0
+pause_streak=0
 for round in $(seq 1 "$MAX_ROUNDS"); do
   # Stay OUT of the 01:00–06:59 protected window: it covers the 01:30 icloud-sync, the
   # 03:00 launch batch, and the 3–6am Photos-maintenance / iCloud download-failure window.
@@ -36,11 +37,25 @@ for round in $(seq 1 "$MAX_ROUNDS"); do
     echo ">>> 01:00–07:00 protected window (sync/batch/Photos-maint) — stopping; 07:00 job resumes." | tee -a "$LOG"
     break
   fi
-  free_gb=$(df -g / | tail -1 | awk '{print $4}')
+  # Linux-portable free-GB parse. NOTE: `df -g` is a macOS flag — on Linux it errors and
+  # returns EMPTY, which used to read as 0 < floor → pause 60s → `continue` every round, so
+  # the job spun for hours labelling nothing (the runaway this guard prevents). Use GNU
+  # `--output=avail -BG` and keep only digits.
+  free_gb=$(df -BG --output=avail / 2>/dev/null | tail -1 | tr -dc '0-9')
+  [ -z "$free_gb" ] && free_gb=$(df -BG / 2>/dev/null | awk 'END{gsub(/[^0-9]/,"",$4); print $4}')
   if [ "${free_gb:-0}" -lt "$MIN_FREE_GB" ]; then
-    echo ">>> free disk ${free_gb}GB < ${MIN_FREE_GB}GB floor — pausing 60s to let prune/system catch up" | tee -a "$LOG"
+    pause_streak=$((pause_streak + 1))
+    # A broken disk parser or a genuinely wedged disk must NOT spin forever. Abort after
+    # MAX_PAUSE_STREAK consecutive below-floor checks (default 10 = ~10 min) so a failure is
+    # loud + bounded instead of a silent multi-hour pause loop.
+    if [ "$pause_streak" -ge "${MAX_PAUSE_STREAK:-10}" ]; then
+      echo ">>> disk below floor for ${pause_streak} consecutive checks (free='${free_gb}'GB) — aborting to avoid a spin loop (check df output / real disk)." | tee -a "$LOG"
+      exit 3
+    fi
+    echo ">>> free disk ${free_gb}GB < ${MIN_FREE_GB}GB floor — pausing 60s (streak ${pause_streak}/${MAX_PAUSE_STREAK:-10})" | tee -a "$LOG"
     sleep 60; continue
   fi
+  pause_streak=0
   echo "" | tee -a "$LOG"
   echo "===== ROUND $round ($(date '+%T'))  free=${free_gb}GB  batch~${BATCH_GB}GB =====" | tee -a "$LOG"
   # KEEP_DAYS=0 → prune deletes this round's batch right after it's mirrored to GCS.
