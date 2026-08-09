@@ -298,18 +298,33 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
                 log.exception("self-heal slot run failed (%s %s)", lane, slot)
                 res = []
                 buf.append(f"EXC: {e}")
-            if res and res[0].get("output"):
+            if res and res[0].get("output") and res[0].get("video_id"):
                 done[(lane, slot)] = res[0]
-                if res[0].get("video_id"):
-                    cap(f":white_check_mark: [self-heal] {slot} {lane} 성공 (R{rnd})")
+                cap(f":white_check_mark: [self-heal] {slot} {lane} 성공 (R{rnd})")
+            elif res and res[0].get("output"):
+                # Rendered a valid mp4 but the upload/schedule step returned no video_id
+                # → the slot would go live-empty (orphan). Surface it loudly; the concrete
+                # reason is logged as [ORPHAN-SKIP] at the upload choke point
+                # (_auto_upload_episode): no-card / rf-too-short / upload-exception.
+                log.error("[ORPHAN] %s/%s rendered %s but video_id is None — upload/schedule "
+                          "failed; grep [ORPHAN-SKIP] in this log for the reason",
+                          lane, slot, res[0].get("output"))
+                # PD 2026-08-09: an rf-too-short orphan (the gutted-stub guard REFUSED to schedule
+                # a <16s RF episode) used to be marked done → the slot stayed permanently EMPTY,
+                # even though a different concept would fill it. RF renders are FREE, so treat a
+                # too-short/orphan RF render like content_gutted: reroll a FRESH concept (the stub's
+                # card is now in the exclude set, so brainstorm won't repeat it) every remaining
+                # round until one lands ≥ the guard. AV (paid) still surfaces the orphan and stops.
+                # This closes the loop the pre-render footage gate can't (it estimates from raw
+                # footage; caption-span / distinct-clip collapse can still shorten the render).
+                # RF_ORPHAN_REROLL=0 reverts.
+                if (lane == "real_footage" and reroll_on and rnd < _rounds
+                        and os.getenv("RF_ORPHAN_REROLL", "1") == "1"):
+                    cap(f":arrows_counterclockwise: [self-heal] {slot} {lane} 렌더OK·예약실패"
+                        f"(고아: rf-too-short 등) — RF는 무료라 신선 컨셉으로 재롤 (R{rnd}→{rnd+1})")
+                    # do NOT mark done/terminal → next round re-proposes a fresh concept
                 else:
-                    # Rendered a valid mp4 but the upload/schedule step returned no video_id
-                    # → the slot goes live-empty (orphan). Do NOT report a silent ✅ — surface
-                    # it loudly; the concrete reason is logged as [ORPHAN-SKIP] at the upload
-                    # choke point (_auto_upload_episode): no-card / rf-too-short / upload-exception.
-                    log.error("[ORPHAN] %s/%s rendered %s but video_id is None — upload/schedule "
-                              "failed; grep [ORPHAN-SKIP] in this log for the reason",
-                              lane, slot, res[0].get("output"))
+                    done[(lane, slot)] = res[0]
                     cap(f":rotating_light: [self-heal] {slot} {lane} 렌더OK·예약실패(고아) — "
                         f"이유는 로그 `[ORPHAN-SKIP]` 참조")
             else:
