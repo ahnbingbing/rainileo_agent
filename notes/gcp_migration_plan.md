@@ -1,20 +1,34 @@
-# 클라우드 이관 — CANONICAL 플랜 (봇·배치 → GCP VM, Mac = 새벽 백필만)
+# 프로덕션 아키텍처 — GCP VM (봇·배치 전부 클라우드) · Mac = Photos 인입만
 
-> **상태:** APPROVED 방향 (2026-06-28). 프로비저닝(VM/과금)은 PD 승인·결제 게이트.
-> **이 문서가 `notes/cloud_migration_plan.md`(board executor, 이슈 #12)와 이전
-> `gcp_migration_plan.md`를 통합·대체한다.** 두 분석이 엇갈렸던 지점은 §1에서 해소.
+> **상태: 컷오버 완료 · LIVE.** 이 채널의 프로덕션(Slack 봇·전 cron·렌더 오케스트레이션·
+> DB)은 **GCP VM `rianileo-brain`에서 상시 돌고 있다.** 아래 §1–8은 이 결정에 이른 *역사적
+> 근거*(provenance)이고, 현재 운영 진실은 이 상단 블록이다.
 >
-> **진행현황 (2026-06-30) — 프로비저닝 전 $0 작업 전부 DONE·main 커밋·push 완료:**
-> - ✅ **GCS 커버리지 100%** (16,626/16,626; 769 백필 + 패치前 slack영상 5 업로드).
-> - ✅ **렌더 GCS-only 가드** (`_osxphotos_available()`, cameraman 양 폴백; Mac=무변경/VM=스킵).
-> - ✅ **인입 GCS 보장** (`_ingest_file` GCS 푸시).
-> - ✅ **브랜치 main 통합** — 활성 브랜치 main 전환, board/CLI/세션 커밋 전부 main=배포로.
-> - ✅ **P1 배포 스캐폴딩** (`deploy/`, fe56982, origin/main): **git push=main 자동배포**
->   (smoke 게이트) + `rianileo-bot.service`(상시봇=BrokenPipe해결) + deploy.timer(2분) +
->   crontab.vm(17잡 KST, writer 포함) + bootstrap(멱등) + smoke.
-> - **다음 = VM 프로비저닝(결제 게이트)** → `bootstrap.sh` 1회 → P2a 봇 shadow(BrokenPipe 소멸
->   검증) → 1주 패리티 → 원자 컷오버. 프로비저닝 후 코드 잔여 = `ingest_register` 새벽 델타
->   (작업2 축소판) + 최종 DB 동기화. **로컬은 컷오버까지 그대로 라이브.**
+> ### ⚠️ 어디가 ground truth인가 (세션 시작 시 반드시)
+> - **VM이 authoritative.** 운영 상태(스케줄·카드·DB·예약)는 **VM DB 또는 라이브 유튜브**로 확인하라.
+>   **로컬 `data/agent.db`는 stale하다** — 로컬 수치로 스케줄/카드 판단 금지.
+>   - 라이브 예약 조회: `python -m agents.reconcile`(orphan) 또는 `reconcile.list_scheduled_videos()`.
+>   - VM 접속: `gcloud compute ssh rianileo-brain --zone=asia-northeast3-a --project=rianileo-veo --tunnel-through-iap`
+> - **배포 = `git push origin main`.** VM `deploy.timer`(2분 폴)가 pull→smoke→봇 재기동. 수동 SSH 배포 불필요.
+> - **VM 잡 실행**: `sudo -u rianileo bash deploy/run_job.sh <...>` (repo `/home/rianileo/rianileo-agent`,
+>   owner `rianileo`; PYTHONPATH 세팅됨 — 직접 python 호출 금지). ⚠️ `run_job.sh -c "<multiline>"`는
+>   sudoers 매칭 실패 → 한 줄 `python -c`만.
+>
+> ### 지금 무엇이 어디서 도나
+> - **VM (상시 두뇌)**: `rianileo-bot.service`(상시 Slack 봇=BrokenPipe 해결) + `deploy.timer` +
+>   **`deploy/crontab.vm` 전 cron(KST)** — 03:00 `launch_selfheal`(익일+`LAUNCH_LEAD_DAYS=2` 배치),
+>   06:30 `bandit --collect`, 09:00 일일지표, 18:00 `writer`, board-escalation 5분, slack_sync 15분,
+>   ingest_register 30분, giri 주간 등. DB(sqlite)는 VM 영구디스크 단일 거주.
+> - **Mac (비상시, 비크리티컬)**: 이제 **Photos 인입 launchd만** 유지(icloud-sync / petlabel /
+>   slack-sync = Photos→GCS 미러). **프로덕션-중복 launchd는 전부 `unload -w`로 껐다**
+>   (2026-08-07: GCP 이전 후 안 꺼진 맥 `com.rianileo.launch`가 배치를 중복 실행 = "유령 렌더"
+>   근본이었음). Slack-only 정착 시 Mac 은퇴 가능 = 순수 클라우드 엔드게임.
+> - **인입**: Slack 봇 `_ingest_file`이 주 경로(파일만 올리면 자동 asset 행+GCS). osxphotos=새벽 백필.
+> - **로컬 iteration 예외**: 창작 프루프(예: `scripts/impact_edit.py` 룩 검증)는 PD 승인 하에 Mac
+>   로컬에서 빠르게 반복 후, 확정되면 VM 파이프라인에 태운다 — 이건 *개발*이지 *운영 진실*이 아니다.
+>
+> **통합 이력**: 이 문서가 `notes/cloud_migration_plan.md`(이슈 #12)와 이전 `gcp_migration_plan.md`를
+> 통합·대체한다. 결정을 가른 변수는 §1.
 
 ---
 
@@ -123,4 +137,6 @@ PD 단순화(GCS 95%→실측) 후 원래 4모듈 분리는 **과설계로 판�
 
 - ✅ VM: e2-medium @ 서울, tz Asia/Seoul · ✅ shadow 봇: 별도 dev 워크스페이스 ·
   ✅ DB: sqlite 단일거주 · ✅ 컷오버: 봇우선검증→1주shadow→전체원자 · ✅ 인입: **Slack-primary**, osxphotos=새벽백필→은퇴경로
-- ⬜ 월 비용 캡(api_calls 원장 합산) — 착수 비차단 · ⬜ VM/Secret 프로비저닝 = 결제 승인 시점
+- ✅ **VM/Secret 프로비저닝 완료 · 컷오버 완료 (LIVE)** — `rianileo-brain` 상시 가동, crontab.vm 전 cron 이관,
+  Mac 프로덕션 launchd `unload -w`(2026-08-07). 현재 운영 진실은 상단 블록 참조.
+- ⬜ 월 비용 캡(api_calls 원장 합산) — 착수 비차단 (잔여 유일) · (선택) Slack-only 정착 시 Mac 은퇴

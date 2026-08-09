@@ -45,6 +45,15 @@
 > 작업 후 같은 로그에 `[board]`로 남기고, board 봇은 답하기 전 이 로그를 컨텍스트로 읽는다 — 그래서
 > 둘이 서로 무엇을 했는지 알고 진행한다.
 
+> **🖥️ WHERE-THIS-RUNS RULE (운영 진실):** 프로덕션(Slack 봇·전 cron·렌더 오케스트레이션·DB)은
+> **GCP VM `rianileo-brain`에서 상시 돈다.** 이 Mac/레포는 *개발* + Photos 인입(icloud/petlabel/
+> slack-sync launchd)일 뿐이다. **그래서 운영 상태(스케줄·카드·예약)의 ground truth는 VM DB 또는
+> 라이브 유튜브지, 로컬 `data/agent.db`가 아니다 — 로컬은 stale하다.** 스케줄 판단 전 로컬 DB를
+> 먼저 보지 마라(라이브 예약=`agents.reconcile.list_scheduled_videos`, VM=`gcloud compute ssh
+> rianileo-brain --zone=asia-northeast3-a --project=rianileo-veo --tunnel-through-iap`). **배포=
+> `git push origin main`**(VM deploy.timer 2분 폴이 pull→smoke→봇 재기동); 아래 "Env/setup (Mac)"은
+> 프로덕션이 아니라 로컬 개발 셋업이다. 전체 아키텍처·crontab·컷오버 이력: `notes/gcp_migration_plan.md`.
+
 ---
 
 ## The channel
