@@ -2531,6 +2531,22 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     # reused clips without starving (no more "relax → reuse"), and old footage becomes
     # a first-class pick. years_ago is already stamped for time-grounded captions.
     _arch = _drop_tiny_clips(_drop_branding(context.get("archive_videos", []), _branding), _tiny)
+    # PD 2026-08-11 ROOT FIX (broad — the multi-clip counterpart to _rf_long_candidates' one-take
+    # exclusion): a has_human clip whose face survives the crop is DROPPED whole by the render-time
+    # face gate (cameraman.py:_rf_face_gate). When a directive steers the writer to human-heavy
+    # footage (a 산책/나들이 concept off owner-filmed clips), EVERY cut face-leaks → the episode guts
+    # to empty, and the self-heal reroll can't escape it because the directive keeps re-selecting the
+    # same human clips (8/13 08:00 burned all 6 rounds this way). So drop human clips from the pool
+    # the writer builds from. The RF pool is ~76% human-free, so this almost never starves; a fallback
+    # keeps human clips ONLY if excluding them would leave too few to build an episode — RF is
+    # pet-observation and almost never NEEDS the owner in frame (owner interaction is the AV lane).
+    # The existing _lead_with_underused soft-demotion couldn't stop this: a walk directive overrides
+    # a sort order. RF_EXCLUDE_HUMAN=0 reverts; RF_CLEAN_POOL_MIN tunes the fallback floor.
+    if os.getenv("RF_EXCLUDE_HUMAN", "1") != "0":
+        _cav = [v for v in avail_videos if not v.get("has_human")]
+        _car = [v for v in _arch if not v.get("has_human")]
+        if len(_cav) + len(_car) >= int(os.getenv("RF_CLEAN_POOL_MIN", "8")):
+            avail_videos, _arch = _cav, _car
     _seen = {v.get("id") for v in avail_videos if v.get("id")}
     avail_videos = avail_videos + [v for v in _arch if v.get("id") and v.get("id") not in _seen]
     cooldown: set[str] = set()
