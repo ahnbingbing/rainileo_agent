@@ -953,9 +953,14 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   owner 영상(가장 긴 경우가 잦다)이 뽑히고, 렌더-시점 face 게이트(`cameraman.py:_rf_face_gate`)가 얼굴 남은 컷을
   통째 드롭 → one-take는 단일 클립이라 여분이 없어 0컷 gut**. 사전 footage 게이트(C16/C19/C21)는 원본 길이로
   추정하지 실제 렌더가 face-drop/collapse/캡션-span으로 짧아지는 걸 모델링 못 해 이 부류를 못 막는다 — 게이트를
-  더 조이는 건 답이 아니었다. **Fix①(선택-시점 근본, 6b87a27):** `_rf_long_candidates`에서 has_human 제외 → one-take는
-  클린 클립(풀의 76%)에서만 뽑고, human 클립은 여분이 있는 **멀티-클립 몬타주 경로**로만(다른 컷이 face-drop을 견딤).
-  취약한 케이스를 붕괴 대신 견고한 경로로 라우팅. **Fix②(backstop, bc0a043):** self-heal이 rf-too-short 고아
+  더 조이는 건 답이 아니었다. **Fix①(선택-시점 근본, 6b87a27 → 067c0d9):** RF 후보 pool에서 has_human 제외 →
+  클린 클립(풀의 76%)에서만 컨셉을 짠다. ★단, 첫 커밋(6b87a27)은 one-take 경로(`_rf_long_candidates`)만 걸러
+  **절반이었다** — 8/13 08:00이 반증: "산책 출근길" 멀티-클립 컨셉이 owner 영상 4컷 전부 face-leak → **멀티-클립도
+  전컷 드롭이면 똑같이 gut**(여분이 있어도 전부 human이면 무의미). 게다가 directive("산책")가 고정이라 self-heal
+  reroll이 매 라운드 같은 human 산책클립을 다시 골라 6라운드 전멸. Fix 완성(067c0d9): singlepass 멀티-클립 pool
+  (`_propose_realfootage_singlepass`의 avail_videos/_arch)도 has_human 제외(클린 pool floor fallback). 기존
+  `_lead_with_underused` soft-demote는 directive가 정렬을 덮어써서 무력했다 — **정렬 강등으론 directive를 못 이기고,
+  pool에서 빼야 이긴다.** RF는 펫 관찰이라 주인이 필요한 경우가 드물다(주인 상호작용=AV 레인). **Fix②(backstop, bc0a043):** self-heal이 rf-too-short 고아
   (가드가 stub 예약 거부)를 "done"으로 처리하고 1회 만에 포기해 슬롯을 **영구히** 비우던 걸, RF는 무료이므로
   content_gutted처럼 매 라운드 신선 컨셉으로 재롤하도록(6라운드까지). ★교훈: **재발하는 빈 슬롯은 게이트 임계가
   아니라 생성 패턴의 구조적 취약점을 봐라** — one-take(단일 클립)는 우아하지만 단일 실패점이라, robustness는 "그
