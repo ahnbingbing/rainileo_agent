@@ -946,6 +946,28 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   출력 분포에 비춰 다시 봐야 한다 — 올바른 게이트라도 바가 낮으면 PD가 "짧다"는 걸 그대로 통과시킨다. 그리고
   임계를 올릴 땐 **분포를 먼저 재서 false-reject 위험을 정량화**하라(여기선 <16초 0% = 안전) — 감으로 조이면
   빈 슬롯을 만든다(스파인의 과-조임 경고). cf C21(같은 게이트의 구멍 fix), C19(floor 정렬 원리).
+- **C23. RF 빈슬롯의 최종 근본은 사전 게이트가 아니라 one-take의 무-여분성 — 단일 클립이 face-leak나면 컷 드롭 →
+  통째 붕괴다(8/12, C21/C22 계보의 종착)** — 8/12 12:30 RF이 self-heal 6라운드를 전부 content_gutted로 소진하고
+  빈 채 종료(예전 1회-포기와 달리 6회 시도한 건 진전). 매 라운드 다른 이유로 실패했지만 공통 뿌리 하나: **writer가
+  (PD 승인 패턴대로) 가장 긴 클립 1개로 one-take를 짜는데, `_rf_long_candidates`가 has_human을 전혀 안 걸러
+  owner 영상(가장 긴 경우가 잦다)이 뽑히고, 렌더-시점 face 게이트(`cameraman.py:_rf_face_gate`)가 얼굴 남은 컷을
+  통째 드롭 → one-take는 단일 클립이라 여분이 없어 0컷 gut**. 사전 footage 게이트(C16/C19/C21)는 원본 길이로
+  추정하지 실제 렌더가 face-drop/collapse/캡션-span으로 짧아지는 걸 모델링 못 해 이 부류를 못 막는다 — 게이트를
+  더 조이는 건 답이 아니었다. **Fix①(선택-시점 근본, 6b87a27):** `_rf_long_candidates`에서 has_human 제외 → one-take는
+  클린 클립(풀의 76%)에서만 뽑고, human 클립은 여분이 있는 **멀티-클립 몬타주 경로**로만(다른 컷이 face-drop을 견딤).
+  취약한 케이스를 붕괴 대신 견고한 경로로 라우팅. **Fix②(backstop, bc0a043):** self-heal이 rf-too-short 고아
+  (가드가 stub 예약 거부)를 "done"으로 처리하고 1회 만에 포기해 슬롯을 **영구히** 비우던 걸, RF는 무료이므로
+  content_gutted처럼 매 라운드 신선 컨셉으로 재롤하도록(6라운드까지). ★교훈: **재발하는 빈 슬롯은 게이트 임계가
+  아니라 생성 패턴의 구조적 취약점을 봐라** — one-take(단일 클립)는 우아하지만 단일 실패점이라, robustness는 "그
+  클립이 깨끗한가"를 선택 단계에서 보장해야지 사후 가드로는 못 막는다(가드는 이미 stub를 거부 중이었고, 그게
+  슬롯을 비운 것). **★롤백(같은 세션):** 처음엔 사전 footage 게이트에 "서로 다른 클립 ≥2" 요구를 넣어 collapse를
+  잡으려 했으나 — pipeline-change-impact가 잡아냄 — **PD 승인한 "긴 클립 1컷 원테이크" 패턴(writer_realfootage.md)과
+  정면충돌**해 되돌렸다. 교훈: **robustness 가드는 승인된 생성 패턴과 싸우면 안 된다** — 패턴을 금지(distinct 강제)하지
+  말고, 그 패턴의 취약점만(클린 클립 선택) 보강하라. **★메타(진단 환각):** self-heal 진단 LLM이 범인으로 존재하지
+  않는 파일 `real_footage_storytelling.py:assemble_cuts_for_episode`를 지목 — 반복되는 진단-LLM 환각(C16의
+  "branding" 날조와 동류). 진짜 게이트는 grep로 찾은 `cameraman.py:_rf_face_gate`. **로그·grep(아티팩트)를 믿고
+  진단 LLM의 파일명은 믿지 마라.** cf C21/C22(같은 게이트 계보), C16(진단 환각·footage 게이트 탄생),
+  B15(홀리스틱 LLM은 sparse·주관 → 결정론/선택으로 물어라).
 
 ### 4.5 인프라 / 파이프라인
 - **D_salvage. 캡션-salvage가 카드 링크를 끊어 렌더·Giri-통과 에피소드가 조용히 예약 실패했다(7/21)** — 빈 슬롯의
