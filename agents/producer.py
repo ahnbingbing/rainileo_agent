@@ -1603,11 +1603,20 @@ def _rf_long_candidates(context: dict) -> list[dict]:
                 _con, _pool_ids, _recently_used_rf_vphashes(_con))
         except Exception as e:
             log.warning("one-take visual cooldown lookup failed: %s", e)
+    # PD 2026-08-11 ROOT FIX for the recurring empty RF slot: a one-take is a SINGLE clip,
+    # so it has NO redundancy — if that clip carries a human, the render-time face gate drops
+    # the whole cut and the episode guts to empty (8/12 12:30: reroll burned all 6 rounds on
+    # single-long-clip concepts whose only clip was face-leaking). The pool is ~76% human-free,
+    # so a one-take must be drawn from a CLEAN clip; a human clip still serves the MULTI-clip
+    # montage path, where other cuts survive a face drop. Excluding human clips here routes the
+    # fragile case to the robust path instead of gutting. RF_ONETAKE_EXCLUDE_HUMAN=0 reverts.
+    _excl_human = os.getenv("RF_ONETAKE_EXCLUDE_HUMAN", "1") != "0"
     longs = [{"id": v.get("id"), "dur": float(v.get("dur") or 0),
               "sc": (v.get("sc") or "")[:240], "date": v.get("date"), "tod": v.get("tod")}
              for v in pool
              if isinstance(v.get("dur"), (int, float)) and v.get("dur") >= _min
-             and v.get("id") not in _excl]
+             and v.get("id") not in _excl
+             and not (_excl_human and bool(v.get("has_human")))]
     # PD 2026-07-16: match footage time-of-day to the slot's time-of-day (a 밤 clip must not lead
     # a 12:30 lunch slot). Soft ordering, not a hard drop — a mismatched clip still beats an empty
     # slot, so we rank time-appropriate clips first, then longest. RF_TOD_MATCH=0 disables.
