@@ -2031,16 +2031,41 @@ def _household_knowledge_block(limit: int = 40) -> str:
     inject into the caption VLMs — so the model that READS the footage knows what the family
     told us (e.g. the dried fish is 청어, not the generic '멸치'). Empty on any failure; capped
     so the VLM prompt stays bounded. Facts are harvested in slack _grandma_converse."""
+    block = ""
     try:
         import sqlite3 as _sql
         from agents import knowledge as _kn
         con = _sql.connect(ROOT / "data" / "agent.db")
         try:
-            return _kn.facts_block(con, limit=limit)
+            block = _kn.facts_block(con, limit=limit)
         finally:
             con.close()
     except Exception:
-        return ""
+        block = ""
+    # PD 2026-08-13: ALSO surface episode_material — the family-told PLAY/PROP knowledge
+    # (곶감 꼭지 놀이, 캣휠=할머니가 모르고 쓰는 '다람쥐 쳇바퀴', 낚싯대 …). facts_block holds only
+    # canonical BEHAVIOR facts, so the caption VLM that READS the footage had no way to know a
+    # small brown object Leo bats on the floor is a 곶감 꼭지 he loves — it captioned it a generic
+    # '발라당'. The material bank is where these props/games live, so inject it too (bounded). This
+    # is the miss behind 8/13 08:00 (곶감 놀이 → '벌러덩 기지개'); fixing the shared block grounds
+    # BOTH the auto pipeline and hand-curation. RF_MATERIAL_KB=0 reverts.
+    if os.getenv("RF_MATERIAL_KB", "1") != "0":
+        try:
+            import sqlite3 as _sql2
+            con2 = _sql2.connect(ROOT / "data" / "agent.db")
+            try:
+                mats = [r[0] for r in con2.execute(
+                    "SELECT DISTINCT material FROM episode_material "
+                    "WHERE material IS NOT NULL AND material != '' "
+                    "ORDER BY rowid DESC LIMIT ?", (int(os.getenv("RF_MATERIAL_KB_N", "30")),)).fetchall()]
+            finally:
+                con2.close()
+            if mats:
+                block = (block + "\n\n## 가족이 알려준 놀이·소품 (실제 있었던 것 — 발명 금지)\n"
+                         + "\n".join(f"- {m}" for m in mats)).strip()
+        except Exception:
+            pass
+    return block
 
 
 # A caption carries a TIME anchor when it names WHEN the clip is from (past archive or
