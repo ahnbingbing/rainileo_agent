@@ -34,6 +34,9 @@ LAUNCH_LEAD_DAYS=2
 0   7 * * *   $J scripts/petlabels_chunked.sh                    >> $LOG/cron.petlabel.log 2>&1
 0   9 * * *   $J -m agents.bandit --collect --daily --slack      >> $LOG/cron.daily_metrics.log 2>&1
 9   9 * * *   $J scripts/grandmompapa_nudge.py morning           >> $LOG/cron.gmp_morning.log 2>&1
+# PD 2026-08-13: 09시 빈-슬롯 topup 안전망 — 03:00 배치가 gut로 비워둔 슬롯을 아침에 잡아 채운다
+# (self-heal이 밤새 face-leak 클립을 has_human 백필해 풀이 깨끗해진 뒤라 재시도가 붙을 확률↑). 못 채우면 Slack 경고.
+10  9 * * *   $J -m agents.slot_topup --slack                    >> $LOG/cron.topup.log 2>&1
 10  8 * * *   $J -m scripts.api_cost_report --post               >> $LOG/cron.api_cost.log 2>&1
 # PD 2026-07-05: the legacy producer daily_pipeline posted a manual "내일 영상 제안 (2편)"
 # to Slack and BLOCKED 2h for PD feedback before rendering. The channel now runs fully on
