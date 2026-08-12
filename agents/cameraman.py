@@ -5817,14 +5817,39 @@ def _rf_face_gate(manifests: dict, anim_dir: Path,
     Raises if too few cuts remain."""
     cuts = manifests.get("cuts") or []
     drop = []
+    _face_aids: set = set()   # asset_ids whose render showed a face → teach the pool
     for item in cuts:
         tag = item.get("tag")
         mp4 = anim_dir / f"{tag}.mp4"
         if mp4.exists() and _clip_has_human_face(mp4):
             drop.append(tag)
+            _aid = (item.get("asset") or {}).get("asset_id") or item.get("asset_id")
+            if _aid:
+                _face_aids.add(_aid)
             if progress_cb:
                 progress_cb(f":no_entry: {tag} 사람 얼굴 감지 — 컷 드롭(절대 노출 금지)")
             log.warning("RF face gate: dropping %s (human face survived crop)", tag)
+    # PD 2026-08-13 SELF-CORRECTING POOL: the render-time face VLM is STRICTER than the
+    # ingest `has_human` tag, so a clip tagged has_human=0 can still leak a face here and get
+    # dropped — and since the RF selection excludes on the tag (producer: _rf_long_candidates /
+    # singlepass pool), a mis-tagged clip keeps getting re-picked and re-dropped, so the reroll
+    # can't converge (8/14 21:00 gutted after 6 rounds on face-leak-that-the-tag-missed). Backfill
+    # has_human=1 on every clip this gate drops: the NEXT selection (the very next reroll round,
+    # and all future batches) then excludes it, so the pool teaches itself and the reroll converges.
+    if _face_aids and os.getenv("RF_FACE_GATE_BACKFILL", "1") != "0":
+        try:
+            import sqlite3 as _sq
+            _con = _sq.connect(str(ROOT / "data" / "agent.db"), timeout=30)
+            _con.executemany("UPDATE assets SET has_human=1 WHERE asset_id=? AND coalesce(has_human,0)=0",
+                             [(a,) for a in _face_aids])
+            _con.commit(); _con.close()
+            log.warning("RF face gate: backfilled has_human=1 on %d mis-tagged clip(s): %s",
+                        len(_face_aids), sorted(_face_aids))
+            if progress_cb:
+                progress_cb(f":memo: 얼굴 누락-태그 {len(_face_aids)}클립 has_human=1 백필 "
+                            f"(다음 선택부터 자동 제외 → 재롤 수렴)")
+        except Exception as e:
+            log.warning("RF face gate backfill failed: %s", e)
     if not drop:
         return
     dropset = set(drop)
