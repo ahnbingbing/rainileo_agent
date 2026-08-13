@@ -3114,6 +3114,20 @@ def _fold_wink_into_closer(c: dict, cuts: list, wink_subject: str,
     else:
         # Respect the Director's closer duration, but keep it a tight button.
         closer["duration_seconds"] = min(int(closer.get("duration_seconds") or _wd), _wd + 1)
+        # PD 2026-08-13: a Director-authored wink_ending routinely BURIES the wink under quality
+        # boilerplate ("...natural fur texture, no airbrushed look"), leaving no clear eye-close
+        # action — so Seedance (which under-delivers subtle eye motion) renders the closer with
+        # NO visible wink and the channel sign-off "disappears" (8/13 12:30 weird, 8/14 08:00 gone).
+        # The strong, renderable one-eye-close lives in the _build_wink_cut template; graft it onto
+        # the Director's closing action unless the Director already has an explicit one-eye wink.
+        # AV_FORCE_STRONG_WINK=0 reverts.
+        _dm = (closer.get("motion_prompt") or closer.get("veo_prompt") or "").strip()
+        _has_strong = any(k in _dm.lower() for k in ("one eye", "one-eye")) or "한쪽 눈" in _dm
+        if os.getenv("AV_FORCE_STRONG_WINK", "1") != "0" and not _has_strong:
+            merged = _dm.rstrip(". ") + ".\n\nTHEN, to close the episode: " + template["motion_prompt"]
+            closer["motion_prompt"] = merged
+            closer["veo_prompt"] = merged
+            closer["camera_move"] = "push_in"   # the signature land-on-the-wink push-in
     # Mechanics that apply in BOTH cases.
     closer["function"] = "wink_ending"
     closer["beat"] = "wink_ending"
