@@ -8063,7 +8063,11 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
                 ref_video_url = None
                 ref_video_lbl = ""
                 try:
-                    if sa_for_anti:
+                    # PD 2026-08-13: the R2V (reference_video from a Drive URL) makes each ref
+                    # Seedance call very heavy and it HUNG mid-episode (8/13 catwheel stuck on
+                    # cut3's R2V call). AV_REF_VIDEO=0 drops the ref-video and renders ref mode
+                    # with the Omni IMAGE refs + scene anchor only — much faster, no Drive hang.
+                    if sa_for_anti and os.getenv("AV_REF_VIDEO", "1") != "0":
                         rv_url = (lib_data.get(sa_for_anti) or {}).get("reference_video_url")
                         if rv_url:
                             ref_video_url = rv_url
