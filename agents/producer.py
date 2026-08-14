@@ -336,10 +336,13 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
     # had no PAST footage to do "입양 첫날 → 지금" past⇄present narration. Surface
     # a YEAR-STRATIFIED sample of older quality clips (excluding the recent-20),
     # each stamped with years_ago so captions can ground the time point.
-    def _years_ago(iso: str) -> float | None:
+    def _years_ago(iso: str) -> int | None:
+        # PD 2026-08-14: WHOLE years only (0 for <1yr). A fractional value (0.6) leaked into
+        # captions as the nonsensical "0.6년 전"; sub-year age is worded via time_ago_phrase
+        # ("N개월 전"/"반년 전"), never a decimal year.
         try:
             d0 = dt.date.fromisoformat((iso or "")[:10])
-            return round((target - d0).days / 365.25, 1)
+            return int((target - d0).days // 365)
         except Exception:
             return None
     # also stamp recent clips with years_ago (0 for this year)

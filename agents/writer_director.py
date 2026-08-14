@@ -1033,7 +1033,9 @@ def _stamp_years_ago(concepts: list[dict]) -> None:
                 try:
                     d0 = _dt.date.fromisoformat(str(row[0])[:10])
                     _days = (tgt - d0).days
-                    cut["years_ago"] = round(_days / 365.25, 1)
+                    # PD 2026-08-14: WHOLE years only (0 for <1yr) — a fractional 0.6 leaked into
+                    # captions as "0.6년 전". Sub-year age is worded via time_ago_phrase.
+                    cut["years_ago"] = int(_days // 365)
                     cut["time_ago_phrase"] = _years_ago_phrase(_days)
                     # PD 2026-06-30: stamp the subject's life-era at capture so a
                     # memory-lane opener leads with the endearing young era ("아기 레오")
