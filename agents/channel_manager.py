@@ -280,7 +280,7 @@ def recommend(con: sqlite3.Connection | None = None) -> dict:
     return rec
 
 
-def portfolio_signal(con: sqlite3.Connection | None = None) -> str:
+def portfolio_signal(con: sqlite3.Connection | None = None, lane: str | None = None) -> str:
     """Phase 4 — feed performance back into the CONCEPT stage as PATTERN guidance:
     which energy / format / packaging performs, NOT which topics to repeat (freshness
     still owns topics). Returns "" when there's too little data to signal. Built to be
@@ -303,27 +303,43 @@ def portfolio_signal(con: sqlite3.Connection | None = None) -> str:
         if d:
             k, _v = max(d.items(), key=lambda kv: kv[1].get("mean_reward") or 0)
             parts.append(f"{label}={_LANE_KO.get(k, k)}")
-    tops = []
+    # PD 2026-08-14: surface the ACTUAL POPULAR concepts (by views), lane-scoped, so the concept
+    # stage learns the WINNING 결 — e.g. '레오가 일식집 쉐프' (역할극 판타지) was a hit. Views ≠
+    # retention; the old signal ranked retention only and missed what the audience actually clicked.
+    _lane_sql = " AND vp.lane=?" if lane else ""
+    _lane_args = (lane,) if lane else ()
+    pop, ret_top = [], []
     try:
-        rows = con.execute(
+        for r in con.execute(
+            "SELECT vp.views_48h AS v, vp.retention_pct AS ret, c.theme AS theme "
+            "FROM video_performance vp LEFT JOIN cards c ON c.card_id=vp.card_id "
+            "WHERE coalesce(vp.views_48h,0) > 0 AND c.theme IS NOT NULL" + _lane_sql +
+            " ORDER BY vp.views_48h DESC LIMIT 4", _lane_args).fetchall():
+            pop.append(f"「{(r['theme'] or '')[:30]}」({r['v']}회·유지{(r['ret'] or 0):.0f}%)")
+        for r in con.execute(
             "SELECT vp.retention_pct AS ret, c.theme AS theme "
             "FROM video_performance vp LEFT JOIN cards c ON c.card_id=vp.card_id "
-            "WHERE vp.retention_pct > 5 AND c.theme IS NOT NULL "
-            "ORDER BY vp.retention_pct DESC LIMIT 3").fetchall()
-        tops = [f"{(r['theme'] or '')[:22]}({r['ret']:.0f}%)" for r in rows]
+            "WHERE vp.retention_pct > 5 AND c.theme IS NOT NULL" + _lane_sql +
+            " ORDER BY vp.retention_pct DESC LIMIT 3", _lane_args).fetchall():
+            ret_top.append(f"{(r['theme'] or '')[:24]}({(r['ret'] or 0):.0f}%)")
     except Exception:
         pass
     if own:
         con.close()
-    if not parts and not tops:
+    if not parts and not pop and not ret_top:
         return ""
-    s = "\n\n[성과 신호 — 잘 되는 '결' 참고용 (소재 베끼기 금지)]\n"
+    _who = _LANE_KO.get(lane, "") if lane else ""
+    s = ("\n\n[성과 신호 — " + (f"이 레인({_who}) " if _who else "") +
+         "실제로 잘 된 컨셉의 '결'을 배워라 (소재 그대로 베끼기 금지)]\n")
+    if pop:
+        s += "  ★조회수 톱(가장 인기): " + ", ".join(pop) + "\n"
+    if ret_top:
+        s += "  유지율 톱: " + ", ".join(ret_top) + "\n"
     if parts:
         s += "  우세 패턴: " + ", ".join(parts) + "\n"
-    if tops:
-        s += "  유지율 톱: " + ", ".join(tops) + "\n"
-    s += ("  → 위 '결'(에너지·포맷·패키징)만 새 소재에 녹여라. 같은 주제 반복은 금지 — "
-          "신선도 규칙이 소재를 지배한다.")
+    s += ("  → 위에서 잘 된 컨셉의 '결'을 파악해 비슷한 결의 **새로운** 컨셉을 우선하라 — 특히 "
+          "펫이 어떤 역할·직업이 되는 상상(역할극 판타지), 뚜렷한 반전, 호들갑 레오 vs 의젓한 랴니 같은 "
+          "캐릭터 대비 코미디가 잘 먹힌다. 단 같은 소재/설정 반복은 금지(신선도가 소재를 지배).")
     return s
 
 

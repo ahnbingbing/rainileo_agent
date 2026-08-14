@@ -331,7 +331,7 @@ def brainstorm(style: str, brief: str, n: int = 5, *, context: dict | None = Non
     # not topics — freshness still rules topics). Empty until enough performance data.
     try:
         from agents.channel_manager import portfolio_signal
-        system += portfolio_signal()
+        system += portfolio_signal(lane=style)
     except Exception:
         pass
     user = f"brief: {brief}\n스타일: {style}\n후보 {n}개를 JSON 배열로."
