@@ -278,12 +278,18 @@ def _do_rerender(con, ctx: dict, issue: dict, date: dt.date) -> str:
 
 # ─────────────────────────── orchestration ───────────────────────────
 
-def review_batch(target: dt.date | None = None, apply: bool = True, slack: bool = True) -> list[dict]:
+def review_batch(target: dt.date | None = None, apply: bool = False, slack: bool = True) -> list[dict]:
     from agents.producer import _db
     if target is None:
-        target = (dt.datetime.now(dt.timezone(dt.timedelta(hours=9))) + dt.timedelta(days=1)).date()
-    if os.getenv("PD_REVIEW_APPLY", "1") == "0":
-        apply = False
+        # default to the batch the 03:00 cron just built (LAUNCH_LEAD_DAYS ahead) so issues are
+        # caught with maximum lead before it goes public.
+        _lead = max(1, int(os.getenv("PD_REVIEW_LEAD_DAYS", os.getenv("LAUNCH_LEAD_DAYS", "2"))))
+        target = (dt.datetime.now(dt.timezone(dt.timedelta(hours=9))) + dt.timedelta(days=_lead)).date()
+    # SAFETY DEFAULT = flag-only. The LLM review is non-deterministic run-to-run (an episode that
+    # passes one pass gets flagged the next), so blind auto-fix CHURNS good videos (an 8/18 catwheel
+    # that a dry-run passed got spuriously re-captioned + rescheduled). Auto-fix must be explicitly
+    # enabled (--apply / PD_REVIEW_APPLY=1) AND every fix is gated by a 2-pass agreement (below).
+    apply = apply or os.getenv("PD_REVIEW_APPLY") == "1"
     allow_rr = os.getenv("PD_REVIEW_RERENDER", "1") == "1"
     max_rr = int(os.getenv("PD_REVIEW_MAX_RERENDER", "2"))
     con = _db()
@@ -303,11 +309,23 @@ def review_batch(target: dt.date | None = None, apply: bool = True, slack: bool 
             report_lines.append(f"✅ {ep['slot']}: {summ[:90]}")
             continue
         report_lines.append(f"⚠️ {ep['slot']}: {summ[:90]}")
+        # 2-pass agreement gate: the LLM review is non-deterministic, so before mutating a live
+        # video, confirm with a SECOND independent pass and only apply a fix whose (class, action)
+        # is flagged in BOTH. A single-pass flag is reported but never auto-applied — this is what
+        # stops a spurious pass from churning a good episode.
+        confirm_keys = set()
+        if apply and any((i or {}).get("action", "none") != "none" for i in verdict.get("issues", [])):
+            confirm = _llm_review(ctx)
+            confirm_keys = {((i or {}).get("class"), (i or {}).get("action"))
+                            for i in confirm.get("issues", []) if (i or {}).get("action", "none") != "none"}
         for issue in verdict.get("issues", []):
             act = (issue or {}).get("action", "none")
             ev = str(issue.get("evidence", ""))[:80]
             report_lines.append(f"   └[{issue.get('class')}·{act}] {ev}")
             if not apply or act == "none":
+                continue
+            if (issue.get("class"), act) not in confirm_keys:
+                report_lines.append(f"      → 미적용(2-pass 불일치 — 단일패스 플래그, 보고만)")
                 continue
             try:
                 if act == "retitle":
@@ -353,12 +371,15 @@ def main() -> int:
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"),
                         format="%(asctime)s %(name)s %(levelname)s %(message)s")
     ap = argparse.ArgumentParser(description="PD daily reviewer + auto-fixer")
-    ap.add_argument("--date", default=None, help="KST publish date (YYYY-MM-DD); default = tomorrow")
-    ap.add_argument("--dry-run", action="store_true", help="review only, do not apply fixes")
+    ap.add_argument("--date", default=None, help="KST publish date (YYYY-MM-DD); default=batch lead date")
+    ap.add_argument("--apply", action="store_true",
+                    help="auto-apply fixes (default = flag-only review). Each fix is still gated by a "
+                         "2-pass agreement. Or set PD_REVIEW_APPLY=1.")
+    ap.add_argument("--dry-run", action="store_true", help="(default) review only — kept for clarity")
     ap.add_argument("--no-slack", action="store_true")
     args = ap.parse_args()
     target = dt.date.fromisoformat(args.date) if args.date else None
-    review_batch(target, apply=not args.dry_run, slack=not args.no_slack)
+    review_batch(target, apply=args.apply, slack=not args.no_slack)
     return 0
 
 

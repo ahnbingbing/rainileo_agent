@@ -37,6 +37,13 @@ LAUNCH_LEAD_DAYS=2
 # PD 2026-08-13: 09시 빈-슬롯 topup 안전망 — 03:00 배치가 gut로 비워둔 슬롯을 아침에 잡아 채운다
 # (self-heal이 밤새 face-leak 클립을 has_human 백필해 풀이 깨끗해진 뒤라 재시도가 붙을 확률↑). 못 채우면 Slack 경고.
 10  9 * * *   $J -m agents.slot_topup --slack                    >> $LOG/cron.topup.log 2>&1
+# PD 2026-08-17: daily PD-style DEEP review of the freshly-built batch (LAUNCH_LEAD_DAYS ahead) —
+# dense frames across each clip + live title + captions + source era/reuse vs the DB, catching the
+# title↔content / story-truth / prop-drift / café-as-home / pre-Leo / un-threaded-gag classes Giri's
+# sparse defect gate can't. FLAG-ONLY (posts to Slack): the LLM review is non-deterministic run-to-run
+# so blind auto-fix churns good videos; enable auto-fix (2-pass-agreement-gated) with PD_REVIEW_APPLY=1
+# once proven. Runs after the 09:10 topup settles the final scheduled set.
+40  9 * * *   $J -m agents.pd_reviewer                           >> $LOG/cron.pdreview.log 2>&1
 10  8 * * *   $J -m scripts.api_cost_report --post               >> $LOG/cron.api_cost.log 2>&1
 # PD 2026-07-05: the legacy producer daily_pipeline posted a manual "내일 영상 제안 (2편)"
 # to Slack and BLOCKED 2h for PD feedback before rendering. The channel now runs fully on
