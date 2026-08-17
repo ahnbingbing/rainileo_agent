@@ -4272,15 +4272,19 @@ def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.dat
     title = desc = None
     tags = []
     try:
-        from agents.channel_manager import make_packaging, actual_captions_for_video
+        from agents.channel_manager import (make_packaging, actual_captions_for_video,
+                                             actual_captions_for_card)
         # payload top-level carries the concept (title/oneliner/cuts) for normal cards;
         # pinned cards have only draft.title — make_packaging degrades gracefully.
         concept = dict(payload)
         concept.setdefault("title", draft.get("title") or row["theme"])
         # PD 2026-07-16: title/desc must match the ACTUAL video, not the concept (a '주방 대작전'
         # concept rendered a nap → wrong title). Feed the final burned captions (VLM-grounded) so
-        # packaging titles from what's really on screen.
-        concept["actual_captions"] = actual_captions_for_video(out_path)
+        # packaging titles from what's really on screen. PD 2026-08-17: a re-caption output has no
+        # render-stamp in its filename → actual_captions_for_video()==[] → packaging fell back to the
+        # stale concept theme (cafe outing titled '집 아지트/굿나잇'). Fall back to a card-located read.
+        concept["actual_captions"] = (actual_captions_for_video(out_path)
+                                      or actual_captions_for_card(card_id))
         # PD 2026-07-16 ("내용 작성할 때 자꾸 시점 안볼래?"): the footage's ERA must anchor the copy —
         # a winter clip of 3-month-old baby Leo was titled "여름 오후". Derive season + each pet's
         # age from the clips' capture dates so packaging says '겨울 / 아기 레오', not the wrong season.
@@ -4332,8 +4336,12 @@ def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.dat
         tags = [str(t).lstrip("#") for t in pkg["hashtags"]]
         draft["packaging_arm"] = pkg["arm"]          # record arm for perf attribution
         payload["draft"] = draft
-        con.execute("UPDATE cards SET payload_json=? WHERE card_id=?",
-                    (json.dumps(payload, ensure_ascii=False), card_id))
+        # PD 2026-08-17: persist the grounded title back to cards.theme so the card follows the
+        # ACTUALLY-uploaded video. A re-caption changes the burned captions but used to leave
+        # cards.theme = the old concept theme; the next packaging then re-echoed that stale theme
+        # as the title hint (a cafe outing re-titled '집 아지트/굿나잇'). theme now tracks content.
+        con.execute("UPDATE cards SET payload_json=?, theme=? WHERE card_id=?",
+                    (json.dumps(payload, ensure_ascii=False), (title or row["theme"]), card_id))
     except Exception as e:
         log.warning("packaging failed for %s, using static draft: %s", card_id[:8], e)
     if not title:                                     # fallback: legacy static draft

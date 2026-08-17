@@ -116,6 +116,35 @@ def actual_captions_for_video(video_path) -> list[str]:
     return []
 
 
+def actual_captions_for_card(card_id) -> list[str]:
+    """Same ground-truth captions as `actual_captions_for_video`, but located by CARD instead
+    of by the video filename's render stamp. A re-caption output (episode_..._recap.mp4) carries
+    no `YYYYMMDD_HHMMSS` stamp, so `actual_captions_for_video` returns [] and packaging falls back
+    to the stale concept theme (a cafe outing titled '집 아지트/굿나잇'). The workdir is
+    `cameraman_<card_id_prefix>_<stamp>`; read the newest one's captions.json (which recaption_finish
+    now overwrites with the re-captioned text). Empty on any miss."""
+    import glob as _glob
+    try:
+        pref = str(card_id).split("-")[0]
+        for wd in sorted(_glob.glob(str(ROOT / "data" / "tmp" / f"cameraman_{pref}_*")), reverse=True):
+            p = Path(wd) / "captions.json"
+            if not p.exists():
+                continue
+            cap = json.loads(p.read_text(encoding="utf-8"))
+            out = []
+            for tag, e in cap.items():
+                if tag.startswith("_") or not isinstance(e, dict):
+                    continue
+                for s in (e.get("scenes") or []):
+                    if isinstance(s, dict) and (s.get("ko") or "").strip():
+                        out.append(s["ko"].strip())
+            if out:
+                return out
+    except Exception:
+        pass
+    return []
+
+
 def _concept_brief(concept: dict) -> str:
     """Compact, packaging-relevant view of the concept for the LLM. When `actual_captions`
     (the final burned, VLM-grounded on-screen text) is present, it is the AUTHORITATIVE content —

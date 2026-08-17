@@ -815,6 +815,94 @@ _TEMPORAL_TOKENS = (
 )
 
 
+def _caption_mismatch_gate(concept: "dict | None", report: dict) -> None:
+    """Make `caption_vs_clip_mismatches` DETERMINISTIC (PD 2026-08-17). The rule "≥2 mismatches →
+    cap≤5, and a mismatch needs frame evidence" lived ONLY in the prompt, so the LLM both INVENTED
+    mismatches and SELF-applied the cap — a fully non-deterministic path that false-rejected good RF
+    and let real lies score inconsistently. Three deterministic steps:
+
+    1) SCRUB the pet-identity/pet-absence class for real_footage. "cut3's caption is about Leo but the
+       frame shows Ryani" / "레오 없음" is the documented sparse-frame hallucination
+       ([[giri_false_reject_frame_evidence]]): 2 frames/cut can't reliably tell which pet is on screen,
+       and the deterministic RF grounding gate is the authoritative caption-frame check. Removed, never caps.
+    2) ENFORCE ≥2-real-mismatch → cap≤5 in CODE on the SURVIVING (surface/place/motion/kick) entries,
+       so a genuine lie is caught regardless of the LLM's self-scoring.
+    3) RELIEF: if RF and the low verdict rested SOLELY on now-scrubbed identity/absence hallucinations
+       (수정필요, 점수≤5, zero surviving mismatches, story present, no OTHER deterministic gate fired),
+       lift to 소폭 수정(점수≥6) so a hallucination can't empty a good slot. GIRI_MISMATCH_GATE=0 reverts."""
+    import os as _os
+    if _os.getenv("GIRI_MISMATCH_GATE", "1") != "1":
+        return
+    ms = report.get("caption_vs_clip_mismatches")
+    if not isinstance(ms, list):
+        return
+    is_rf = (concept or {}).get("render_style", "") == "real_footage"
+
+    def _pets(t):
+        t = (t or "").lower()
+        p = set()
+        if "레오" in t or "leo" in t:
+            p.add("leo")
+        if "랴니" in t or "ryani" in t or "라니" in t:
+            p.add("ryani")
+        return p
+
+    def _is_identity_absence(e):
+        shows = str(e.get("what_clip_actually_shows") or "")
+        low = shows.lower()
+        if re.search(r"없|안\s*보|보이지\s*않|부재|등장하지\s*않|not\s+(visible|present|there|shown)"
+                     r"|no\s+(leo|ryani|cat|dog)|absent|wrong\s+(pet|subject)", low):
+            return True
+        cp, sp = _pets(e.get("caption_text")), _pets(shows)
+        # caption implies one pet, clip-desc asserts the OTHER (the "about Leo but shows Ryani" pattern)
+        if cp and sp and cp != sp and (sp - cp) and \
+           re.search(r"아니|대신|not |instead|실제로|actually|위에|shown\s+over|표시", low):
+            return True
+        return False
+
+    scrubbed, kept = [], []
+    for e in ms:
+        if not isinstance(e, dict):
+            continue
+        (scrubbed if (is_rf and _is_identity_absence(e)) else kept).append(e)
+    if scrubbed:
+        report["caption_vs_clip_mismatches"] = kept
+        report["_mismatch_scrubbed"] = [
+            f"cut{e.get('cut_number', '?')}: {str(e.get('what_clip_actually_shows'))[:60]}" for e in scrubbed]
+        log.info("caption-mismatch gate: scrubbed %d RF pet-identity/absence hallucination(s)", len(scrubbed))
+
+    if len(kept) >= 2:  # deterministic cap on REAL (frame-grounded) mismatches
+        report["점수"] = min(int(report.get("점수", 10) or 10), 5)
+        if report.get("판정") in ("업로드", "즉시 업로드", "소폭 수정 후 업로드"):
+            report["판정"] = "수정 필요"
+        report["최종_결정"] = report.get("판정")
+        _note = f"캡션-클립 불일치 {len(kept)}건(프레임근거) — 사실과 어긋남"
+        _prev = report.get("가장_큰_문제", "") or ""
+        report["가장_큰_문제"] = _note if (not _prev or "없" in _prev[:6]) else f"{_note} / {_prev}"
+        report["_mismatch_cap_override"] = _note
+        log.info("caption-mismatch gate: %d real mismatches → cap≤5", len(kept))
+        return
+
+    # false-reject relief — only when scrubbed identity hallucination was the SOLE basis
+    if (is_rf and scrubbed and not kept
+            and report.get("story_arc_present") is not False
+            and str(report.get("판정", "")).strip() == "수정 필요"
+            and int(report.get("점수", 10) or 10) <= 5
+            and not any(k.endswith("_override") for k in report.keys())):
+        prob = str(report.get("가장_큰_문제") or "")
+        _prob_identity = bool(re.search(
+            r"위에\s*표시|표시되는|아니라|대신|shown\s+over|wrong\s+(pet|subject)"
+            r"|(레오|랴니|leo|ryani)\s*[가는이]?\s*(없|안\s*보|보이지\s*않|not\s+(visible|present|there))",
+            prob.lower()))
+        if (not prob.strip()) or _prob_identity:
+            report["점수"] = max(int(report.get("점수", 0) or 0), 6)
+            report["판정"] = "소폭 수정 후 업로드"
+            report["최종_결정"] = report["판정"]
+            report["_mismatch_false_reject_relief"] = prob[:80]
+            log.info("caption-mismatch gate: RF false-reject relief (scrubbed identity "
+                     "hallucination was sole basis) → 판정=%s 점수=%s", report["판정"], report["점수"])
+
+
 def _temporal_grounding_gate(concept: dict | None, report: dict) -> None:
     """Deterministic era-mix gate (PD 2026-06-23).
 
@@ -1851,6 +1939,13 @@ def review(video: Path, storyboard: list[dict] | None = None,
         _caption_hold_gate(concept, report)
     except Exception as e:
         log.warning("Caption-hold gate failed: %s", e)
+
+    # Deterministic caption-mismatch handling — runs LAST so its false-reject relief can see whether
+    # any OTHER deterministic gate already fired (scrub + real-mismatch cap are order-independent).
+    try:
+        _caption_mismatch_gate(concept, report)
+    except Exception as e:
+        log.warning("Caption-mismatch gate failed: %s", e)
 
     # Cleanup
     for f in frames:

@@ -72,6 +72,17 @@ def main() -> int:
                                  encoding="utf-8")
         print(f"  tempo factors for assemble (inherited+native-filled): {tf}")
 
+    # PD 2026-08-17: overwrite the workdir's captions.json with the RE-CAPTIONED text so the
+    # ground-truth readers that title the upload (channel_manager.actual_captions_for_video /
+    # _for_card) see the NEW captions — not the pre-recaption ones. Without this a cafe re-caption
+    # still packaged its title from the old '집 아지트/굿나잇' captions.json (title↔content mismatch).
+    # Done AFTER the tempo block above has already read the original _tempo_factors.
+    try:
+        (wd / "captions.json").write_text(json.dumps(caps, ensure_ascii=False, indent=2),
+                                          encoding="utf-8")
+    except Exception as _e:
+        print(f"  (could not update workdir captions.json: {_e})")
+
     out_dir = wd / "recap_captioned"
     out_dir.mkdir(exist_ok=True)
     tags = [k for k in caps if not k.startswith("_")]
