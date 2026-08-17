@@ -331,10 +331,79 @@ def _subjects_csv(tags: dict) -> str | None:
     return ",".join(pets) or None
 
 
+def _pre_leo_neutralize(captured_iso, scene_desc, subj_csv, focus):
+    """Deterministic backstop for the pre-Leo era. Leo (orange tabby) was born ~2025-09-25
+    and CANNOT appear in earlier footage. The VLM prompt already says this
+    (`_temporal_grounding`), but the model still occasionally tags an orange stray cat in
+    old footage as 'leo' (a 2017 waterside clip → subjects 'leo,ryani', scene '레오가…'),
+    which then drives a false "레오" caption on a memory-lane RF. This strips Leo from any
+    asset captured before he existed, regardless of what the VLM returned — the prompt rule
+    is advisory, this is the enforcement. Returns (scene_desc, subj_csv, focus, changed).
+
+    Ryani (the dog) is untouched; only the impossible orange-cat=Leo attribution is removed.
+    The cat is left described neutrally ('고양이' / 'the cat') — never asserted as Leo."""
+    date = (captured_iso or "")[:10]
+    try:
+        from agents import canon
+        pre = bool(date) and not canon.pet_exists_on("leo", captured_iso)
+    except Exception:
+        pre = bool(date) and date < "2025-09-25"
+    if not pre:
+        return scene_desc, subj_csv, focus, False
+    changed = False
+    if subj_csv:
+        parts = [s for s in subj_csv.split(",") if s.strip().lower() != "leo"]
+        new = ",".join(parts)  # '' if Leo was the only subject → clears the column
+        if new != subj_csv:
+            subj_csv, changed = new, True
+    if scene_desc and ("레오" in scene_desc or re.search(r"\bLeo\b", scene_desc)):
+        scene_desc = scene_desc.replace("레오", "고양이")
+        scene_desc = re.sub(r"\bLeo\b", "the cat", scene_desc)
+        changed = True
+    if focus and str(focus).strip().lower() in ("leo", "both"):
+        focus = "ryani" if (subj_csv and "ryani" in subj_csv) else "other"
+        changed = True
+    return scene_desc, subj_csv, focus, changed
+
+
+def backfill_pre_leo(con: sqlite3.Connection, dry: bool = False) -> tuple[int, int]:
+    """One-shot cleanup of assets already mis-tagged with Leo before he existed."""
+    rows = con.execute(
+        "SELECT asset_id, captured_iso, scene_description, subjects_csv, focus_subject "
+        "FROM assets WHERE captured_iso IS NOT NULL AND substr(captured_iso,1,10) < '2025-09-25' "
+        "AND (lower(subjects_csv) LIKE '%leo%' OR scene_description LIKE '%레오%' "
+        "     OR scene_description LIKE '%Leo%')").fetchall()
+    n = 0
+    for r in rows:
+        ns, nsubj, nfoc, ch = _pre_leo_neutralize(
+            r["captured_iso"], r["scene_description"], r["subjects_csv"], r["focus_subject"])
+        if ch:
+            n += 1
+            if not dry:
+                con.execute("UPDATE assets SET scene_description=?, subjects_csv=?, focus_subject=? "
+                            "WHERE asset_id=?",
+                            (ns, nsubj if nsubj is not None else "", nfoc, r["asset_id"]))
+    if not dry:
+        con.commit()
+    return n, len(rows)
+
+
 def update_asset_tags(con: sqlite3.Connection, asset_id: str, tags: dict) -> None:
     """Write VLM analysis results to the DB."""
     _loc_type = _coarse_location(tags.get("location_specific"))
     _subj = _subjects_csv(tags)
+    _scene = _str(tags.get("scene_description"))
+    _focus = tags.get("focus_subject")
+    # Deterministic pre-Leo backstop (VLM prompt rule is advisory; enforce it here).
+    try:
+        _row = con.execute("SELECT captured_iso FROM assets WHERE asset_id=?", (asset_id,)).fetchone()
+        _cap = _row[0] if _row else None
+    except Exception:
+        _cap = None
+    _scene, _subj, _focus, _neu = _pre_leo_neutralize(_cap, _scene, _subj, _focus)
+    if _neu:
+        log.info("pre-Leo neutralize: %s (captured %s) — stripped impossible Leo tag",
+                 asset_id, (_cap or "")[:10])
     con.execute(
         """
         UPDATE assets SET
@@ -357,7 +426,7 @@ def update_asset_tags(con: sqlite3.Connection, asset_id: str, tags: dict) -> Non
         WHERE asset_id = ?
         """,
         (
-            _str(tags.get("scene_description")),
+            _scene,
             _str(tags.get("activity")),
             1 if tags.get("has_human") else 0,
             _str(tags.get("composition")),
@@ -368,7 +437,7 @@ def update_asset_tags(con: sqlite3.Connection, asset_id: str, tags: dict) -> Non
             _loc_type,                     # location_type column (COALESCE — keep if undecidable)
             _subj,                         # subjects_csv column (COALESCE — keep if undecidable)
             tags.get("quality_score"),
-            tags.get("focus_subject"),
+            _focus,
             tags.get("decoration_level"),
             ",".join(tags.get("best_for", [])) if isinstance(tags.get("best_for"), list) else tags.get("best_for"),
             json.dumps({
@@ -437,9 +506,18 @@ def main() -> int:
                    help="comma-separated substrings; match assets whose "
                         "scene_description/subjects_csv/focus_subject contains ANY of them "
                         "(case-insensitive). e.g. 'leo,레오,고양이,cat,tabby'")
+    p.add_argument("--backfill-pre-leo", action="store_true",
+                   help="deterministic one-shot: strip impossible Leo tags from assets "
+                        "captured before Leo existed (2025-09-25). No API calls.")
     args = p.parse_args()
 
     con = _db()
+
+    if args.backfill_pre_leo:
+        n, scanned = backfill_pre_leo(con, dry=args.dry_run)
+        print(f"pre-Leo backfill: {n} neutralized of {scanned} scanned"
+              f"{' (dry-run)' if args.dry_run else ''}")
+        return 0
 
     if args.asset:
         row = con.execute("SELECT * FROM assets WHERE asset_id LIKE ? || '%'", (args.asset,)).fetchone()
