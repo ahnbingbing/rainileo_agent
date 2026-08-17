@@ -105,6 +105,27 @@ def _av_era_floor() -> str:
         return "2026-03-25"
 
 
+def _rf_era_floor(concept: dict) -> str:
+    """Pre-Leo floor for real_footage selection (PD 2026-08-17). A PRESENT-DAY RF concept must not
+    pick footage from before Leo existed (2025-09-25) — that is how a reused 2024 café clip (an orange
+    cat that isn't even Leo) shipped ('레오도 아니고 옛날이잖아'). Memory-lane concepts legitimately use
+    old footage, so the floor is SKIPPED when the concept signals the past (어릴 적 / N년 전 / 예전 /
+    아기 …). Returns '' (no floor) for memory-lane. RF_ERA_FLOOR='' disables; RF_ERA_FLOOR=<date> overrides."""
+    env = os.getenv("RF_ERA_FLOOR")
+    if env is not None:
+        return env
+    blob = " ".join(str(concept.get(k) or "") for k in ("theme", "narrative_oneliner", "pd_keyword"))
+    _t = concept.get("title")
+    blob += " " + (str(_t.get("ko")) if isinstance(_t, dict) else str(_t or ""))
+    if re.search(r"어릴|아기|예전|옛날|그때|년\s*전|처음|과거|어렸|memory|years?\s+ago", blob):
+        return ""  # memory-lane — old footage is intended, do not floor
+    try:
+        from agents import canon as _canon
+        return _canon.LEO["exists_from"][:10]
+    except Exception:
+        return "2025-09-25"
+
+
 def search_candidates(concept: dict, limit: int = 20) -> list[dict]:
     """Search DB for candidate assets matching the concept's requirements."""
     con = _db()
@@ -126,6 +147,11 @@ def search_candidates(concept: dict, limit: int = 20) -> list[dict]:
     sub_params = [f"%{s}%" for s in subjects]
 
     if kind_filter == "video":
+        # Pre-Leo floor: a present-day RF concept must not pick footage from before Leo existed
+        # (a reused 2024 café clip whose cat isn't even Leo). Skipped for memory-lane concepts.
+        _floor = _rf_era_floor(concept)
+        _floor_clause = "AND substr(captured_iso,1,10) >= ?" if _floor else ""
+        _fp = [_floor] if _floor else []
         # For real_footage: find the best same-date cluster first
         # Step 1: find dates with 3+ clips
         date_rows = con.execute(
@@ -136,11 +162,12 @@ def search_candidates(concept: dict, limit: int = 20) -> list[dict]:
                   AND quality_score >= 0.7
                   AND (decoration_level IS NULL OR decoration_level = 'none')
                   AND ({sub_clauses})
+                  {_floor_clause}
             GROUP BY clip_date HAVING cnt >= 3
             ORDER BY clip_date DESC
             LIMIT 5
             """,
-            sub_params,
+            sub_params + _fp,
         ).fetchall()
 
         if date_rows:
@@ -195,10 +222,11 @@ def search_candidates(concept: dict, limit: int = 20) -> list[dict]:
                       AND file_path NOT LIKE '%.heic'
                       AND (decoration_level IS NULL OR decoration_level = 'none')
                       AND ({sub_clauses})
+                      {_floor_clause}
                 ORDER BY captured_iso DESC
                 LIMIT ?
                 """,
-                sub_params + [limit],
+                sub_params + _fp + [limit],
             ).fetchall()
     else:
         # For ai_vtuber: random high-quality photos — current-era only, so the
