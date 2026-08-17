@@ -40,10 +40,12 @@ LAUNCH_LEAD_DAYS=2
 # PD 2026-08-17: daily PD-style DEEP review of the freshly-built batch (LAUNCH_LEAD_DAYS ahead) —
 # dense frames across each clip + live title + captions + source era/reuse vs the DB, catching the
 # title↔content / story-truth / prop-drift / café-as-home / pre-Leo / un-threaded-gag classes Giri's
-# sparse defect gate can't. FLAG-ONLY (posts to Slack): the LLM review is non-deterministic run-to-run
-# so blind auto-fix churns good videos; enable auto-fix (2-pass-agreement-gated) with PD_REVIEW_APPLY=1
-# once proven. Runs after the 09:10 topup settles the final scheduled set.
-40  9 * * *   $J -m agents.pd_reviewer                           >> $LOG/cron.pdreview.log 2>&1
+# sparse defect gate can't. AUTO-FIX ON (PD 2026-08-17, after validating the gate): the LLM review is
+# non-deterministic run-to-run, so every fix is gated by a 2-PASS AGREEMENT — a second independent pass
+# must flag the same (class, action) before a live video is mutated (a single-pass spurious flag is
+# reported, never applied). Reviews the fresh batch (no hand-work to churn). Heavy rerender/reselect
+# capped by PD_REVIEW_MAX_RERENDER. To revert to flag-only: drop PD_REVIEW_APPLY=1. Posts to Slack.
+40  9 * * *   PD_REVIEW_APPLY=1 $J -m agents.pd_reviewer          >> $LOG/cron.pdreview.log 2>&1
 10  8 * * *   $J -m scripts.api_cost_report --post               >> $LOG/cron.api_cost.log 2>&1
 # PD 2026-07-05: the legacy producer daily_pipeline posted a manual "내일 영상 제안 (2편)"
 # to Slack and BLOCKED 2h for PD feedback before rendering. The channel now runs fully on
