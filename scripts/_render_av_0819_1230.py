@@ -4,7 +4,12 @@ PD: (1) 랴니가 왜 시무룩인지 나와야 함 → '밖에 비가 와요'(�
 (3) 랴니가 왜 윙크 안 해? → 윙크 주체 = 랴니(레오 아님).
   CONCEPT_BRAINSTORM=0 AV_REF_VIDEO=0 AV_FORCE_STRONG_WINK=1 run_job.sh scripts/_render_av_0819_1230.py
 """
-import sys, datetime as dt
+import os, sys, datetime as dt
+# env baked in so the detached launch command can stay short (SSH tunnel drops long commands).
+os.environ.setdefault("CONCEPT_BRAINSTORM", "0")
+os.environ.setdefault("AV_REF_VIDEO", "0")
+os.environ.setdefault("AV_FORCE_STRONG_WINK", "1")
+os.environ.setdefault("SELFHEAL_REROLL", "0")
 sys.path.insert(0, ".")
 from pathlib import Path
 from agents import arc
