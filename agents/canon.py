@@ -181,7 +181,22 @@ def correct_canon_age_text(text: str) -> str:
         text = _BIRTH_YEAR_KO.sub(lambda m: f"{_snap_birth_year(int(m.group(1)))}년생", text)
     text = _BIRTH_YEAR_EN.sub(lambda m: f"{m.group(1)} {_snap_birth_year(int(m.group(2)))}", text)
     text = correct_canon_names_text(text)
+    text = _scrub_geuhae(text)
     return text
+
+
+# ── "그해" memory-lane phrase ban (PD 2026-08-15, re-flagged 2026-08-19) ───────────────
+# A past⇄present memory-lane caption must not say "그해 (가을/겨울/…)" ("that year/autumn"). PD wants
+# a plain "몇 년 전". The caption_agent.md prompt ban kept leaking (a burned "그해 가을" shipped on
+# 8/19 RF1800), so enforce it deterministically at the burn/upload chokepoint. "그해 가을" → "몇 년
+# 전 가을"; a bare "그해"/"그 해" → "몇 년 전". Idempotent (the result doesn't re-match).
+_GEUHAE_KO = _re_canon.compile(r"그\s?해(\s*(?:봄|여름|가을|겨울))?")
+
+
+def _scrub_geuhae(text: str) -> str:
+    if not text or "그" not in text:
+        return text
+    return _GEUHAE_KO.sub(lambda m: "몇 년 전" + (m.group(1) or ""), text)
 
 
 # ── Temporally-impossible pet-name corrector (PD 2026-08-01, RF0800) ───
