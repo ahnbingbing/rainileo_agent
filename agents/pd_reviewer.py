@@ -62,14 +62,21 @@ def _scheduled_for(target: dt.date) -> list[dict]:
     return out
 
 
-def _already_used(con, asset_id: str, exclude_card: str) -> bool:
-    """Is this clip live in another recently-uploaded episode? (reuse defect)."""
+def _already_used(con, asset_id: str, exclude_card: str, this_date: str, style: str) -> bool:
+    """Is this RF clip reused from ANOTHER episode (a real defect)? Calibrated to avoid false
+    positives that would auto-rerender good videos: (a) AV pose-reference reuse is NORMAL (the
+    same character-ref image feeds many episodes) → never a reuse defect, so skip AV entirely;
+    (b) a same-DATE re-render/recaption produces old vetoed card rows carrying the same clip →
+    exclude same-date; (c) only count a still-live episode (youtube_video_id present)."""
+    if style != "real_footage" or not asset_id:
+        return False
     try:
         rows = con.execute(
-            "SELECT card_id, payload_json FROM cards WHERE uploaded=1 AND card_id!=? "
-            "AND date >= date('now','-14 day')", (exclude_card,)).fetchall()
-        for cid, pj in rows:
-            if asset_id and asset_id in (pj or ""):
+            "SELECT payload_json FROM cards WHERE uploaded=1 AND card_id!=? "
+            "AND youtube_video_id IS NOT NULL AND date != ? AND date >= date('now','-45 day')",
+            (exclude_card, this_date)).fetchall()
+        for (pj,) in rows:
+            if asset_id in (pj or ""):
                 return True
     except Exception:
         pass
@@ -78,11 +85,11 @@ def _already_used(con, asset_id: str, exclude_card: str) -> bool:
 
 def _episode_context(con, ep: dict) -> dict | None:
     """Gather the card, workdir captions, and per-cut source clip era/reuse for one episode."""
-    row = con.execute("SELECT card_id, render_style, output_video_path, payload_json, theme "
+    row = con.execute("SELECT card_id, render_style, output_video_path, payload_json, theme, date "
                       "FROM cards WHERE youtube_video_id=?", (ep["video_id"],)).fetchone()
     if not row:
         return None
-    card_id, style, out_path, pj, theme = row
+    card_id, style, out_path, pj, theme, card_date = row
     try:
         payload = json.loads(pj or "{}")
     except Exception:
@@ -111,7 +118,7 @@ def _episode_context(con, ep: dict) -> dict | None:
             r2 = con.execute("SELECT captured_iso FROM assets WHERE asset_id=?", (aid,)).fetchone()
             cap_iso = r2[0] if r2 else None
         sources.append({"asset_id": aid, "captured_iso": cap_iso,
-                        "already_used": _already_used(con, aid, card_id) if aid else False})
+                        "already_used": _already_used(con, aid, card_id, card_date, style) if aid else False})
     # locate the mp4: local output first (this runs on the VM), else GCS mirror
     mp4 = None
     if out_path and Path(out_path).exists():
