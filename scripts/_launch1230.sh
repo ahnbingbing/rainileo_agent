@@ -6,7 +6,7 @@
 pkill -9 -f _render_av_0819 2>/dev/null
 pkill -9 -f animate_seedance 2>/dev/null
 systemctl reset-failed avfin1230 2>/dev/null
-systemd-run --uid=rianileo --gid=rianileo -p RuntimeMaxSec=1600 \
+systemd-run --uid=rianileo --gid=rianileo -p RuntimeMaxSec=2600 \
   --working-directory=/home/rianileo/rianileo-agent --unit=avfin1230 --collect \
   bash deploy/run_job.sh scripts/_render_av_0819_1230.py
 echo "launched: $(systemctl is-active avfin1230)"
