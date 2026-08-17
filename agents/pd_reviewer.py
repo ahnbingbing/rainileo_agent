@@ -216,14 +216,27 @@ def _do_recaption(con, ctx: dict, issue: dict, date: dt.date) -> str:
     # inherit each cut's scene timing from the existing captions.json (keep timing, swap text)
     orig = json.loads((wdp / "captions.json").read_text(encoding="utf-8"))
     new_caps = {}
+    skipped_multi: list[str] = []
     for tag in ctx["caption_tags"]:
         if tag not in caps:
             new_caps[tag] = orig.get(tag)  # unchanged cut
             continue
         scenes = (orig.get(tag) or {}).get("scenes") or [{"start": 0.1, "end": 5.0}]
+        if len(scenes) > 1:
+            # MULTI-SCENE (narrator) cut: the reviewer's per-cut single {ko,en} can't re-time N sub-
+            # scenes — collapsing them into one scene crams the whole story on-screen at once (a real
+            # degradation seen on 8/18 12:30). Keep the original text until the reviewer emits per-scene
+            # captions. TODO: per-scene recaption schema. Skip this cut; recaption only single-scene cuts.
+            new_caps[tag] = orig.get(tag)
+            skipped_multi.append(tag)
+            continue
         end = scenes[-1].get("end", 5.0) if scenes else 5.0
         new_caps[tag] = {"scenes": [{"start": 0.1, "end": end,
                                      "ko": caps[tag].get("ko", ""), "en": caps[tag].get("en", "")}]}
+    _targeted = [t for t in ctx["caption_tags"] if t in caps]
+    if _targeted and skipped_multi and len(skipped_multi) == len(_targeted):
+        return (f"recaption 미적용 — 대상 컷이 모두 멀티씬(내레이터)이라 단일텍스트로 뭉개짐 방지"
+                f"(per-scene 재캡션 미지원): {skipped_multi}")
     out = ROOT / "data" / "output" / "episodes" / f"episode_pdr_{ctx['card_id'].split('-')[0]}_{ctx['slot'].replace(':','')}.mp4"
     caps_path = wdp / "pdr_caps.json"
     caps_path.write_text(json.dumps(new_caps, ensure_ascii=False, indent=2), encoding="utf-8")
