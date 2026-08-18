@@ -722,6 +722,23 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   "목뒤 흰점 헛것")를 잡는 일반화 가치**로 배포하되, subtle 케이스는 못 잡을 수 있음을 인정. ★교훈=결정론 backstop은
   파이프라인 **마지막 mutation 뒤**에 둬야 프레임 ground truth를 본다(앞단만 두면 render-time이 프레임만 보고 되돌린다);
   그리고 검수 게이트를 강화할 땐 **정상 마킹 오탐(false-fail)을 안 만드는 것**이 subtle-catch보다 우선이다. cf B15(환각반려), B5(photoreal 오벌).
+- **B22. 체커가 "생성기가 이미 금지한 것"을 안 봤다 — 검수기는 생성기 규칙의 총합 거울이어야(8/18, B5·B21 러버스탬프 계열)** —
+  PD 일일 리뷰어 첫 실전(8/18 09:40→8/20 배치)이 **hook 없는 flat 제목**("랴니가 벤치에 앉아서 주변을 살펴보고
+  있어요" = 「펫이 ~하고 있어요」 라벨링)과 **22.5초 단일 컷 flat 캡션 1개**(salvage 경로가 원래 멀티비트 컨셉
+  캡션을 뭉갠 artifact)를 통과시켜 — PD가 둘 다 수동 지적. 근본 2겹: ①체커가 "생성기가 **못** 잡는 것"(제목
+  거짓말·pre-Leo era)만 enforce하고 "생성기 **자신이 이미 금지한** 것"(realfootage_concept "단순 클립 라벨링
+  아님"·caption cadence ~4-5s/beat `_caption_hold_gate`)은 안 봤다 → salvage가 그 생성기 규칙을 우회하면 아무도
+  안 잡는다. ②recaption 픽서가 컷당 단일 `{ko,en}`만 표현 가능 → 밀도 결함을 감지해도 1→N 비트로 못 고침 =
+  flag-only = PD가 또 손수정. Fix(86c1fa0): pd_review.md Check1에 flat-but-accurate 제목=결함(훅 필수), Check2에
+  캡션 density(긴 클립 단일 flat=결함, ~1비트/4-6s·씬≥2.5s), recaption 스키마에 멀티씬 `scenes[]`; pd_reviewer
+  `_do_recaption`이 `scenes[]` 소비(1→N split/재타이밍, `_sanitize_scenes`로 컷 실길이 clamp·짧은씬 드롭·정렬),
+  멀티씬 컷에 단일 텍스트만 오면 여전히 skip(cram 방지) — "per-scene recaption 미지원" TODO 해결. Giri엔 미추가
+  (제목/캡션밀도는 full-title+all-captions 보는 pd_reviewer 소관, Giri=2프레임·mp4만; §5 검수층 분담과 일치).
+  검증: `_sanitize_scenes` 단위테스트(clamp/드롭/정렬/garbage)+수정된 8/20 배치 dry-run서 내 21:00 재캡션
+  clean(새 density/hook 체크가 좋은 멀티비트 콘텐츠 **오탐0**)·회귀0·무크래시. ★교훈=검수기는 "생성기가 못 하는
+  것"뿐 아니라 "생성기가 이미 요구/금지하는 것"까지 enforce해야 러버스탬프를 면한다(**생성기 갱신≠체커 갱신** —
+  둘을 lockstep으로). 그리고 **감지만 하고 못 고치는 체커**(fix 표현력 부족=단일씬 전용)는 flag-only=사람이 또
+  고침 — 검수기의 감지력과 수정 표현력은 같이 커야 한다. cf B5(photoreal 오벌=역방향 과벌), B15(펫부재 환각반려), B21(nape 러버스탬프).
 
 ### 4.4 실사(RF)
 - **C1. 순증 악화 → PD 지시로 롤백(6/16~17)** — 하룻밤 additive "개선" 3종(브레인스톰 ON→억지드라마 /
