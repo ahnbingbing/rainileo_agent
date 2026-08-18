@@ -207,6 +207,29 @@ def _do_retitle(ctx: dict, issue: dict) -> str:
     return f"retitle → {new[:60]}"
 
 
+def _sanitize_scenes(scenes: list, cut_end: float) -> list:
+    """Validate/clamp reviewer-supplied narrator scenes to the cut's real span, drop unreadable ones."""
+    out = []
+    for s in scenes:
+        if not isinstance(s, dict):
+            continue
+        ko = (s.get("ko") or "").strip()
+        en = (s.get("en") or "").strip()
+        if not ko and not en:
+            continue
+        try:
+            st = max(0.1, float(s.get("start", 0.1)))
+            et = float(s.get("end", st + 3.0))
+        except (TypeError, ValueError):
+            continue
+        et = min(et, cut_end)
+        if et - st < 1.0:  # too short to read
+            continue
+        out.append({"start": round(st, 2), "end": round(et, 2), "ko": ko, "en": en})
+    out.sort(key=lambda x: x["start"])
+    return out
+
+
 def _do_recaption(con, ctx: dict, issue: dict, date: dt.date) -> str:
     caps = issue.get("recaption") or {}
     wd = ctx.get("workdir")
@@ -221,22 +244,33 @@ def _do_recaption(con, ctx: dict, issue: dict, date: dt.date) -> str:
         if tag not in caps:
             new_caps[tag] = orig.get(tag)  # unchanged cut
             continue
-        scenes = (orig.get(tag) or {}).get("scenes") or [{"start": 0.1, "end": 5.0}]
-        if len(scenes) > 1:
-            # MULTI-SCENE (narrator) cut: the reviewer's per-cut single {ko,en} can't re-time N sub-
-            # scenes — collapsing them into one scene crams the whole story on-screen at once (a real
-            # degradation seen on 8/18 12:30). Keep the original text until the reviewer emits per-scene
-            # captions. TODO: per-scene recaption schema. Skip this cut; recaption only single-scene cuts.
+        orig_scenes = (orig.get(tag) or {}).get("scenes") or [{"start": 0.1, "end": 5.0}]
+        cut_end = float(orig_scenes[-1].get("end", 5.0)) if orig_scenes else 5.0
+        supplied = caps[tag] or {}
+        # (A) reviewer supplied an explicit narrator flow → use it. This is how a single flat caption
+        # over a long clip gets re-beat into a proper multi-scene narration (density fix), and how an
+        # already-multi-scene cut is re-timed without cramming. Clamp to the cut's real length.
+        if isinstance(supplied.get("scenes"), list) and supplied["scenes"]:
+            sc = _sanitize_scenes(supplied["scenes"], cut_end)
+            if sc:
+                new_caps[tag] = {"scenes": sc}
+            else:
+                new_caps[tag] = orig.get(tag)
+                skipped_multi.append(tag)
+            continue
+        # (B) reviewer supplied a single {ko,en}. Safe to swap text only when the cut is single-scene;
+        # squeezing one line onto an already-multi-scene cut crams the whole story on-screen at once
+        # (a real degradation) — skip and demand scenes[] instead.
+        if len(orig_scenes) > 1:
             new_caps[tag] = orig.get(tag)
             skipped_multi.append(tag)
             continue
-        end = scenes[-1].get("end", 5.0) if scenes else 5.0
-        new_caps[tag] = {"scenes": [{"start": 0.1, "end": end,
-                                     "ko": caps[tag].get("ko", ""), "en": caps[tag].get("en", "")}]}
+        new_caps[tag] = {"scenes": [{"start": 0.1, "end": cut_end,
+                                     "ko": supplied.get("ko", ""), "en": supplied.get("en", "")}]}
     _targeted = [t for t in ctx["caption_tags"] if t in caps]
     if _targeted and skipped_multi and len(skipped_multi) == len(_targeted):
-        return (f"recaption 미적용 — 대상 컷이 모두 멀티씬(내레이터)이라 단일텍스트로 뭉개짐 방지"
-                f"(per-scene 재캡션 미지원): {skipped_multi}")
+        return (f"recaption 미적용 — 멀티씬 컷에 단일 {{ko,en}}만 와서 뭉개짐 방지(scenes[] 필요) "
+                f"또는 공급된 scenes[]가 사용불가: {skipped_multi}")
     out = ROOT / "data" / "output" / "episodes" / f"episode_pdr_{ctx['card_id'].split('-')[0]}_{ctx['slot'].replace(':','')}.mp4"
     caps_path = wdp / "pdr_caps.json"
     caps_path.write_text(json.dumps(new_caps, ensure_ascii=False, indent=2), encoding="utf-8")

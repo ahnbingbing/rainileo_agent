@@ -22,13 +22,24 @@ fix must be concrete and correct: a wrong "fix" ships a wrong video.
 
 ## The review — check each, using the frames as ground truth
 
-1. **Title ↔ content.** Does `live_title` describe what the frames + captions actually show? A café
-   outing titled "집 아지트/굿나잇", a nap titled "참외 대소동", a treat clip titled by the wrong
-   pet — all title lies. → `retitle`.
-2. **Caption story-truth.** Do the captions narrate the SPECIFIC event that happens, not a generic
-   reading? Trace the real micro-sequence (who does what, in what order, who causes it). A jealousy
-   beat (refuses food twice → eats only when offered to the other pet) captioned as generic "snatched
-   it" is a story-truth miss. → `recaption`.
+1. **Title — true AND a hook.** The title has two failure modes. (a) *It lies*: `live_title` names
+   something the frames + captions don't show — a café outing titled "집 아지트/굿나잇", a nap titled
+   "참외 대소동", a treat clip titled by the wrong pet. (b) *It's true but flat*: an accurate raw
+   description of the frame that sells nothing — "랴니가 벤치에 앉아서 주변을 살펴보고 있어요",
+   "고양이가 자고 있어요" (the tell is 「펫이 ~하고 있어요」 VLM-caption phrasing). A flat label is a
+   defect even when true, because the title IS the click — it must lead with the concept / emotion /
+   turn / era, the same "컨셉·훅이 있는가, 단순 클립 라벨링 아님" bar the writer works to. Either mode
+   → `retitle` with a hook version.
+2. **Caption story-truth AND density.** Two facets. (a) *Truth*: do the captions narrate the SPECIFIC
+   event, not a generic reading? Trace the real micro-sequence (who does what, in what order, who
+   causes it). A jealousy beat (refuses food twice → eats only when offered to the other pet)
+   captioned as generic "snatched it" is a story-truth miss. (b) *Density*: is the clip carried by
+   enough beats for its length? A long cut narrated by a *single flat line* — one caption spanning a
+   15–25s clip ("랴니가 벤치에 앉아서 주변을 살펴보고 있어요" over the whole video) — is a defect, and
+   usually a salvage/flatten artifact where the concept's original multi-beat narration got crushed to
+   one generic line. Captions must be a **narrator flow matched to the footage**: roughly one beat per
+   4–6s, each scene ≥ 2.5s so it's readable (a ~22s clip wants ~4–5 beats, not 1). Either facet →
+   `recaption` — for density, SPLIT the cut into scenes (multi-scene schema below).
 3. **Location / era grounding.** Do place words match the frames (café vs the home's light-wood floor
    + blue-cushion bench)? Does any caption/title name **Leo** over a **pre-2025-09** clip (see
    `sources.captured_iso`)? Pre-Leo cat = not Leo. → `recaption` (+ `retitle`), or `reselect` if the
@@ -53,8 +64,10 @@ are plausible, prefer `ok`.
 
 ## Choosing the action (cheapest correct fix)
 - `retitle` — only the title is wrong. You supply the corrected title.
-- `recaption` — the footage is fine but a caption is untrue/wrong-place/wrong-era/flat. You supply the
-  full corrected per-cut captions (KO+EN), grounded in the frames, matching each cut's real beat.
+- `recaption` — the footage is fine but a caption is untrue/wrong-place/wrong-era/flat, or too sparse
+  for the clip length. You supply the corrected per-cut captions (KO+EN) grounded in the frames — a
+  single `{ko,en}` to reword at existing pacing, or `scenes[]` to re-beat a long/flat cut into a
+  proper narrator flow.
 - `reselect` — the footage itself is wrong (reused, wrong era, subject not visible, too short). You
   supply a directive for what clip to pick instead.
 - `rerender` — the render is broken (prop/character drift, motif not threaded, thin concept). You supply
@@ -73,12 +86,12 @@ apply, list each.
   "summary": "one-line PD-voice verdict (what's wrong or why it's good)",
   "issues": [
     {
-      "class": "title_mismatch|caption_story|location|era_reuse|prop_drift|character_drift|running_gag|thin_content|hook|other",
+      "class": "title_mismatch|title_flat|caption_story|caption_density|location|era_reuse|prop_drift|character_drift|running_gag|thin_content|hook|other",
       "severity": "critical|moderate|minor",
       "evidence": "the concrete frame/caption/data contradiction you saw",
       "action": "retitle|recaption|reselect|rerender|none",
       "retitle": "corrected title (only if action=retitle)",
-      "recaption": {"cut1_tag": {"ko": "...", "en": "..."}, "cut2_tag": {"ko": "...", "en": "..."}},
+      "recaption": {"cut1_tag": {"scenes": [{"start": 0.1, "end": 4.6, "ko": "...", "en": "..."}, {"start": 4.6, "end": 9.2, "ko": "...", "en": "..."}]}, "cut2_tag": {"ko": "...", "en": "..."}},
       "directive": "corrective directive text (only if action=reselect|rerender)"
     }
   ]
@@ -87,3 +100,9 @@ apply, list each.
 
 `verdict` is "fix" if ANY issue has an action other than "none". Keep `recaption` keys aligned to the
 given caption cut tags. Be terse and specific — this goes straight into an auto-fixer.
+
+**Recaption schema.** For a cut that just needs new words at its existing pacing, `{ko,en}` is enough
+(the cut's timing is reused). To fix DENSITY — re-beat a long/flat cut into a narrator flow — supply
+`scenes[]` with `start`/`end` spanning the cut in order, each scene ≥ 2.5s; timings are clamped to the
+cut's real length. A bare `{ko,en}` on an already-multi-scene cut is IGNORED (it would cram every beat
+onto one line), so always use `scenes[]` to re-beat such cuts.
