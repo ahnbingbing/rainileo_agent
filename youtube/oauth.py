@@ -15,6 +15,7 @@ Subsequent runs of get_youtube() just load token.json.
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -44,15 +45,48 @@ CLIENT_SECRETS = Path(os.getenv("YOUTUBE_CLIENT_SECRETS", str(ROOT / "youtube" /
 TOKEN_PATH = Path(os.getenv("YOUTUBE_TOKEN", str(ROOT / "youtube" / "token.json")))
 
 
+_BAK_PATH = TOKEN_PATH.parent / (TOKEN_PATH.name + ".bak")
+_TMP_PATH = TOKEN_PATH.parent / (TOKEN_PATH.name + ".tmp")
+
+
+def _save_token(creds: Credentials) -> None:
+    """Persist creds atomically so a concurrent refresh can never leave a 0-byte / half-written
+    token. 8/21 incident: two processes refreshed at once and truncated token.json to 0 bytes →
+    every upload failed with 'Expecting value: line 1 column 1' and the whole day's batch would
+    have gone unpublished. Guard against empty content, keep a .bak of the last good token, and
+    write-temp-then-os.replace (atomic on POSIX) so readers only ever see a complete file."""
+    data = creds.to_json()
+    if not data or not data.strip():
+        return  # never overwrite a working token with empty content
+    TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if TOKEN_PATH.exists() and TOKEN_PATH.stat().st_size > 0:
+        try:
+            shutil.copy2(TOKEN_PATH, _BAK_PATH)
+        except Exception:
+            pass
+    _TMP_PATH.write_text(data, encoding="utf-8")
+    os.replace(_TMP_PATH, TOKEN_PATH)  # atomic
+
+
+def _load_creds() -> Credentials | None:
+    """Load creds from token.json, falling back to token.json.bak if the primary is missing,
+    empty, or unparseable — auto-recovery from a truncated token instead of a hard failure."""
+    for p in (TOKEN_PATH, _BAK_PATH):
+        try:
+            if p.exists() and p.stat().st_size > 0:
+                return Credentials.from_authorized_user_file(str(p), SCOPES)
+        except Exception:
+            continue
+    return None
+
+
 def authorize() -> Credentials:
-    creds: Credentials | None = None
-    if TOKEN_PATH.exists():
-        creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
+    creds = _load_creds()
     if creds and creds.valid:
         return creds
     if creds and creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
+        _save_token(creds)
         return creds
     if not CLIENT_SECRETS.exists():
         raise FileNotFoundError(
@@ -61,8 +95,7 @@ def authorize() -> Credentials:
         )
     flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_SECRETS), SCOPES)
     creds = flow.run_local_server(port=0, prompt="consent")
-    TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
-    TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
+    _save_token(creds)
     return creds
 
 
