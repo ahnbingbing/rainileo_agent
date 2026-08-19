@@ -2452,6 +2452,18 @@ def _rf_temporal_coherence(concept: dict, target_year: int) -> list[str]:
     return out
 
 
+def _rf_winning_signal() -> str:
+    """RF-lane popularity signal for the single-pass writer: which recent CONCEPTS won
+    (by views/retention). Thin wrapper over channel_manager.portfolio_signal so the RF
+    storyteller learns the winning 결, not just per-slot numbers. Empty on too-little-data
+    or any error (never blocks concept generation)."""
+    try:
+        from agents.channel_manager import portfolio_signal
+        return portfolio_signal(lane="real_footage") or ""
+    except Exception:
+        return ""
+
+
 def _propose_realfootage_singlepass(target: dt.date, context: dict,
                                      progress_cb: ProgressCb = None,
                                      prior_feedback: str = "") -> list[dict]:
@@ -2748,6 +2760,11 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         # PD 2026-06-13: MACRO context (recent episodes + performance + audience comments)
         # so the writer AVOIDS repeating what we just shipped, from the very first draft.
         "macro_context_recent_uploads": context.get("macro_context", ""),
+        # PD 2026-08-21: which CONCEPTS actually performed (by views/retention), RF-lane-scoped.
+        # macro_context only carries per-slot numbers; this surfaces the WINNING 결 (theme-level)
+        # so the RF writer can lean into what the audience liked — parity with the brainstorm path
+        # (portfolio_signal), which the single-pass writer previously never saw.
+        "recent_winning_concepts": _rf_winning_signal(),
         # PD 2026-06-13 (writer-side): over-shot setups to AVOID + pool is pre-sorted
         # fresh-first. The Writer should pick from the top / away from these.
         "avoid_overused_setups": _avoid_overused,

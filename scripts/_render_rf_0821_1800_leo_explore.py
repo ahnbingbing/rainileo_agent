@@ -1,7 +1,8 @@
 """8/21 18:00 RF 재렌더 (PD 8/21 리뷰: '1800RF는 이미 이전에 나왔던거잖아. 재렌더').
-옛 S7RyTzKZMcs='풍덩! 랴니 여름 물가 모험'=물 테마 재탕. PD 지시=신선 '레오 첫 바깥 나들이' footage로 교체.
-이 컷=레오의 첫 바깥 탐험, 타일 턱 위를 발끝으로 조심조심 걸으며 검은 호스를 조사(신선·미사용, 08:00 드라이브와 distinct).
-단일 클립 + narrator 멀티씬 캡션 recaption_finish 강제 → 18:00 재예약 → 옛 물 영상 veto.
+옛 S7RyTzKZMcs='풍덩! 랴니 여름 물가 모험'=물 재탕. PD 지시=신선 '레오 첫 바깥 나들이' footage·물 제외.
+v1(타일턱 클립)은 실제 주된 내용이 '물 마시기'라 Giri 제목-내용 불일치+물 인접 → 카페 클립으로 교체.
+이 컷=레오의 첫 카페 나들이, 러그 위를 걸으며 의자 다리를 킁킁 탐색(물 없음, 08:00 드라이브와 distinct).
+단일 클립 + narrator 멀티씬 캡션 → 18:00 재예약 → v1(HQKTgNTpo5A) veto.
   sudo -u rianileo bash deploy/run_job.sh scripts/_render_rf_0821_1800_leo_explore.py
 """
 import sys, json, subprocess, glob, datetime as dt
@@ -12,29 +13,29 @@ from agents.launch import publish_at_for
 
 DATE = dt.date(2026, 8, 21)
 SLOT = "18:00"
-OLD = "S7RyTzKZMcs"  # 물 재탕 — 교체 후 veto
-CLIP = "med_2026_08_16_123752_slack_8eb78b3d"  # 레오 야외 타일 턱/검은 호스 탐험 (46.3s, 신선)
+OLD = "HQKTgNTpo5A"  # v1(타일턱/물마시기) — 교체 후 veto  (원래 물영상 S7RyTzKZMcs는 이미 veto됨)
+CLIP = "med_2026_08_16_123839_slack_0fbcbef8"  # 레오 카페 러그 위 탐색 (30.2s, 신선, 물 없음)
 
 concept = {
-    "title": "레오의 첫 바깥 탐험 — 타일 턱 위 조심조심",
-    "narrative_oneliner": "레오가 용감하게 바깥 탐험을 나섰어요. 낯선 검은 호스를 조사하고, 타일 턱 위를 발끝으로 조심조심 내려옵니다.",
+    "title": "레오의 첫 카페 나들이 — 여긴 어디냥?",
+    "narrative_oneliner": "레오가 처음으로 카페에 왔어요. 러그 위를 조심조심 걸으며 의자 다리며 낯선 냄새를 킁킁 탐색합니다.",
     "subjects": ["leo"], "tone": {"primary": "warm_playful", "intensity": 0.55},
     "bgm_mood": "playful_upbeat", "cuts": [
-        {"tag": "c1", "asset_id": CLIP, "trim_start": 1.0, "duration_seconds": 18.0,
-         "captions": [{"start": 0.1, "end": 18.0, "ko": "placeholder", "en": "p"}]},
+        {"tag": "c1", "asset_id": CLIP, "trim_start": 1.0, "duration_seconds": 17.0,
+         "captions": [{"start": 0.1, "end": 17.0, "ko": "placeholder", "en": "p"}]},
     ],
 }
 
 FINAL = {
     "c1": {"scenes": [
-        {"start": 0.1, "end": 4.5, "ko": "오늘은 레오, 용감하게 바깥 탐험 나왔어요",
-         "en": "Brave little Leo is out exploring today"},
-        {"start": 4.5, "end": 9.0, "ko": "요 꼬불꼬불 검은 호스… 정체가 뭐냥? 🐍",
-         "en": "This wiggly black hose… what IS it? 🐍"},
-        {"start": 9.0, "end": 13.5, "ko": "타일 턱 위를 발끝으로 조심조심",
-         "en": "Tip-toeing along the tiled ledge, so careful"},
-        {"start": 13.5, "end": 18.0, "ko": "겁 없는 탐험가, 한 발 한 발 내려옵니다",
-         "en": "Our fearless explorer climbs down, one paw at a time"}]},
+        {"start": 0.1, "end": 4.5, "ko": "레오, 태어나서 첫 카페 나들이 왔어요 ☕",
+         "en": "Leo's very first café outing ☕"},
+        {"start": 4.5, "end": 9.0, "ko": "폭신한 러그를 밟으며 한 걸음 한 걸음",
+         "en": "Padding across the fluffy rug, step by step"},
+        {"start": 9.0, "end": 13.0, "ko": "의자 다리는… 킁킁, 이건 무슨 냄새냥?",
+         "en": "Sniff sniff—what's this smell by the chair leg?"},
+        {"start": 13.0, "end": 17.0, "ko": "낯선 곳도 씩씩하게 탐험하는 우리 막내 🐾",
+         "en": "Our brave little one explores every new place 🐾"}]},
 }
 
 

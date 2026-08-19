@@ -173,7 +173,10 @@ def _overused_format_block(days: int = 21, min_count: int = 3) -> str:
         con.close()
         # '평행'(parallel-world/compare) is both over-repeated AND teleport-prone for AV (two pets
         # staged in two separate spaces → Giri '순간이동' rejects), so rotate away from it too.
-        markers = ["챌린지", "년생", "뱃살", "평행", "POV", "관찰기"]
+        # incl. memory-lane framing (과거 회상이 매일 반복되면 채널이 과거에 갇힌다) and the
+        # water motif (물놀이·수영·계곡이 한 배치에 셋씩 나와 슬롯이 겹치고 붕괴했다) — rotate both.
+        markers = ["챌린지", "년생", "뱃살", "평행", "POV", "관찰기",
+                   "년 전", "수영", "물놀이", "물가", "계곡"]
         c = Counter()
         for (th,) in rows:
             for m in markers:
