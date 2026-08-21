@@ -150,6 +150,15 @@ def _snap_birth_year(y: int) -> int:
 _CANON_NAME_FIX = (
     (_re_canon.compile(r"\b(?:Lani|Lanni|Riani|Ryanie|Ryany|Ryanni|Rhyani|Rhyanni|Rihani|Ryanee)\b",
                        _re_canon.IGNORECASE), "Ryani"),
+    # PD 2026-08-22 (21:00 RF): the KO caption named the dog "랑이" ("랑이 언니한테 인사…") —
+    # a misspelling of 랴니 that reads as a different pet. Snap it to canon like the EN
+    # misromanizations above. Guarded by a Hangul-lookbehind so it never eats a legitimate
+    # word that merely ENDS in "랑이" (e.g. 사랑이 = "love"+subject marker).
+    (_re_canon.compile(r"(?<![가-힣])랑이"), "랴니"),
+    # …and Leo is the 막내: his sibling term for the dog is 누나 (or the nickname 랴니엄마),
+    # never 언니 (a female speaker's word). "랴니 언니" is an unambiguous canon slip in this
+    # two-pet cast — no one here would call Ryani 언니 — so snap it after the name fix above.
+    (_re_canon.compile(r"랴니\s*언니"), "랴니 누나"),
 )
 
 

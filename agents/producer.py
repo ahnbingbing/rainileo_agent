@@ -828,7 +828,12 @@ def propose_concepts(target: dt.date, context: dict, style_filter: str | None = 
                             (context.get("arc_directive") or "")
                             + "\n\n[재탕검증] 위 컨셉이 최근 공개된 회차와 사실상 같은 이야기(핵심 "
                             "소재·사건이 겹침)다. 장소·클립만 바꾼 재탕 금지 — 겹친 소재 자체를 피하고 "
-                            "완전히 다른 사건·활동·앵글로 새로 짜라:\n" + _vs)
+                            "완전히 다른 사건·활동·앵글로 새로 짜라. 단, 겹친 소재가 그날의 footage "
+                            "사정상 불가피하면(예: 둘 다 랴니 물놀이) 억지로 무관한 이야기로 틀지 말고 "
+                            "뒷 슬롯을 앞 회차의 '다음 편'으로 명확히 이어라 — 시간·난이도·전개를 "
+                            "진전시켜(아침 첫 도전 → 저녁 물개 마스터, 예고편 → 본편) 제목·캡션이 "
+                            "'2탄/이어서' 결을 갖게 하라. 같은 순간의 평평한 재탕은 금지, 의도된 "
+                            "연속 시리즈는 환영이다:\n" + _vs)
                         _retry = propose_concepts_v2(
                             target, context, style_filter=style_filter,
                             progress_cb=progress_cb) or []
@@ -1011,6 +1016,44 @@ def _recently_used_rf_assets(con: sqlite3.Connection,
                         used.add(aid)
         except Exception as e:
             log.warning("recent-render cooldown lookup failed: %s", e)
+    return used
+
+
+def _scheduled_window_rf_assets(con: sqlite3.Connection, target: dt.date,
+                                days: int = 3) -> set[str]:
+    """asset_ids used by RF cards whose youtube_publish_at falls within ±`days` of
+    `target` — i.e. the NEIGHBORING scheduled episodes on the calendar.
+
+    PD 2026-08-23: the 08:00 RF shipped the EXACT same clip as the previous day's
+    12:30 RF ("0800RF는 8/22 1230RF랑 동일한 영상이잖아"). Root: the soft cooldown
+    (_recently_used_rf_assets) RELAXES wholesale when the fresh pool is thin, and the
+    batch-dedup (_excl) only covers same-batch sibling slots — so a clip a neighbor
+    DAY already scheduled slips back in. This set is the hard, never-relaxed backstop:
+    it's tiny (a handful of neighbors), so excluding it can't starve the writer, and a
+    slightly-less-ideal fresh clip always beats an exact dup of the episode next door.
+    youtube_publish_at is stored UTC; the ±1-day slop absorbs the KST/UTC offset."""
+    used: set[str] = set()
+    try:
+        lo = (target - dt.timedelta(days=days)).isoformat()
+        hi = (target + dt.timedelta(days=days + 1)).isoformat()
+        rows = con.execute(
+            "SELECT payload_json FROM cards WHERE render_style='real_footage' "
+            "AND youtube_publish_at IS NOT NULL "
+            "AND substr(youtube_publish_at,1,10) BETWEEN ? AND ? "
+            "AND state NOT IN ('discarded','vetoed','failed','rejected')",
+            (lo, hi),
+        ).fetchall()
+        for r in rows:
+            try:
+                p = json.loads(r[0] or "{}")
+            except Exception:
+                continue
+            for c in (p.get("cuts") or []):
+                aid = c.get("asset_id") or (c.get("asset") or {}).get("asset_id")
+                if aid:
+                    used.add(aid)
+    except Exception as e:
+        log.warning("scheduled-window dedup lookup failed: %s", e)
     return used
 
 
@@ -2564,6 +2607,23 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
             avail_videos, _arch = _cav, _car
     _seen = {v.get("id") for v in avail_videos if v.get("id")}
     avail_videos = avail_videos + [v for v in _arch if v.get("id") and v.get("id") not in _seen]
+    # HARD neighbor-dedup (PD 2026-08-23): never reuse a clip a NEIGHBORING scheduled RF
+    # episode already uses. The soft cooldown below RELAXES wholesale under a thin fresh
+    # pool, which is exactly how yesterday's 12:30 clip reappeared as today's 08:00. This
+    # set is tiny, so it can't starve the writer; apply it only if it leaves ≥1 clip.
+    _neighbor_excl: set[str] = set()
+    try:
+        _neighbor_excl = _scheduled_window_rf_assets(_db(), target)
+    except Exception as _e:
+        log.warning("neighbor-dedup lookup failed: %s", _e)
+    if _neighbor_excl:
+        _hardkept = [v for v in avail_videos
+                     if (v.get("id") or v.get("asset_id")) not in _neighbor_excl]
+        if _hardkept:
+            if len(_hardkept) < len(avail_videos) and progress_cb:
+                progress_cb(f":no_entry: 이웃 예약편 클립 {len(avail_videos) - len(_hardkept)}개 "
+                            f"하드 제외(중복 방지)")
+            avail_videos = _hardkept
     cooldown: set[str] = set()
     _cool_sessions: set[str] = set()
     _visual_cool: set[str] = set()
@@ -2610,7 +2670,9 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     # PD 2026-06-10: exclude clips already used by an EARLIER slot in THIS batch so
     # two same-day RF episodes don't come out near-identical (6/11 bug: both RF used
     # the exact same 7 photos). Best-effort — relax if it would starve the writer.
-    _excl = set(context.get("exclude_asset_ids") or [])
+    # neighbor-dedup (above) also covers the photo/archive pools so a neighbor's clip
+    # can't re-enter through a non-video candidate list.
+    _excl = set(context.get("exclude_asset_ids") or []) | _neighbor_excl
     if _excl:
         _kept = [v for v in avail_videos
                  if v.get("id") not in _excl and v.get("asset_id") not in _excl]
