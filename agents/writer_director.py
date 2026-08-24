@@ -1437,6 +1437,21 @@ def _enforce_wink_empty_captions(c: dict) -> None:
         closer["captions"] = _lead + [_sign]
     else:
         closer["captions"] = [dict(canonical)]
+    # PD 2026-08-25: the closer carries the 햅삐 sign-off CAPTION, but the wink is a VISIBLE
+    # gesture — it must live in the MOTION too, or Seedance renders a non-winking closer and the
+    # wink "disappears" even though wink_subject is set (the 2100 AV bug: the Director wrote a
+    # calm "each back to their own rhythm" ending with no wink instruction). For AV, guarantee
+    # the wink_subject actually winks in the closer's motion_prompt when it isn't already there.
+    if _lane != "real_footage":
+        _ws = (c.get("wink_subject") or "").lower()
+        _who = ("The orange tabby cat" if _ws == "leo"
+                else "The small black French bulldog (no tail)" if _ws == "ryani"
+                else "The pet in focus")
+        _mp = str(closer.get("motion_prompt") or "")
+        if not _WINK_RE.search(_mp) and not _WINK_RE.search(str(closer.get("action") or "")):
+            closer["motion_prompt"] = (
+                _mp + f" {_who} looks to the camera and gives ONE slow clear WINK — one eye "
+                "closes for a beat then reopens — with a soft content smile.").strip()
     # Drop any stray function-tagged wink_ending cuts that aren't the closer,
     # then force the closer to be the very last cut.
     new_cuts = [cut for i, cut in enumerate(cuts)
