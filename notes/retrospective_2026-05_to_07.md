@@ -1405,6 +1405,14 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   (`cameraman_*` 작업폴더·`seedance_raw`·`vlm_frames`)만 지우고 소스/최종본은 절대 안 건드림, 정리 후 여전히
   90%면 loud 경고(episodes/ GCS-미러-후-트림 필요 신호). **교훈: 침묵하는 채움(silent fill)이 미스터리 빈 슬롯으로
   표면화되면 안 된다 — 정리량·디스크%를 로그로 남겨 fill-up을 보이게 하라.**
+  **★재발(8/27) — 그 loud 경고가 예언대로 맞았다: prune이 안 지운 episodes/가 디스크를 다시 100%로 채웠다.**
+  8/29 배치가 통째로 안 만들어졌다("하나도 안 만들어졌네"). 근본: 02:50 prune은 workdir/tmp만 지우고 **최종
+  `data/output/episodes/`는 설계상 안 건드렸는데**, 그게 600+편·18G로 쌓여 디스크를 채웠다(assets 19G와 합쳐 100%).
+  최종본은 이미 YouTube + GCS(`gs://…/output/episodes/`)에 미러돼 있어 로컬 오래된 복사본은 잉여였다 — 8/21의
+  경고문("episodes/ GCS-미러-후-트림 필요")이 그대로 실현. Fix: prune에 `EP_KEEP_DAYS`(기본 4)일 지난 episodes
+  mp4/thumb 트림 추가(재캡션·재렌더는 workdir을 쓰지 이 출력본이 아니다) → 즉시 16.7G 회수(100%→66%). **교훈:
+  '절대 안 지운다'는 안전 불변식도 그 대상이 무한히 쌓여 자원을 고갈시키면 재발의 씨앗이다 — GCS-미러가 있으면
+  트림이 안전이다. 그리고 자신이 남긴 loud 경고는 다음 사고의 지도다(8/21 경고 → 8/27 그대로 발생).**
 - **D_token. 공유 OAuth refresh-token 회전이 업로드를 조용히 전멸시켰다(8/21)** — `youtube/token.json`이 09:30에
   0바이트로 truncate돼(리프레시 레이스) 모든 업로드가 `Expecting value: line 1 column 1` → `[ORPHAN-SKIP]`.
   03:00 배치는 그 전이라 정상 업로드됐어 증상이 늦게 터졌다. 근본: **맥(개발)과 VM(운영)이 같은 refresh_token을
@@ -1454,6 +1462,14 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   ('~1탄/2탄'은 면제, reviewer.py)와 이미 정합한다. Fix: AV 재탕검증 directive에 "불가피하면 2탄으로 이어라"
   분기 추가(`producer._one_pass`). **교훈: 중복 회피는 '다르게 만들기 vs 안 만들기'의 이분법이 아니다 — 소재가
   강제되면 '시리즈로 엮기'가 세 번째, 더 나은 길이다(재탕은 반복, 시리즈는 의도).** cf E3(컨셉 dedup), C_neighbordup(RF 클립 이웃-dedup).
+- **E13. 인기-컨셉 신호가 RF엔 있고 AV엔 없었다 — 성과 피드백은 두 레인에 대칭이어야(8/27)** — PD: "AV 만들 때 최근
+  인기 많았던 AV 컨셉을 참고해야 — reviewer가 알려줘야." `portfolio_signal`(bandit + video_performance, 조회수 기준,
+  lane-scoped)이 잘 된 '결'을 알려주는데, **RF 단일패스 작가엔 `_rf_winning_signal`로 주입돼 있었지만 AV Writer/Director
+  (`propose_concepts_v2`)는 이 신호를 한 번도 못 받았다** — 그래서 AV 컨셉이 '어떤 vtuber 결이 실제로 시청됐는지'를 못
+  배웠다(C_fresh의 RF 인기신호 비대칭 봉합의 AV 짝). Fix: `portfolio_signal(lane="ai_vtuber")`를 AV context에 주입,
+  writer_director가 `recent_popular_concepts_by_views`로 Writer body에 hoist(인기 '결'을 배우되 소재는 신선하게 —
+  freshness가 여전히 topic 소유). **교훈: 성과/리뷰어 피드백을 한 레인에만 배선하면 다른 레인은 눈먼 채 생성한다 —
+  생성기↔측정기 배선은 양 레인 대칭으로(availability≠usage는 프롬프트뿐 아니라 신호 배선에도).** cf C_fresh(RF 인기신호), pd_notes→captioner(생성기·검수기 lockstep).
 
 ---
 
