@@ -50,4 +50,19 @@
 - **다음 03:00 배치 durable 첫 실전 스팟체크**: AV 윙크가 실제로 화면에 렌더되는지(제스처 주입)·부추/캣그라스가 소품으로
   안 나오는지·생리 footage 맥락 반영.
 - **미착수(선택)**: 8/25 12:30 AV cut2의 부추 새싹(PD 승인 밖이라 유지 — 원하면 cut2도 교정 스틸 재렌더).
-- (이월) Giri confabulated-backstory 반려(B23) giri-update 미완.
+- ~~(이월) Giri confabulated-backstory 반려(B23) giri-update~~ → **8/26 정정: 오진이었다(아래).**
+
+## 8/26 정정 — B23은 '검수기 환각'이 아니라 '내가 pd_notes를 안 읽은 것'이었다 (VM HEAD `e25c324`)
+- 8/23 08:00 grass-walk(X2S7zv9QxhU)를 Giri가 "PD 정보상 레오가 과거 장소 알아보고 욺·랴니 동행 — 캡션 누락"으로
+  반려한 걸 지난번에 **confabulation으로 오판**하고 frame-evidence로 override했다. giri-update로 "백스토리 발명 금지"
+  픽스(프롬프트 ff74034 + 결정론 스크럽 738e727)까지 넣었는데 — **회귀 확인 중 진짜 원인 발견**: 그 서사는 asset
+  `med_2026_08_17_031015`의 **pd_notes에 PD가 직접 적은 실제 맥락**("길잃은 레오를 데려온 곳… 알아보고 엄마 부르듯
+  운다")이고, Giri는 `_pd_groundtruth_block`으로 그걸 받아 **정당하게** flag한 거였다.
+- **롤백**(0046c6e/77655ea): 오진 위의 두 픽스를 되돌렸다(정당한 pd_notes 그라운딩을 억눌렀을 것).
+- **진짜 근본 fix**(f9a854e): 캡션 VLM(`_rf_action_grounded_captions`)에도 clip pd_notes 주입 → 생성기·검수기가
+  같은 ground truth 공유. **검증**: grass-walk 재렌더 시 captioner가 실제 이야기를 씀("이곳은 몇 달 전 레오를 처음
+  만났던 곳… 혹시 기억하고 있는 걸까요?") — confabulation-reject 소멸(Giri의 새 4점은 랴니 화면부족+콜라주 별건).
+- ★교훈: **검수기 반려가 '환각'처럼 보여도, 근거가 내가 안 읽은 pd_notes일 수 있다 — override 전에 소스 확인.
+  '프레임이 ground truth'는 반쪽; PD가 문서화한 pd_notes가 프레임 위의 ground truth다.** 회고 B23 정정.
+- ★미결(PD 결정): 이미 공개된 8/23 08:00 X2S7zv9QxhU를 감정 스토리 버전으로 교체할지(조회수 리셋 tradeoff).
+  교체 대신 durable fix로 **앞으로의 배치는 자동으로** pd_notes 스토리를 캡션한다.
