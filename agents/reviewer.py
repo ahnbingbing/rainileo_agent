@@ -861,11 +861,29 @@ def _caption_mismatch_gate(concept: "dict | None", report: dict) -> None:
             return True
         return False
 
+    # PD 2026-08-25 (B23): the INVENTED-backstory class. Giri conflates a DIFFERENT recent
+    # episode's story with this clip and logs every cut as a mismatch for not telling that
+    # narrative ("PD 정보에 따르면 레오가 과거 장소에 돌아와 울었다 … 캡션에 반영 안 됨"). This is an
+    # OMISSION-of-imagined-story, not a frame contradiction — a real surface/motion/kick mismatch
+    # cites the concrete frame, never a missing backstory. Scrub entries whose justification is
+    # narrative-omission (prompt rule alone didn't hold — the LLM re-invented it, so gate it).
+    _BACKSTORY = re.compile(
+        r"배경\s*스토리|더\s*깊은\s*이야기|서사(가|를|적|\s|가\s*빠|\s*누락)|스토리(가|를)?\s*(빠|누락|반영|담기지)"
+        r"|반영(되지|하지|이\s*안|\s*안)|누락|과거(에|의|\s*장소|\s*기억|\s*상황)|돌아(온|와|간)|재회|재방문"
+        r"|감정(적|선)|감동|기억(을|이|하는|나는)|pd\s*(정보|가\s*제공|제공)|narrative|back-?story|deeper\s+story",
+        re.IGNORECASE)
+
+    def _is_backstory_omission(e):
+        blob = " ".join(str(e.get(k) or "") for k in
+                        ("what_clip_actually_shows", "why", "reason", "mismatch", "note", "설명"))
+        return bool(_BACKSTORY.search(blob))
+
     scrubbed, kept = [], []
     for e in ms:
         if not isinstance(e, dict):
             continue
-        (scrubbed if (is_rf and _is_identity_absence(e)) else kept).append(e)
+        (scrubbed if (is_rf and (_is_identity_absence(e) or _is_backstory_omission(e)))
+         else kept).append(e)
     if scrubbed:
         report["caption_vs_clip_mismatches"] = kept
         report["_mismatch_scrubbed"] = [
@@ -891,11 +909,11 @@ def _caption_mismatch_gate(concept: "dict | None", report: dict) -> None:
             and int(report.get("점수", 10) or 10) <= 5
             and not any(k.endswith("_override") for k in report.keys())):
         prob = str(report.get("가장_큰_문제") or "")
-        _prob_identity = bool(re.search(
+        _prob_scrubbable = bool(re.search(
             r"위에\s*표시|표시되는|아니라|대신|shown\s+over|wrong\s+(pet|subject)"
             r"|(레오|랴니|leo|ryani)\s*[가는이]?\s*(없|안\s*보|보이지\s*않|not\s+(visible|present|there))",
-            prob.lower()))
-        if (not prob.strip()) or _prob_identity:
+            prob.lower())) or bool(_BACKSTORY.search(prob))
+        if (not prob.strip()) or _prob_scrubbable:
             report["점수"] = max(int(report.get("점수", 0) or 0), 6)
             report["판정"] = "소폭 수정 후 업로드"
             report["최종_결정"] = report["판정"]
