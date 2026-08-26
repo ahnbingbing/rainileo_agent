@@ -155,6 +155,12 @@ _CANON_NAME_FIX = (
     # misromanizations above. Guarded by a Hangul-lookbehind so it never eats a legitimate
     # word that merely ENDS in "랑이" (e.g. 사랑이 = "love"+subject marker).
     (_re_canon.compile(r"(?<![가-힣])랑이"), "랴니"),
+    # PD 2026-08-27 (8/28 RF): the KO caption also drops the ㅑ and writes the dog as "라니"
+    # ("라니도 합류 / 라니는 포근하게") — another misspelling of 랴니. Snap it, but tightly: only
+    # when "라니" is the NAME (followed by a subject/object/topic particle or space), NEVER the
+    # common quotative ending "-라니까/-라니요/-라니" (먹으라니까). The Hangul-lookbehind already
+    # excludes verb-attached quotatives (preceded by a syllable); the lookahead is the backstop.
+    (_re_canon.compile(r"(?<![가-힣])라니(?=[는가를도와의야랑이\s]|한테|$)"), "랴니"),
     # …and Leo is the 막내: his sibling term for the dog is 누나 (or the nickname 랴니엄마),
     # never 언니 (a female speaker's word). "랴니 언니" is an unambiguous canon slip in this
     # two-pet cast — no one here would call Ryani 언니 — so snap it after the name fix above.
