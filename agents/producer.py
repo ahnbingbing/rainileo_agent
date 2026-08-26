@@ -786,6 +786,18 @@ def propose_concepts(target: dt.date, context: dict, style_filter: str | None = 
                         + "위 스토리라인을 충실히 컷으로 전개하라.")
             except Exception as e:
                 log.warning("concept brainstorm gate failed (skipping): %s", e)
+        # PD 2026-08-27: feed the AV Writer the lane-scoped POPULAR-concept signal (by views)
+        # the way RF gets it via _rf_winning_signal — "AV 만들 때 최근 인기 컨셉 참고". The signal
+        # is the performance/reviewer feedback (bandit + video_performance); set once, empty on
+        # too-little-data. writer_director hoists it to recent_popular_concepts_by_views.
+        if style_filter == "ai_vtuber" and not context.get("recent_winning_concepts"):
+            try:
+                from agents.channel_manager import portfolio_signal
+                _av_sig = portfolio_signal(lane="ai_vtuber")
+                if _av_sig:
+                    context["recent_winning_concepts"] = _av_sig
+            except Exception as _e:
+                log.warning("AV winning-signal inject failed: %s", _e)
         try:
             from agents.writer_director import propose_concepts_v2
             concepts = propose_concepts_v2(

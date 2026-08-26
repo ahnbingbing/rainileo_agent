@@ -347,6 +347,14 @@ def _build_writer_user_prompt(target_date: dt.date, context: dict,
         body["macro_context_recent_uploads"] = context["macro_context"]
     if isinstance(context, dict) and context.get("reviewer_feedback"):
         body["reviewer_rewrite_directive"] = context["reviewer_feedback"]
+    # PD 2026-08-27: surface the recently POPULAR concepts (by views, lane-scoped) so the AV
+    # Writer learns the winning 결 — which energy/format/role-play actually got watched — the
+    # way RF already does (recent_winning_concepts). This is the performance/reviewer signal
+    # (bandit + video_performance) fed back into AV generation: reference the hits, don't
+    # repeat their exact topic (freshness still owns topics). Hoisted to the top level so the
+    # Writer can't miss it. (PD: "AV도 최근 인기 컨셉 참고 — reviewer가 알려줘야.")
+    if isinstance(context, dict) and context.get("recent_winning_concepts"):
+        body["recent_popular_concepts_by_views"] = context["recent_winning_concepts"]
     # PD 2026-07-11: the grandparents' RECENT explicit asks + the real props/spaces they
     # uploaded are the spine + set material — hoist them to the top level (like the macro
     # context) so the AV writer can't leave them buried in the context blob. A named
