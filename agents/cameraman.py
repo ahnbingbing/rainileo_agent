@@ -2621,6 +2621,31 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
         probe = (s.get("asset_id") if isinstance(s, dict) else s) or ""
         m = re.search(r"med_(\d{4})_(\d{2})_(\d{2})", str(probe))
         return f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else None
+
+    def _pd_notes_for(tag: str) -> str:
+        # PD 2026-08-26: the clip's asset pd_notes is PD's AUTHORITATIVE context for what the
+        # clip really is (e.g. "이곳은 길잃은 레오를 데려온 곳 — 레오가 알아보고 엄마 부르듯 운다"). Giri
+        # already judges caption-truthfulness against this (reviewer._pd_groundtruth_block), but
+        # the CAPTIONER only ever saw frames + date — so a rich emotional truth got captioned as a
+        # generic "첫 산책" and then correctly flagged by Giri. Feed the SAME pd_notes to the
+        # caption VLM so generator and checker share one ground truth (lockstep).
+        s = _src_map.get(tag)
+        aid = (s.get("asset_id") if isinstance(s, dict) else s) or ""
+        if not aid:
+            return ""
+        try:
+            con = sqlite3.connect(str(ROOT / "data" / "agent.db"))
+            try:
+                row = con.execute("SELECT pd_notes FROM assets WHERE asset_id=?", (str(aid),)).fetchone()
+            finally:
+                con.close()
+        except Exception:
+            return ""
+        pdn = (row[0] or "").strip() if row and row[0] else ""
+        # drop pipeline markers; keep the human story
+        for _mk in ("[BRANDING]", "[EXCLUDE]"):
+            pdn = pdn.replace(_mk, "")
+        return pdn.strip()
     try:
         from google import genai as _g
         from google.genai import types as _gt
@@ -2669,6 +2694,13 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
         _cd = _clip_date(tag)
         if _cd:
             parts.append(f"[clip captured {_cd}]")
+        _pdn = _pd_notes_for(tag)
+        if _pdn:
+            parts.append(
+                "[PD가 알려준 이 클립의 실제 맥락 — AUTHORITATIVE]: 아래는 이 영상이 실제로 어떤 순간인지 "
+                "PD(주인)가 직접 알려준 진짜 이야기다. 화면만으로는 다 안 보여도 이 맥락을 캡션의 중심 이야기로 "
+                "살려라(프레임에 없는 감정·사연도 PD가 겪은 사실이면 존중; 단 화면과 정면으로 모순되는 물리적 동작은 "
+                "지어내지 마라). 촬영 메타/질문답변 파편은 무시:\n" + _pdn[:700])
         parts.append(f"Clip length ≈ {dur:.1f}s. Caption the action beats.")
         # A caption-fix re-render carries PD's specific caption direction via env — honor it
         # while still grounding to the real on-screen beats (roadmap A2 caption mode).
