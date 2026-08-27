@@ -1088,8 +1088,23 @@ def handle_board_message(client, event, *, db, do_veto):
     # progress instead of one silent gap between ack and final.
     def _progress(msg):
         _post(client, channel, reply_thread, msg)
+    # PD 2026-08-27: the agent parsed ONLY the current message, so in a back-and-forth thread it
+    # forgot what PD already said (which slot / date / direction) and kept re-asking "어느 영상?"
+    # — PD's #1 board frustration ("맥락을 파악 못하고 자꾸 어떤 영상이냐고 물어봐"). Feed the recent
+    # thread history so it resolves the slot/direction from the whole conversation and never
+    # re-asks for info already given.
+    agent_text = text
+    if thread_ts:
+        try:
+            hist = _thread_context(client, channel, thread_ts, exclude_ts=ts)
+            if hist:
+                agent_text = ("[이 스레드의 최근 대화 — PD가 이미 말한 슬롯·날짜·방향·맥락을 여기서 "
+                              "파악하라. 이미 준 정보(어느 슬롯/영상, 무슨 방향)는 절대 되묻지 마라]:\n"
+                              + hist + "\n\n[지금 PD의 새 메시지]:\n" + text)
+        except Exception as _e:
+            log.warning("board thread-context fetch failed: %s", _e)
     try:
-        res = _agent_answer(text, db=db, user=user, channel=channel,
+        res = _agent_answer(agent_text, db=db, user=user, channel=channel,
                             thread_ts=reply_thread, do_veto=do_veto,
                             progress_cb=_progress)
     except Exception as e:
@@ -1120,6 +1135,30 @@ def _post(client, channel, thread_ts, text):
 
 def _is_bot_msg(m: dict) -> bool:
     return bool(m.get("bot_id")) or m.get("subtype") == "bot_message"
+
+
+def _thread_context(client, channel: str, thread_ts: str, *, exclude_ts: str = "",
+                    limit: int = 14) -> str:
+    """Recent PD↔bot turns in this thread, oldest→newest, so the intent parser sees what PD
+    already said (slot/date/direction) and doesn't re-ask. The bot's own long progress/receipt
+    lines are noise for intent — keep PD's turns in full and trim the bot's."""
+    try:
+        r = client.conversations_replies(channel=channel, ts=thread_ts, limit=limit)
+        msgs = r.get("messages", []) or []
+    except Exception:
+        return ""
+    lines = []
+    for m in msgs[-limit:]:
+        if m.get("ts") == exclude_ts:
+            continue
+        t = (m.get("text") or "").strip().replace("\n", " ")
+        if not t or t.startswith("👀 받았어요"):
+            continue
+        if _is_bot_msg(m):
+            lines.append(f"봇: {t[:160]}")
+        else:
+            lines.append(f"PD: {t[:500]}")
+    return "\n".join(lines[-12:])
 
 
 def resume_unanswered(client, *, channel: str, db, do_veto) -> None:
