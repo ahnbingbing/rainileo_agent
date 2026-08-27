@@ -58,6 +58,17 @@ def recaption_slot(target: dt.date, lane: str, slot: str, progress_cb=None) -> d
     con.execute("UPDATE cards SET state='approved' WHERE card_id=?", (card_id,))
     con.commit(); con.close()
 
+    # ⚠️ CAPTION-PRESERVE MUST NOT RE-RENDER AV. render_card(use_brain=False) re-runs the WHOLE
+    # pipeline; for real_footage that's cheap (re-trim the same clip + re-ground captions, no
+    # Seedance), but for ai_vtuber it REGENERATES the GPT character stills AND calls Seedance i2v
+    # (~$50) — so "캡션만 고쳐" spent $50 and re-rolled the characters (PD 2026-08-27, "왜 캐릭터를
+    # 생산해 / seedance 왜 호출해"). The AV lane must instead REUSE the already-rendered cuts and
+    # only refresh + re-burn the captions.
+    if lane == "ai_vtuber":
+        summary = _recaption_av_preserve(card_id, concept, out_target=target, slot=slot,
+                                         progress_cb=progress_cb)
+        summary["clips_preserved"] = n_clips
+        return summary
     if progress_cb:
         progress_cb(f":art: 캡션 보존 재렌더 — 원본 {n_clips}개 클립 그대로, 캡션만 재생성")
     out = render_card(card_id, use_brain=False, concept=concept, progress_cb=progress_cb)
@@ -66,6 +77,53 @@ def recaption_slot(target: dt.date, lane: str, slot: str, progress_cb=None) -> d
     summary = reupload_episode(card_id, str(out))
     summary["mode"] = "caption_preserve"
     summary["clips_preserved"] = n_clips
+    return summary
+
+
+def _recaption_av_preserve(card_id: str, concept: dict, *, out_target, slot, progress_cb=None) -> dict:
+    """AV caption-preserve: reuse the ALREADY-rendered i2v cuts, refresh only the captions, and
+    re-burn — NEVER regen stills or call Seedance. Fails fast (routes to CLI/rebuild) if the
+    rendered cuts are gone, rather than falling through to an expensive render."""
+    import glob, os, subprocess
+    from scripts.reupload_episode import reupload_episode
+    from agents.writer_director import run_caption_agent, run_caption_polisher
+    # 1) the workdir that actually HAS the rendered cuts (AV render retries leave empty dirs;
+    #    picking the newest-by-name would grab an empty one — pick the one with the most cuts).
+    cands = [(w, len(glob.glob(os.path.join(w, "animated", "*.mp4"))))
+             for w in glob.glob(str(ROOT / "data" / "tmp" / f"cameraman_{card_id[:8]}_*"))]
+    cands = [(w, n) for w, n in cands if n > 0]
+    if not cands:
+        raise SystemExit(f"AV caption-preserve: no rendered cuts found for {card_id[:8]} — "
+                         f"footage was cleaned; use full rebuild or a CLI recaption.")
+    wd = Path(max(cands, key=lambda x: x[1])[0])
+    tags = sorted(Path(p).stem for p in glob.glob(str(wd / "animated" / "*.mp4")))
+    if progress_cb:
+        progress_cb(f":art: AV 캡션 보존 — 렌더된 {len(tags)}컷 그대로, 캡션만 재생성 (Seedance 호출 없음)")
+    # 2) refresh captions via the caption agent (+ any PD direction), on the SAME concept — no render.
+    c = dict(concept)
+    _dir = os.getenv("PD_RERENDER_DIRECTIVE", "").strip()
+    if _dir:
+        c["reviewer_feedback"] = _dir  # surfaced to the caption agent / polisher
+    captioned = run_caption_agent([c], progress_cb=progress_cb)
+    polished = run_caption_polisher(captioned, progress_cb=progress_cb) or captioned
+    new_cuts = (polished[0] if polished else c).get("cuts") or []
+    # map refreshed captions to the existing cut files IN ORDER (robust to tag naming drift)
+    caps: dict = {}
+    for tag, cut in zip(tags, new_cuts):
+        caps[tag] = {"scenes": cut.get("captions") or []}
+    if not caps:
+        raise SystemExit("AV caption-preserve: caption agent produced no captions — aborting (no render).")
+    cp = wd / "recap_slot_caps.json"
+    cp.write_text(json.dumps(caps, ensure_ascii=False, indent=2), encoding="utf-8")
+    out = ROOT / "data" / "output" / "episodes" / f"episode_recap_slot_{card_id[:8]}.mp4"
+    # 3) re-burn onto the existing cuts + assemble — ffmpeg only, no Seedance
+    subprocess.run([str(ROOT / ".venv" / "bin" / "python"), "-m", "scripts.recaption_finish",
+                    "--workdir", str(wd), "--captions", str(cp), "--out", str(out)],
+                   check=True, cwd=str(ROOT))
+    if progress_cb:
+        progress_cb(f":arrow_up: 재업로드 → {slot} 슬롯 (영상 그대로, 캡션만)")
+    summary = reupload_episode(card_id, str(out))
+    summary["mode"] = "caption_preserve_av"
     return summary
 
 
