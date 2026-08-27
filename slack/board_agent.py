@@ -1093,16 +1093,21 @@ def handle_board_message(client, event, *, db, do_veto):
     # — PD's #1 board frustration ("맥락을 파악 못하고 자꾸 어떤 영상이냐고 물어봐"). Feed the recent
     # thread history so it resolves the slot/direction from the whole conversation and never
     # re-asks for info already given.
-    agent_text = text
+    _mem = []
+    try:
+        _ch = _channel_recent(client, channel, exclude_ts=ts)
+        if _ch:
+            _mem.append("[이 채널의 최근 대화 (스레드 넘어선 흐름) — 진행 중인 맥락을 여기서 이어가라]:\n" + _ch)
+    except Exception as _e:
+        log.warning("board channel-recent fetch failed: %s", _e)
     if thread_ts:
         try:
-            hist = _thread_context(client, channel, thread_ts, exclude_ts=ts)
-            if hist:
-                agent_text = ("[이 스레드의 최근 대화 — PD가 이미 말한 슬롯·날짜·방향·맥락을 여기서 "
-                              "파악하라. 이미 준 정보(어느 슬롯/영상, 무슨 방향)는 절대 되묻지 마라]:\n"
-                              + hist + "\n\n[지금 PD의 새 메시지]:\n" + text)
+            _th = _thread_context(client, channel, thread_ts, exclude_ts=ts)
+            if _th:
+                _mem.append("[지금 이 스레드의 대화 — PD가 이미 말한 슬롯·날짜·방향은 절대 되묻지 마라]:\n" + _th)
         except Exception as _e:
             log.warning("board thread-context fetch failed: %s", _e)
+    agent_text = ("\n\n".join(_mem) + "\n\n[지금 PD의 새 메시지]:\n" + text) if _mem else text
     try:
         res = _agent_answer(agent_text, db=db, user=user, channel=channel,
                             thread_ts=reply_thread, do_veto=do_veto,
@@ -1137,28 +1142,46 @@ def _is_bot_msg(m: dict) -> bool:
     return bool(m.get("bot_id")) or m.get("subtype") == "bot_message"
 
 
-def _thread_context(client, channel: str, thread_ts: str, *, exclude_ts: str = "",
-                    limit: int = 14) -> str:
-    """Recent PD↔bot turns in this thread, oldest→newest, so the intent parser sees what PD
-    already said (slot/date/direction) and doesn't re-ask. The bot's own long progress/receipt
-    lines are noise for intent — keep PD's turns in full and trim the bot's."""
-    try:
-        r = client.conversations_replies(channel=channel, ts=thread_ts, limit=limit)
-        msgs = r.get("messages", []) or []
-    except Exception:
-        return ""
-    lines = []
-    for m in msgs[-limit:]:
+def _fmt_turns(msgs: list, *, exclude_ts: str = "", pd_cap: int = 500, bot_cap: int = 160) -> list:
+    """Format Slack messages (oldest→newest) into 'PD:/봇:' lines. The bot's own long
+    receipt/progress lines are noise for intent — keep PD's turns full, trim the bot's."""
+    out = []
+    for m in msgs:
         if m.get("ts") == exclude_ts:
             continue
         t = (m.get("text") or "").strip().replace("\n", " ")
         if not t or t.startswith("👀 받았어요"):
             continue
         if _is_bot_msg(m):
-            lines.append(f"봇: {t[:160]}")
+            out.append(f"봇: {t[:bot_cap]}")
         else:
-            lines.append(f"PD: {t[:500]}")
-    return "\n".join(lines[-12:])
+            out.append(f"PD: {t[:pd_cap]}")
+    return out
+
+
+def _thread_context(client, channel: str, thread_ts: str, *, exclude_ts: str = "",
+                    limit: int = 14) -> str:
+    """Recent PD↔bot turns in THIS thread, so the parser sees what PD already said in the
+    back-and-forth (slot/date/direction) and doesn't re-ask."""
+    try:
+        msgs = (client.conversations_replies(channel=channel, ts=thread_ts, limit=limit)
+                .get("messages", []) or [])
+    except Exception:
+        return ""
+    return "\n".join(_fmt_turns(msgs[-limit:], exclude_ts=exclude_ts)[-12:])
+
+
+def _channel_recent(client, channel: str, *, exclude_ts: str = "", limit: int = 16) -> str:
+    """Recent CHANNEL turns across threads — the bot's short-term conversational memory, so a
+    new message doesn't start amnesiac (PD 2026-08-27: '거의 메모리가 없는 느낌'). Complements the
+    durable progress_log (big-picture work memory) and the in-thread context."""
+    try:
+        msgs = (client.conversations_history(channel=channel, limit=limit)
+                .get("messages", []) or [])
+    except Exception:
+        return ""
+    msgs = list(reversed(msgs))  # API returns newest-first → oldest→newest
+    return "\n".join(_fmt_turns(msgs, exclude_ts=exclude_ts, pd_cap=280)[-14:])
 
 
 def resume_unanswered(client, *, channel: str, db, do_veto) -> None:
