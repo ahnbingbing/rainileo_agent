@@ -707,6 +707,31 @@ def _av_role_swap_hit(concept: dict) -> "str | None":
     return m.group(0) if m else None
 
 
+# PD 2026-08-31: AV concepts keep hiding behind a "fake device/AI observes-and-analyzes the pets"
+# meta-framing (관찰카메라·시뮬레이터·분석 리포트·프로그램 v1.0) — a UI narrates while the pets just
+# coexist doing separate things, so nothing actually HAPPENS and there is NO comedic kick ("이게 뭐야,
+# 돈만 쓰고, kick이 없잖아"). It reads as filler and Seedance renders the fake overlays awkwardly. Detect
+# the gimmick at the CONCEPT level and forbid it — the humor must come from a real event, not a popup.
+_AV_KICKLESS_META_RX = re.compile(
+    r"관찰\s*(?:카메라|일지)|관측\s*카메라|CCTV|"
+    r"시뮬레이(?:터|션)|"
+    r"분석\s*(?:카메라|리포트|프로그램|시스템|모드|중|일지)|"
+    r"실험\s*(?:실|카메라|리포트)|"
+    r"(?:AI|인공지능)\s*(?:카메라|관찰|분석|리포트)|"
+    r"(?:프로그램|시스템)\s*v\s*\d"
+)
+
+
+def _av_kickless_meta_hit(concept: dict) -> "str | None":
+    """The matched phrase if this AV concept is built on a 'fake device/AI observes/analyzes/
+    simulates the pets' meta-framing — a gimmick that reliably has NO comedic kick (the pets just
+    coexist while a UI narrates). Scans the CONCEPT frame (theme/title/narrative), NOT per-cut
+    captions (a witty 'ERROR 404' caption line is fine; the concept BEING a fake analyzer is not)."""
+    blob = "\n".join(str(concept.get(k) or "") for k in ("theme", "title", "narrative_oneliner"))
+    m = _AV_KICKLESS_META_RX.search(blob)
+    return m.group(0) if m else None
+
+
 def propose_concepts(target: dt.date, context: dict, style_filter: str | None = None,
                      progress_cb: ProgressCb = None) -> list[dict]:
     """Generate 1-2 video concepts.
@@ -869,6 +894,32 @@ def propose_concepts(target: dt.date, context: dict, style_filter: str | None = 
                             good = [_backfill_av_set_anchor(c, style_filter) for c in _rsg]
                 except Exception as e:
                     log.warning("AV role-swap gate failed: %s", e)
+            # PD 2026-08-31: forbid the kick-less "fake system observes/analyzes the pets" framing.
+            # PD: "이게 뭐야, 돈만 쓰고, 재미도 없고, kick이 없잖아" (9/2 관찰카메라). AV_KICKLESS_META_GATE=0 reverts.
+            if (good and style_filter == "ai_vtuber"
+                    and os.getenv("AV_KICKLESS_META_GATE", "1") == "1"):
+                try:
+                    _km = [(c.get("title"), _av_kickless_meta_hit(c)) for c in good]
+                    _km = [(t, h) for t, h in _km if h]
+                    if _km:
+                        if progress_cb:
+                            progress_cb(f":no_entry: AV kick-부재 메타프레이밍 금지 — {len(_km)}건 "
+                                        f"(예: '{_km[0][1]}') → 재작성")
+                        context["arc_directive"] = (
+                            (context.get("arc_directive") or "")
+                            + "\n\n[kick 필수·가짜 관찰시스템 금지] 위 컨셉은 '관찰카메라/시뮬레이터/분석 "
+                            "리포트' 같은 가짜 장치가 펫을 관찰·분석하는 틀이다 — 장치가 코멘트만 하고 정작 "
+                            "아무 사건도 안 일어나 kick(빵 터지는 순간)이 없다. 이런 메타프레이밍은 절대 쓰지 "
+                            "마라. 대신 레오·랴니 사이에 실제로 '벌어지는 한 방'(구체적 사건·반전·payoff — 누가 "
+                            "무엇을 훔치고/덮치고/골탕먹이고, 예상 밖 반응이 터지는)이 중심인 컨셉으로 다시 짜라. "
+                            "제목만 봐도 '무슨 일이 터지는지' 보여야 한다.")
+                        _rk = propose_concepts_v2(
+                            target, context, style_filter=style_filter, progress_cb=progress_cb) or []
+                        _rkg = [c for c in _rk if (c.get("cuts") or [])]
+                        if _rkg:
+                            good = [_backfill_av_set_anchor(c, style_filter) for c in _rkg]
+                except Exception as e:
+                    log.warning("AV kickless-meta gate failed: %s", e)
             # PD 2026-08-02: deterministic AV concept-dedup (mirrors the RF gate at
             # _propose_realfootage_singlepass). exclude_concepts is injected only as an
             # LLM-advisory "diverge from these" note for AV — and the Writer re-treaded it
@@ -4527,6 +4578,33 @@ def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.dat
                             f"stub 예약 거부(슬롯 비움 > stub 공개). 재료 부족 의심 — 재빌드 필요.")
             return None
     publish_at = publish_at_iso or _compute_publish_at(target)
+    # PD 2026-08-31: SLOT-COLLISION guard. A slot (publish_at) holds exactly ONE public video.
+    # This card's OWN previous video is handled by the replace-not-add veto below — but a DIFFERENT
+    # card scheduling onto an already-filled slot silently double-books it (9/2 18:00 RF ended up with
+    # TWO: an off-cycle production over-scheduled onto an already-filled slot ~28min after the first).
+    # The launch batch's SKIP_FILLED front-runs this at production time, yet off-cycle runs (self-heal /
+    # board / manual) can still collide because they don't re-read the live slot at the moment of upload.
+    # Enforce it HERE, where all scheduling funnels: if another uploaded card already owns this
+    # publish_at, keep the incumbent and SKIP this upload (loud log, never silent) rather than clobber a
+    # live slot. A genuine replacement goes through the SAME card (prev_vid veto below) or vetoes the
+    # incumbent first. SLOT_COLLISION_GUARD=0 reverts.
+    if os.getenv("SLOT_COLLISION_GUARD", "1") == "1":
+        try:
+            occ = con.execute(
+                "SELECT card_id, youtube_video_id FROM cards WHERE youtube_publish_at=? "
+                "AND uploaded=1 AND card_id<>? AND youtube_video_id IS NOT NULL "
+                "ORDER BY updated_at DESC LIMIT 1", (publish_at, card_id)).fetchone()
+        except Exception:
+            occ = None
+        if occ:
+            log.error("[SLOT-COLLISION] publish_at=%s already filled by card=%s vid=%s — SKIP "
+                      "scheduling card=%s (out=%s) to avoid double-book", publish_at,
+                      occ["card_id"][:8], occ["youtube_video_id"], card_id[:8], out_path)
+            if progress_cb:
+                progress_cb(f":no_entry: 슬롯 충돌 — {publish_at}는 이미 `{occ['youtube_video_id']}`"
+                            f"(card {occ['card_id'][:8]})가 차지 중. 이 업로드 건너뜀(이중예약 방지). "
+                            f"교체하려면 기존 예약본을 먼저 veto하라.")
+            return None
     try:
         from youtube.upload import upload_short
         if progress_cb:

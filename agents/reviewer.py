@@ -140,6 +140,13 @@ looks. These are CAPS (a ceiling), not soft notes:
   colliding, not from trading places. If the theme/captions frame the episode as a role or
   routine swap (e.g. "레오가 랴니 루틴 체험 / 서로 바꿔보기"), flag "역할스왑 재탕" and cap ≤6
   (verdict ≤ 수정 필요).
+- **kick 부재 / 가짜 관찰-분석 프레이밍 (ai_vtuber)**: an AV must have a real comedic KICK — a
+  concrete event/turn/payoff between the pets. Concepts framed as a fake device/AI observing or
+  analyzing the pets (관찰카메라·시뮬레이터·분석 리포트·프로그램 v1.0) where the pets merely coexist
+  doing separate things while a UI narrates — and especially those whose ending is an anti-payoff
+  like "분석 실패/이해 불가" — have NO kick and read as filler. If the episode is this kind of
+  observe/analyze meta-framing with no actual event landing, flag "kick 부재 — 가짜 관찰 프레이밍"
+  and cap ≤6 (verdict ≤ 수정 필요).
 - **배경/공간 드리프트 (ai_vtuber, single-space concepts)**: a single-space concept's room
   must stay the SAME across cuts. If the background unintentionally changes between cuts
   — especially the closer suddenly in a different room — flag "배경 드리프트", cap ≤6.
