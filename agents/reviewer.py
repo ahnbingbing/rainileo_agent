@@ -116,9 +116,16 @@ score — deduct first, and a violation forces the score DOWN regardless of how 
 looks. These are CAPS (a ceiling), not soft notes:
 - **시점 미표기 (real_footage)**: if the episode mixes time periods (baby-Leo / years-ago
   clips alongside present ones) and the captions do NOT state the timeframe
-  ("○년 전" / "아기 땐" / "지금은"), that reads as confusing/disconnected — flag "시점
-  미표기" and the score MUST NOT exceed 6 (verdict ≤ 수정 필요). Seamlessly connecting
-  past+present with NO time anchor is a defect, never "smooth editing".
+  ("지난 가을" / "몇 개월 전" / "○년 전" / "아기 땐" / "지금은"), that reads as confusing/
+  disconnected — flag "시점 미표기" and the score MUST NOT exceed 6 (verdict ≤ 수정 필요).
+  Seamlessly connecting past+present with NO time anchor is a defect, never "smooth editing".
+- **잘못된 시점 (시점 과장, real_footage)**: the timeframe stated must match the clip's REAL
+  age. Leo joined the house last autumn (2025-09), so ANY baby-Leo clip is a few MONTHS old
+  — a caption calling it "몇 년 전 / N년 전" is a factual error; it must read "지난 가을/지난
+  겨울/몇 개월 전". Likewise a months-old clip framed as present-day ("오늘/지금") when it's
+  clearly a past baby-Leo moment misleads. Flag "잘못된 시점" and cap ≤6 (verdict ≤ 수정 필요).
+  (Only when the frame clearly shows the young/baby pet — give an ambiguous adult clip the
+  benefit of the doubt.)
 - **era-mix 인과성 없음 (real_footage)**: a time anchor is necessary but NOT sufficient.
   Even WITH "○년 전"/"지금은" captions, if two different-era clips are just stitched
   together with no causal/story link — e.g. a recent 먹방 cut followed by an unrelated
@@ -127,6 +134,12 @@ looks. These are CAPS (a ceiling), not soft notes:
   If the cuts read as unrelated clips from different times bolted together, flag
   "인과성 없는 era-mix — 무관 클립 나열" and cap ≤6 (verdict ≤ 수정 필요), even if the
   timeframe is captioned.
+- **역할/루틴 스왑 premise (ai_vtuber)**: the concept must NOT be built on "the two pets
+  swap each other's roles/routines" (역할 반전·루틴 체인지·상대 흉내내기·입장 바꾸기). This
+  premise recurs and reads stale — the humor should come from each pet's REAL personality
+  colliding, not from trading places. If the theme/captions frame the episode as a role or
+  routine swap (e.g. "레오가 랴니 루틴 체험 / 서로 바꿔보기"), flag "역할스왑 재탕" and cap ≤6
+  (verdict ≤ 수정 필요).
 - **배경/공간 드리프트 (ai_vtuber, single-space concepts)**: a single-space concept's room
   must stay the SAME across cuts. If the background unintentionally changes between cuts
   — especially the closer suddenly in a different room — flag "배경 드리프트", cap ≤6.

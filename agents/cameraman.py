@@ -2694,6 +2694,25 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
         _cd = _clip_date(tag)
         if _cd:
             parts.append(f"[clip captured {_cd}]")
+            # Memory-lane framing from the REAL capture date: months-old footage is NOT "오늘".
+            # Leo joined the house 2025-09, so baby-Leo clips are months ago (지난 가을/겨울),
+            # never "몇 년 전". Compute the canonical timeframe + life-era and hand it to the VLM
+            # so the caption's "when" matches the footage instead of defaulting to present-day.
+            try:
+                import agents.canon as _canon_tf
+                _tf = _canon_tf.timeframe_phrase(_cd)
+                _em = _canon_tf._elapsed_months(_cd) or 0
+                if _tf and _em >= 3:  # only reframe genuinely-past footage; leave fresh clips present-day
+                    _eras = [e for e in (_canon_tf.age_era_at("leo", _cd),
+                                         _canon_tf.age_era_at("ryani", _cd)) if e]
+                    _era_hint = f" 이 시기 {'·'.join(sorted(set(_eras)))} 시절." if _eras else ""
+                    parts.append(
+                        f"[시점 — 반드시 지킬 것]: 이 클립은 '{_tf}' 촬영본이다(현재가 아님).{_era_hint} "
+                        "'오늘/지금' 같은 현재형으로 쓰지 말고 '{tf}, 아기 레오' 처럼 memory-lane 시점으로 "
+                        "프레이밍하라. 레오는 작년에 우리집에 왔으니 '몇 년 전'은 절대 금지 — 몇 달 전이면 "
+                        "'지난 가을/지난 겨울/몇 개월 전'으로 적어라.".replace("{tf}", _tf))
+            except Exception:
+                pass
         _pdn = _pd_notes_for(tag)
         if _pdn:
             parts.append(
@@ -3201,6 +3220,10 @@ def _rf_existence_caption_gate(work_dir: Path, manifests: dict,
             for k in ("ko", "en"):
                 orig = sc.get(k) or ""
                 fixed = _canon.correct_preleo_pet_names_text(orig, cdate)
+                if k == "ko":
+                    # date-aware memory-lane timeframe: baby-Leo footage is months, not years,
+                    # old — snap a "몇 년 전" over-claim to "지난 가을/겨울" from the real date.
+                    fixed = _canon.correct_timeframe_text(fixed, cdate)
                 if fixed != orig:
                     sc[k] = fixed
                     n_fixed += 1

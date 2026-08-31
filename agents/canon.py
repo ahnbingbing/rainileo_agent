@@ -214,6 +214,71 @@ def _scrub_geuhae(text: str) -> str:
     return _GEUHAE_KO.sub(lambda m: "몇 년 전" + (m.group(1) or ""), text)
 
 
+# ── Capture-date-aware memory-lane timeframe (PD 2026-08-31) ──────────────────
+# A memory-lane caption must state HOW LONG AGO from the clip's REAL capture date — not a
+# blanket "몇 년 전". Leo came to the house 2025-09, so every baby-Leo clip is < ~1 year old;
+# calling it "몇 년 전" (years ago) is a lie — it's "지난 가을/겨울" or "몇 개월 전". The dateless
+# _scrub_geuhae hardcodes "몇 년 전" and over-claims for recent footage, so when the clip's
+# capture date IS known, compute the phrase from elapsed months instead. The same math still
+# reads "몇 년 전" for genuinely old footage (Ryani's 2016 clips), so it's one rule for both
+# pets: trust the date, not a fixed string. The VLM captioner is guided to WRITE the right
+# framing from the date; this is the deterministic backstop that fixes any "년" over-claim.
+_SEASON_KO = {12: "겨울", 1: "겨울", 2: "겨울", 3: "겨울", 4: "봄", 5: "봄",
+              6: "여름", 7: "여름", 8: "여름", 9: "가을", 10: "가을", 11: "가을"}
+_YEARS_AGO_KO = _re_canon.compile(r"(?:몇|여러|\d+)\s*년\s*전")
+
+
+def _elapsed_months(captured_iso: "str | None", now=None):
+    import datetime as _dt
+    try:
+        shot = _dt.date.fromisoformat(str(captured_iso)[:10])
+    except Exception:
+        return None
+    return ((now or _dt.date.today()) - shot).days / 30.44
+
+
+def timeframe_phrase(captured_iso: "str | None", now=None) -> str:
+    """Canonical '얼마 전' phrase for a memory-lane caption, from the clip's capture date.
+    < ~14mo → '지난 <계절>' (last autumn/winter…); 14–30mo → '작년 <계절>'; ≥30mo → 'N년 전'.
+    '' on missing/future date (never invent a timeframe). Feed as a WRITING hint to the VLM."""
+    import datetime as _dt
+    m = _elapsed_months(captured_iso, now)
+    if m is None or m < 0:
+        return ""
+    season = _SEASON_KO.get(_dt.date.fromisoformat(str(captured_iso)[:10]).month, "")
+    if m < 3:
+        return "얼마 전"
+    if m < 14:
+        return f"지난 {season}" if season else "몇 개월 전"
+    if m < 30:
+        return f"작년 {season}" if season else "1년 전"
+    return f"{round(m / 12)}년 전"
+
+
+def correct_timeframe_text(text: str, captured_iso: "str | None") -> str:
+    """Snap an over-claimed memory-lane timeframe in KO caption text to the clip's real age.
+    On recent footage (< ~14mo) a "몇 년 전 / N년 전 / 그해" becomes "지난 <계절>" (or "몇 개월 전"
+    if the season is unclear); on genuinely old footage it's left as "몇 년 전". No/undated
+    clip → falls back to the dateless _scrub_geuhae. Idempotent. Call at the burn chokepoint
+    with the cut's capture date (KO only — the timeframe idioms are Korean)."""
+    if not text:
+        return text
+    import datetime as _dt
+    m = _elapsed_months(captured_iso)
+    if m is None or m < 0:
+        return _scrub_geuhae(text)
+    season = _SEASON_KO.get(_dt.date.fromisoformat(str(captured_iso)[:10]).month, "")
+    recent = m < 14
+    ago = (f"지난 {season}" if season else "몇 개월 전") if recent else "몇 년 전"
+    if "그" in text:
+        text = _GEUHAE_KO.sub(
+            lambda mm: (f"지난 {mm.group(1).strip()}" if (recent and mm.group(1))
+                        else f"몇 년 전{mm.group(1) or ''}" if mm.group(1) else ago), text)
+    if recent:
+        text = _YEARS_AGO_KO.sub(ago, text)
+    return text
+
+
 # ── Temporally-impossible pet-name corrector (PD 2026-08-01, RF0800) ───
 # A caption over a clip that PREDATES a pet's existence must not name that pet. The RF
 # caption VLM reads only the frame and is told to name our pets — so a café cat in a 2024

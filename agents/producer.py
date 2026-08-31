@@ -678,6 +678,35 @@ def _backfill_av_set_anchor(concept: dict, style_filter: str | None) -> dict:
     return concept
 
 
+# PD 2026-08-31: the two-pet cast makes "서로의 역할/루틴을 바꿔보기" (role reversal / routine
+# swap) an easy structure the AV Writer keeps re-landing on (8/22 '역할 반전 도전', 9/1 '루틴
+# 체인지'). The content-dedup gate misses it because differently-worded swap episodes share no
+# content NOUNS — so detect the PREMISE itself and forbid it. One rule, applied wherever a
+# concept is proposed for the AV lane.
+_AV_ROLESWAP_RX = re.compile(
+    r"역할\s*(?:바꾸|반전|체인지|교체|교환|스왑|뒤바)|"
+    r"루틴\s*(?:바꾸|반전|체인지|체험|교체|교환|스왑)|"
+    r"서로\s*(?:의)?\s*(?:루틴|역할|습관|자리|입장)\s*(?:을|를)?\s*(?:바꾸|체험|교체|스왑|흉내)|"
+    r"(?:레오|랴니)\s*루틴\s*체험|"
+    r"입장\s*바꿔|처지\s*바꿔|서로\s*바꿔"
+)
+
+
+def _av_role_swap_hit(concept: dict) -> "str | None":
+    """The matched role/routine-swap phrase if this AV concept is built on the (overused)
+    'two pets swap roles/routines' premise, else None. Scans theme, title, and each cut's
+    action/captions — the premise surfaces in wording even when the content nouns differ
+    episode-to-episode (which is exactly why the content-dedup gate can't catch it)."""
+    blobs = [str(concept.get("theme") or ""), str(concept.get("title") or "")]
+    for c in (concept.get("cuts") or []):
+        blobs.append(str(c.get("action") or ""))
+        cap = c.get("captions")
+        if isinstance(cap, list):
+            blobs += [(s.get("ko", "") if isinstance(s, dict) else str(s)) for s in cap]
+    m = _AV_ROLESWAP_RX.search("\n".join(blobs))
+    return m.group(0) if m else None
+
+
 def propose_concepts(target: dt.date, context: dict, style_filter: str | None = None,
                      progress_cb: ProgressCb = None) -> list[dict]:
     """Generate 1-2 video concepts.
@@ -812,6 +841,34 @@ def propose_concepts(target: dt.date, context: dict, style_filter: str | None = 
             if concepts and not good and progress_cb:
                 progress_cb(":x: 재시도 후에도 컷 없는 컨셉만 — LLM 불안정, 슬롯 비움(churn 방지)")
             good = [_backfill_av_set_anchor(c, style_filter) for c in good]
+            # PD 2026-08-31: forbid the recurring role/routine-SWAP premise (AV only). PD:
+            # "왜 자꾸 역할 바꾸기를 하냐 — 그만, 못하게 해." The content-dedup gate below can't see
+            # it (swap episodes share no content nouns), so detect the premise and re-propose
+            # ONCE with it named as forbidden. AV_ROLESWAP_GATE=0 reverts.
+            if (good and style_filter == "ai_vtuber"
+                    and os.getenv("AV_ROLESWAP_GATE", "1") == "1"):
+                try:
+                    _sw = [(c.get("title"), _av_role_swap_hit(c)) for c in good]
+                    _sw = [(t, h) for t, h in _sw if h]
+                    if _sw:
+                        if progress_cb:
+                            progress_cb(f":no_entry: AV 역할스왑 금지 게이트 — {len(_sw)}건 "
+                                        f"(예: '{_sw[0][1]}') → 재작성")
+                        context["arc_directive"] = (
+                            (context.get("arc_directive") or "")
+                            + "\n\n[역할스왑 금지] 위 컨셉은 두 펫이 '서로의 역할/루틴을 바꿔보는' "
+                            "구조다(역할 반전·루틴 체인지·상대 흉내내기·입장 바꾸기). 이 premise는 "
+                            "이미 여러 번 나와 식상하다 — 절대 다시 쓰지 마라. 레오와 랴니가 '각자의 "
+                            "진짜 성격·습관' 그대로 부딪히거나 협력하는 새 사건으로 다시 짜라. 역할을 "
+                            "바꾸지 말고, 둘의 '차이 그 자체'가 웃긴 상황을 만들어라.")
+                        _rs = propose_concepts_v2(
+                            target, context, style_filter=style_filter,
+                            progress_cb=progress_cb) or []
+                        _rsg = [c for c in _rs if (c.get("cuts") or [])]
+                        if _rsg:
+                            good = [_backfill_av_set_anchor(c, style_filter) for c in _rsg]
+                except Exception as e:
+                    log.warning("AV role-swap gate failed: %s", e)
             # PD 2026-08-02: deterministic AV concept-dedup (mirrors the RF gate at
             # _propose_realfootage_singlepass). exclude_concepts is injected only as an
             # LLM-advisory "diverge from these" note for AV — and the Writer re-treaded it

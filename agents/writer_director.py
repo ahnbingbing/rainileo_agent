@@ -1044,7 +1044,18 @@ def _stamp_years_ago(concepts: list[dict]) -> None:
                     # PD 2026-08-14: WHOLE years only (0 for <1yr) — a fractional 0.6 leaked into
                     # captions as "0.6년 전". Sub-year age is worded via time_ago_phrase.
                     cut["years_ago"] = int(_days // 365)
-                    cut["time_ago_phrase"] = _years_ago_phrase(_days)
+                    # Season-aware timeframe from the real capture date (single source of
+                    # truth = canon.timeframe_phrase): baby-Leo footage reads "지난 가을/겨울",
+                    # never "몇 년 전". Keep '' for fresh (<45d) clips; day-based fallback.
+                    if _days < 45:
+                        cut["time_ago_phrase"] = ""
+                    else:
+                        try:
+                            import agents.canon as _cn_tf
+                            cut["time_ago_phrase"] = (
+                                _cn_tf.timeframe_phrase(str(row[0])) or _years_ago_phrase(_days))
+                        except Exception:
+                            cut["time_ago_phrase"] = _years_ago_phrase(_days)
                     # PD 2026-06-30: stamp the subject's life-era at capture so a
                     # memory-lane opener leads with the endearing young era ("아기 레오")
                     # instead of generic season/weather. Deterministic from canon birth.
