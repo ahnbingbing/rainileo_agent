@@ -45,9 +45,27 @@
   ② `mv ~/Downloads/client_secret_*.json youtube/client_secret.json` → 저 부르면
   ③ 맥 옛 token.json 제거 → ④ `! python -m youtube.oauth` 재인증 → ⑤ 검증.
 
+## SHIPPED — PD 9/2 리뷰 (근본 2건 c2d65e2 + 슬롯 4건 정리)
+- **0800 RF 제목** 옥상→마당 (`KF8Gcazt49w` 메타데이터-only, 재렌더 X). ⚠️번인 캡션엔 '옥상 계단에'
+  잔존(PD가 제목만 지시) — 원하면 RF 재캡션.
+- **1800 RF 중복 2편 해결**: keeper=묘한평화협정 `cbiZSPO5u_Q`(재캡션='레오 펀치에 랴니 반응' 거짓 제거
+  →'랴니 쿨쿨파워엔 미동 불가', 제목도 '레오가 뭘 하든 쿨쿨—묘한 평화'로 교정) · 카시트 `4baRydG9SIc` veto.
+- **Durable A — 슬롯 충돌 가드** (`D_slotcollision`, 회고 §4.5). 근본: replace-not-add veto(bd12680)는
+  *한 카드의 자기 옛 영상*만 회수 — **다른 두 카드가 같은 publish_at에 이중예약**(오프사이클 과잉생산)은
+  못 막음. SKIP_FILLED는 생산시점만 보고 업로드 순간 재확인 안 함. Fix=`_auto_upload_episode` chokepoint서
+  다른 uploaded 카드가 슬롯 차지 중이면 incumbent 유지+**skip(loud)**. 이 가드=9/2 사고 정확 예방.
+  `SLOT_COLLISION_GUARD=0` revert.
+- **Durable B — AV kick-부재 게이트** (`A26`, 회고 §4.2). 근본: '관찰카메라/시뮬레이터/분석 리포트' 가짜
+  관찰-시스템 메타프레이밍은 장치가 코멘트만 하고 사건이 안 터져 kick 없음(9/2 관찰카메라='분석 실패'로 끝,
+  9/1 평화시뮬레이터도 동류). Fix=`producer._av_kickless_meta_hit`(concept-frame 감지)→'실제 벌어지는 한 방'
+  재작성 + writer_story kick 원칙 + Giri 캡('kick 부재'). `AV_KICKLESS_META_GATE=0` revert. 유닛테스트 통과.
+- **1230 AV 관찰카메라** `r1i7h7k-H_4`는 PD대로 **오늘 건 그대로**(게이트는 다음 배치 발효).
+- 9/2 라인업 최종 clean(슬롯당 1편, 카시트·옛묘한평화 gone) 확인.
+
 ## ★ NEXT
-- 다음 03:00 배치(9/2 생산)서 **durable 2건 첫 실전** 스팟체크: RF 아기 레오 캡션이 '지난 가을/겨울/
-  몇 개월 전'으로 나오는지(오늘/몇 년 전 X), AV 역할스왑 게이트가 발화하는지(과반려 X).
+- 다음 03:00 배치서 **durable 4건 첫 실전** 스팟체크: (8/31) RF 아기 레오 시점('지난 가을/겨울/몇 개월 전',
+  오늘/몇 년 전 X)·AV 역할스왑 게이트 / (9/2) 슬롯 충돌 가드 발화([SLOT-COLLISION] 로그, 이중예약 0)·
+  AV kick-부재 게이트(관찰/분석 컨셉 재작성, 과반려 X).
 - OAuth PD 2단계 후 이어서 마무리.
 - (선택) 21:00 RF '지난 봄'→'지난 겨울' 스냅 여부 PD 확정.
 
