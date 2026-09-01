@@ -46,8 +46,10 @@
   ③ 맥 옛 token.json 제거 → ④ `! python -m youtube.oauth` 재인증 → ⑤ 검증.
 
 ## SHIPPED — PD 9/2 리뷰 (근본 2건 c2d65e2 + 슬롯 4건 정리)
-- **0800 RF 제목** 옥상→마당 (`KF8Gcazt49w` 메타데이터-only, 재렌더 X). ⚠️번인 캡션엔 '옥상 계단에'
-  잔존(PD가 제목만 지시) — 원하면 RF 재캡션.
+- **0800 RF 옥상→마당 전체 재캡션** (`6i5-glkPzJc`, 옛 `KF8Gcazt49w` 교체). 처음엔 제목만 고쳤으나
+  PD "언제 옥상이야 다 마당이야 재캡션" → payload의 옥상 전량 스크럽 + '마당' 지시로 재캡션 →
+  캡션·제목·theme 전부 마당(옥상 0). 교훈: 잘못된 장소명은 제목만이 아니라 번인 캡션까지(footage가
+  그렇게 안 보이면 pd 지시로 전 필드 스크럽 후 재캡션).
 - **1800 RF 중복 2편 해결**: keeper=묘한평화협정 `cbiZSPO5u_Q`(재캡션='레오 펀치에 랴니 반응' 거짓 제거
   →'랴니 쿨쿨파워엔 미동 불가', 제목도 '레오가 뭘 하든 쿨쿨—묘한 평화'로 교정) · 카시트 `4baRydG9SIc` veto.
 - **Durable A — 슬롯 충돌 가드** (`D_slotcollision`, 회고 §4.5). 근본: replace-not-add veto(bd12680)는
@@ -60,7 +62,8 @@
   9/1 평화시뮬레이터도 동류). Fix=`producer._av_kickless_meta_hit`(concept-frame 감지)→'실제 벌어지는 한 방'
   재작성 + writer_story kick 원칙 + Giri 캡('kick 부재'). `AV_KICKLESS_META_GATE=0` revert. 유닛테스트 통과.
 - **1230 AV 관찰카메라** `r1i7h7k-H_4`는 PD대로 **오늘 건 그대로**(게이트는 다음 배치 발효).
-- 9/2 라인업 최종 clean(슬롯당 1편, 카시트·옛묘한평화 gone) 확인.
+- **9/2 최종 라인업**(슬롯당 1편, 카시트·옛묘한평화·옛0800 gone 확인): 08:00 RF `6i5-glkPzJc`(마당) ·
+  12:30 AV `r1i7h7k-H_4`(관찰카메라) · 18:00 RF `cbiZSPO5u_Q`(묘한평화) · 21:00 AV `PQGNAsYVSV8`.
 
 ## ★ NEXT
 - 다음 03:00 배치서 **durable 4건 첫 실전** 스팟체크: (8/31) RF 아기 레오 시점('지난 가을/겨울/몇 개월 전',
