@@ -3222,17 +3222,31 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
                     _adur[r[0]] = (float(r[1]) if r[1] and float(r[1]) > 0 else None,
                                    bool(r[2]))
             for c in concepts:
-                _got = 0.0
+                # SAME-CLIP COLLAPSE simulation (PD 2026-09-04): the render MERGES cuts that
+                # reuse one asset_id into a SINGLE cut, and that cut can't exceed the clip's real
+                # length. Crediting each same-clip cut its own request overcounts wildly — 5 cuts ×
+                # 4s on a 12.5s clip estimates 20s but collapses to a 12.5s body → gutted stub →
+                # empty slot (the #1 "too short" cause; face-leak was a misdiagnosis). Group cuts by
+                # asset and cap each asset's summed request at its clip duration, so a concept that
+                # only really has <floor of distinct footage is re-proposed BEFORE a wasted render.
+                _per_asset: dict = {}
                 for cut in (c.get("cuts") or []):
+                    _aid = cut.get("asset_id")
                     _req = float(cut.get("duration_seconds") or cut.get("trim_dur") or 4)
-                    _meta = _adur.get(cut.get("asset_id"))
+                    _meta = _adur.get(_aid)
                     _act, _human = _meta if _meta is not None else (None, False)
                     # NULL duration_sec used to be credited the full request (blind spot that
-                    # passed the 6.3s→43s clip). Probe the real length + backfill, so the floor
-                    # sees actual achievable seconds. Probe failure keeps the estimate.
+                    # passed the 6.3s→43s clip). Probe the real length + backfill (cache for
+                    # same-clip siblings). Probe failure keeps the estimate.
                     if _act is None:
-                        _act = _probe_clip_seconds(cut.get("asset_id"), _acon)
-                    _use = min(_req, _act) if _act is not None else _req
+                        _act = _probe_clip_seconds(_aid, _acon)
+                        if _aid:
+                            _adur[_aid] = (_act, _human)
+                    _e = _per_asset.setdefault(_aid or id(cut), [0.0, _act, _human])
+                    _e[0] += _req
+                _got = 0.0
+                for _sum_req, _act, _human in _per_asset.values():
+                    _use = min(_sum_req, _act) if _act is not None else _sum_req
                     if _human:
                         _use *= _human_disc
                     _got += _use
