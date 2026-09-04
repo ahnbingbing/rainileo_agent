@@ -28,6 +28,12 @@ LAUNCH_LEAD_DAYS=2
 */30 * * * *  $J -m scripts.ingest_register --import              >> $LOG/cron.ingest.log 2>&1
 
 # ── daily (KST) ──────────────────────────────────────────────────
+# PD 2026-09-04: keep clip duration_sec probed (ffprobe) so the RF long-clip / one-take filters
+# SEE real lengths — NULL durations blinded the pool (post-Leo usable 98→654 after the first
+# backfill). Ingest now probes NEW clips; this clears the remaining NULL backlog nightly, bounded
+# + recent-first (idempotent — only NULL/<=0). Runs before prune/batch. COALESCE in ingest_register
+# keeps a Mac NULL export from re-blinding it.
+0   1 * * *   $J -m scripts.backfill_durations --limit 400        >> $LOG/cron.backfill_dur.log 2>&1
 # PD 2026-08-21: prune render scratch BEFORE the 03:00 batch so a full disk never turns
 # renders into render_error (empty slots). Only touches regenerable scratch, never sources/episodes.
 50  2 * * *   bash /home/rianileo/rianileo-agent/scripts/prune_render_scratch.sh >> $LOG/cron.prune.log 2>&1
