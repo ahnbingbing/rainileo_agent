@@ -702,6 +702,12 @@ def launch_pipeline(target: dt.date, *,
     def _run_lane(lane: str, slots: list[str]) -> list[dict]:
         out = []
         for hhmm in slots:           # sequential within the lane
+            # Cooperative stop (PD 2026-09-04): a Slack "stop" halts the batch before the
+            # next slot renders (the in-flight one finishes). `go` clears it.
+            from agents.render_control import stop_requested
+            if stop_requested():
+                log.info("render STOP in effect — skipping remaining %s slots", lane)
+                break
             r = _slot_pipeline(lane, hhmm)
             if r:
                 out.append(r)

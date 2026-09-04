@@ -273,12 +273,23 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
         if any(l == "real_footage" for l, _ in want) else max_rounds
 
     for rnd in range(1, _rounds + 1):
+        # Cooperative stop (PD 2026-09-04): honor a Slack "stop" between rounds so a bad
+        # self-heal can be halted instead of grinding all its rounds. The in-flight render
+        # finishes; we just don't start the next round.
+        from agents.render_control import stop_requested, stop_reason
+        if stop_requested():
+            cap(f":octagonal_sign: [self-heal] STOP 요청 — 남은 라운드 중단"
+                f"{(' ('+stop_reason()+')') if stop_reason() else ''}. `go`로 재개.")
+            break
         pending = [(l, h) for (l, h) in want if (l, h) not in done and (l, h) not in terminal]
         if not pending:
             break
         cap(f":arrows_counterclockwise: [self-heal R{rnd}/{_rounds}] 대상 슬롯: "
             f"{', '.join(f'{h} {l}' for l, h in pending)}")
         for (lane, slot) in pending:
+            if stop_requested():
+                cap(":octagonal_sign: [self-heal] STOP — 남은 슬롯 중단. `go`로 재개.")
+                break
             buf: list[str] = []
             try:
                 # progress_cb → Slack workroom (cap) for humans; slot_log_cb → buf for

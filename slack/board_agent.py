@@ -1044,6 +1044,25 @@ def handle_board_message(client, event, *, db, do_veto):
         return
     low = text.lower().strip().strip("!. ")
 
+    # 0) STOP / GO — halt or resume renders IMMEDIATELY, before the (minute-long) LLM agent
+    #    loop and with NO confirmation (PD 2026-09-04). "stop" felt ignored precisely because
+    #    it used to fall into the slow agent path while a batch ground on; halting is safe and
+    #    reversible, so it takes effect NOW. Render loops honor the flag at their next cut/round.
+    _GO_WORDS = {"go", "고", "재개", "resume", "다시 시작", "다시시작"}
+    _STOP_WORDS = ("stop", "스톱", "멈춰", "멈춰줘", "멈춰라", "중단", "정지", "그만", "그만해")
+    if low in _GO_WORDS:
+        from agents.render_control import clear_stop
+        clear_stop()
+        _post(client, channel, thread_ts or ts, ":arrow_forward: 재개 — 렌더 STOP 해제했어요.")
+        return
+    if low in _STOP_WORDS or (len(low) <= 14 and any(w in low for w in _STOP_WORDS)):
+        from agents.render_control import request_stop
+        request_stop(f"slack:{user}")
+        _post(client, channel, thread_ts or ts,
+              ":octagonal_sign: STOP — 지금 렌더 중인 컷/라운드는 끝내고 *다음 렌더부터* 멈춰요. "
+              "재개는 `go`. (안 하면 6시간 뒤 자동 해제)")
+        return
+
     # 1) Confirmation reply to a pending costly action (in its thread).
     if thread_ts:
         with _PENDING_LOCK:
