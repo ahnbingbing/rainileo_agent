@@ -3697,14 +3697,23 @@ def _fit_caption_reading_time(manifests: dict, in_dir: Path, progress_cb=None) -
             src_dur = float(_src.get("src_dur") or 0.0)
             has_src = bool(src_path and src_dur > 0 and Path(src_path).exists())
             avail_real = (src_dur - t0) if has_src else clip_dur
+            # EDIT-FIRST cap (PD 2026-09-04): never burn more than a tight cut. RF now selects
+            # long clips (duration backfill un-blinded 30-100s footage) and caption-fit used to
+            # keep the whole thing — slow render + a loose spread (2 captions dragged over 45s).
+            # Cap the cut at RF_MAX_CUT_SEC: extend to fit captions with real footage, OR shrink
+            # an over-long clip to a tight window (payoff-forward, from the writer's trim_start).
+            _max_cut = float(os.getenv("RF_MAX_CUT_SEC", "28"))
+            display_needed = round(min(display_needed, _max_cut), 2)
             raw_used = min(display_needed, max(avail_real, 0.1))
-            # Re-trim a LONGER real window only if the source genuinely has more footage.
-            if has_src and raw_used > clip_dur + 0.3 and avail_real > clip_dur + 0.3:
+            _extend = has_src and raw_used > clip_dur + 0.3 and avail_real > clip_dur + 0.3
+            _shrink = has_src and clip_dur > _max_cut + 0.5
+            if _extend or _shrink:
+                _target = min(_max_cut, avail_real) if _shrink else raw_used
                 tmp = mp4.with_suffix(".fit.mp4")
                 try:
                     subprocess.run(
                         ["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-ss", f"{t0}",
-                         "-i", str(src_path), "-t", f"{raw_used:.2f}",
+                         "-i", str(src_path), "-t", f"{_target:.2f}",
                          "-vf", "scale=720:1280:force_original_aspect_ratio=increase,"
                          "crop=720:1280,setsar=1", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
                          "-an", str(tmp)], check=True, timeout=180)
