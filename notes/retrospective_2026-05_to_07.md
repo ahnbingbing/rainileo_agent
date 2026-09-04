@@ -1100,8 +1100,41 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   lockstep. 라이브 검증: 12:30 재렌더 캡션이 "지난 가을의 초록 벽에 기대던 레오"·"아기 레오"로 나오고 '오늘'·원두 없음.
   ★교훈: 데이터(촬영일)를 안 보는 결정론 교정기는 문자열을 추측할 뿐이다 — ground truth를 먹여 계산하게 하라. cf
   C13(시점 캡션 flatten), C6(존재-시점 날조), C_periodfact(안 보이는 사실은 canon으로).
+- **C_nulldur. "RF 풀이 작다"는 소재 부족이 아니라 메타데이터 맹점이었다 — 최적화 전에 전제를 프레임/파일로 검증하라(9/4)** —
+  몇 달간 RF 슬롯이 반복해 비고 "풀이 작다"고 느꼈다. 첫 진단 본능은 "all-time 쿨다운이 풀을 말린다"였는데 **틀렸다.**
+  근본: 인입이 clip 길이를 osxphotos `.duration`에서만 저장했는데 이게 ~89%(2500/2808)에서 없어 `duration_sec`가 NULL.
+  RF one-take/long-clip 후보 필터는 **known `dur>=12`**를 요구하므로, 실제로는 16~109s인 긴 클립이 선택기 시야에서 조용히
+  사라졌다 — 소재는 GCS에 3292개로 넘치는데(요즘 건 특히 길다) 파이프라인은 duration을 probe한 ~98개만 보고 "작다"고 굶었다.
+  결정적 반증: NULL로 기록된 최신 클립을 GCS에서 직접 ffprobe하니 57·58·109s. PD의 반복된 반문("풀은 안 작다, 하미하비·
+  iCloud로 GCS에 넘친다")이 열쇠였다. Fix 4겹: (a) 인입 시 ffprobe(`icloud/sync.py`, 라이브포토 짝 포함), (b) 기존 NULL
+  백로그 일괄 backfill(`scripts/backfill_durations.py`, GCS download→probe→delete, recent-first; post-Leo 0 NULL,
+  **VM 풀 post-Leo dur>=12 ~98→654**), (c) 후보 단계 per-run net(`producer._backfill_pool_durations`, dur>=12 필터 앞),
+  (d) `ingest_register` import COALESCE — Mac이 NULL을 export해도 VM이 probe한 값을 덮지 못하게(이건 `_probe_clip_seconds`가
+  VM에서 채운 값을 매 import가 조용히 지우던 **잠복 버그**의 정면 수정). ★교훈: "풀이 작다/빈 슬롯"의 원인은 컨텐츠 선택이 아니라
+  **자원·메타데이터 상태가 컨텐츠 실패로 위장**한 것일 수 있다(D_disk와 동류 — 디스크 100%가 render_error로 위장했듯, NULL
+  duration이 "소재 없음"으로 위장). 유사도/쿨다운을 튜닝하기 전에 **전제를 ground truth(프레임·파일·GCS 카운트)로 검증하라.**
+  cf D_disk(자원고갈의 위장), C16(availability≠usability), C21(footage NULL duration이 6.3s를 43s로 통과시킨 프로브 도입 —
+  그때는 렌더 후 백필만, 이번엔 선택 앞 + 인입 + 백로그로 근본화).
+- **C_photoseq. 안 쓰이던 소스(연속사진)를 기존 소비 계약(video asset)에 맞춰 등록 — 파이프라인 변경 없이 되살렸다(9/4)** —
+  2000+ 연속 촬영 사진이 same-session 클러스터로 쌓여 있었지만, RF는 lone-photo는 drop하고 photo는 never-closer라 대부분
+  사장됐다(PD 6/13 "연속사진을 동영상으로" 아이디어가 `scripts/photo_sequence.py` MVP까지 있었으나 파이프라인에 **미배선**).
+  근본 해결의 형태가 핵심: 렌더 dispatch/Writer/Director를 건드려 새 cut 타입을 추가하는 대신(=큰 blast radius, 새 비주얼
+  스타일 무검수 라이브), `scripts/build_photo_sequences.py`가 같은-세션 사진을 시간+장소로 클러스터→ken-burns+xfade mp4로
+  렌더→**synthetic video asset**(`kind='video'`, `source='archive'`, `quality_score=0.75`, `vlm_analyzed_at` set)로 등록해
+  **기존 RF video 경로가 그대로 소비**한다. `photo_sequence.py`엔 `pillow_heif` 오프너가 없어 HEIC(iCloud 대다수)가 무음
+  실패하던 걸 고침. 9/4 18:00 RF이 실제로 seq_ 클립으로 렌더되어 GCS fetch→editor→trim→de-haze→caption을 정상 통과 = e2e
+  검증. ★교훈: 새 소스는 새 렌더 경로를 만들기보다 **이미 있는 소비 계약(여기선 video asset row)에 맞춰 넣으면** blast radius가
+  최소가 되고 검수 부담도 기존 게이트가 흡수한다. cf C_fresh(신선 footage 기본화), C_nulldur(같은 배치의 풀 확장).
 
 ### 4.5 인프라 / 파이프라인
+- **D_openaicost. per-cut best-of가 상류 컨셉-ref best-of와 예산을 이중 지출했다 + 엔진 이름이 틀린 죽은 config(9/4)** —
+  OpenAI gpt-image 비용이 과했다. 근본: AV 스틸은 컨셉 레퍼런스를 이미 best-of-4(`AV_CONCEPT_REF_BEST_OF`)로 검증하고
+  그 예산을 상류에 쓰는 이유가 **컷마다 재롤하지 않게** 하려는 것인데, per-cut `REGEN_BEST_OF` 기본이 여전히 2라 지배적 비용
+  (컷수 × N gpt-image)을 이중 지출했다. Fix: 기본 2→1(코드 주석도 "ref가 좋으면 1" 명시; 드리프트 재발 시만 env로 상향).
+  ≈6컷 기준 에피소드당 gpt-image ~16→10. 더해서 `REGEN_MODEL`/`MODEL`/`ENDPOINT`(gemini를 가리킴)가 **정의만 되고 아무데서도
+  안 쓰이는 죽은 config**임을 명시 — primary 엔진은 OpenAI인데(PD 6/2 "openAI가 안될땐 gemini") 이름이 반대라 "왜 Gemini인
+  줄 알았는데 OpenAI 과금"의 수개월 오진 근원이었다. 엔진 교체는 화질 결정이라 PD 몫으로 남김(단독 변경 안 함). ★교훈: 쓰는
+  엔진과 다른 이름의 죽은 config는 장식이 아니라 **능동적 부채**다(오진을 수개월 유발). 그리고 선택 예산은 한 곳에서만 쓴다.
 - **D_salvage. 캡션-salvage가 카드 링크를 끊어 렌더·Giri-통과 에피소드가 조용히 예약 실패했다(7/21)** — 빈 슬롯의
   **두 번째 독립 원인**(C15의 게이트-과드롭과 별개). Giri가 캡션만 문제 삼으면 `caption_salvage.salvage`가 재렌더 없이
   자막만 고쳐 **새 타임스탬프의 `episode_..._salvaged.mp4`**를 쓴다. 그런데 카드의 `output_video_path`는 salvage 이전
