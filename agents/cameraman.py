@@ -328,7 +328,7 @@ def _apply_av_lofi_grade(mp4_path: "Path", progress_cb: "ProgressCb" = None,
         return
     graded = mp4_path.with_name(mp4_path.stem + "_lofi.mp4")
     cmd = ["ffmpeg", "-y", "-i", str(mp4_path), "-vf", AV_LOFI_GRADE_VF, "-an",
-           "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "fast", "-crf", "19",
+           "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-crf", "19",
            str(graded)]
     _run(cmd, f":film_frames: [3c/6] lo-fi grade {mp4_path.stem}", progress_cb, dry_run)
     if graded.exists() and graded.stat().st_size > 10_000:
@@ -2459,7 +2459,7 @@ def _rf_subject_exit_tail_trim(work_dir: Path, manifests: dict, anim_dir: Path,
             continue
         tmp = mp4.with_suffix(".trim.mp4")
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(mp4), "-t",
-                        f"{new_dur:.2f}", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                        f"{new_dur:.2f}", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
                         "-crf", "19", "-an", str(tmp)], check=False)
         if not (tmp.exists() and tmp.stat().st_size > 5000):
             continue
@@ -3706,7 +3706,7 @@ def _fit_caption_reading_time(manifests: dict, in_dir: Path, progress_cb=None) -
                         ["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-ss", f"{t0}",
                          "-i", str(src_path), "-t", f"{raw_used:.2f}",
                          "-vf", "scale=720:1280:force_original_aspect_ratio=increase,"
-                         "crop=720:1280,setsar=1", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                         "crop=720:1280,setsar=1", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
                          "-an", str(tmp)], check=True, timeout=180)
                     tmp.replace(mp4)
                     clip_dur = float(subprocess.run(
@@ -3815,7 +3815,7 @@ def _fade_out_ending(manifests: dict, captioned_dir: Path, progress_cb=None) -> 
         tmp = mp4.with_suffix(".fo.mp4")
         cmd = ["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-i", str(mp4),
                "-vf", f"fade=t=out:st={st}:d={fd}",
-               "-c:v", "libx264", "-pix_fmt", "yuv420p"]
+               "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p"]
         if has_audio:
             cmd += ["-af", f"afade=t=out:st={st}:d={fd}", "-c:a", "aac"]
         else:
@@ -4603,7 +4603,7 @@ def _prerender_photo_kenburns_cuts(manifests: dict, work_dir: Path,
                          "crop=720:1280,"
                          f"zoompan=z='min(zoom+0.0006,1.10)':d={frames}:s=720x1280:fps=25,"
                          "setsar=1"),
-                 "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", str(out_mp4)],
+                 "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-an", str(out_mp4)],
                 check=True, timeout=120)
             sources[tag] = {"source": str(out_mp4), "trim_start": 0.0, "trim_dur": dur,
                             "has_human": entry.get("has_human", 0)}
@@ -4862,7 +4862,7 @@ def _prerender_split_cuts(manifests: dict, work_dir: Path,
             "-i", str(secondary),
             "-filter_complex", filt,
             "-map", "[vout]",
-            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
             "-preset", "fast", "-crf", "20",
             "-an",
             str(out_mp4),
@@ -5305,7 +5305,7 @@ def _trim_real_footage_clips(manifests: dict, anim_dir: Path,
         if vf:
             cmd.extend(["-filter:v", vf])
         cmd.extend([
-            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
             "-preset", "fast", "-crf", "20",
             "-an",
             "-movflags", "+faststart",
@@ -8429,7 +8429,7 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
             "ffmpeg", "-y", "-i", str(src_mp4),
             "-filter:v", ",".join(filters),
             "-an",
-            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
             "-preset", "fast", "-crf", "18",
             str(faded_mp4),
         ]
@@ -8476,7 +8476,7 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
             cmd = [
                 "ffmpeg", "-y", "-i", str(src_mp4),
                 "-filter:v", f"setpts={ratio:.3f}*PTS",
-                "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                "-an", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
                 "-preset", "fast", "-crf", "18", str(slowed_mp4),
             ]
             _run(cmd, f":hourglass: [3b/6] 여운 {tag} {actual:.1f}s→{actual+av_linger:.1f}s "
@@ -8501,7 +8501,7 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
             "ffmpeg", "-y", "-i", str(src_mp4),
             "-filter:v", f"setpts={ratio:.3f}*PTS",
             "-an",
-            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
             "-preset", "fast", "-crf", "18",
             str(slowed_mp4),
         ]
