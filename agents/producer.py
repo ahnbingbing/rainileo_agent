@@ -3190,8 +3190,9 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     # clip's ACTUAL duration when known — and re-propose ONCE if a concept can't reach the
     # floor. Pairs with the pool-level fragment drop (_drop_tiny_clips). "[재료검증]" bounds
     # the retry; the burn-time guard remains the final net. RF_FOOTAGE_GATE=0 reverts.
-    if (os.getenv("RF_FOOTAGE_GATE", "1") == "1"
-            and "[재료검증]" not in prior_feedback):
+    if os.getenv("RF_FOOTAGE_GATE", "1") == "1":
+        # Evaluate footage sufficiency on EVERY pass (bounded by RF_FOOTAGE_MAX_TRIES below):
+        # re-propose a different RF concept up to N times, then fall back to AV. (Was once-only.)
         # Floor must clear the RENDER minimum, not sit below it: the burn-time guard fails an
         # assembled RF episode under RF_MIN_SECONDS (16s incl. ~4.5s bumpers), so the CONTENT
         # floor is ~RF_MIN_SECONDS − bumpers + margin. A floor of 8 passed concepts that then
@@ -3256,16 +3257,34 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
             log.warning("RF footage-sufficiency check failed: %s", e)
             _thin = []
         if _thin:
-            if progress_cb:
-                progress_cb(f":film_frames: 재료검증 — 실현 길이 부족 {len(_thin)}건 "
-                            f"(< {_floor:.0f}s content) → 재작성")
-            _vs = "; ".join(f"'{t}' (실현 ~{s}s)" for t, s in _thin)
-            _fb = ("[재료검증] 아래 컨셉은 고른 클립의 실제 길이로는 최소 분량을 못 채운다(자투리·버스트 "
-                   "클립을 잘라 여러 컷으로 쓴 경우 포함). 각 컷은 서로 다른, 충분히 긴 클립이어야 하고, "
-                   f"전체 content가 최소 {_floor:.0f}s 이상 되게 짜라:\n" + _vs
-                   + (("\n\n[이전 피드백]\n" + prior_feedback) if prior_feedback else ""))
-            return _propose_realfootage_singlepass(target, context, progress_cb,
-                                                   prior_feedback=_fb)
+            # PD 2026-09-04: give RF up to 3 DIFFERENT concepts to reach the floor with distinct
+            # footage (each re-propose is cheap — no render). If all 3 still can't, this slot has
+            # no RF story to tell, so make it AV instead of shipping a gutted stub / empty slot
+            # (footage-first: no story → AV). RF_FOOTAGE_MAX_TRIES / RF_AV_FALLBACK tune/revert.
+            _tries = prior_feedback.count("[재료검증]")
+            _max_tries = int(os.getenv("RF_FOOTAGE_MAX_TRIES", "3"))
+            if _tries < _max_tries:
+                if progress_cb:
+                    progress_cb(f":film_frames: 재료검증 — 실현 길이 부족 {len(_thin)}건 "
+                                f"(< {_floor:.0f}s content) → 재작성 ({_tries + 1}/{_max_tries})")
+                _vs = "; ".join(f"'{t}' (실현 ~{s}s)" for t, s in _thin)
+                _fb = ("[재료검증] 아래 컨셉은 고른 클립의 실제 길이로는 최소 분량을 못 채운다(자투리·버스트 "
+                       "클립을 잘라 여러 컷으로 쓴 경우 포함). 각 컷은 서로 다른, 충분히 긴 클립이어야 하고, "
+                       f"전체 content가 최소 {_floor:.0f}s 이상 되게 짜라:\n" + _vs
+                       + (("\n\n[이전 피드백]\n" + prior_feedback) if prior_feedback else ""))
+                return _propose_realfootage_singlepass(target, context, progress_cb,
+                                                       prior_feedback=_fb)
+            if os.getenv("RF_AV_FALLBACK", "1") == "1":
+                log.info("RF footage insufficient after %d tries → AV fallback for %s",
+                         _tries, target.isoformat())
+                if progress_cb:
+                    progress_cb(f":sparkles: RF 소재로 {_max_tries}회 시도했으나 최소 분량 미달 "
+                                f"— 이 슬롯을 AV로 전환(footage-first: 스토리 없으면 AV)")
+                try:
+                    return propose_concepts(target, context, style_filter="ai_vtuber")
+                except Exception as _avf:
+                    log.warning("AV fallback failed (%s) — keeping the last RF concept", _avf)
+            # RF_AV_FALLBACK off (or AV failed): fall through with the last RF concept.
     # PD 2026-07-02: deterministic CONCEPT-DEDUP gate. exclude_concepts (sibling slots +
     # last-14d public uploads, seeded by launch) is injected into the Writer prompt as a
     # "diverge from these" note (_exclude_block) — but that is LLM-advisory and the Writer
