@@ -42,44 +42,58 @@ def _nearest_slot(hhmm_min: int, slots: list[str]) -> str:
     return min(slots, key=lambda s: abs(_slot_min(s) - hhmm_min))
 
 
-def _occupied(day_strs: set[str]) -> set[tuple[str, str]]:
-    """(YYYY-MM-DD, 'HH:MM') that already has a video — PUBLIC or SCHEDULED — on the channel.
-    Maps each video's publishAt (scheduled) or publishedAt (public) to its KST day + nearest
-    timeslot. Fail-open (empty set) so a YouTube hiccup never blocks the fill decision loudly."""
+def slot_occupancy(day_strs: set[str], yt=None) -> dict[tuple[str, str], dict]:
+    """{(YYYY-MM-DD, 'HH:MM'): {video_id, title, status, when}} for every slot that already
+    holds a video — PUBLIC *or* SCHEDULED — on the channel, within day_strs. Each video's
+    publishAt (scheduled) OR publishedAt (already public) is mapped to its KST day + nearest
+    timeslot.
+
+    ⭐ YouTube is the SINGLE SOURCE OF TRUTH for slot occupancy — NEVER the card DB. A card's
+    `youtube_publish_at` desyncs from reality (9/4: a card stamped VQC at 09:00Z/18:00 while
+    the video actually published at 08:00 → a FALSE collision blocked 18:00 for hours and a
+    FALSE gap read let batches pile on). Every empty-slot / collision decision reads THIS.
+    `list_scheduled_videos` is NOT a substitute — it returns only future-private videos and
+    misses already-PUBLIC ones, so a public-filled slot reads as empty. Raises on API failure
+    so the caller chooses fail-open vs fail-closed."""
     from agents.launch import TIMESLOTS, KST
     slots = [s.strip() for s in TIMESLOTS if s.strip()]
-    out: set[tuple[str, str]] = set()
-    try:
+    if yt is None:
         from youtube.oauth import get_youtube
         yt = get_youtube()
-        ch = yt.channels().list(part="contentDetails", mine=True).execute()
-        up = ch["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
-        ids: list[str] = []
-        tok = None
-        while True:
-            r = yt.playlistItems().list(part="contentDetails", playlistId=up,
-                                        maxResults=50, pageToken=tok).execute()
-            ids += [it["contentDetails"]["videoId"] for it in r.get("items", [])]
-            tok = r.get("nextPageToken")
-            if not tok or len(ids) >= 200:
-                break
-        for i in range(0, len(ids), 50):
-            v = yt.videos().list(part="snippet,status", id=",".join(ids[i:i + 50])).execute()
-            for it in v.get("items", []):
-                when = it["status"].get("publishAt") or it["snippet"].get("publishedAt")
-                if not when:
-                    continue
-                k = dt.datetime.fromisoformat(when.replace("Z", "+00:00")).astimezone(KST)
-                d = k.strftime("%Y-%m-%d")
-                if d in day_strs:
-                    out.add((d, _nearest_slot(k.hour * 60 + k.minute, slots)))
-    except Exception as e:
-        log.warning("slot_topup: occupancy lookup failed (%s) — treating window as fully occupied "
-                    "to avoid double-booking", e)
-        # fail-safe: pretend everything is occupied so we DON'T fill on bad data (a false gap
-        # would double-book; a missed gap is caught tomorrow). Return a sentinel handled by caller.
-        raise
+    ch = yt.channels().list(part="contentDetails", mine=True).execute()
+    up = ch["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
+    ids: list[str] = []
+    tok = None
+    while True:
+        r = yt.playlistItems().list(part="contentDetails", playlistId=up,
+                                    maxResults=50, pageToken=tok).execute()
+        ids += [it["contentDetails"]["videoId"] for it in r.get("items", [])]
+        tok = r.get("nextPageToken")
+        if not tok or len(ids) >= 200:
+            break
+    out: dict[tuple[str, str], dict] = {}
+    for i in range(0, len(ids), 50):
+        v = yt.videos().list(part="snippet,status", id=",".join(ids[i:i + 50])).execute()
+        for it in v.get("items", []):
+            st = it["status"]
+            when = st.get("publishAt") or it["snippet"].get("publishedAt")
+            if not when:
+                continue
+            k = dt.datetime.fromisoformat(when.replace("Z", "+00:00")).astimezone(KST)
+            d = k.strftime("%Y-%m-%d")
+            if d not in day_strs:
+                continue
+            out[(d, _nearest_slot(k.hour * 60 + k.minute, slots))] = {
+                "video_id": it["id"], "title": it["snippet"]["title"],
+                "status": st.get("privacyStatus"), "when": when}
     return out
+
+
+def _occupied(day_strs: set[str]) -> set[tuple[str, str]]:
+    """Occupied (date, slot) keys from YouTube (public OR scheduled) — see slot_occupancy.
+    Raises on API failure; find_gaps treats that as 'abort, don't fill on bad data' (a false
+    gap would double-book; a missed gap is caught next run)."""
+    return set(slot_occupancy(day_strs))
 
 
 def find_gaps(days_ahead: int = 2) -> list[dict]:
