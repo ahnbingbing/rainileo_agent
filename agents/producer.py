@@ -4624,13 +4624,35 @@ def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.dat
     # live slot. A genuine replacement goes through the SAME card (prev_vid veto below) or vetoes the
     # incumbent first. SLOT_COLLISION_GUARD=0 reverts.
     if os.getenv("SLOT_COLLISION_GUARD", "1") == "1":
+        # YouTube is the source of truth for whether this slot is really taken. The card DB's
+        # youtube_publish_at desyncs (9/4: a card stamped a video at 18:00 that had actually
+        # published at 08:00 → this guard falsely blocked 18:00 for hours). Ask YouTube whether
+        # a DIFFERENT video actually occupies this slot; only that is a real collision. Fall
+        # back to the card-DB check ONLY if YouTube is unreachable (preserve double-book guard).
+        occ = None
         try:
-            occ = con.execute(
-                "SELECT card_id, youtube_video_id FROM cards WHERE youtube_publish_at=? "
-                "AND uploaded=1 AND card_id<>? AND youtube_video_id IS NOT NULL "
-                "ORDER BY updated_at DESC LIMIT 1", (publish_at, card_id)).fetchone()
-        except Exception:
-            occ = None
+            from agents.slot_topup import slot_occupancy, _nearest_slot
+            from agents.launch import TIMESLOTS, KST
+            _slots = [s.strip() for s in TIMESLOTS if s.strip()]
+            _pt = dt.datetime.fromisoformat(publish_at.replace("Z", "+00:00")).astimezone(KST)
+            _d = _pt.strftime("%Y-%m-%d")
+            _slot = _nearest_slot(_pt.hour * 60 + _pt.minute, _slots)
+            _hit = slot_occupancy({_d}).get((_d, _slot))
+            _row = con.execute("SELECT youtube_video_id FROM cards WHERE card_id=?",
+                               (card_id,)).fetchone()
+            _my_vid = _row[0] if _row else None
+            if _hit and _hit.get("video_id") and _hit["video_id"] != _my_vid:
+                occ = {"card_id": "(youtube)", "youtube_video_id": _hit["video_id"]}
+        except Exception as _e:
+            log.warning("[SLOT-COLLISION] YouTube occupancy unavailable (%s) — card-DB fallback",
+                        str(_e)[:90])
+            try:
+                occ = con.execute(
+                    "SELECT card_id, youtube_video_id FROM cards WHERE youtube_publish_at=? "
+                    "AND uploaded=1 AND card_id<>? AND youtube_video_id IS NOT NULL "
+                    "ORDER BY updated_at DESC LIMIT 1", (publish_at, card_id)).fetchone()
+            except Exception:
+                occ = None
         if occ:
             log.error("[SLOT-COLLISION] publish_at=%s already filled by card=%s vid=%s — SKIP "
                       "scheduling card=%s (out=%s) to avoid double-book", publish_at,

@@ -207,23 +207,21 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
         try:
             from agents import reconcile as _rec
             from agents.producer import _db as _pdb
-            _all_sched = _rec.list_scheduled_videos()
+            from agents.slot_topup import slot_occupancy
+            # YouTube truth incl. already-PUBLIC videos (list_scheduled_videos returned only
+            # future-private ones, so a public-filled slot read as EMPTY and got piled on).
+            _occ = slot_occupancy({target.isoformat()})
             with _pdb() as _con:
                 _known_vids = _rec._card_video_ids(_con)
             _filled = set()
             _orphan_slots: list = []      # slots filled by a card-LESS video (재사용/수동 의심)
-            for _s in _all_sched:
-                _pa = _s.get("publish_at") or ""
-                if not _pa:
+            for (_d, _slot), _info in _occ.items():
+                if _d != target.isoformat():
                     continue
-                _t = dt.datetime.fromisoformat(_pa.replace("Z", "+00:00")) + dt.timedelta(hours=9)
-                if _t.date() != target:
-                    continue
-                _slot = _t.strftime("%H:%M")
-                if _s["video_id"] in _known_vids:
+                if _info["video_id"] in _known_vids:
                     _filled.add(_slot)            # legit card-backed episode → skip (correct)
                 else:
-                    _orphan_slots.append((_slot, _s["video_id"], _s.get("title", "")))
+                    _orphan_slots.append((_slot, _info["video_id"], _info.get("title", "")))
             # PD 2026-08-02: a slot filled by a card-LESS ORPHAN (a reused/manual upload that
             # bypassed the card pipeline — clip-cooldown & dedup never ran on it) used to be
             # counted as a normal fill and SILENTLY skipped, so the orphan stayed live (8/3
