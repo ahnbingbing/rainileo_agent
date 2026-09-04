@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import os
 import sqlite3
 from pathlib import Path
 
@@ -135,7 +136,14 @@ def _build_one(con, run: list[dict], dry: bool) -> str | None:
         "activity, scene_description, mood, composition, vlm_analyzed_at, notes) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (seq_id, "archive", "video", rel, first["captured_iso"], dur, 720, 1280,
-         ",".join(subs), loc_tag, loc_t, 1 if n_human * 2 >= len(run) else 0, 0.75,
+         # quality_score 0.65 is DELIBERATELY below the RF pool floor (0.7): ken-burns photo
+         # sequences are low-motion and read as "static/photo-like", which drags RF Giri
+         # scores (first live attempt scored 4/10 and self-heal had to gut it). So they are
+         # BUILT + READY but do NOT auto-enter live batches until PD reviews the style and
+         # opts them in — raise this to >=0.7 (or bump SEQ_QUALITY) once approved. This keeps
+         # fix-3 wired without letting an unreviewed style flood/starve live RF slots.
+         ",".join(subs), loc_tag, loc_t, 1 if n_human * 2 >= len(run) else 0,
+         float(os.getenv("SEQ_QUALITY", "0.65")),
          first.get("activity") or "photo_sequence",
          (first.get("scene_description") or "") + " (연속 사진 시퀀스)",
          first.get("mood") or "", "sequence",
