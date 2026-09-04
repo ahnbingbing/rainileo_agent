@@ -1125,6 +1125,24 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   실패하던 걸 고침. 9/4 18:00 RF이 실제로 seq_ 클립으로 렌더되어 GCS fetch→editor→trim→de-haze→caption을 정상 통과 = e2e
   검증. ★교훈: 새 소스는 새 렌더 경로를 만들기보다 **이미 있는 소비 계약(여기선 video asset row)에 맞춰 넣으면** blast radius가
   최소가 되고 검수 부담도 기존 게이트가 흡수한다. cf C_fresh(신선 footage 기본화), C_nulldur(같은 배치의 풀 확장).
+- **C_toolshort. RF "too short → 빈 슬롯"의 진짜 원인은 face-leak이 아니라 same-clip collapse였다 — aggregate 로그 grep은 근본을
+  오귀속한다(9/4)** — RF pass율 15%, 빈 슬롯 최대 원인이 "too short"였다. 첫 진단(서브에이전트 aggregate 로그 grep)은
+  face-leak/coherence 컷 드롭 탓으로 귀속했는데 **PD가 반박: "face-leak 거의 없다, 얼굴 때문에 길이가 줄 리 없다, 버그다."
+  PD가 옳았다.** face crop은 **공간 crop(x:y 창)**이라 `-t trim_dur`와 독립적이어서 시간을 못 깎는다("too short" 115건과
+  face 드롭은 완전히 다른 에러 경로). 구체적 케이스를 추적하니 진짜 근본은 **same-clip collapse**: writer가 한 클립을 여러
+  컷(5×2.5s)으로 슬라이스하면 render가 이를 한 컷으로 합치는데(`_collapse_rf_same_clip_segments`, 합쳐진 컷 길이=세그먼트 합),
+  **사전 재료게이트는 같은-클립 컷을 독립적으로 크레딧**해 5×4s on 12.5s 클립=20s로 추정→통과→collapse+클립길이 cap으로
+  12.5s 붕괴→gutted stub→빈 슬롯(+ 매번 헛렌더). Fix: 사전게이트가 컷을 asset별로 그룹핑해 **각 asset을 클립 실제 길이로
+  cap**(collapse 시뮬레이션)→<floor면 렌더 전 재제안. ★교훈: **aggregate 로그 상관(grep 카운트)은 근본이 아니다 — 구체적
+  케이스를 끝까지 추적하라. 그리고 PD의 도메인 지식(프레임이 어떻게 동작하는지)이 서브에이전트의 grep을 이긴다.** cf B15/B23
+  (검수기 판정을 프레임/소스로 검증), C16(재료 충분성), C_nulldur(같은 세션의 메타데이터 맹점).
+- **C_avfallback. footage-first: RF로 3회 시도해도 소재로 스토리가 안 나오면 그 슬롯은 AV로 만든다(9/4)** — story-first(캡션
+  비트 N개 스토리를 쓰고 클립을 끼워맞춤)가 same-clip 반복·짧은 클립·캡션-영상 불일치의 공통 뿌리. PD 지시: RF는 **동영상에서
+  스토리보드를 도출**(footage-first)하고, **footage로 스토리가 안 되면 AV로.** Fix: 재료게이트가 distinct footage로 floor를
+  못 채우면 **다른 컨셉으로 3회**(RF_FOOTAGE_MAX_TRIES=3, 재제안은 렌더 없어 공짜) 재시도하고, 그래도 안 되면
+  `propose_concepts(ai_vtuber)`로 **AV 폴백**(RF_AV_FALLBACK=1, AV 실패 시 마지막 RF로 graceful). 빈 슬롯/gutted 대신 AV
+  비용($3)을 최후에만 쓴다. 편집 원칙 유지(전체 재생 X, 페이오프 앞으로 ~20-30s 타이트). ★교훈: 매체가 이야기를 못 담으면
+  그 매체를 고집하지 말고 담을 수 있는 매체로 바꿔라(빈 슬롯보다 낫다). cf C_toolshort(같은 배치의 collapse 차단).
 
 ### 4.5 인프라 / 파이프라인
 - **D_openaicost. per-cut best-of가 상류 컨셉-ref best-of와 예산을 이중 지출했다 + 엔진 이름이 틀린 죽은 config(9/4)** —
@@ -1135,6 +1153,24 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   안 쓰이는 죽은 config**임을 명시 — primary 엔진은 OpenAI인데(PD 6/2 "openAI가 안될땐 gemini") 이름이 반대라 "왜 Gemini인
   줄 알았는데 OpenAI 과금"의 수개월 오진 근원이었다. 엔진 교체는 화질 결정이라 PD 몫으로 남김(단독 변경 안 함). ★교훈: 쓰는
   엔진과 다른 이름의 죽은 config는 장식이 아니라 **능동적 부채**다(오진을 수개월 유발). 그리고 선택 예산은 한 곳에서만 쓴다.
+- **D_slottruth. 슬롯이 찼는지는 YouTube가 유일한 진실 — 카드 DB도, "예약 목록"도 아니다(9/4)** — 9/4 18:00 슬롯이 몇 시간
+  헛렌더로 갈렸고, "9/4에 3개인데 왜 4개냐"는 PD 반박이 근본을 드러냈다. 두 겹의 desync: ① **collision 가드가 카드 DB의
+  `youtube_publish_at`을 봤는데** 그 값이 실제와 어긋났다 — 한 카드가 영상을 09:00Z(18:00)로 찍었으나 그 영상은 실제로 08:00에
+  게시돼 있어, 18:00을 "찼다"고 거짓 판정→매 채우기를 차단(가짜 collision). ② **빈-슬롯 감지가 `list_scheduled_videos`를 썼는데**
+  그건 **미래-private 예약만** 반환하고 **이미 public인 영상을 제외**해서, public으로 찬 슬롯이 "비었다"고 읽혔다(가짜 gap).
+  Fix: `slot_topup.slot_occupancy()` — uploads 플레이리스트를 `publishAt|publishedAt`로 읽어 **public+예약 둘 다** KST 슬롯에
+  매핑하는 단일 진실원. 빈슬롯 감지·collision 가드·slot_topup 3곳이 전부 이걸 쓰고, 가드는 **YouTube 우선·카드 DB는 fallback**
+  (YouTube 불가 시에만, 이중예약 보호 유지). ★교훈: 대외 상태(스케줄)의 판정은 **대외 진실원(YouTube)**을 봐야지 로컬 미러
+  (카드 DB)를 믿으면 desync가 유령 문제를 만든다 — 그리고 "예약 목록"류 헬퍼가 무엇을 **제외**하는지(여기선 public) 알아야
+  false negative를 안 만든다. cf D30(스케줄이 ground truth·생산기는 라이브를 읽어라), D_salvage(카드 링크 끊김).
+- **D_stopflag. 렌더를 멈출 방법이 없었다 — 협조적 STOP 플래그로 "stop"이 실제로 먹히게(9/4)** — PD가 Slack에 "stop"을
+  쳐도 재렌더가 안 멈췄고, CLI(나)도 프로덕션 렌더를 kill하지 못했다. 근본: stop 핸들러도, 렌더 루프가 볼 협조 신호도 없었다
+  ("stop"은 느린 LLM 에이전트 경로로 빠져 배치가 ~30분 갈리는 동안 무시된 것처럼 보였다). Fix: `agents/render_control.py` —
+  렌더 루프가 **안전 경계**(self-heal 라운드/슬롯, 배치 슬롯)에서 확인하는 파일 플래그. 진행 중 ffmpeg/Seedance subprocess는
+  끝내고(중단 불가) **다음 렌더부터** 멈춘다. board 봇이 "stop"/"go"를 **LLM·확인 없이 즉시** 처리(지연이 곧 "무시된 느낌"의
+  근본이었다). 6h TTL 자동해제로 잊힌 stop이 밤 배치를 영구 차단하지 못한다. ★부수효과: CLI도 kill이 막힌 prod에서
+  `request_stop()`으로 렌더를 세울 수 있다. ★교훈: 장시간 비용 작업은 **협조적 중단점**(루프가 확인하는 플래그)이 있어야
+  하고, 안전·가역적 제어(stop)는 확인·LLM 없이 즉시 실행돼야 한다(지연이 곧 무시).
 - **D_salvage. 캡션-salvage가 카드 링크를 끊어 렌더·Giri-통과 에피소드가 조용히 예약 실패했다(7/21)** — 빈 슬롯의
   **두 번째 독립 원인**(C15의 게이트-과드롭과 별개). Giri가 캡션만 문제 삼으면 `caption_salvage.salvage`가 재렌더 없이
   자막만 고쳐 **새 타임스탬프의 `episode_..._salvaged.mp4`**를 쓴다. 그런데 카드의 `output_video_path`는 salvage 이전
