@@ -1447,21 +1447,13 @@ def _clip_reuse_gate(concept: "dict | None", report: dict) -> None:
     if not mine:
         return
     try:
-        import datetime as _dt
+        # Shared kill-set: the SELECTION stage hard-excludes this exact set as a non-relaxable
+        # floor (producer._live_published_rf_assets), so the two can't drift — the drift (soft
+        # cooldown relaxing back in a clip this gate then kills) WAS the #1 RF reject cause.
+        from agents.producer import _live_published_rf_assets
         con = sqlite3.connect(str(ROOT / "data" / "agent.db"))
         try:
-            since = (_dt.date.today() - _dt.timedelta(days=7)).isoformat()
-            live: set = set()
-            for (pj,) in con.execute(
-                "SELECT payload_json FROM cards WHERE date >= ? AND youtube_video_id IS NOT NULL "
-                "AND state!='archived'", (since,)).fetchall():
-                try:
-                    for c in (json.loads(pj or "{}").get("cuts") or []):
-                        aid = c.get("asset_id") or c.get("secondary_asset_id")
-                        if aid:
-                            live.add(aid)
-                except Exception:
-                    continue
+            live = _live_published_rf_assets(con, days=7)
         finally:
             con.close()
     except Exception as e:

@@ -1151,6 +1151,34 @@ def _recently_used_rf_assets(con: sqlite3.Connection,
     return used
 
 
+def _live_published_rf_assets(con: sqlite3.Connection, days: int = 7) -> set[str]:
+    """asset_ids that are LIVE in a real_footage episode published in the last `days`
+    (youtube_video_id set, not archived). This is the EXACT set the post-render reviewer's
+    `_clip_reuse_gate` caps at ≤5 / 수정 필요 — so selection must hard-exclude it or every
+    such pick is a guaranteed Giri fail (PD 2026-09-04: 52% of RF rejects were this, because
+    the soft cooldown RELAXES when the pool is thin and re-admits exactly these clips). Single
+    source of truth shared by the selection floor and the reviewer gate so the two never drift
+    (the drift WAS the bug)."""
+    used: set[str] = set()
+    try:
+        import datetime as _dt
+        since = (_dt.date.today() - _dt.timedelta(days=days)).isoformat()
+        for (pj,) in con.execute(
+            "SELECT payload_json FROM cards WHERE date >= ? AND youtube_video_id IS NOT NULL "
+            "AND state!='archived'", (since,)).fetchall():
+            try:
+                for c in (json.loads(pj or "{}").get("cuts") or []):
+                    aid = c.get("asset_id") or c.get("secondary_asset_id") \
+                        or (c.get("asset") or {}).get("asset_id")
+                    if aid:
+                        used.add(aid)
+            except Exception:
+                continue
+    except Exception as e:
+        log.warning("live-published rf asset lookup failed: %s", e)
+    return used
+
+
 def _scheduled_window_rf_assets(con: sqlite3.Connection, target: dt.date,
                                 days: int = 3) -> set[str]:
     """asset_ids used by RF cards whose youtube_publish_at falls within ±`days` of
@@ -2822,6 +2850,23 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
                 progress_cb(f":warning: 쿨다운 후 클립 부족({len(filtered)}개) — 완화 적용")
     except Exception as e:
         log.warning("cooldown filter failed: %s", e)
+    # PD 2026-09-04: NON-relaxable floor. The soft cooldown above relaxes when the pool is
+    # thin and can re-admit a clip that is LIVE in a published episode (last 7d) — which the
+    # reviewer's _clip_reuse_gate then caps at ≤5 (수정 필요), a guaranteed Giri fail (the #1
+    # RF reject cause). Selection and the reviewer must agree, so hard-exclude the reviewer's
+    # exact kill-set here, never relaxed: a thinner pool (or an empty slot) beats a futile
+    # render. Post-duration-backfill the pool is large, so this rarely bites.
+    try:
+        _live_kill = _live_published_rf_assets(_db(), days=7)
+        if _live_kill:
+            _bk = len(avail_videos)
+            avail_videos = [v for v in avail_videos
+                            if (v.get("id") or v.get("asset_id")) not in _live_kill]
+            if len(avail_videos) < _bk and progress_cb:
+                progress_cb(f":lock: 최근 7일 공개본 클립 {_bk - len(avail_videos)}개 "
+                            f"하드 제외 (재사용 게이트 정합 — 확정 Giri 실패 방지)")
+    except Exception as _e:
+        log.warning("live-published hard exclude skipped: %s", _e)
     # PD 2026-06-10: exclude clips already used by an EARLIER slot in THIS batch so
     # two same-day RF episodes don't come out near-identical (6/11 bug: both RF used
     # the exact same 7 photos). Best-effort — relax if it would starve the writer.
