@@ -58,9 +58,13 @@ from agents import canon as _canon  # central character canon (single source)
 CHARACTER_SHEET = ROOT / "agents" / "prompts" / "character_sheets.md"
 log = logging.getLogger("generate_character_scene")
 
-# Model — same as regen_vtuber_style.py
-MODEL = os.getenv("REGEN_MODEL", "gemini-2.5-flash-image")
-ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
+# NOTE: the PRIMARY image engine is OpenAI gpt-image (see generate_scene / PD 2026-06-02
+# "openAI가 안될땐 gemini API"); Gemini is only the fallback (_generate_scene_gemini, which
+# builds its own endpoint). REGEN_MODEL / the constants below are LEGACY and unused — kept
+# only so old callers importing them don't break. Setting REGEN_MODEL does NOT switch the
+# engine; it never did. To change the engine, edit generate_scene, not this env var.
+MODEL = os.getenv("REGEN_MODEL", "gemini-2.5-flash-image")  # unused (legacy)
+ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"  # unused
 
 
 def load_character_sheet() -> str:
@@ -446,14 +450,15 @@ def generate_batch(prompts_file: Path, in_dir: Path | None, out_dir: Path,
             except Exception:
                 pass
 
-        # Best-of-N stills per cut + Giri selection (still_select). The per-cut count
-        # is now LOW because the episode's concept reference is itself validated
-        # best-of-N (cameraman._build_concept_char_ref) and seeded from a real both-pets
-        # photo — cuts inherit a marking-accurate seed instead of re-rolling 5× to dodge
-        # a bad one, so the selection budget moved upstream to the reference (cheaper +
-        # higher fidelity). REGEN_BEST_OF=1 restores the single-still path; raise it only
-        # if per-cut drift returns despite a good reference.
-        best_of = max(1, int(os.getenv("REGEN_BEST_OF", "2")))
+        # Best-of-N stills per cut + Giri selection (still_select). Default is 1: the
+        # episode's concept reference is ALREADY a validated best-of-N seed
+        # (cameraman._build_concept_char_ref, AV_CONCEPT_REF_BEST_OF=4) taken from a real
+        # both-pets photo, and the whole point of spending that selection budget UPSTREAM
+        # is so each cut inherits a marking-accurate seed instead of re-rolling here. A
+        # per-cut best-of-2 double-spent that budget — the dominant OpenAI gpt-image cost
+        # (cuts × N), for little gain once the ref is good (PD 2026-09-04 "OpenAI 콜 과다").
+        # Raise REGEN_BEST_OF only if per-cut drift returns despite a good reference.
+        best_of = max(1, int(os.getenv("REGEN_BEST_OF", "1")))
         cands = []
         for k in range(best_of):
             b = _gen_one()
