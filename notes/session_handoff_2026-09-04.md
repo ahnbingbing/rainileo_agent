@@ -31,6 +31,9 @@
    AV 전환(footage-first: 스토리 없으면 AV, PD 컨펌). AV 실패시 마지막 RF로 graceful.
 8. **stop 플래그** (D_stopflag): `agents/render_control.py` 협조적 STOP(6h TTL)+렌더루프 3곳 경계 체크+board
    "stop"/"go" 즉시 처리. "stop"이 실제로 먹힌다.
+9. **RF 렌더 속도** (D_renderspeed): duration 백필이 긴 클립(30~100s)을 노출시켜 RF 렌더가 슬롯당 30~40분으로
+   느려짐(로그 조용해 hang처럼). ① RF 재인코딩 `-preset veryfast`(3~5배) ② `RF_MAX_CUT_SEC=28` 편집-먼저 캡
+   (과길이 클립 타이트 다운-트림 = 속도 + PD "편집해야"). 다음 렌더부터 발효.
 
 ## 조사만 (수정 대기, PD 결정/후속)
 - **인입율 하락**(`notes/ingestion_rate_drop_2026-09-04.md`): 8/24부터 "Ryani&Leo" 앨범 신규 0(라이브러리엔
@@ -51,5 +54,7 @@
 - **다음 03:00 배치 = 오늘 RF수정 첫 실전**: collapse-aware 사전게이트·AV 폴백·clip-reuse 하드플로어·
   slot-truth·stop 플래그. 스팟체크=빈슬롯 감소 / 과-AV폴백(RF가 너무 쉽게 AV로 가는지) / 과-재제안 / board
   stop·go 동작 / backfill cron 로그(`cron.backfill_dur.log`).
-- **9/5·9/6 빈슬롯 채우기** 실행함(launch_selfheal --date, slot-truth로 빈슬롯만) — 결과 확인 필요.
+- **9/5·9/6 빈슬롯 채우기 = 완료·검증됨**: 빈 슬롯 4개(9/5 12:30·21:00, 9/6 12:30·18:00) 전부 **RF로 예약 성공**
+  (배치 써머리 "성공 2/2" ×2, **AV 폴백 0**). 오늘 slot-truth·collapse게이트·clip-reuse가 실전에서 통과 = 검증됨
+  (예전엔 여기서 가짜충돌/gutted로 막힘). ※이 fill은 렌더-속도 수정(#9) 前이라 느렸음.
 - **PD 결정 대기**: 연속사진 시퀀스 라이브 유입(quality≥0.7), OpenAI 텍스트엔진 Gemini 전환, 인입 앨범 복구.
