@@ -60,6 +60,16 @@ def import_() -> None:
         if not aid:
             continue
         keys = [c for c in d if c in local_cols]           # tolerate schema drift
+        # INSERT OR REPLACE overwrites the whole row, so a Mac export carrying NULL
+        # duration_sec (the pre-2026-09-04 ingestion default) would re-blind a duration
+        # the VM already probed at render/pool time (_probe_clip_seconds / _backfill_pool_
+        # durations). Preserve a known duration when the incoming value is empty. Backfill
+        # the Mac side (scripts.backfill_durations) so exports carry real values too.
+        if "duration_sec" in keys and not d.get("duration_sec"):
+            prev = con.execute(
+                "SELECT duration_sec FROM assets WHERE asset_id=?", (aid,)).fetchone()
+            if prev and prev[0]:
+                d["duration_sec"] = prev[0]
         con.execute(
             f"INSERT OR REPLACE INTO assets ({', '.join(keys)}) "
             f"VALUES ({', '.join('?' * len(keys))})", [d[k] for k in keys])

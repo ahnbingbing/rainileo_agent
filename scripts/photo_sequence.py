@@ -25,6 +25,15 @@ from pathlib import Path
 
 from PIL import Image, ImageOps
 
+# iCloud stills are mostly HEIC (1500+ post-Leo), which PIL can't decode natively —
+# without this every HEIC burst silently failed to render. Register the HEIF opener so
+# Image.open handles .heic/.heif directly (cross-platform; no sips dependency).
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except Exception:
+    pass
+
 W, H = 720, 1280
 FPS = 30
 

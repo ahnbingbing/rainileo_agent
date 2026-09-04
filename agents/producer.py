@@ -348,6 +348,18 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
     # also stamp recent clips with years_ago (0 for this year)
     for v in best_videos:
         v["years_ago"] = _years_ago(v.get("date", ""))
+    # PD 2026-09-04: un-blind the long-clip / one-take filters. ~89% of ingested clips
+    # carried NULL duration_sec (osxphotos gave none), so the dur>=12 gates dropped long,
+    # usable footage and RF slots emptied while the pool looked "small". Probe the NULL
+    # clips in the recent pool here (bounded) so their real length reaches the writer.
+    if os.getenv("RF_DUR_PROBE", "1") != "0":
+        try:
+            _nfill = _backfill_pool_durations(
+                best_videos, con, int(os.getenv("RF_DUR_PROBE_CAP", "40")))
+            if _nfill:
+                log.info("RF pool: probed+backfilled %d NULL-duration clips", _nfill)
+        except Exception as _e:
+            log.warning("RF pool duration probe skipped: %s", _e)
     _recent_ids = {v["id"] for v in best_videos}
     ARCHIVE_PER_YEAR = int(os.getenv("ARCHIVE_PER_YEAR", "8"))  # PD 2026-06-11: more old footage in the pool
     archive_videos: list[dict] = []
@@ -1671,6 +1683,29 @@ def _probe_clip_seconds(asset_id: str | None, con: sqlite3.Connection) -> float 
     except Exception as e:
         log.debug("clip-duration probe failed for %s: %s", asset_id, e)
     return None
+
+
+def _backfill_pool_durations(pool: list, con: sqlite3.Connection, cap: int) -> int:
+    """Probe NULL-duration clips in an RF candidate pool so the long-clip / one-take
+    filters (which require a KNOWN dur>=12) can SEE them. Ingestion left ~89% of clips
+    with NULL duration_sec, so those gates silently dropped long, usable footage
+    (16~109s clips) and RF slots emptied while the pool looked "small". Ingest-time
+    ffprobe + scripts.backfill_durations clear the bulk; this is the per-run net for
+    anything still unprobed (e.g. just-imported clips). Bounded + recent-first to keep
+    concept generation fast. Mutates each item's 'dur' in place (so avail_videos /
+    long_clip_candidates, which share these dict refs, see the value); returns count
+    filled. RF_DUR_PROBE=0 disables; RF_DUR_PROBE_CAP tunes the ceiling."""
+    if cap <= 0:
+        return 0
+    targets = [v for v in (pool or []) if isinstance(v, dict) and not v.get("dur")]
+    targets.sort(key=lambda v: v.get("date", "") or "", reverse=True)  # freshest first
+    n = 0
+    for v in targets[:cap]:
+        dur = _probe_clip_seconds(v.get("id"), con)
+        if dur and dur > 0:
+            v["dur"] = dur
+            n += 1
+    return n
 
 
 def _drop_tiny_clips(items: list, tiny_ids: set) -> list:

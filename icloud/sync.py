@@ -189,6 +189,27 @@ def _year_dir(base: Path, captured: dt.datetime | None) -> Path:
     return d
 
 
+def _probe_duration(path: Path | str) -> float | None:
+    """Actual video length via ffprobe. osxphotos `.duration` is frequently absent
+    (None) — and Live-Photo paired .mov never carried one — so ~89% of ingested clips
+    landed with NULL duration_sec. That blinded the RF one-take/long-clip candidate
+    filters (they require dur>=12): long, usable footage became invisible and slots
+    emptied even though the clips were 16~109s. Probe at ingest so every new clip
+    carries its real length. Best-effort: None on any failure (caller falls back to
+    the osxphotos value, and the batch backfill / render-time _probe_clip_seconds
+    remain as nets)."""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nw=1:nk=1", str(path)],
+            capture_output=True, text=True, timeout=30).stdout
+        dur = float((out or "").strip() or 0)
+        return dur if dur > 0 else None
+    except Exception as e:
+        log.debug("ingest duration probe failed for %s: %s", path, e)
+        return None
+
+
 def infer_age_tag(subjects: list[str], captured: dt.date | None) -> str | None:
     if not captured or not subjects:
         return None
@@ -1209,7 +1230,8 @@ def sync_album(
                 file_path=_rel_to_root(dest_path),
                 captured_iso=captured_iso,
                 ingested_iso=None,
-                duration_sec=getattr(p, "duration", None),
+                duration_sec=((_probe_duration(dest_path) or getattr(p, "duration", None))
+                              if is_video else None),
                 width=p.width,
                 height=p.height,
                 phash=phash,
@@ -1240,7 +1262,7 @@ def sync_album(
                         file_path=_rel_to_root(live_dest),
                         captured_iso=captured_iso,
                         ingested_iso=None,
-                        duration_sec=None,
+                        duration_sec=_probe_duration(live_dest),
                         width=p.width,
                         height=p.height,
                         phash=None,
