@@ -154,3 +154,62 @@ def _log_text(provider: str, model: str, price_key: str, resp) -> None:
 def call_user_only(prompt: str, *, max_tokens: int = 4000) -> str:
     """Convenience for one-shot prompt without a system message."""
     return call_text_cascade("", prompt, max_tokens=max_tokens)
+
+
+# Anthropic Sonnet $/1M tokens: (input, cache-write, cache-read, output).
+_CACHED_RATE = (3.0, 3.75, 0.30, 15.0)
+
+
+def _log_cached(model: str, u) -> None:
+    """Ledger entry for a cached Anthropic call — cost accounts for the cache
+    discount (read ≈ 0.1× input), and meta carries cache_read/write so the report
+    can SHOW the cache actually hitting."""
+    try:
+        from agents import api_ledger as _led
+        inp = int(getattr(u, "input_tokens", 0) or 0)
+        cw = int(getattr(u, "cache_creation_input_tokens", 0) or 0)
+        cr = int(getattr(u, "cache_read_input_tokens", 0) or 0)
+        out = int(getattr(u, "output_tokens", 0) or 0)
+        ri, rw, rr, ro = _CACHED_RATE
+        cost = (inp * ri + cw * rw + cr * rr + out * ro) / 1_000_000.0
+        _led.log_call("anthropic", "text", price_key="anthropic_text_cached", model=model,
+                      stage=os.getenv("CURRENT_STAGE") or _caller_label(),
+                      card_id=os.getenv("CURRENT_CARD_ID") or None, est_cost=cost,
+                      meta={"tokens": inp + cw + cr + out, "cache_read": cr, "cache_write": cw})
+    except Exception:
+        pass
+
+
+def call_text_cached(system: str, user: str, *, max_tokens: int = 12000,
+                     model: str | None = None) -> str:
+    """Anthropic-PRIMARY variant of call_text_cascade for HEAVY, REPEATED prompts.
+
+    The large STATIC `system` is sent with cache_control=ephemeral (5-min TTL), so a
+    retry loop that re-sends the same ~80k-token context (the RF single-pass pool on
+    every Giri/reviewer re-proposal) pays full price ONCE (cache write, +25%) then
+    ~90% off on each re-send (cache read). Put everything static in `system`; put only
+    the per-attempt dynamic bit (Giri feedback) in `user`. Falls back to the normal
+    OpenAI→Gemini cascade (same content) on ANY Anthropic failure, so it degrades to
+    today's exact path. Caller opts in via its own flag (e.g. RF_PROMPT_CACHE)."""
+    from agents import circuit
+    model = model or os.getenv("RF_CACHE_MODEL", "claude-sonnet-4-6")
+    if not circuit.is_down("anthropic"):
+        try:
+            import anthropic
+            client = anthropic.Anthropic()
+            msg = client.messages.create(
+                model=model, max_tokens=max_tokens,
+                system=[{"type": "text", "text": system,
+                         "cache_control": {"type": "ephemeral"}}],
+                messages=[{"role": "user", "content": user or "위 지침대로 지금 작성하라."}],
+            )
+            if getattr(msg, "stop_reason", "") == "max_tokens":
+                raise RuntimeError("anthropic output truncated")
+            circuit.mark_up("anthropic")
+            _log_cached(model, getattr(msg, "usage", None))
+            return "".join(b.text for b in msg.content
+                           if getattr(b, "type", "") == "text").strip()
+        except Exception as e:
+            circuit.mark_down("anthropic")
+            log.warning("cached Anthropic failed (%s) — falling back to cascade", e)
+    return call_text_cascade(system, user, max_tokens=max_tokens)

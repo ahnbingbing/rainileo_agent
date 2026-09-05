@@ -3131,8 +3131,11 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         user += _cb._exclude_block(context)
     except Exception as e:
         log.warning("RF exclude_concepts inject failed: %s", e)
+    # Per-attempt DYNAMIC tail (Giri feedback) — held OUT of `user` so the static
+    # prefix (system + pool + rules) stays a cacheable unit across re-proposals.
+    _fb = ""
     if prior_feedback:
-        user += (
+        _fb = (
             "\n\n## ⚠️ 이전 시도가 기리(Giri) 검수를 통과하지 못했다. 아래 지적을 "
             "반드시 고쳐서 다시 써라 (같은 실수 반복 금지):\n" + prior_feedback +
             "\n위 문제를 해결한 새 컨셉을 작성하라. 필요하면 컷 구성/자산/캡션을 바꿔라."
@@ -3160,8 +3163,14 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         user += ("\n\n⚠️ 구간 재사용: recently_used_segments는 최근 에피소드가 이미 쓴 "
                  "(클립별) 구간이다. 같은 클립을 다시 쓰려면 그 구간과 겹치지 않는 다른 "
                  "trim_start를 골라라 — 겹치는 구간 재사용은 거부된다(동일 구간 반복 방지).")
-    from agents.llm_cascade import call_text_cascade
-    text = call_text_cascade(system, user, max_tokens=12000).strip()  # PD 2026-06-09: avoid truncation
+    from agents.llm_cascade import call_text_cascade, call_text_cached
+    if os.getenv("RF_PROMPT_CACHE", "1") != "0":
+        # HEAVY prompt (~80-180k tok): cache the static system+pool, send only the
+        # dynamic Giri feedback fresh → the retry loop stops re-paying full price for
+        # the identical pool (Anthropic cache-read ≈ 90% off; falls back to cascade).
+        text = call_text_cached(system + "\n\n" + user, _fb, max_tokens=12000).strip()
+    else:
+        text = call_text_cascade(system, user + _fb, max_tokens=12000).strip()  # PD 2026-06-09: avoid truncation
     concepts = _robust_json_parse(text)
     # PD 2026-06-05: NO cut cap — script decides length.
     # PD 2026-06-06: stamp the single-pass author so the render pipeline can
