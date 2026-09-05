@@ -369,6 +369,47 @@ def _cut_is_fantasy(cc: dict | None) -> bool:
     return any(h.lower() in blob for h in _AV_FANTASY_HINTS)
 
 
+# PD 2026-09-05 — harness consistency. A REAL walk/outdoor cut → BOTH pets wear a chest
+# harness (canon: "always wears harness for walks"), IDENTICAL on both and held across every
+# such cut. A fantasy/imagination cut (야외라도 상상 컨셉) → NO harness (a dream isn't a real
+# outing, and forcing one fights the vivid dreamscape). ONE source of truth used by BOTH the
+# still-regen and the i2v motion prompt, so the still and the motion never disagree (that
+# disagreement — harness in motion, bare in the still — was the drift: a harness on one pet /
+# blinking between cuts). State = (set requires_harness) AND (cut not fantasy).
+_SET_LIB_CACHE: dict | None = None
+
+
+def _set_library() -> dict:
+    global _SET_LIB_CACHE
+    if _SET_LIB_CACHE is None:
+        try:
+            _SET_LIB_CACHE = json.loads(
+                (ROOT / "data" / "set_library.json").read_text(encoding="utf-8"))
+        except Exception:
+            _SET_LIB_CACHE = {}
+    return _SET_LIB_CACHE
+
+
+def _cut_wants_harness(cc: dict | None, concept: dict | None) -> bool:
+    if _cut_is_fantasy(cc):
+        return False
+    sa = (cc or {}).get("set_anchor") or (concept or {}).get("set_anchor") or ""
+    return bool(sa and (_set_library().get(sa) or {}).get("requires_harness"))
+
+
+_HARNESS_BOTH = (
+    "BOTH pets wear a plain chest harness for this real outing (canon — always harnessed on "
+    "walks): Ryani a soft dark-grey nylon chest harness, Leo a slim red nylon chest harness — "
+    "chest-style only (no neck straps), no buckles/text/logo visible, no leashes in frame, no "
+    "collars, no bandanas. The SAME harness on BOTH pets in EVERY cut — never one pet only, "
+    "never appearing or vanishing between cuts."
+)
+_BARE_BOTH = (
+    "BOTH pets bare-furred: NO collar, NO harness, NO clothing, NO accessories — on both pets, "
+    "every cut."
+)
+
+
 def _resolve_costume_for_cut(cc: dict | None, manifests: dict | None) -> dict | None:
     """PD 2026-06-30 — sanctioned costume whitelist. When an episode's whole premise
     IS an outfit (우비 패션쇼 등), the Director sets a concept-level `costume_prop`
@@ -1758,10 +1799,10 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
             "tailless; never render any tail). "
             "Leo is MALE (he/him, 8mo young male orange tabby — channel's "
             "아들 레오). "
-            "BOTH pets bare-furred: NO collar, NO harness, NO clothing, NO "
-            "accessories. The pets take ONLY the pose/action stated in the "
+            "The pets take ONLY the pose/action stated in the "
             "scene direction — do NOT default to nose-down floor-sniffing."
-        )
+        )  # NOTE: wearable state (harness vs bare) is appended PER-CUT below via
+        #  _cut_wants_harness — a real walk = harness on both every cut, fantasy = bare.
 
         # Get regen direction from concept (priority) or generate generic
         regen_dir = (concept or {}).get("regen_direction", {})
@@ -1850,14 +1891,18 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
                             "image model will invent the location", tag)
             # Fantasy/imagination still: vivid wondrous look (swap lo-fi → vivid) and no
             # single-room scene lock — the dreamscape is its own world (PD 2026-06-24).
+            # PD 2026-09-05: wearable state per cut — real walk/outdoor = harness on BOTH
+            # (canon), fantasy/imagination = bare. Deterministic + identical to the motion
+            # prompt's predicate, so the still and the i2v never disagree.
+            _wear = _HARNESS_BOTH if _cut_wants_harness(cc, concept) else _BARE_BOTH
             if _cut_is_fantasy(cc):
                 _style = overall_style.replace(LOFI_REALISM_DIRECTIVE, VIVID_FANTASY_DIRECTIVE)
                 if "VIVID DREAMSCAPE" not in _style:
                     _style = (_style + " " + VIVID_FANTASY_DIRECTIVE).strip()
-                full_prompt = f"{_style}. {per_cut_prompt}. Featuring {subjects}. {preserve}"
+                full_prompt = f"{_style}. {per_cut_prompt}. Featuring {subjects}. {preserve} {_wear}"
             else:
                 full_prompt = f"{overall_style}. {_scene_lock_prefix}{per_cut_prompt}. " \
-                              f"Featuring {subjects}. {preserve}"
+                              f"Featuring {subjects}. {preserve} {_wear}"
             full_prompt = _ensure_sink_height_lock(full_prompt)  # floor-sink guard
             # Sanctioned costume (PD 2026-06-30): keep the episode's premise garment on
             # the wearer in the still too, so an i2v cut's first frame matches the motion.
@@ -7725,24 +7770,13 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         # Conditional clothing rule (PD 2026-06-01 PM): default bare-furred,
         # EXCEPT for set_anchors with `requires_harness: true` (cafe, outdoor,
         # vet, etc.) — there pets MUST wear harnesses for realism.
-        requires_harness = False
-        try:
-            if sa_for_anti and lib_data:
-                requires_harness = bool(
-                    (lib_data.get(sa_for_anti) or {}).get("requires_harness")
-                )
-        except Exception:
-            pass
-        # PD 2026-06-13: a FANTASY ai_vtuber scene (beach 판타지 등) is NOT a real
-        # outing — it doesn't need the outdoor-etiquette harness, and forcing one
-        # CONFLICTS with the harness-free base ref → the model invents inconsistent
-        # harnesses mid-episode. So skip the harness injection for ai_vtuber by
-        # default (the clean base has none). real_footage (real walks/cafe) keeps it.
-        # A separate harness-version base + AV_FORCE_HARNESS=1 covers AV daily concepts.
-        _rstyle = (card.get("render_style") or "").lower()
-        if requires_harness and _rstyle == "ai_vtuber" \
-                and os.getenv("AV_FORCE_HARNESS", "0") != "1":
-            requires_harness = False
+        # PD 2026-09-05: single source of truth (same predicate the still-regen uses, so the
+        # still and this motion prompt NEVER disagree — that disagreement was the drift). A
+        # REAL walk/outdoor cut (set requires_harness) that is NOT a fantasy beat → BOTH pets
+        # harnessed; a fantasy/imagination cut (야외라도 상상 컨셉) → bare. Was: blanket-skip for
+        # ALL ai_vtuber, which left AV walks with no harness assertion at all → Seedance put a
+        # harness on one pet / some cuts only.
+        requires_harness = _cut_wants_harness(cc, (manifests or {}).get("concept"))
         if costume:
             costume_inject = _costume_inject_text(costume)
             if costume_inject not in prompt:
