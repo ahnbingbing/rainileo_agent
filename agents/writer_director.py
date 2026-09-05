@@ -97,16 +97,39 @@ def _call_anthropic(system: str, user: str, *, model: str,
     the timeout on every call. `model` applies to the Anthropic call.
     """
     from agents import circuit
-    # 1) Anthropic primary — prompt-cached, completes the 25KB-system + 16k-JSON call
+    # 1) Anthropic primary — prompt-cached, completes the 25KB-system + 16k-JSON call.
+    #    A TRUNCATION (output hit max_tokens) is NOT a provider outage: it means the
+    #    JSON is genuinely longer than the ceiling. Anthropic is the ONLY provider that
+    #    reliably emits large JSON within budget (gpt-4.1/Gemini on the fail-fast timeout
+    #    provably time out on 16k+ output — see docstring). So on truncation, ESCALATE
+    #    the token ceiling and retry Anthropic, instead of cascading to fallbacks that
+    #    are guaranteed to time out and then dump us into the legacy single-pass path.
+    #    (PD 2026-06-09 intended this "retry with a higher limit" — it was documented at
+    #    the truncation raise but never wired at the call sites; this closes that gap.)
     if not circuit.is_down("anthropic"):
-        try:
-            out = _call_anthropic_raw(system, user, model=model,
-                                      max_tokens=max_tokens, cache_system=cache_system)
-            circuit.mark_up("anthropic")
-            return out
-        except Exception as e:
-            circuit.mark_down("anthropic")
-            log.warning("Anthropic primary failed (%s) — trying OpenAI", e)
+        _mt = max_tokens
+        _cap = int(os.getenv("WRITER_MAX_TOKENS_CAP", "32000"))
+        while True:
+            try:
+                out = _call_anthropic_raw(system, user, model=model,
+                                          max_tokens=_mt, cache_system=cache_system)
+                circuit.mark_up("anthropic")
+                return out
+            except Exception as e:
+                _truncated = "truncated" in str(e)
+                # Truncation → bump the ceiling and retry the SAME (healthy) provider.
+                if _truncated and _mt < _cap:
+                    _prev, _mt = _mt, min(_cap, _mt * 2)
+                    log.warning("Anthropic output truncated at %d — retrying at max_tokens=%d",
+                                _prev, _mt)
+                    continue
+                # Still truncated at the cap = pathologically large JSON, NOT an outage:
+                # leave the circuit UP (don't skip Anthropic for later smaller calls) and
+                # just cascade this one call. A genuine API error DOES mark the circuit down.
+                if not _truncated:
+                    circuit.mark_down("anthropic")
+                log.warning("Anthropic primary failed (%s) — trying OpenAI", e)
+                break
     else:
         log.info("writer_director: skip Anthropic (circuit open) → OpenAI")
     # 2) OpenAI fallback
