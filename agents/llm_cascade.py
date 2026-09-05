@@ -114,6 +114,25 @@ def call_text_cascade(system: str, user: str, *,
     return "".join(parts).strip()
 
 
+def _caller_label() -> str:
+    """First frame OUTSIDE this module = the agent that made the cascade call.
+    Attributes the ledger `stage` per-caller (was flat 'cascade' → all 234 calls/day
+    lumped, so we couldn't see WHICH 40k-token prompt drove the $). Best-effort:
+    'module.func' (e.g. 'producer._propose_realfootage_singlepass'); 'cascade' on any
+    failure. CURRENT_STAGE env still wins when a caller sets it explicitly."""
+    try:
+        import sys
+        f = sys._getframe(1)  # start above _caller_label; skip all in-module frames below
+        while f is not None:
+            mod = f.f_globals.get("__name__", "")
+            if mod != __name__:  # left llm_cascade
+                return f"{mod.rsplit('.', 1)[-1]}.{f.f_code.co_name}"
+            f = f.f_back
+    except Exception:
+        pass
+    return "cascade"
+
+
 def _log_text(provider: str, model: str, price_key: str, resp) -> None:
     """Best-effort cost-ledger entry for one text call; pulls token usage when present."""
     try:
@@ -126,7 +145,7 @@ def _log_text(provider: str, model: str, price_key: str, resp) -> None:
             if tot:
                 meta = {"tokens": int(tot)}
         _led.log_call(provider, "text", price_key=price_key, model=model,
-                      stage=os.getenv("CURRENT_STAGE") or "cascade",
+                      stage=os.getenv("CURRENT_STAGE") or _caller_label(),
                       card_id=os.getenv("CURRENT_CARD_ID") or None, meta=meta)
     except Exception:
         pass
