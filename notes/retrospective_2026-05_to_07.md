@@ -1145,6 +1145,18 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   그 매체를 고집하지 말고 담을 수 있는 매체로 바꿔라(빈 슬롯보다 낫다). cf C_toolshort(같은 배치의 collapse 차단).
 
 ### 4.5 인프라 / 파이프라인
+- **D_writertrunc. 폴백 티어가 주력의 출력 예산을 못 맞추면 그건 폴백이 아니다 — truncation은 장애가 아니다(9/5)** —
+  writer_director가 만성적으로 legacy 단일패스로 새고 있었다(9/5 배치: non-JSON 61회·OpenAI 타임아웃 15회). 근본:
+  `_call_anthropic`이 Anthropic 주력의 **max_tokens truncation**(출력이 16k 한도를 넘어 잘림)을 **provider 장애처럼** 취급해
+  gpt-4.1/Gemini 폴백으로 넘겼는데 — 이들은 fail-fast 45s 타임아웃에서 **16k+ JSON을 시간 내에 못 뱉는 게 확정**이라
+  반드시 타임아웃 → 그 다음 malformed/504 → non-JSON → legacy. 즉 폴백 티어가 애초에 주력의 출력 예산을 못 맞추니
+  truncation이 무조건 캐스케이드 실패로 귀결됐다. (2026-06-09에 truncation raise에 "더 높은 limit으로 재시도" 의도를
+  주석으로 달았으나 **호출부에 배선한 적이 없어** 6·7·8·9월 내내 이 갭이 열려 있었다.) Fix: truncation이면 같은(건강한)
+  Anthropic을 **max_tokens 2배로 올려 재시도**(cap `WRITER_MAX_TOKENS_CAP`=32000, Opus 4.8이 지원) — 큰 JSON을 예산 내
+  완성하는 유일한 provider에 머문다. circuit은 truncation엔 UP 유지(장애 아님), 진짜 API 에러만 down+캐스케이드. 단위검증
+  3케이스(truncate→escalate→성공 / cap초과→폴백·circuit UP / api에러→down·폴백). ★교훈: **폴백은 주력의 작업을 실제로
+  대신할 수 있어야 폴백이다.** 출력 예산·타임아웃이 주력보다 빡빡한 "폴백"은 장애를 완화하는 게 아니라 장애를 확대하는
+  우회로다. 그리고 **의도를 주석에만 적고 배선 안 하면 그 의도는 없는 것**이다(3개월 열린 갭). cf. D18(진단 실패)·[[baby_leo_timeframe_and_roleswap_gate]]의 "advisory 규칙 ≠ 결정론".
 - **D_openaicost. per-cut best-of가 상류 컨셉-ref best-of와 예산을 이중 지출했다 + 엔진 이름이 틀린 죽은 config(9/4)** —
   OpenAI gpt-image 비용이 과했다. 근본: AV 스틸은 컨셉 레퍼런스를 이미 best-of-4(`AV_CONCEPT_REF_BEST_OF`)로 검증하고
   그 예산을 상류에 쓰는 이유가 **컷마다 재롤하지 않게** 하려는 것인데, per-cut `REGEN_BEST_OF` 기본이 여전히 2라 지배적 비용
