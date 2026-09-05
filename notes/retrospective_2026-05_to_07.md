@@ -1157,6 +1157,27 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   3케이스(truncate→escalate→성공 / cap초과→폴백·circuit UP / api에러→down·폴백). ★교훈: **폴백은 주력의 작업을 실제로
   대신할 수 있어야 폴백이다.** 출력 예산·타임아웃이 주력보다 빡빡한 "폴백"은 장애를 완화하는 게 아니라 장애를 확대하는
   우회로다. 그리고 **의도를 주석에만 적고 배선 안 하면 그 의도는 없는 것**이다(3개월 열린 갭). cf. D18(진단 실패)·[[baby_leo_timeframe_and_roleswap_gate]]의 "advisory 규칙 ≠ 결정론".
+- **D_rfcache. 비싼 프롬프트 ≠ 낭비 — 반복되는 load-bearing 프롬프트는 줄이지 말고 재전송을 캐시하라(9/5)** —
+  PD "오늘도 OpenAI 또 결제, 왜 안 줄었나". 9/4에 줄인 건 gpt-**이미지**(REGEN_BEST_OF)였는데 그날 image는
+  2콜 ~$0.34 — **엉뚱한 표면을 줄였다.** 실제 OpenAI 비용은 텍스트 캐스케이드(`call_text_cascade`,
+  OpenAI gpt-4.1 primary): 234콜 ~$37. ★그런데 **콜 수가 아니라 프롬프트 크기가 범인**이었다 — 원장의
+  토큰 버킷을 까보니 `<5k` 119콜 $1.2 vs **`≥50k` 81콜 $33(평균 103K·최대 183K) = 비용의 90%**. 그 81콜의
+  정체는 RF 단일패스: available_videos(24K)+available_photos(24K)+system+context ≈ 콜당 92K인데, reuse-reject
+  재제안 루프가 슬롯당 그 92K를 ~5회 재전송한 것. **표면(gpt-image)이 아니라 원장(ledger 토큰 분포)이
+  진실이고, 최적화 전에 그걸 재라.** flat `stage='cascade'`가 범인을 가려서, `_log_text`에 스택워크
+  호출자 귀속을 넣어(256f675) 처음으로 `producer._propose_realfootage_singlepass`를 지목했다.
+  순진한 대응(클립당 필드 트림)은 **pipeline-change-impact가 막았다**: `sc`/`content_desc`/`observed_motion`은
+  realfootage_concept.md가 "이게 **진실**이다 / sc에 없으면 캡션 금지"로 쓰는 **anti-hallucination ground-truth**
+  (랴니/레오 뒤바꿈·없는 동작 지어내기 방지) — 트림 = 몇 달 걸려 고친 환각의 회귀. 소비자(프롬프트)를
+  확인하고 revert. **비싼 프롬프트가 load-bearing이면 크기는 낭비가 아니다 — 낭비는 같은 걸 여러 번
+  재전송하는 것이다.** Fix(e472e70): RF 단일패스를 **정적(system+풀+규칙) vs 동적(Giri feedback)**으로 쪼개,
+  정적을 `llm_cascade.call_text_cached`(Anthropic-primary, system `cache_control=ephemeral`, model
+  `RF_CACHE_MODEL`=claude-sonnet-4-6)로 → 5분 TTL 안의 재제안이 풀을 `cache_read`(~90% off)로 읽는다.
+  Anthropic 실패 시 기존 cascade로 폴백, `RF_PROMPT_CACHE=0` revert. 라이브 검증: 실제 재제안이
+  cache_write 127K $0.50 → **cache_read 127K $0.07(86%↓)**, 풀 바이트 동일이라 완벽 히트. 경제=churn 슬롯
+  (문제의 그 슬롯)은 40-67%↓, 저-churn 슬롯만 Sonnet write 프리미엄으로 near-break-even(원래 싼 슬롯). ★교훈
+  3겹: ①표면 아닌 원장이 비용의 진실(측정 먼저) ②콜 수 아닌 토큰 크기로 귀속 ③비싼 load-bearing 프롬프트는
+  트림 아니라 재전송 캐싱. cf. [[D_writertrunc]]·D_openaicost·§4.4 RF 소재 게이트.
 - **D_openaicost. per-cut best-of가 상류 컨셉-ref best-of와 예산을 이중 지출했다 + 엔진 이름이 틀린 죽은 config(9/4)** —
   OpenAI gpt-image 비용이 과했다. 근본: AV 스틸은 컨셉 레퍼런스를 이미 best-of-4(`AV_CONCEPT_REF_BEST_OF`)로 검증하고
   그 예산을 상류에 쓰는 이유가 **컷마다 재롤하지 않게** 하려는 것인데, per-cut `REGEN_BEST_OF` 기본이 여전히 2라 지배적 비용
