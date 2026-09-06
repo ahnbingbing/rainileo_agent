@@ -72,9 +72,26 @@ def recaption_slot(target: dt.date, lane: str, slot: str, progress_cb=None) -> d
     if progress_cb:
         progress_cb(f":art: 캡션 보존 재렌더 — 원본 {n_clips}개 클립 그대로, 캡션만 재생성")
     out = render_card(card_id, use_brain=False, concept=concept, progress_cb=progress_cb)
+    # PD 2026-09-07: a re-caption changes the on-screen STORY, so the TITLE must follow it —
+    # reupload_episode alone keeps the stale card title ("캡션만 바뀌고 제목은 그대로"). Regenerate
+    # the title from the ACTUAL burned captions, exactly like _auto_upload_episode does, and pass
+    # it as the override so the slot ships a title that matches the new captions.
+    new_title = None
+    try:
+        from agents.channel_manager import (make_packaging, actual_captions_for_video,
+                                            actual_captions_for_card)
+        _cx = dict(concept)
+        _cx["actual_captions"] = (actual_captions_for_video(str(out))
+                                  or actual_captions_for_card(card_id))
+        if _cx.get("actual_captions"):
+            new_title = (make_packaging(_cx, card_id=card_id) or {}).get("title")
+            if new_title and progress_cb:
+                progress_cb(f":label: 제목도 새 캡션 기준 재생성 → {new_title}")
+    except Exception as e:
+        import logging; logging.getLogger(__name__).warning("recaption title regen failed: %s", e)
     if progress_cb:
-        progress_cb(f":arrow_up: 재업로드 → {slot} 슬롯 (같은 컨셉/제목)")
-    summary = reupload_episode(card_id, str(out))
+        progress_cb(f":arrow_up: 재업로드 → {slot} 슬롯 (제목 {'재생성' if new_title else '유지'})")
+    summary = reupload_episode(card_id, str(out), title_override=new_title)
     summary["mode"] = "caption_preserve"
     summary["clips_preserved"] = n_clips
     return summary
@@ -120,9 +137,22 @@ def _recaption_av_preserve(card_id: str, concept: dict, *, out_target, slot, pro
     subprocess.run([str(ROOT / ".venv" / "bin" / "python"), "-m", "scripts.recaption_finish",
                     "--workdir", str(wd), "--captions", str(cp), "--out", str(out)],
                    check=True, cwd=str(ROOT))
+    # PD 2026-09-07: re-title from the new captions too (same as the RF path) — a re-caption
+    # changes the story, so the title must follow, not stay the stale card title.
+    new_title = None
+    try:
+        from agents.channel_manager import (make_packaging, actual_captions_for_video,
+                                            actual_captions_for_card)
+        _cx = dict(concept)
+        _cx["actual_captions"] = (actual_captions_for_video(str(out))
+                                  or actual_captions_for_card(card_id))
+        if _cx.get("actual_captions"):
+            new_title = (make_packaging(_cx, card_id=card_id) or {}).get("title")
+    except Exception as e:
+        import logging; logging.getLogger(__name__).warning("AV recaption title regen failed: %s", e)
     if progress_cb:
-        progress_cb(f":arrow_up: 재업로드 → {slot} 슬롯 (영상 그대로, 캡션만)")
-    summary = reupload_episode(card_id, str(out))
+        progress_cb(f":arrow_up: 재업로드 → {slot} 슬롯 (영상 그대로, 캡션+제목)")
+    summary = reupload_episode(card_id, str(out), title_override=new_title)
     summary["mode"] = "caption_preserve_av"
     return summary
 
