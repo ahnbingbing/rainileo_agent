@@ -39,6 +39,7 @@ log = logging.getLogger("agents.writer_director")
 
 DB_PATH = Path(os.getenv("DB_PATH", str(ROOT / "data" / "agent.db"))).resolve()
 PROMPTS_DIR = ROOT / "agents" / "prompts"
+from agents import prompt_loader as _pl  # PROMPT_SET=v2 → diet'd prompts (A/B), else v1
 
 WRITER_STORY_PROMPT = PROMPTS_DIR / "writer_story.md"
 WRITER_REALFOOTAGE_PROMPT = PROMPTS_DIR / "writer_realfootage.md"
@@ -489,7 +490,7 @@ def run_writer(target_date: dt.date, context: dict, *,
     is_realfootage = (style_filter or "").lower() == "real_footage"
     if is_realfootage:
         try:
-            story_system = WRITER_REALFOOTAGE_PROMPT.read_text(encoding="utf-8")
+            story_system = _pl.load(WRITER_REALFOOTAGE_PROMPT)
             if progress_cb:
                 progress_cb(":pencil: Real_footage Writer (specialized — draft only, no critique/revise)")
             # Filter few_shots to real_footage only — TV동물농장 dramaturgy
@@ -498,10 +499,10 @@ def run_writer(target_date: dt.date, context: dict, *,
                          if (fs.get("render_style") or "").lower() == "real_footage"]
         except FileNotFoundError:
             log.warning("writer_realfootage.md not found — falling back to generic")
-            story_system = WRITER_STORY_PROMPT.read_text(encoding="utf-8")
+            story_system = _pl.load(WRITER_STORY_PROMPT)
             is_realfootage = False
     else:
-        story_system = WRITER_STORY_PROMPT.read_text(encoding="utf-8")
+        story_system = _pl.load(WRITER_STORY_PROMPT)
     # PD 2026-06-13: give the Writer the editing/selection JUDGMENT guide too, so the
     # story's intent already considers format/tempo/caption-timing (agent decides).
     try:
@@ -707,7 +708,7 @@ def run_conte(story_concepts: list[dict], context: dict, progress_cb=None) -> li
 def run_director(story_concepts: list[dict], context: dict,
                  progress_cb=None) -> list[dict]:
     """Run the 1-pass Director: add cinematography to each cut."""
-    director_system_base = DIRECTOR_SHOTS_PROMPT.read_text(encoding="utf-8")
+    director_system_base = _pl.load(DIRECTOR_SHOTS_PROMPT)
 
     # PD 2026-06-12: the Director system was ~91KB (director_shots 50KB + these refs
     # ~41KB) + 20K output tokens → OpenAI/Gemini TIME OUT on the request (only the slow
@@ -1115,7 +1116,7 @@ def run_caption_agent(concepts: list[dict],
     if progress_cb:
         progress_cb(":writing_hand: Caption Agent — narrator script 작성 중...")
     try:
-        system = CAPTION_AGENT_PROMPT.read_text(encoding="utf-8")
+        system = _pl.load(CAPTION_AGENT_PROMPT)
     except FileNotFoundError:
         log.warning("Caption Agent prompt missing — skipping pass")
         return concepts

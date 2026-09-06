@@ -38,6 +38,7 @@ load_dotenv(ROOT / ".env")
 log = logging.getLogger("agents.producer")
 
 DB_PATH = Path(os.getenv("DB_PATH", str(ROOT / "data" / "agent.db"))).resolve()
+from agents import prompt_loader as _pl  # v2 diet A/B
 PROPOSE_PROMPT_PATH = ROOT / "agents" / "prompts" / "producer_propose.md"
 KST = ZoneInfo("Asia/Seoul")
 
@@ -609,7 +610,7 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
 # ──────────────────────────────────────────────────────────────────────
 def _propose_concepts_legacy(target: dt.date, context: dict, style_filter: str | None) -> list[dict]:
     """Single-pass fallback using producer_propose.md (the old behavior)."""
-    system = PROPOSE_PROMPT_PATH.read_text(encoding="utf-8")
+    system = _pl.load(PROPOSE_PROMPT_PATH)
     user_prompt = json.dumps(context, ensure_ascii=False, default=str)
 
     from agents.llm_cascade import call_text_cascade
@@ -2749,7 +2750,7 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         if prior_feedback:
             msg += " — 기리 피드백 반영 재작성"
         progress_cb(msg)
-    system = REALFOOTAGE_SINGLEPASS_PROMPT.read_text(encoding="utf-8") + _editing_direction_block()
+    system = _pl.load(REALFOOTAGE_SINGLEPASS_PROMPT) + _editing_direction_block()
     # Feed both videos (Tier 1) and photos (Tier 2). PD 2026-06-06: photos are
     # NOT dropped anymore — every photo cut is animated via Seedance photo_i2v
     # so the writer can use a photo for the payoff/closer and still get motion.
