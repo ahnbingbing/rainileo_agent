@@ -194,22 +194,35 @@ def call_text_cached(system: str, user: str, *, max_tokens: int = 12000,
     from agents import circuit
     model = model or os.getenv("RF_CACHE_MODEL", "claude-sonnet-4-6")
     if not circuit.is_down("anthropic"):
-        try:
-            import anthropic
-            client = anthropic.Anthropic()
-            msg = client.messages.create(
-                model=model, max_tokens=max_tokens,
-                system=[{"type": "text", "text": system,
-                         "cache_control": {"type": "ephemeral"}}],
-                messages=[{"role": "user", "content": user or "위 지침대로 지금 작성하라."}],
-            )
-            if getattr(msg, "stop_reason", "") == "max_tokens":
-                raise RuntimeError("anthropic output truncated")
-            circuit.mark_up("anthropic")
-            _log_cached(model, getattr(msg, "usage", None))
-            return "".join(b.text for b in msg.content
-                           if getattr(b, "type", "") == "text").strip()
-        except Exception as e:
-            circuit.mark_down("anthropic")
-            log.warning("cached Anthropic failed (%s) — falling back to cascade", e)
+        import anthropic
+        client = anthropic.Anthropic()
+        _mt = max_tokens
+        _cap = int(os.getenv("CACHED_MAX_TOKENS_CAP", "24000"))
+        while True:
+            try:
+                msg = client.messages.create(
+                    model=model, max_tokens=_mt,
+                    system=[{"type": "text", "text": system,
+                             "cache_control": {"type": "ephemeral"}}],
+                    messages=[{"role": "user", "content": user or "위 지침대로 지금 작성하라."}],
+                )
+                # Truncation is NOT an outage — escalate the ceiling and retry the SAME (cached)
+                # call so we keep the ~90% cache-read discount instead of losing it to the
+                # cascade (PD 2026-09-07: RF cached calls were truncating at 12k → falling back to
+                # the expensive un-cached cascade every re-proposal).
+                if getattr(msg, "stop_reason", "") == "max_tokens" and _mt < _cap:
+                    _mt = min(_cap, _mt * 2)
+                    log.warning("cached Anthropic truncated — retrying at max_tokens=%d", _mt)
+                    continue
+                if getattr(msg, "stop_reason", "") == "max_tokens":
+                    raise RuntimeError("anthropic output truncated at cap")
+                circuit.mark_up("anthropic")
+                _log_cached(model, getattr(msg, "usage", None))
+                return "".join(b.text for b in msg.content
+                               if getattr(b, "type", "") == "text").strip()
+            except Exception as e:
+                if "truncated" not in str(e):
+                    circuit.mark_down("anthropic")
+                log.warning("cached Anthropic failed (%s) — falling back to cascade", e)
+                break
     return call_text_cascade(system, user, max_tokens=max_tokens)

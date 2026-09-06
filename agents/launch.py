@@ -557,7 +557,13 @@ def launch_pipeline(target: dt.date, *,
             ctx["slot_hhmm"] = hhmm
             # The day's designated 시의성 AV slot: force a timely concept (see timely_av_slot
             # above). Exactly one AV/day carries this; the other AV proposes free-form.
-            if lane == "ai_vtuber" and hhmm == timely_av_slot:
+            # PD 2026-09-07: a forced-timely concept (스핑크스 수수께끼·밈 등) is often abstract and
+            # Seedance can't visually implement it → giri_fail every round → the 08:00 slot ships
+            # EMPTY (only 3/day). An empty slot is worse than a non-timely AV, so self-heal drops
+            # the timely requirement after it fails a couple renders (SELFHEAL_DROP_TIMELY=1) and
+            # fills the slot with a normal, renderable AV instead.
+            if (lane == "ai_vtuber" and hhmm == timely_av_slot
+                    and os.getenv("SELFHEAL_DROP_TIMELY") != "1"):
                 ctx["require_timely"] = True
                 if _att == 1:
                     sp(f":calendar: {hhmm} {lane_lbl} — 오늘의 '시의성 AV' 슬롯 "

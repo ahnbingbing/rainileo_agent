@@ -98,6 +98,15 @@ def _remediate(category: str, round_no: int) -> str:
         # (producer rewrites captions on the existing render, $0, re-reviews) before
         # it ever reaches this outer loop — so a giri_fail arriving here is genuinely
         # NOT caption-fixable (structural: marking/face/render). Keep it terminal.
+        # PD 2026-09-07: the day's 시의성(timely) AV slot forces an abstract hook Seedance often
+        # can't render → giri_fail every round → 08:00 ships EMPTY (only 3/day, recurring). After
+        # the timely concept has failed a couple renders, drop the timely requirement so the next
+        # round proposes a NORMAL, renderable AV and the slot fills. Harmless to non-timely slots
+        # (they never set require_timely). SELFHEAL_KEEP_TIMELY=1 reverts.
+        if round_no >= 2 and os.getenv("SELFHEAL_KEEP_TIMELY") != "1":
+            os.environ["SELFHEAL_DROP_TIMELY"] = "1"
+            return ("Seedance 비용 발생 실패 — 시의성 강제 해제(렌더가능 일반 AV로 폴백) + "
+                    "재시도 예산 유지(상향 금지)")
         return "Seedance 비용 발생 실패 — 재시도 예산 유지(상향 금지), 하드 ceiling 적용"
     return "일반 재시도"
 
