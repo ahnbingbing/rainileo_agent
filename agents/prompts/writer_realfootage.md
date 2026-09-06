@@ -307,6 +307,7 @@ Your concept should pass these self-checks before output:
 - [ ] No dramatic competitive framing in title (X 대신 Y, 이겼어요, 결국)
 - [ ] No mystery framing in title (누구일까요, 범인, 대반전, 그런데)
 - [ ] Title/theme uses real, instantly-understood Korean — no coined neologism (지어낸 조어/억지 합성어 X봇 류). A viewer reads it in 2s; if a word isn't real (e.g. "관조봇"), rewrite it plainly. Separate axis from title-content match.
+- [ ] Title names a CONCRETE 순간·사건 (2초 안에 무슨 영상인지) — NOT poetic/mood/은유 (조회수 데이터: "세상의 모든 길은 낯설다" 0뷰·"바람을 나눠요" 11뷰가 매장 vs "로봇청소기 피난 대작전"·"화장실 바닥이 명당?!" 900-1000+뷰). 잔잔한 소재여도 제목은 구체 명사·사건으로('햇살 속 두 그림자'→'나란히 낮잠'). Separate axis from over-hype(과장) — this is under-communication.
 - [ ] editing_concept field set to a valid slug
 - [ ] Per-concept signature constraints satisfied
 - [ ] asset_enumeration field present and populated

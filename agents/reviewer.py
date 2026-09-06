@@ -261,6 +261,21 @@ looks. These are CAPS (a ceiling), not soft notes:
   and, if the over-hype is blatant, lean the verdict toward 소폭 수정. Keep it SOFT — do NOT
   hard-cap on a merely lively-but-fair title; reserve the note for a clear energy mismatch
   (worked example: a quiet at-home 더위 식히기 titled "방구석 워터밤").
+- **제목·테마가 시적/모호 — 구체적 훅 부재 (양레인, PD 2026-09-06 조회수 데이터)**: the `title`/`theme`
+  must name a CONCRETE moment/event/stakes a viewer grasps in ~2 seconds — 무슨 일이 / 누구에게 /
+  왜 봐야 하는지. A title that is METAPHORICAL·literary·mood-only·추상(a feeling or an image, not an
+  event) with no graspable hook or curiosity-gap gets BURIED even when the content itself is good.
+  This is the review-data gap: such episodes often have HIGH retention (the people who click, watch)
+  but almost NO reach — the title never earned the click. Worked examples that shipped and flopped:
+  "세상의 모든 길은 낯설다"(0뷰), "햇살 속에 스며드는 두 그림자"(5뷰), "바람을 나눠요"(11뷰) — all
+  grammatical, all real words (so the 조어 cap missed them), none tells a viewer what to click for;
+  vs concrete-event titles that drew 900-1000+: "로봇청소기 피난 대작전", "화장실 바닥이 명당?!",
+  "목줄 데뷔한 막내 레오의 풀숲 탐험기", "레오의 첫 드라이브". Flag "제목 훅 부족 — 시적/모호,
+  구체적 사건·훅 없음" and cap ≤6 (verdict ≤ 수정 필요) so it re-titles before shipping. ⚠️ This is
+  the TITLE's clickable concreteness ONLY — NOT the content's calmness. A quiet, high-retention
+  episode is GOOD; the fix is a title that NAMES the concrete moment (e.g. "나란히 낮잠" / "선풍기 앞
+  자리다툼", not "햇살 속 두 그림자"). Do NOT cap a title that already names a concrete moment/hook,
+  even a gentle everyday one.
 - **AV가 자기 레인을 정당화 못함 — 무훅·무사건 (ai_vtuber, PD 2026-06-30 / 재범위화 2026-07-04)**:
   이건 **CONTENT(스토리) 결함**이지 LOOK(실사 여부) 결함이 절대 아니다. ★혼동 금지: ai_vtuber가
   photoreal·실사처럼·real_footage처럼 보이는 것, 일상 소재인 것은 **감점 사유가 아니다**(오히려 정상 —
