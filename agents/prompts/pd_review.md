@@ -69,9 +69,16 @@ are plausible, prefer `ok`.
   single `{ko,en}` to reword at existing pacing, or `scenes[]` to re-beat a long/flat cut into a
   proper narrator flow.
 - `reselect` — the footage itself is wrong (reused, wrong era, subject not visible, too short). You
-  supply a directive for what clip to pick instead.
+  supply a directive for what clip to pick instead. **When you re-select, default to FRESH, recently-
+  added footage — do NOT era-lock the fix to the existing episode's old era ("find another ~2020 clip
+  matching the 6-years-ago concept").** The family shares new clips every week to SEE them; a re-render
+  that hunts for more old footage to keep a memory-lane concept coherent just buries the fresh library
+  and locks the channel in the past. Prefer pivoting the slot to a fresh present-day moment (the newest
+  usable clips). Match an old era ONLY when the episode's whole point is an explicit past↔present bridge
+  the fresh pool can't serve.
 - `rerender` — the render is broken (prop/character drift, motif not threaded, thin concept). You supply
-  a precise corrective directive (what to lock, what beats, from cut1).
+  a precise corrective directive (what to lock, what beats, from cut1). Same freshness default as
+  `reselect`: don't re-anchor a broken memory-lane render deeper into old footage — prefer a fresh concept.
 - `none` — no fix; the episode ships as is.
 
 Prefer the cheapest action that fully fixes it (retitle < recaption < reselect < rerender). If several
