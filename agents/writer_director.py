@@ -251,24 +251,64 @@ def _strip_fences(text: str) -> str:
     return t.strip()
 
 
+def _balanced_json_slice(t: str, start: int, opener: str, closer: str) -> str | None:
+    """Return the substring from `start` (an opener char) to its matching closer,
+    respecting string literals/escapes, or None if unbalanced (truncated)."""
+    depth = 0
+    in_str = False
+    esc = False
+    for j in range(start, len(t)):
+        ch = t[j]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str = True
+        elif ch == opener:
+            depth += 1
+        elif ch == closer:
+            depth -= 1
+            if depth == 0:
+                return t[start:j + 1]
+    return None
+
+
 def _parse_json_loose(text: str) -> Any:
-    """Parse JSON, tolerating fences and surrounding prose."""
+    """Parse JSON, tolerating fences and surrounding prose.
+
+    PD 2026-09-07 (THE non-JSON bug — ~1/3 of writer drafts failed, emptying batch slots):
+    the model sometimes prepends a PROSE preamble ("Looking at ... I have strong candidates
+    as spine:") before the JSON, and that Korean prose contains [브래킷] like "[컨셉]". The old
+    greedy `\\[[\\s\\S]*\\]` grabbed the FIRST "[" (the prose bracket) → parsed garbage → failed
+    at char 1 even though a valid JSON array sat later in the SAME response. Fix: scan EVERY
+    "[" / "{" candidate with a string-aware balanced-bracket slicer and return the first slice
+    that actually parses (trailing-comma repair kept). Robust to prose preambles, Korean
+    brackets, and mid-response truncation (an unbalanced slice is skipped)."""
     t = _strip_fences(text)
     # strict=False tolerates raw control chars (unescaped newlines/tabs in a string).
     try:
         return json.loads(t, strict=False)
     except json.JSONDecodeError:
-        # Try to find a JSON array or object inside, with a trailing-comma repair
-        # (PD 2026-06-09: common LLM-fallback malformation).
-        for pattern in (r"\[[\s\S]*\]", r"\{[\s\S]*\}"):
-            m = re.search(pattern, t)
-            if m:
-                frag = m.group(0)
-                try:
-                    return json.loads(frag, strict=False)
-                except json.JSONDecodeError:
-                    return json.loads(re.sub(r',\s*([}\]])', r'\1', frag), strict=False)
-        raise
+        pass
+    for opener, closer in (("[", "]"), ("{", "}")):
+        i = 0
+        while True:
+            start = t.find(opener, i)
+            if start < 0:
+                break
+            frag = _balanced_json_slice(t, start, opener, closer)
+            if frag:
+                for cand in (frag, re.sub(r',\s*([}\]])', r'\1', frag)):
+                    try:
+                        return json.loads(cand, strict=False)
+                    except json.JSONDecodeError:
+                        pass
+            i = start + 1
+    raise json.JSONDecodeError("no parseable JSON array/object found", t, 0)
 
 
 # ──────────────────────────────────────────────────────────────────────

@@ -1316,6 +1316,33 @@ def _robust_json_parse(text: str, allow_llm_repair: bool = True):
         m = re.search(r'\[[\s\S]*\]', t) or re.search(r'\{[\s\S]*\}', t)
         return m.group(0) if m else t
 
+    # PD 2026-09-07: a prose preamble + Korean [브래킷] (e.g. "[컨셉]") broke the greedy
+    # extractor below (it grabbed the prose "[" → parsed garbage → 'Expecting value char 1'
+    # even when a valid JSON array sat later in the SAME response). Try string-aware balanced
+    # slices from every "[" / "{" first — same fix as writer_director._parse_json_loose.
+    try:
+        from agents.writer_director import _balanced_json_slice as _bal
+        _t = (text or "").strip()
+        if _t.startswith("```"):
+            _t = _t.split("\n", 1)[1] if "\n" in _t else _t[3:]
+            if _t.rstrip().endswith("```"):
+                _t = _t.rstrip()[:-3]
+        for _op, _cl in (("[", "]"), ("{", "}")):
+            _i = 0
+            while True:
+                _st = _t.find(_op, _i)
+                if _st < 0:
+                    break
+                _fr = _bal(_t, _st, _op, _cl)
+                if _fr:
+                    for _c in (_fr, re.sub(r',\s*([}\]])', r'\1', _fr)):
+                        try:
+                            return json.loads(_c, strict=False)
+                        except Exception:
+                            pass
+                _i = _st + 1
+    except Exception:
+        pass
     s = _extract(text)
     try:
         return json.loads(s)
