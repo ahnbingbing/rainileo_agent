@@ -3032,8 +3032,12 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         # drift (drift came only from Seedance photo_i2v GENERATION, now off by default
         # via RF_PHOTO_MODE=kenburns in cameraman). So keep photos in the pool — they're
         # essential for same-location past↔present bridges. RF_PHOTO_MODE=off bans them.
+        # PD 2026-09-07 (token cost): photos are the SECONDARY, video-first pool — used only for
+        # occasional same-location past↔present ken-burns bridges, rarely more than 1-2/episode.
+        # 100 photos was ~24k tokens (a quarter of the RF prompt) for a pool the writer barely
+        # taps. Cap at RF_PHOTO_POOL_MAX (default 40) — plenty for bridges, ~15k tokens lighter.
         "available_photos": [] if os.getenv("RF_PHOTO_MODE", "kenburns").lower() == "off"
-                            else _photos[:100],
+                            else _photos[:int(os.getenv("RF_PHOTO_POOL_MAX", "40"))],
         # PD 2026-06-07: archive (older) clips for past⇄present memory-lane /
         # character-intro episodes. Each has years_ago — if you use one, the
         # caption MUST state the time point ("○년 전", "입양 첫날", "그때는…").
