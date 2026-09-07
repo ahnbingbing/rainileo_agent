@@ -311,4 +311,4 @@ Each cut object has exactly:
 - `caption_position`: `"bottom"` (default) or `"top"` (when the pet occupies bottom of frame)
 - `captions`: array of `{start, end, ko, en}` scenes
 
-If a cut has `function: "wink_ending"`, output `"captions": []` (empty array). No text on the wink.
+If a cut has `function: "wink_ending"`, its captions depend on POSITION (see the Wink-cut rule above): the episode's LAST wink cut carries the sign-off `[{"start":4.5,"end":5.0,"ko":"오늘도 햅삐 ♥","en":"Happy as ever ♥"}]`; every OTHER wink cut (a mid-episode callback wink) outputs `"captions": []` (empty).
