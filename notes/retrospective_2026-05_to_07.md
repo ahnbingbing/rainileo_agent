@@ -792,6 +792,16 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   이번엔 진짜 반려였다), C12(episode_stories/pd_notes는 생성기에도 닿아야), A24(생성기·검수기 lockstep).
 
 ### 4.4 실사(RF)
+- **C_freshbias. 신선 클립이 안 만들어진 건 인입이 아니라 선택 편향 + 리뷰어 자기강화였다(9/7)** — PD "왜 함미하비가
+  공유한 신선 클립이 에피소드가 안 되나, 풀 문제야?". 검증하니 풀은 정상(최근 usable 151개, home 81·outdoor 21) — 인입도
+  사용가능성(dur≥12·VLM·q≥0.7)도 병목이 아니었다. 진짜 근본 2겹: ①**RF writer가 잔잔한 신선 홈 클립보다 드라마틱한 옛
+  footage("N년 전 물놀이 대모험")를 선호**(story-worthy) → 최근 에피 90%가 2016-2021 memory-lane, 신선 클립 방치.
+  프롬프트에 "기본 우물은 지금"이 있어도 옛 드라마가 이겼다. ②**pd_reviewer(일일 자동 리뷰어)가 그걸 영속화**: memory-lane
+  에피의 컷 이슈를 고칠 때 `_do_rerender`가 LLM 디렉티브 "같은 옛 era(2020, 6년 전)의 unused footage 찾아라"를
+  pd_concept_directives에 **"[PD 지정 — 최우선]"**으로 써서 RF 프롬프트의 신선-우선 규칙을 덮음 → 그 슬롯이 과거에 못박힘.
+  Fix=pd_review.md 재선택/재렌더가 **신선 recent footage 기본·era-lock 금지**(명시적 past↔present 아닌 한) + stale
+  era-lock 디렉티브 청소. ★교훈=자동화 루프가 서로 강화하면(리뷰어가 옛것을 옛것으로 고침) 개별 규칙(신선-우선)이 조용히
+  무력화된다 — 나쁜 루프를 끊어야 한다. 그리고 "가족이 신선 클립을 공유하는 건 그걸 **보려는** 것"이 채널의 존재 이유다.
 - **C1. 순증 악화 → PD 지시로 롤백(6/16~17)** — 하룻밤 additive "개선" 3종(브레인스톰 ON→억지드라마 /
   사진-길게→7-14s 정적 오프닝 리텐션 사망 / 세션쿨다운→같은날 묶음 못 찾음)이 **합쳐서 RF를 악화**.
   PD "꼭 남겨둬 — 다시 적용 금지." **메타교훈: 새 게이트는 실제 도움 검증 후에만 유지.**
@@ -1145,6 +1155,29 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   그 매체를 고집하지 말고 담을 수 있는 매체로 바꿔라(빈 슬롯보다 낫다). cf C_toolshort(같은 배치의 collapse 차단).
 
 ### 4.5 인프라 / 파이프라인
+- **D_nonjsonparse. 만성 non-JSON은 truncation도 모델거부도 아닌 파서 버그였다 — 한국어 대괄호가 greedy 정규식을 속였다(9/7)** —
+  Writer draft의 ~1/3이 "Expecting value: line 1 column 2 (char 1)"로 실패해 legacy 폴백→빈 슬롯(한 배치 61회). 모두가
+  truncation이나 모델 변덕으로 추정했으나, `log.error`가 이미 찍던 raw draft를 끝까지 읽으니 진실이 나왔다: 모델이 JSON
+  앞에 **프로즈 서문**("Looking at grandmompapa_recent_asks, I have strong candidates as spine: - '[컨셉]…'")을 붙였고,
+  그 서문의 **한국어 `[컨셉]` 대괄호**가 `_parse_json_loose`의 greedy `\[[\s\S]*\]`를 속여 프로즈 `[`부터 마지막 `]`까지
+  garbage를 잡았다 — 정작 유효한 JSON 배열은 같은 4039-토큰 응답 안에 멀쩡히 있었다. Fix=문자열-인식 **균형-괄호 스캔**
+  (모든 `[`·`{` 후보를 슬라이스해 파싱되는 첫 것 반환). AV `_parse_json_loose` + RF `_robust_json_parse` 둘 다(같은 버그).
+  라이브 AV 4/4 성공·0에러. ★교훈 3겹: ①만성 실패의 원인을 추정하지 말고 **raw 출력을 끝까지 읽어라**(이미 로깅되고 있었다)
+  ②에러 시그니처는 정확하다("char 1"=`json.loads('[')`) — 재현해서 무엇이 그 바이트를 만드는지 봐라 ③**한국어 텍스트는
+  영어용 파서를 깬다**(대괄호·따옴표). 이건 프롬프트 다이어트(1%)·캐싱보다 큰 레버였다 — 버려지던 1/3 컨셉을 회수했으니.
+- **D_timelyempty. 하루를 4개로 못 채운 근본은 '시의성 강제' 슬롯이었다 — 빈 슬롯 > 억지 timely(9/7)** —
+  "왜 4개를 다 못 만들고 아침 self-heal이 도나": 하루 첫 AV슬롯(08:00)이 `require_timely`로 시의성 훅을 강제받는데, 그런
+  컨셉(스핑크스 레오 수수께끼·밈)은 대개 추상이라 Seedance가 시각 구현 못 함 → giri_fail 6R → 빔. 그 빈 슬롯을 09:10
+  `slot_topup`(별개 cron, 시의성 강제 없는 일반 AV로 backfill)이 채운 게 "아침 self-heal"의 정체였다. Fix=self-heal이
+  giri_fail 2R후 `SELFHEAL_DROP_TIMELY=1`→03:00 배치가 08:00을 **일반 렌더가능 AV로 스스로 채움**. ★교훈=하드 제약(하루 1
+  timely 보장)이 렌더 실패를 낳으면, 제약보다 **슬롯 채움을 우선**하는 graceful 폴백을 넣어라(빈 슬롯이 억지 timely보다 나쁘다).
+- **D_promptdiet_small. 프롬프트 다이어트로는 토큰이 거의 안 준다 — 비용은 시스템 프롬프트가 아니라 주입 컨텍스트에 있다(9/7)** —
+  PD "프롬프트 토큰 줄이자". 4개 core 프롬프트를 서브에이전트로 다이어트(중복·모순·verbose 제거, 규칙 100% 보존)했으나
+  ~9%뿐, 컨셉 A/B는 품질 동등·**콜당 토큰 ~1%↓**. 이유=RF 콜 92K 중 시스템은 ~26K, 나머지는 **available_videos(24K)+
+  available_photos(24K)+few-shot+refs** = load-bearing 컨텍스트. 진짜 레버=①load-bearing 아닌 컨텍스트 컷(photos 100→40,
+  RF_PHOTO_POOL_MAX) ②재전송 캐싱(D_rfcache) ③재시도 churn↓(D_nonjsonparse). ★부수 가치=다이어트가 v1의 실제 모순 3개를
+  발견(컷수 5~6 vs 상한없음·해요체 위반 ✅예시·윙크캡션 last vs all). ★교훈=프롬프트가 커도 대부분 load-bearing이면 다이어트는
+  청소지 절감이 아니다 — 토큰 절감은 컨텍스트·재전송·churn에서 찾아라. cf. [[D_rfcache]].
 - **D_writertrunc. 폴백 티어가 주력의 출력 예산을 못 맞추면 그건 폴백이 아니다 — truncation은 장애가 아니다(9/5)** —
   writer_director가 만성적으로 legacy 단일패스로 새고 있었다(9/5 배치: non-JSON 61회·OpenAI 타임아웃 15회). 근본:
   `_call_anthropic`이 Anthropic 주력의 **max_tokens truncation**(출력이 16k 한도를 넘어 잘림)을 **provider 장애처럼** 취급해
