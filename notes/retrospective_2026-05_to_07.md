@@ -1224,6 +1224,26 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   (문제의 그 슬롯)은 40-67%↓, 저-churn 슬롯만 Sonnet write 프리미엄으로 near-break-even(원래 싼 슬롯). ★교훈
   3겹: ①표면 아닌 원장이 비용의 진실(측정 먼저) ②콜 수 아닌 토큰 크기로 귀속 ③비싼 load-bearing 프롬프트는
   트림 아니라 재전송 캐싱. cf. [[D_writertrunc]]·D_openaicost·§4.4 RF 소재 게이트.
+- **D_streamguard. 작동하는 폴백이 죽은 주력을 가린다 — 우리가 만든 캐시는 몇 달 동안 한 번도 안 돌았다(9/10)** —
+  PD가 "Anthropic $440 자동충전 실패로 새벽 배치가 안 돈 것 같다"고 보고했다. 하지만 **배치 로그가 ground truth**였다:
+  크레딧/402/잔액부족 에러 0건, 배치는 정상 완주(09-12 3RF+1AV 4/4). $440은 실제 청구 사건이지만 배치를 막은 원인이 아니었다.
+  진짜 근본은 로그의 반복 경고였다 — `cached Anthropic failed (Streaming is required for operations that may take longer
+  than 10 minutes) — falling back to cascade`. anthropic SDK 0.116.0은 max_tokens가 커서 10분 초과가 추정되는
+  **non-streaming `messages.create()`를 클라이언트단에서 거부**한다. 우리의 무거운 호출은 전부 그 천장 위였다: RF 캐시
+  경로는 truncation 시 24k로 에스컬레이트([[D_writertrunc]]의 그 재시도)했고, AV Writer/Director는 opus 16k(opus가 느려
+  임계가 더 낮다). 그래서 **모든 무거운 Anthropic 호출이 이 가드에 걸려 OpenAI/Gemini 캐스케이드로 폴백**했다 — [[D_rfcache]]에서
+  공들여 만든 RF 프롬프트 캐싱(e472e70)은 **Anthropic이 한 번도 성공한 적이 없어 사실상 무효**였고, AV Writer는 캐시된 opus가
+  아니라 OpenAI로 돌았으며, 배치는 폴백 왕복으로 3.5시간을 기었다. 이게 몇 달간 안 보인 이유=**폴백이 작동했기 때문**이다:
+  슬롯은 채워졌고(느리고·비싸고·캐시 없이) 하드 실패로 표면화되지 않았다. Fix(4608872)=3개 사이트를
+  `messages.stream()`+`get_final_message()`로 전환 — streaming엔 10분 천장이 없고 `cache_control`·usage·stop_reason을
+  동일하게 실어 출력·truncation-escalation 동작 무변경, 실패 시 폴백도 보존(최악=오늘과 동일). VM 0.116.0에서 검증:
+  `create(mt=24000)`이 정확히 그 에러 재현 → streaming은 성공+`cache_read` 히트(RF·AV 양 레인). ★교훈 3겹:
+  ①**작동하는 폴백은 죽은 주력을 가린다** — 아무것도 하드 실패하지 않는 곳에 열화가 숨는다. "슬롯이 채워졌다"로 건강을
+  추론하지 말고 **주력이 실제로 쓰였는지**(로그의 provider·`cache_read`)를 확인하라 ②**사용자가 지목한 원인은 가설이지
+  ground truth가 아니다** — 배치 로그가 크레딧 설을 반증했다(cf. 프레임/원장이 진실이라는 이 문서의 반복 스파인)
+  ③**"한 번 검증했다"는 프로덕션에서 유지되지 않는다** — [[D_rfcache]]의 9/5 라이브 검증은 작은 프롬프트였고, SDK 업그레이드
+  (0.103→0.116)가 클라이언트 가드를 조용히 조였으며 max_tokens/프롬프트가 프로덕션에서 임계를 넘자 무너졌다. 라이브
+  경로는 실제 스케일·실제 SDK로 재검증하라. cf. [[D_rfcache]]·[[D_writertrunc]]·D18(진단 실패).
 - **D_openaicost. per-cut best-of가 상류 컨셉-ref best-of와 예산을 이중 지출했다 + 엔진 이름이 틀린 죽은 config(9/4)** —
   OpenAI gpt-image 비용이 과했다. 근본: AV 스틸은 컨셉 레퍼런스를 이미 best-of-4(`AV_CONCEPT_REF_BEST_OF`)로 검증하고
   그 예산을 상류에 쓰는 이유가 **컷마다 재롤하지 않게** 하려는 것인데, per-cut `REGEN_BEST_OF` 기본이 여전히 2라 지배적 비용
