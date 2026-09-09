@@ -145,35 +145,37 @@ def resolve_batch_veto(con, thread_ts: str, text: str) -> tuple[str | None, list
     return None, vids
 
 
-def day_assignments(target: dt.date) -> list[tuple[str, str]]:
-    """Return [(lane, "HH:MM"), ...] for the 4 daily slots, lane×timeslot
-    counterbalanced via a 2-day Latin square.
+def _assign_rf_heavy(slots: list[str], target: dt.date) -> list[tuple[str, str]]:
+    """PD 2026-09-09: **3 real_footage + 1 ai_vtuber** per day. RF outperforms AV on
+    reach, so the channel tilts RF-heavy; one AV/day stays for variety and carries the
+    시의성/timely hook. The single AV ROTATES across the timeslots on an N-day cycle so
+    AV×timeslot stays balanced (clean marginals); RF fills the other slots each day.
+    Fixed for the launch-month, then edit_grammar (velocity/meme/story) becomes the
+    bandit dimension on the RF slots (notes/impact_edit_plan.md Phase 1)."""
+    n = len(slots)
+    av_idx = target.toordinal() % n if n else 0     # which slot is AV today (rotates daily)
+    return [("ai_vtuber" if idx == av_idx else "real_footage", hhmm)
+            for idx, hhmm in enumerate(slots)]
 
-    With 4 slots and 2 lanes we always ship 2 av + 2 rf. We rotate WHICH slots
-    each lane occupies by day parity, so over any 2 consecutive days each lane
-    appears in each timeslot exactly once → lane and timeslot are uncorrelated
-    (clean marginal estimates for both factors).
+
+def _assign_latin_2av2rf(slots: list[str], target: dt.date) -> list[tuple[str, str]]:
+    """LEGACY 2 av + 2 rf Latin square (+ bandit lane-steer). Kept intact as the
+    ROLLBACK path — set LAUNCH_LANE_MIX=2av2rf to restore instantly (no redeploy).
 
         even day: av @ slots 0,2   rf @ slots 1,3
         odd  day: rf @ slots 0,2   av @ slots 1,3
     """
-    slots = [s.strip() for s in TIMESLOTS if s.strip()]
     parity = target.toordinal() % 2
     out: list[tuple[str, str]] = []
     for idx, hhmm in enumerate(slots):
-        # slots 0,2 → lane A ; slots 1,3 → lane B ; A/B swap each day
         first = (idx % 2 == 0)
         if parity == 0:
             lane = "ai_vtuber" if first else "real_footage"
         else:
             lane = "real_footage" if first else "ai_vtuber"
         out.append((lane, hhmm))
-    # Bandit loop-closure (Channel Manager Phase 2): the Latin square is the EXPLORATION
-    # backbone (balanced 2av+2rf → clean marginals). Once a lane has clearly WON
-    # (bandit.stabilized: P(best)≥θ & enough n), tilt the mix 2-2 → 3-1 toward it, but
-    # KEEP one slot of the other lane so exploration never fully stops (drift detection).
-    # Until a lane stabilizes (sparse launch data) this is a NO-OP — the balanced square
-    # stands, so closing the loop changes nothing until the data earns it. Disable: BANDIT_STEER=0.
+    # Bandit loop-closure: once a lane clearly WON, tilt 2-2 → 3-1 toward it (keep one
+    # loser slot for drift detection). NO-OP until a lane stabilizes. Disable: BANDIT_STEER=0.
     if os.getenv("BANDIT_STEER", "1") == "1":
         try:
             from agents import bandit
@@ -181,17 +183,28 @@ def day_assignments(target: dt.date) -> list[tuple[str, str]]:
             if win in LANES:
                 lose = "real_footage" if win == "ai_vtuber" else "ai_vtuber"
                 lose_slots = [i for i, (ln, _h) in enumerate(out) if ln == lose]
-                for i in lose_slots[1:]:          # convert all but one loser slot → winner
+                for i in lose_slots[1:]:
                     out[i] = (win, out[i][1])
                 if len(lose_slots) > 1:
                     log.info("bandit steer: lane '%s' stabilized → tilt to %s",
                              win, [f"{h}:{l}" for l, h in out])
         except Exception as e:
             log.warning("bandit steer skipped (Latin square stands): %s", e)
+    return out
+
+
+def day_assignments(target: dt.date) -> list[tuple[str, str]]:
+    """Return [(lane, "HH:MM"), ...] for the daily slots.
+
+    Mix chosen by **LAUNCH_LANE_MIX** (default '3rf1av' — 3 RF + 1 AV, PD 2026-09-09).
+    ★ ROLLBACK: set LAUNCH_LANE_MIX=2av2rf to restore the legacy balanced Latin square
+    INSTANTLY on the next batch — no code change, no redeploy, no in-flight impact.
+    """
+    slots = [s.strip() for s in TIMESLOTS if s.strip()]
+    mix = os.getenv("LAUNCH_LANE_MIX", "3rf1av").strip().lower()
+    out = _assign_latin_2av2rf(slots, target) if mix == "2av2rf" else _assign_rf_heavy(slots, target)
     # Pause a lane's auto-fill WITHOUT unloading the whole batch: LAUNCH_PAUSE_LANES is a
-    # comma-sep list of lanes to SKIP (e.g. "ai_vtuber" while the AV still-gen — which
-    # collapsed every cut of a multi-space concept into one identical two-shot — is being
-    # fixed). Paused slots are simply left empty: no junk, no Seedance spend.
+    # comma-sep list of lanes to SKIP. Paused slots are left empty: no junk, no spend.
     paused = {s.strip() for s in os.getenv("LAUNCH_PAUSE_LANES", "").split(",") if s.strip()}
     if paused:
         out = [(lane, hhmm) for lane, hhmm in out if lane not in paused]

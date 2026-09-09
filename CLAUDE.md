@@ -157,9 +157,13 @@ i2v scripts or BGM choice. Edit prompts in `agents/prompts/writer_*.md` /
 First month = explore-heavy **4 videos/day A/B** (av vs rf). Full design in
 `notes/first_month_plan.md`; operations in README "런칭 자동화".
 
-- **`agents/launch.py`** — `day_assignments()` = 2 av + 2 rf/day on a lane×timeslot
-  **Latin square** (timeslots 08:00/12:30/18:00/21:00 KST, rotated daily so each
-  lane×slot cell is balanced). `launch_pipeline()` proposes per lane → renders
+- **`agents/launch.py`** — `day_assignments()` = **3 rf + 1 av/day** (PD 2026-09-09,
+  RF-heavy for reach); the single AV rotates across timeslots (08:00/12:30/18:00/21:00
+  KST) on a 4-day cycle so AV×slot stays balanced. **Kill-switch `LAUNCH_LANE_MIX`**
+  (default `3rf1av`) → set `2av2rf` to roll back INSTANTLY to the legacy balanced
+  Latin square (no redeploy, next batch only). Next A/B axis is edit_grammar (velocity/
+  meme/story) on the RF slots, not lane (`notes/impact_edit_plan.md` Phase 1).
+  `launch_pipeline()` proposes per lane → renders
   (existing per-lane Giri retry gates) → auto-schedules passing episodes public at
   their slot → leaves failed slots empty (no junk). `publish_at_for()` rolls a
   passed slot to next day.
