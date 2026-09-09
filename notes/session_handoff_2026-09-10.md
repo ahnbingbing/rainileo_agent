@@ -83,3 +83,27 @@
 3. **TikTok 주말** — PD dev-app 크레덴셜 나오면.
 
 관련: `notes/impact_edit_plan.md`(Phase 1 상세)·`notes/tiktok_expansion_plan.md`·회고 §4.5 D_lanemix.
+
+---
+
+## ★ 비용 인시던트 (2026-09-10) — Anthropic $440 청구 거부됨
+- **증상**: 앤트로픽이 **$440 청구 시도 → PD 한도 부족으로 거부**. 즉 **크레딧이 곧/이미 소진** 상태일 수 있음 → 파이프라인 Opus 호출이 실패할 위험.
+- **$440 정체 = 계정 전체 합산**(파이프라인 Opus API + **Claude Code 세션들**). 로컬 원장(`data/agent.db`.`api_calls`)은 **8/7까지 stale**: 그때까지 누적 anthropic $210 / byteplus $687 / openai $300. **Claude Code(개발) 사용분은 원장에 안 찍힘** → 로컬로 $440 전부 설명 불가. ★이 세션(Opus 4.8 1M, 매우 긺)이 상당 기여했을 것 — 개발 세션 비용도 같은 계정.
+- **ground truth = Anthropic Console → Usage/Billing** (API 키별·날짜별). 파이프라인 키 vs Claude-Code 사용분이 거기서 갈림. **먼저 이걸 볼 것.**
+
+### 폴백 조사 (코드 확인 — `agents/llm_cascade.py`)
+앤트로픽이 죽어도 **대부분 경로는 graceful degrade**:
+- `call_text_cascade` = **OpenAI → Gemini → Anthropic(최후)**. 파이프라인 텍스트 대부분이 OpenAI 우선이라 **앤트로픽 죽어도 영향 거의 없음**(앤트로픽은 마지막에만 닿음). ✓
+- `call_text_cached`(RF 무거운 프롬프트, `RF_PROMPT_CACHE`) = **Anthropic-PRIMARY**지만 **any Anthropic 실패 시 cascade로 폴백**(`circuit.mark_down`→`break`→`call_text_cascade`, 라인 196~228). → OpenAI→Gemini로 강등. ✓
+- ⚠️ **미검증(다음에 값싸게 확인)**: `agents/writer_director.py`의 Writer/Director(WRITER_MODEL=opus)가 앤트로픽 신용거부 시 **graceful 폴백하는지**. 메모리 D_writertrunc 기준 추정: real API 에러→circuit down+cascade / 예외→`producer.propose_concepts`가 **legacy 단일패스로 auto-fallback**(그건 cascade=OpenAI 우선). → **죽지는 않고 품질만 강등**일 가능성 큼. **확인 방법**: `writer_director._call_anthropic`의 except 경로 + `producer.propose_concepts`의 try/except 폴백 한 번만 읽으면 끝(그람마 배선 아님, 값쌈).
+
+### 크레딧이 계속 막히면 — 레버 (택1)
+1. **크레딧 충전**(가장 단순), 또는
+2. `USE_WRITER_DIRECTOR=0` → legacy 단일패스(cascade=OpenAI 우선) = **Opus 글쓰기 완전 회피**, 또는
+3. `WRITER_MODEL`/`DIRECTOR_MODEL`=`claude-haiku-4-5`(또는 sonnet) = Opus 비용의 핵심(25KB 시스템프롬프트×매 컨셉) 제거.
+- 개발 세션도: 앞으로 무거운 작업은 더 값싼 모델/짧은 컨텍스트 고려(이 세션이 비쌌음).
+
+### NEXT (비용)
+1. **Anthropic Console 사용량 화면 확인** — 파이프라인 키 vs Claude-Code 어느 쪽이 $440 대부분인지 1분 판별.
+2. 파이프라인이 앤트로픽 필요로 막히면 위 레버(2 or 3) 즉시 적용 or 충전.
+3. writer_director 폴백 미검증분 값싸게 확인(위 "확인 방법").
