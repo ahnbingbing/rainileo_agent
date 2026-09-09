@@ -1155,6 +1155,19 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   그 매체를 고집하지 말고 담을 수 있는 매체로 바꿔라(빈 슬롯보다 낫다). cf C_toolshort(같은 배치의 collapse 차단).
 
 ### 4.5 인프라 / 파이프라인
+- **D_lanemix. 라이브 채널 변경은 되돌림을 런타임 플래그로 출하하라 — git-revert만으론 부족하다(9/9)** —
+  일일 슬롯 믹스를 2av+2rf 라틴스퀘어 → **3rf+1av**(RF가 도달에서 AV를 이김: RF 514v > AV 341v)로 바꿨다. 문제는
+  *무엇을 바꾸냐*가 아니라 *어떻게 안전하게 바꾸냐*였다 — 라이브 채널이라 잘못되면 즉시 되돌려야 한다. Fix=옛 경로
+  (`_assign_latin_2av2rf`, BANDIT_STEER 포함)를 **삭제하지 않고 보존**하고 `day_assignments`가 `LAUNCH_LANE_MIX`
+  (기본 `3rf1av`)로 디스패치 → 롤백 = VM에서 env `2av2rf` 세팅, **다음 배치부터 즉시 복귀**(재배포·git revert·2분 폴 無).
+  안전성 근거 3겹: ①`day_assignments`는 **배치 시점(~03:00)에만** 읽혀 이미 예약/제작된 영상엔 무영향 → 다음 배치 전
+  롤백이면 라이브 영향 0 ②슬롯 **배분만** 바꿔 렌더 계약(AV/RF·Writer→Director→cameraman→burn→Giri)은 안 건드림
+  (change-impact로 확인: 호출처 5곳 launch_pipeline·launch 765·slot_topup·launch_selfheal·pin_episode 전부 반환 리스트를
+  동적 순회, 2av 가정 없음) ③커밋을 이 행위 하나로 스코프해 `git revert`도 깨끗. ★교훈=**가역성을 코드 경로로 출하하라**
+  (옛 경로 보존 + 플래그 디스패치) — 런타임 스위치는 git-revert보다 빠르고(재배포 0)·인플라이트 위험 0이며, 되돌릴 때
+  심리적 문턱이 낮아 "일단 질러보고 아니면 끈다"가 가능해진다. 그리고 **배분/스케줄 변경은 blast radius가 배치-시점으로
+  유계** — 렌더 계약 무변경만 확인하면 빠르게 출하해도 안전하다. 한 달 고정 후 다음 A/B 축은 레인이 아니라
+  **edit_grammar**(velocity/meme/story를 RF 슬롯에, 손-프루프 3종 PD 승인 9/9) — `impact_edit_plan.md` Phase 1.
 - **D_nonjsonparse. 만성 non-JSON은 truncation도 모델거부도 아닌 파서 버그였다 — 한국어 대괄호가 greedy 정규식을 속였다(9/7)** —
   Writer draft의 ~1/3이 "Expecting value: line 1 column 2 (char 1)"로 실패해 legacy 폴백→빈 슬롯(한 배치 61회). 모두가
   truncation이나 모델 변덕으로 추정했으나, `log.error`가 이미 찍던 raw draft를 끝까지 읽으니 진실이 나왔다: 모델이 JSON
