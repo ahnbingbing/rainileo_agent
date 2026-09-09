@@ -90,22 +90,18 @@ def call_text_cascade(system: str, user: str, *,
         if "circuit open" not in str(e):   # real failure, not a skip → open circuit
             circuit.mark_down("gemini")
         log.warning("Gemini failed (%s) — last fallback Anthropic", e)
-    # 3. Anthropic last resort
+    # 3. Anthropic last resort. Stream, not create(): with max_tokens up to 16k the
+    # non-streaming SDK raises "Streaming is required …" and this last-resort hop would
+    # itself fail, collapsing the cascade. Streaming returns the same final Message.
     import anthropic
     client = anthropic.Anthropic()
+    _akw = dict(model=(anthropic_model or _models.ANTHROPIC_TEXT),
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": user}])
     if system:
-        msg = client.messages.create(
-            model=(anthropic_model or _models.ANTHROPIC_TEXT),
-            max_tokens=max_tokens,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-        )
-    else:
-        msg = client.messages.create(
-            model=(anthropic_model or _models.ANTHROPIC_TEXT),
-            max_tokens=max_tokens,
-            messages=[{"role": "user", "content": user}],
-        )
+        _akw["system"] = system
+    with client.messages.stream(**_akw) as _stream:
+        msg = _stream.get_final_message()
     log.info("LLM cascade: Anthropic last-resort used")
     if getattr(msg, "stop_reason", "") == "max_tokens":
         log.warning("cascade Anthropic output truncated (max_tokens=%s)", max_tokens)
@@ -200,12 +196,19 @@ def call_text_cached(system: str, user: str, *, max_tokens: int = 12000,
         _cap = int(os.getenv("CACHED_MAX_TOKENS_CAP", "24000"))
         while True:
             try:
-                msg = client.messages.create(
+                # Stream, not create(): anthropic SDK rejects a non-streaming call whose
+                # max_tokens implies a >10-min generation ("Streaming is required …"). Our
+                # RF pool prompts run max_tokens 12k–24k, so every cached call was raising
+                # that guard and silently falling back to the un-cached cascade (defeating
+                # the whole point of this path). Streaming carries cache_control + usage
+                # identically; get_final_message() returns the same Message we inspect below.
+                with client.messages.stream(
                     model=model, max_tokens=_mt,
                     system=[{"type": "text", "text": system,
                              "cache_control": {"type": "ephemeral"}}],
                     messages=[{"role": "user", "content": user or "위 지침대로 지금 작성하라."}],
-                )
+                ) as _stream:
+                    msg = _stream.get_final_message()
                 # Truncation is NOT an outage — escalate the ceiling and retry the SAME (cached)
                 # call so we keep the ~90% cache-read discount instead of losing it to the
                 # cascade (PD 2026-09-07: RF cached calls were truncating at 12k → falling back to

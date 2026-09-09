@@ -162,12 +162,17 @@ def _call_anthropic_raw(system: str, user: str, *, model: str,
         }]
     else:
         system_param = system
-    msg = client.messages.create(
+    # Stream, not create(): with max_tokens=16k the non-streaming SDK raises
+    # "Streaming is required …" and every Writer/Director Anthropic call would fall
+    # through to OpenAI. Streaming carries cache_control + usage identically; the final
+    # message we read below (usage, stop_reason, content) is unchanged.
+    with client.messages.stream(
         model=model,
         max_tokens=max_tokens,
         system=system_param,
         messages=[{"role": "user", "content": user}],
-    )
+    ) as _stream:
+        msg = _stream.get_final_message()
     usage = getattr(msg, "usage", None)
     if usage is not None:
         log.info("LLM usage: input=%s cache_created=%s cache_read=%s output=%s",
