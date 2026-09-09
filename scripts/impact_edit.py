@@ -72,6 +72,15 @@ def resolve(asset_id: str) -> str:
     return f
 
 
+def _resolve_clip(v: str) -> str:
+    """Accept either an asset_id (DB lookup) OR a direct file path — so production
+    (Phase B) can hand the grammar already-selected clip paths without a DB round-trip."""
+    if os.path.exists(v):
+        return v
+    p = ROOT / v
+    return str(p) if p.exists() else resolve(v)
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Motion analysis — find the most kinetic windows (what a velocity edit wants)
 # ──────────────────────────────────────────────────────────────────────
@@ -371,27 +380,30 @@ SWIM   = "med_2026_06_28_032719_slack_d4f82512"    # Ryani swim
 PLAY2  = "med_2026_06_28_031930_slack_85d20838"    # Leo+Ryani play 2
 BELLY  = "med_2026_07_05_072016_slack_f144f67b"    # Leo belly (slow beauty)
 
+# Default clip set = the PD-approved proof footage. Production (Phase B) passes its own
+# `clips` dict (SAME role keys) so the grammar runs on dynamically-selected RF footage.
+# Roles are ENERGY/function slots, not literal content: soccer=climax/high-motion payoff,
+# play1/play2=mid-energy interaction, swim=high-motion, belly=slow "beauty"/calm anchor.
+DEFAULT_CLIPS = {"soccer": SOCCER, "play1": PLAY1, "swim": SWIM, "play2": PLAY2, "belly": BELLY}
+
 
 # ──────────────────────────────────────────────────────────────────────
 # VELOCITY (club)
 # ──────────────────────────────────────────────────────────────────────
-VELOCITY_PLAN = [
-    (SOCCER, 4, 1.1, "run"),
-    (PLAY1,  3, 1.0, "play"),
-    (SWIM,   3, 1.1, "swim"),
-    (PLAY2,  3, 1.0, "play"),
-    (BELLY,  1, 1.4, "beauty"),
-]
-
-
-def build_velocity(music_id: str, out: Path):
+def build_velocity(music_id: str, out: Path, clips: dict | None = None):
+    c = clips or DEFAULT_CLIPS
+    velocity_plan = [
+        (c["soccer"], 4, 1.1, "run"), (c["play1"], 3, 1.0, "play"),
+        (c["swim"], 3, 1.1, "swim"), (c["play2"], 3, 1.0, "play"),
+        (c["belly"], 1, 1.4, "beauty"),
+    ]
     music = str(BGM / music_id)
     period, _ = beat_grid(music)
     print(f"velocity  {os.path.basename(music)}  {60/period:.1f}bpm  beat={period:.3f}s")
 
     pool = []
-    for aid, nwin, win, role in VELOCITY_PLAN:
-        clip = resolve(aid)
+    for aid, nwin, win, role in velocity_plan:
+        clip = _resolve_clip(aid)
         for (s, d) in top_motion_windows(clip, nwin, win):
             pool.append((clip, s, d, role))
 
@@ -456,9 +468,10 @@ def build_velocity(music_id: str, out: Path):
 # ──────────────────────────────────────────────────────────────────────
 # MEME (reaction) — jump cuts, zoom punch, freeze, big captions, SFX
 # ──────────────────────────────────────────────────────────────────────
-def build_meme(music_id: str, out: Path):
+def build_meme(music_id: str, out: Path, clips: dict | None = None):
+    c = clips or DEFAULT_CLIPS
     print(f"meme  {music_id}")
-    soccer, play1, swim, play2, belly = (resolve(x) for x in (SOCCER, PLAY1, SWIM, PLAY2, BELLY))
+    soccer, play1, swim, play2, belly = (_resolve_clip(c[k]) for k in ("soccer", "play1", "swim", "play2", "belly"))
     p_soc = top_motion_windows(soccer, 4, 1.2)
     p_p1 = top_motion_windows(play1, 4, 1.1)
     p_sw = top_motion_windows(swim, 4, 1.1)
@@ -515,9 +528,10 @@ def build_meme(music_id: str, out: Path):
 # ──────────────────────────────────────────────────────────────────────
 # STORY (payoff-first) — climax cold-open → rewind → build → return
 # ──────────────────────────────────────────────────────────────────────
-def build_story(music_id: str, out: Path):
+def build_story(music_id: str, out: Path, clips: dict | None = None):
+    c = clips or DEFAULT_CLIPS
     print(f"story  {music_id}")
-    soccer, play1, swim, play2, belly = (resolve(x) for x in (SOCCER, PLAY1, SWIM, PLAY2, BELLY))
+    soccer, play1, swim, play2, belly = (_resolve_clip(c[k]) for k in ("soccer", "play1", "swim", "play2", "belly"))
     climax = best_motion_window(soccer, 2.6)          # the payoff moment
     soc_build = top_motion_windows(soccer, 2, 2.4)
     b_belly = even_windows(belly, 2, 4.4)
@@ -603,6 +617,15 @@ GRAMMARS = {
     "story":    (build_story, "hunzalaawanarts75-cinematic-cozy-vibes-421335.mp3",
                  "data/output/style_demo/story_proof.mp4"),
 }
+
+
+def render_grammar(grammar: str, out, *, clips: dict | None = None, music: str | None = None):
+    """Production entry (Phase B): render one grammar to `out` from an injected `clips`
+    dict (role→asset_id or file path; roles: soccer/play1/swim/play2/belly). Defaults to
+    the proof footage. NOTE: captions/narration are still the proof TEXT — B4 (Writer)
+    must generate grammar-appropriate copy per episode before this goes live."""
+    fn, default_music, _ = GRAMMARS[grammar]
+    return fn(music or default_music, Path(out), clips=clips) or Path(out)
 
 
 def main():

@@ -84,7 +84,7 @@ Phase 0은 손-구동(Mac 로컬 빠른 반복, PD 승인). 구현/구현예정:
   - `velocity_proof.mp4` 15.8s — 고속 hue 순환(색 변환 frequency 빠르게) + **원본색↔클럽색 씬 교대**(훅/뷰티=원본색). 드랍 라이저.
   - `meme_proof.mp4` 16.1s — 16컷 점프컷+줌펀치4+프리즈2+휘익, **KO/EN 이중언어**(상단 마진 확보, 한자 제거—甲은 ffmpeg 두부).
   - `story_proof.mp4` 33.4s — 페이오프-선공개 + **OpenAI 뉴럴 TTS(nova) 내레이션**(씬 window에 맞춰 atempo 압축=겹침 방지) + 인과서사(밖으로 나가 축구).
-- ⏳ **Phase 1 대기(커밋 후)**: (a) Writer 연결 — 실제 에피소드 소재에서 컨셉→arm 배정, (b) 밴딧 배선(`edit_style` 4번째 arm).
+- 🔄 **Phase B 진행 중** (배선): **B1 완료** — 엔진 데이터-드리븐화(`render_grammar(grammar,out,clips=,music=)`, `build_*(clips=)`, `_resolve_clip`; 회귀+주입 스모크 검증). **B2~B5 남음**(스키마+배정 / cameraman seam / ★Writer 카피 / 검증→플립→밴딧) — 라이브 배선 전, PD가 자동출력 검증 필요. 전체 스텝·seam·리스크는 `session_handoff_2026-09-10.md`.
 - ⏳ 남은 튜닝(선택): story 보이스 대안(alloy/shimmer/coral)·컷 크로스페이드·클럽/EDM 트랙 소싱·프리즈 팝 애니메이션.
 - ⚠️ **미커밋** — Phase 0 로컬 프루프. 커밋 시점 PD 컨펌 대기.
 - 엔진 사용법: `.venv/bin/python scripts/impact_edit.py --grammar {velocity|meme|story|all}`. 소스풀=`impact_edit.py` 상단 SOCCER/PLAY1/SWIM/PLAY2/BELLY 상수. 신규 프리미티브: colorbalance/hue-cycle 클럽색·`render_freeze`·`_gen_sfx`(boom/ding/riser/whoosh)·`_tts`(OpenAI→say 폴백)·bilingual `_draw`.
