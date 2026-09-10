@@ -44,8 +44,22 @@ import shutil as _shutil
 FF = _shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
 FP = _shutil.which("ffprobe") or "/opt/homebrew/bin/ffprobe"
 DB = ROOT / "data" / "agent.db"
-FONT_BLACK = os.path.expanduser("~/Library/Fonts/Pretendard-Black.otf")
-FONT_XBOLD = os.path.expanduser("~/Library/Fonts/Pretendard-ExtraBold.otf")
+
+
+def _font(*names: str) -> str:
+    """First existing Pretendard weight from `names`. The Mac dev box has every weight
+    (Homebrew cask) but the VM only ships Bold/ExtraBold/Medium — a hardcoded
+    Pretendard-Black.otf there is a MISSING fontfile, so drawtext renders Korean as tofu
+    (□□□). Fall back to an installed heavier weight so KO burns correctly on both hosts."""
+    for n in names:
+        p = os.path.expanduser(f"~/Library/Fonts/{n}")
+        if os.path.exists(p):
+            return p
+    return os.path.expanduser(f"~/Library/Fonts/{names[0]}")
+
+
+FONT_BLACK = _font("Pretendard-Black.otf", "Pretendard-ExtraBold.otf", "Pretendard-Bold.otf")
+FONT_XBOLD = _font("Pretendard-ExtraBold.otf", "Pretendard-Bold.otf")
 W, H, FPS = 1080, 1920, 30
 BGM = ROOT / "assets" / "bgm"
 
