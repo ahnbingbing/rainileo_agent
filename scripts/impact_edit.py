@@ -196,13 +196,29 @@ CLUB = [
 def render_segment(clip: str, src_start: float, src_dur: float, target: float,
                    tmp: Path, idx: int, *, grade: str = "club",
                    hue_speed: float = 460.0, phase: float = 0.0,
-                   sat: float = 1.35, flash: bool = False, zoom_crop: float = 1.0) -> Path:
+                   sat: float = 1.35, flash: bool = False, zoom_crop: float = 1.0,
+                   hflip: bool = False, zoom_ramp: str | None = None,
+                   rotate_amp: float = 0.0) -> Path:
+    """Motion FX (PD 2026-09-10, velocity punch-up): hflip (좌우반전), zoom_ramp
+    ('in'=wide→tight / 'out'=tight→wide, a live push over the cut), rotate_amp (radians —
+    a rhythmic dutch wobble). Applied on top of the club color cycle."""
     out = tmp / f"seg_{idx:02d}.mp4"
     speed = src_dur / target                    # >1 speeds up, <1 slow-mo
     chain = [f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}"]
-    if zoom_crop and abs(zoom_crop - 1.0) > 1e-3:
-        chain.append(f"crop=iw/{zoom_crop:.4f}:ih/{zoom_crop:.4f},scale={W}:{H}")  # punch-in
+    if hflip:
+        chain.append("hflip")
+    if zoom_ramp in ("in", "out"):
+        lo, hi = (1.0, 1.30) if zoom_ramp == "in" else (1.30, 1.0)
+        _d = max(0.1, src_dur)
+        z = f"({lo:.3f}+({hi:.3f}-{lo:.3f})*t/{_d:.3f})"       # source-time zoom over the cut
+        chain.append(f"crop=w='iw/{z}':h='ih/{z}':x='(iw-iw/{z})/2':y='(ih-ih/{z})/2',scale={W}:{H}")
+    elif zoom_crop and abs(zoom_crop - 1.0) > 1e-3:
+        chain.append(f"crop=iw/{zoom_crop:.4f}:ih/{zoom_crop:.4f},scale={W}:{H}")  # static punch-in
     chain.append(f"setpts=PTS/{speed:.4f}")
+    if rotate_amp > 1e-3:
+        # prescale so the rotated frame still fills 9:16 (no black corners), rhythmic wobble
+        chain.append(f"scale=iw*1.25:ih*1.25,rotate=a='{rotate_amp:.3f}*sin(2*PI*1.6*t)':c=black@0,"
+                     f"crop={W}:{H}")
     chain.append(f"fps={FPS}")
     if grade == "club":
         # CONTINUOUS fast hue cycle (PD 9/8: 색 변환 frequency 작게·빠르게) — reads as
@@ -314,7 +330,9 @@ def assemble(seq: list[dict], caps: list[tuple], music_id: str, out: Path, *,
             f = render_segment(sg["clip"], sg["start"], sg["dur"], sg["target"], tmp, i,
                               grade=sg.get("grade", "club"), hue_speed=sg.get("hue_speed", 460.0),
                               phase=sg.get("phase", 0.0), sat=sg.get("sat", 1.35),
-                              flash=sg.get("flash", False), zoom_crop=sg.get("zoom_crop", 1.0))
+                              flash=sg.get("flash", False), zoom_crop=sg.get("zoom_crop", 1.0),
+                              hflip=sg.get("hflip", False), zoom_ramp=sg.get("zoom_ramp"),
+                              rotate_amp=sg.get("rotate_amp", 0.0))
         seg_files.append(f)
         t += sg["target"]
     total = t
@@ -508,21 +526,34 @@ def build_velocity(music_id: str, out: Path, clips: dict | None = None, copy: di
         add(pick(ei), 2); ei += 1
     add(runs[0] if runs else pick(0), 2, flash=True)                      # PAYOFF/LOOP
 
-    # Mix ORIGINAL-color scenes with club-color scenes (PD 9/9: 원본 색상 씬도 좀 있어야).
-    # DROP burst = full club strobe (~900°/s); BUILD alternates natural↔club; the slow
-    # beauty + hook stay in true color so the eye gets a real-color anchor between flashes.
+    # Color + MOTION FX (PD 9/9 색 / 9/10 모션). Color: mix ORIGINAL-color scenes with club
+    # strobe (DROP = full ~900°/s, BUILD alternates natural↔club, slow beauty stays true color).
+    # Motion (PD "줌인/줌아웃·회전·좌우반전 막"): every cut gets an alternating zoom push (in↔out);
+    # a dutch wobble (subtle on build, hard on the drop burst); a left-right flip every 3rd cut
+    # for variety. The HOOK/PAYOFF flash hits stay a clean zoom-in punch (no wobble/flip) so the
+    # bookends read strong; the slow beauty anchor stays still.
     ci = 0
     for sg in seq:
         role = sg.get("role")
         if role == "slow":
             sg["grade"] = "natural"; sg["sat"] = 1.10
             continue
-        if role == "drop":
-            sg["grade"] = "club"; sg["hue_speed"] = 900.0; sg["phase"] = (ci * 90) % 360; sg["sat"] = 1.4
-        elif ci % 2 == 0:                                   # every other cut = original color
-            sg["grade"] = "natural"; sg["sat"] = 1.08
-        else:
+        sg["zoom_ramp"] = "in" if ci % 2 == 0 else "out"
+        if sg.get("flash"):                                # hook / payoff — clean strong punch
             sg["grade"] = "club"; sg["hue_speed"] = 520.0; sg["phase"] = (ci * 90) % 360; sg["sat"] = 1.4
+            sg["zoom_ramp"] = "in"
+        elif role == "drop":                               # DROP burst — full strobe + hard spin-wobble + flips
+            sg["grade"] = "club"; sg["hue_speed"] = 900.0; sg["phase"] = (ci * 90) % 360; sg["sat"] = 1.4
+            sg["rotate_amp"] = 0.11
+            sg["hflip"] = (ci % 2 == 0)
+        elif ci % 2 == 0:                                  # BUILD — original color + gentle wobble
+            sg["grade"] = "natural"; sg["sat"] = 1.08
+            sg["rotate_amp"] = 0.05
+            if ci % 3 == 0:
+                sg["hflip"] = True
+        else:                                              # BUILD — club color + gentle wobble
+            sg["grade"] = "club"; sg["hue_speed"] = 520.0; sg["phase"] = (ci * 90) % 360; sg["sat"] = 1.4
+            sg["rotate_amp"] = 0.05
         ci += 1
 
     ts = _times(seq)
