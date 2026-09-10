@@ -24,9 +24,14 @@ _GRAMMAR_CYCLE = ["velocity", "meme", "story"]
 
 
 def edit_grammar_for_slot(target: dt.date, hhmm: str, assignments: list) -> str | None:
-    """The grammar assigned to this RF slot, or None (→ standard RF). Off unless
-    EDIT_GRAMMAR_MODE=1. `assignments` = day_assignments() output [(lane, hhmm), ...]."""
-    if os.getenv("EDIT_GRAMMAR_MODE", "0") != "1":
+    """The grammar assigned to this RF slot, or None (→ standard RF).
+
+    LIVE (PD 2026-09-11): the launch-month grammar test is ON by DEFAULT — the 3 RF slots run
+    velocity/meme/story. Reversibility: set env EDIT_GRAMMAR_MODE=0 (instant, next batch) OR
+    git-revert this default to "0". (The env-file flip kept hitting tooling friction, so the ON
+    switch is git-deployed; the env still overrides for an instant OFF.)
+    `assignments` = day_assignments() output [(lane, hhmm), ...]."""
+    if os.getenv("EDIT_GRAMMAR_MODE", "1") != "1":
         return None
     rf_slots = sorted(hh for ln, hh in assignments if ln == "real_footage")
     if hhmm not in rf_slots:
