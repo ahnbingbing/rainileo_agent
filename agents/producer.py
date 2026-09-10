@@ -3204,6 +3204,17 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     else:
         text = call_text_cascade(system, user + _fb, max_tokens=12000).strip()  # PD 2026-06-09: avoid truncation
     concepts = _robust_json_parse(text)
+    # Guard (PD 2026-09-10): _robust_json_parse can hand back a bare dict (single
+    # concept) or a list holding a non-dict element (a stray int/str when the LLM
+    # emits a malformed array). The stamping loop below item-assigns
+    # c["render_style"]=…, which crashed the ENTIRE RF propose with "'int' object does
+    # not support item assignment" — uncaught, so the slot emptied (self-heal burned 6
+    # rounds and the diagnosis LLM then hallucinated a non-existent fix file). Normalize
+    # to a list and keep only well-formed concept dicts, so a partly-malformed response
+    # still yields its valid concepts instead of taking the whole slot down.
+    if isinstance(concepts, dict):
+        concepts = [concepts]
+    concepts = [c for c in (concepts or []) if isinstance(c, dict)]
     # PD 2026-06-05: NO cut cap — script decides length.
     # PD 2026-06-06: stamp the single-pass author so the render pipeline can
     # SKIP the VLM post-render caption rewrite. The single-pass captions are
@@ -3680,6 +3691,51 @@ def finalize_concepts(proposals: list[dict], pd_feedback: list[str]) -> list[dic
 # ──────────────────────────────────────────────────────────────────────
 # Produce: Writer batch → Cameraman render
 # ──────────────────────────────────────────────────────────────────────
+def _writeback_rf_asset_ids(con: sqlite3.Connection, card_id: str) -> int:
+    """Persist the clip each RF cut ACTUALLY rendered from back into the card's
+    payload cuts[].asset_id.
+
+    PD 2026-09-10 root: the single-pass / story-first RF concept binds NO clip — the
+    cameraman selects it at render time — so the card payload keeps cuts[] with
+    asset_id=None. But EVERY RF dedup gate (`_recently_used_rf_assets`,
+    `_scheduled_window_rf_assets`, `_recently_used_rf_primary_sessions`) keys on
+    `cuts[].asset_id`, so they were BLIND to what a story-first episode used, and the
+    same clip shipped two slots the same day (12:30 + 18:00 both used
+    med_2026_08_16_125328). The cameraman already records the per-cut clip in the
+    workdir's sources.json (in cut order); write it back onto the card cuts by index so
+    the dedup gates can finally see it. Fills only MISSING asset_id — clip-first RF
+    (which already carries asset_id) is untouched."""
+    try:
+        from agents.caption_salvage import _find_work_dir
+        wd = _find_work_dir(card_id)
+        if not wd:
+            return 0
+        srcs = json.loads((wd / "sources.json").read_text(encoding="utf-8"))
+        ordered = [v for k, v in srcs.items() if not k.startswith("_")]
+        row = con.execute("SELECT payload_json FROM cards WHERE card_id=?", (card_id,)).fetchone()
+        if not row:
+            return 0
+        p = json.loads(row[0] or "{}")
+        cuts = p.get("cuts") or []
+        n = 0
+        for i, c in enumerate(cuts):
+            if c.get("asset_id"):
+                continue
+            src = ordered[i] if i < len(ordered) else None
+            aid = (src or {}).get("asset_id")
+            if aid:
+                c["asset_id"] = aid
+                n += 1
+        if n:
+            con.execute("UPDATE cards SET payload_json=? WHERE card_id=?",
+                        (json.dumps(p, ensure_ascii=False), card_id))
+            con.commit()
+        return n
+    except Exception as e:
+        log.warning("RF asset_id writeback failed (%s): %s", card_id, e)
+        return 0
+
+
 def _render_realfootage_direct(concept: dict, target: dt.date,
                                 con: sqlite3.Connection,
                                 progress_cb: ProgressCb = None) -> Path | None:
@@ -3743,6 +3799,14 @@ def _render_realfootage_direct(concept: dict, target: dt.date,
     # use_brain=False — use the concept's cuts/asset_ids directly, no re-planning.
     out = render_card(card["card_id"], progress_cb=progress_cb, use_brain=False,
                       concept=concept)
+
+    # Persist the clips the cameraman actually selected back onto the card so the RF
+    # dedup gates (which key on cuts[].asset_id) stop being blind to story-first
+    # episodes (PD 2026-09-10 same-clip-two-slots root — see _writeback_rf_asset_ids).
+    if out:
+        _n_aid = _writeback_rf_asset_ids(con, card["card_id"])
+        if _n_aid and progress_cb:
+            progress_cb(f":link: 클립 dedup 기록: {_n_aid}컷 asset_id 저장")
 
     # PD 2026-06-06: real_footage was bypassing the Giri review gate entirely
     # (it goes through render_card directly, not render_with_retry). Run Giri on
