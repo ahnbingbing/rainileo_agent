@@ -37,8 +37,12 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
-FF = "/opt/homebrew/bin/ffmpeg"
-FP = "/opt/homebrew/bin/ffprobe"
+import shutil as _shutil
+# Host-agnostic: prefer PATH (VM = /usr/bin, Mac = /opt/homebrew/bin) so this runs on
+# the dev Mac AND the VM (needed once Phase B wires the grammars into the VM render
+# path). Falls back to the Mac Homebrew path.
+FF = _shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
+FP = _shutil.which("ffprobe") or "/opt/homebrew/bin/ffprobe"
 DB = ROOT / "data" / "agent.db"
 FONT_BLACK = os.path.expanduser("~/Library/Fonts/Pretendard-Black.otf")
 FONT_XBOLD = os.path.expanduser("~/Library/Fonts/Pretendard-ExtraBold.otf")
