@@ -61,8 +61,10 @@ not duplicate word-for-word.
 
 ## 6. Return ONLY the JSON of `output_shape`
 
-No preamble, no explanation, no markdown fences, no `[컨셉]`-style brackets before the
-object — emit the JSON object and nothing else. Why: the downstream parser reads the
-first structure it finds, and any prose or stray bracket ahead of the JSON corrupts
-it. Every `beat.role` you reference must be a role you cast in `clips`. Fill exactly
-the beats/captions the `beat_structure` asks for, in order.
+The VERY FIRST character of your reply must be `{`. Do not think out loud, do not
+explain your casting, do not write "I need to…" or any preamble, do not wrap the
+object in markdown fences or `[컨셉]`-style brackets — emit the JSON object and stop.
+Why: the downstream parser takes the first balanced structure it sees, so a reasoning
+preamble or the beats `[...]` array leaking ahead of the outer object corrupts the
+parse and the whole edit is lost. Every `beat.role` you reference must be a role you
+cast in `clips`. Fill exactly the beats/captions the `beat_structure` asks for, in order.

@@ -71,18 +71,38 @@ def _pool_for_prompt(pool: list[dict]) -> list[dict]:
     return out
 
 
-def _robust_parse(text: str) -> dict:
-    """Reuse the pipeline's balanced-brace JSON parser (handles prose preamble / KO brackets /
-    fences — the D_nonjsonparse fix). Falls back to a plain slice."""
-    try:
-        from agents.producer import _robust_json_parse
-        v = _robust_json_parse(text)
-        if isinstance(v, list):
-            v = next((x for x in v if isinstance(x, dict)), {})
-        return v if isinstance(v, dict) else {}
-    except Exception:
-        s, e = text.find("{"), text.rfind("}")
-        return json.loads(text[s:e + 1]) if s >= 0 and e > s else {}
+def _extract_json_object(text: str) -> dict:
+    """Return the first TOP-LEVEL `{...}` object, string-aware. Models here reliably wrap the
+    answer in a ```json fence and/or add a reasoning preamble ("I need to cast the clips…") —
+    and the beats `[...]` inside would fool a first-anything parser into returning a lone beat
+    (the D_nonjsonparse trap). So: prefer the fenced block, then scan for the first balanced
+    OBJECT (not array) and json.loads it."""
+    import re
+    m = re.search(r"```(?:json)?\s*(.+?)```", text, re.S)
+    body = m.group(1) if m else text
+    start = body.find("{")
+    if start < 0:
+        return {}
+    depth = 0
+    instr = esc = False
+    for i in range(start, len(body)):
+        ch = body[i]
+        if instr:
+            esc = (ch == "\\" and not esc)
+            if ch == '"' and not esc:
+                instr = False
+        elif ch == '"':
+            instr = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(body[start:i + 1])
+                except Exception:
+                    return {}
+    return {}
 
 
 def propose_grammar_copy(grammar: str, pool: list[dict], *, slot_hhmm: str | None = None,
@@ -107,7 +127,7 @@ def propose_grammar_copy(grammar: str, pool: list[dict], *, slot_hhmm: str | Non
 
     raw = _llm.call_text_cached(system, user, max_tokens=6000,
                                 model=model or os.getenv("GRAMMAR_WRITER_MODEL"))
-    obj = _robust_parse(raw)
+    obj = _extract_json_object(raw)
     clips = obj.get("clips") or {}
     copy = obj.get("copy") or {}
     if not clips or not copy:
