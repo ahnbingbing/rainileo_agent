@@ -204,40 +204,56 @@ def render_segment(clip: str, src_start: float, src_dur: float, target: float,
     a rhythmic dutch wobble). Applied on top of the club color cycle."""
     out = tmp / f"seg_{idx:02d}.mp4"
     speed = src_dur / target                    # >1 speeds up, <1 slow-mo
-    chain = [f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}"]
-    if hflip:
-        chain.append("hflip")
-    # zoom PUNCH per cut (static level — a time-varying crop changes the frame size mid-stream
-    # and ffmpeg errors "reinitializing filters"; a smooth zoompan ramp is a follow-up). Alternate
-    # cuts wide(1.0) vs tight(≈1.26) → an in/out push cut-to-cut.
-    _zc = 1.26 if zoom_ramp in ("in", "out") else (zoom_crop if zoom_crop else 1.0)
-    if _zc and abs(_zc - 1.0) > 1e-3:
-        chain.append(f"crop=iw/{_zc:.4f}:ih/{_zc:.4f},scale={W}:{H}")
-    chain.append(f"setpts=PTS/{speed:.4f}")
-    if rotate_amp > 1e-3:
-        # prescale so the rotated frame still fills 9:16 (no black corners), rhythmic dutch wobble.
-        # crop back to a CONSTANT WxH so the frame size never changes (no filter re-init).
-        chain.append(f"scale=iw*1.25:ih*1.25,rotate=a='{rotate_amp:.3f}*sin(2*PI*1.6*t)':c=black@0,"
+
+    def _build(fx: bool) -> str:
+        # setsar=1 right after the normalize so a variable-SAR/rotated source can't make a
+        # downstream filter re-init ("Failed to inject frame") mid-stream.
+        c = [f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1"]
+        if fx and hflip:
+            c.append("hflip")
+        # zoom PUNCH per cut (static level — a time-VARYING crop changes the frame size mid-stream
+        # → "reinitializing filters"; a smooth zoompan ramp is a follow-up). Alternate cuts
+        # wide(1.0)↔tight(≈1.26) for an in/out push cut-to-cut.
+        _zc = 1.26 if zoom_ramp in ("in", "out") else (zoom_crop if zoom_crop else 1.0)
+        if fx and _zc and abs(_zc - 1.0) > 1e-3:
+            c.append(f"crop=iw/{_zc:.4f}:ih/{_zc:.4f},scale={W}:{H}")
+        c.append(f"setpts=PTS/{speed:.4f}")
+        if fx and rotate_amp > 1e-3:
+            # prescale so the rotated frame still fills 9:16 (no black corners), rhythmic dutch
+            # wobble, crop back to CONSTANT WxH so the frame size never changes.
+            c.append(f"scale=iw*1.25:ih*1.25,rotate=a='{rotate_amp:.3f}*sin(2*PI*1.6*t)':c=black,"
                      f"crop={W}:{H}")
-    chain.append(f"fps={FPS}")
-    if grade == "club":
-        # CONTINUOUS fast hue cycle (PD 9/8: 색 변환 frequency 작게·빠르게) — reads as
-        # disco/club lighting because the color never HOLDS (a sustained hue = "green dog").
-        # hue_speed = deg/sec (460 ≈ full wheel every 0.78s); drop cuts push higher.
-        chain.append(f"hue=h=mod(t*{hue_speed:.0f}+{phase:.0f}\\,360):s={sat:.3f}")
-        chain.append("eq=contrast=1.20:brightness=0.006")
-        chain.append("curves=preset=lighter,eq=brightness=0.10" if flash
+        c.append(f"fps={FPS}")
+        if grade == "club":
+            # CONTINUOUS fast hue cycle (PD 9/8: 색 변환 frequency 작게·빠르게) — reads as club
+            # lighting because the color never HOLDS. hue_speed = deg/sec; drop cuts push higher.
+            c.append(f"hue=h=mod(t*{hue_speed:.0f}+{phase:.0f}\\,360):s={sat:.3f}")
+            c.append("eq=contrast=1.20:brightness=0.006")
+            c.append("curves=preset=lighter,eq=brightness=0.10" if flash
                      else "curves=preset=increase_contrast")
-    elif grade == "cinematic":
-        chain.append(f"eq=contrast=1.06:brightness=-0.004:saturation={sat:.3f}")
-        chain.append("curves=r='0/0.02 1/0.98':b='0/0.03 1/0.95'")   # gentle teal-warm filmic
-        chain.append("vignette=PI/4.5")
-    else:  # natural (meme) — punchy but true color
-        chain.append(f"eq=contrast=1.10:brightness=0.008:saturation={sat:.3f}")
-    chain.append("format=yuv420p")
-    _run([FF, "-y", "-v", "error", "-ss", f"{src_start}", "-t", f"{src_dur}", "-i", clip,
-          "-vf", ",".join(chain), "-an", "-r", str(FPS), "-c:v", "libx264", "-crf", "18",
-          "-preset", "medium", str(out)])
+        elif grade == "cinematic":
+            c.append(f"eq=contrast=1.06:brightness=-0.004:saturation={sat:.3f}")
+            c.append("curves=r='0/0.02 1/0.98':b='0/0.03 1/0.95'")   # gentle teal-warm filmic
+            c.append("vignette=PI/4.5")
+        else:  # natural (meme) — punchy but true color
+            c.append(f"eq=contrast=1.10:brightness=0.008:saturation={sat:.3f}")
+        c.append("format=yuv420p")
+        return ",".join(c)
+
+    # Per-segment resilience: try the full FX chain; if a specific clip trips ffmpeg (variable
+    # res/rotation metadata → filter re-init), retry THIS cut without the motion FX so one bad
+    # clip degrades to a plain cut instead of killing the whole grammar episode.
+    for _fx in (True, False):
+        try:
+            _run([FF, "-y", "-v", "error", "-ss", f"{src_start}", "-t", f"{src_dur}", "-i", clip,
+                  "-vf", _build(_fx), "-an", "-r", str(FPS), "-c:v", "libx264", "-crf", "18",
+                  "-preset", "medium", str(out)])
+            return out
+        except Exception as e:
+            if _fx:
+                print(f"  [seg {idx}] FX render failed → retry plain: {str(e)[:100]}", flush=True)
+                continue
+            raise
     return out
 
 
