@@ -207,16 +207,16 @@ def render_segment(clip: str, src_start: float, src_dur: float, target: float,
     chain = [f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}"]
     if hflip:
         chain.append("hflip")
-    if zoom_ramp in ("in", "out"):
-        lo, hi = (1.0, 1.30) if zoom_ramp == "in" else (1.30, 1.0)
-        _d = max(0.1, src_dur)
-        z = f"({lo:.3f}+({hi:.3f}-{lo:.3f})*t/{_d:.3f})"       # source-time zoom over the cut
-        chain.append(f"crop=w='iw/{z}':h='ih/{z}':x='(iw-iw/{z})/2':y='(ih-ih/{z})/2',scale={W}:{H}")
-    elif zoom_crop and abs(zoom_crop - 1.0) > 1e-3:
-        chain.append(f"crop=iw/{zoom_crop:.4f}:ih/{zoom_crop:.4f},scale={W}:{H}")  # static punch-in
+    # zoom PUNCH per cut (static level — a time-varying crop changes the frame size mid-stream
+    # and ffmpeg errors "reinitializing filters"; a smooth zoompan ramp is a follow-up). Alternate
+    # cuts wide(1.0) vs tight(≈1.26) → an in/out push cut-to-cut.
+    _zc = 1.26 if zoom_ramp in ("in", "out") else (zoom_crop if zoom_crop else 1.0)
+    if _zc and abs(_zc - 1.0) > 1e-3:
+        chain.append(f"crop=iw/{_zc:.4f}:ih/{_zc:.4f},scale={W}:{H}")
     chain.append(f"setpts=PTS/{speed:.4f}")
     if rotate_amp > 1e-3:
-        # prescale so the rotated frame still fills 9:16 (no black corners), rhythmic wobble
+        # prescale so the rotated frame still fills 9:16 (no black corners), rhythmic dutch wobble.
+        # crop back to a CONSTANT WxH so the frame size never changes (no filter re-init).
         chain.append(f"scale=iw*1.25:ih*1.25,rotate=a='{rotate_amp:.3f}*sin(2*PI*1.6*t)':c=black@0,"
                      f"crop={W}:{H}")
     chain.append(f"fps={FPS}")
@@ -538,7 +538,8 @@ def build_velocity(music_id: str, out: Path, clips: dict | None = None, copy: di
         if role == "slow":
             sg["grade"] = "natural"; sg["sat"] = 1.10
             continue
-        sg["zoom_ramp"] = "in" if ci % 2 == 0 else "out"
+        if ci % 2 == 1:                                    # alternate tight(punch)↔wide → in/out push
+            sg["zoom_ramp"] = "in"
         if sg.get("flash"):                                # hook / payoff — clean strong punch
             sg["grade"] = "club"; sg["hue_speed"] = 520.0; sg["phase"] = (ci * 90) % 360; sg["sat"] = 1.4
             sg["zoom_ramp"] = "in"
