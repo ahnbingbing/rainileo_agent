@@ -408,7 +408,8 @@ DEFAULT_CLIPS = {"soccer": SOCCER, "play1": PLAY1, "swim": SWIM, "play2": PLAY2,
 # ──────────────────────────────────────────────────────────────────────
 # VELOCITY (club)
 # ──────────────────────────────────────────────────────────────────────
-def build_velocity(music_id: str, out: Path, clips: dict | None = None):
+def build_velocity(music_id: str, out: Path, clips: dict | None = None, copy: dict | None = None):
+    """copy (B4): {"captions": [{"ko": <hook>}, {"ko": <drop>}]} — 2 KO-only slots; None = proof."""
     c = clips or DEFAULT_CLIPS
     velocity_plan = [
         (c["soccer"], 4, 1.1, "run"), (c["play1"], 3, 1.0, "play"),
@@ -479,6 +480,10 @@ def build_velocity(music_id: str, out: Path, clips: dict | None = None):
         (drop_t, drop_t + 2.2, "풀 파워 가동", 108, H * 0.15),
         (total - 2.2, total, "@ryani_n_leo", 64, H * 0.82),
     ]
+    if copy and copy.get("captions"):                 # B4: swap hook/drop text, keep timing/handle
+        for i, cp in enumerate(copy["captions"][:2]):
+            st, en, _ko, fs, y = caps[i]
+            caps[i] = (st, en, cp.get("ko", _ko), fs, y)
     assemble(seq, caps, music_id, out, music_start=8.0, music_vol=0.85,
              sfx=[(max(0.0, drop_t - 0.62), "riser", 1.2), (drop_t, "boom", 2.2)])
 
@@ -486,7 +491,9 @@ def build_velocity(music_id: str, out: Path, clips: dict | None = None):
 # ──────────────────────────────────────────────────────────────────────
 # MEME (reaction) — jump cuts, zoom punch, freeze, big captions, SFX
 # ──────────────────────────────────────────────────────────────────────
-def build_meme(music_id: str, out: Path, clips: dict | None = None):
+def build_meme(music_id: str, out: Path, clips: dict | None = None, copy: dict | None = None):
+    """copy (B4): {"captions": [{"ko":..,"en":..} × 7]} — 7 punch beats (hook, ?!?!, 포착, 잠깐만,
+    레오 등장, 레오:나 아닌데, 또?!) in order; SFX/timing/handle kept. None = proof."""
     c = clips or DEFAULT_CLIPS
     print(f"meme  {music_id}")
     soccer, play1, swim, play2, belly = (_resolve_clip(c[k]) for k in ("soccer", "play1", "swim", "play2", "belly"))
@@ -540,15 +547,68 @@ def build_meme(music_id: str, out: Path, clips: dict | None = None):
     sfx = [(ts[2] - 0.08, "whoosh", 1.0), (ts[2] + 0.02, "ding", 1.3), (ts[4], "boom", 2.6),
            (ts[6] - 0.08, "whoosh", 1.0), (ts[6] + 0.02, "ding", 1.3), (ts[9] + 0.02, "ding", 1.3),
            (ts[11], "boom", 2.5), (ts[13] - 0.08, "whoosh", 1.0), (ts[13] + 0.02, "boom", 2.2)]
+    if copy and copy.get("captions"):                 # B4: swap the 7 punch captions (KO+EN), keep timing/sfx/handle
+        for i, cp in enumerate(copy["captions"][:len(caps) - 1]):   # leave the @handle (last)
+            st, en, _ko, fs, y, Ff, box, *rest = caps[i]
+            _en = cp.get("en", rest[0] if rest else None)
+            caps[i] = (st, en, cp.get("ko", _ko), fs, y, Ff, box, _en)
     assemble(seq, caps, music_id, out, music_start=2.0, music_vol=0.5, sfx=sfx)
 
 
 # ──────────────────────────────────────────────────────────────────────
 # STORY (payoff-first) — climax cold-open → rewind → build → return
 # ──────────────────────────────────────────────────────────────────────
-def build_story(music_id: str, out: Path, clips: dict | None = None):
+def _build_story_from_beats(c: dict, beats: list[dict], music_id: str, out: Path) -> Path:
+    """B4 beat-driven story: the Writer supplies ordered beats — each a role (soccer/play1/
+    swim/play2/belly, cast by the Writer), an optional kind (cold_open|payoff|calm), KO caption
+    line(s), and optional narration. The ENGINE owns motion-window pick + timing + slow-mo; the
+    Writer owns which clip plays when and what it says (grounded to that clip). Mirrors the proof
+    structure but data-driven. (Generalizes the hand-authored _phaseb_story_grounded proof.)"""
+    winpool: dict = {}
+
+    def _win(role: str, kind: str):
+        clip = _resolve_clip(c[role])
+        if kind in ("cold_open", "payoff"):
+            return clip, best_motion_window(clip, 2.6)
+        wp = winpool.setdefault(role, {"clip": clip, "ws": even_windows(clip, 3, 3.6), "i": 0})
+        s, d = wp["ws"][wp["i"] % len(wp["ws"])]
+        wp["i"] += 1
+        return wp["clip"], (s, d)
+
+    seq = []
+    for b in beats:
+        kind = b.get("kind", "normal")
+        clip, (s, d) = _win(b["role"], kind)
+        mult = {"cold_open": 1.15, "payoff": 1.5, "calm": 1.2}.get(kind, 1.0)
+        seq.append(dict(clip=clip, start=s, dur=d, target=d * mult, grade="cinematic",
+                        sat=1.05 if kind in ("cold_open", "payoff") else 0.97))
+    ts = _times(seq)
+    total = sum(sg["target"] for sg in seq)
+    F, Y = FONT_XBOLD, H * 0.15
+    caps, voices = [], []
+    for i, b in enumerate(beats):
+        seg_end = ts[i + 1] if i + 1 < len(seq) else total
+        ko, ko2, box = b.get("ko"), b.get("ko2"), b.get("box", False)
+        if ko and ko2:
+            mid = ts[i] + min(2.0, (seg_end - ts[i]) * 0.45)
+            caps.append((ts[i] + 0.10, mid - 0.05, ko, b.get("fs", 74), Y, F, box))
+            caps.append((mid, seg_end - 0.1, ko2, b.get("fs2", b.get("fs", 74)), Y, F, box))
+        elif ko:
+            caps.append((ts[i] + 0.10, seg_end - 0.1, ko, b.get("fs", 74), Y, F, box))
+        if b.get("narration"):
+            voices.append((ts[i] + 0.15, b["narration"], 1.45))
+    caps.append((total - 2.0, total, "@ryani_n_leo", 58, H * 0.82, F, False))
+    assemble(seq, caps, music_id, out, music_start=4.0, music_vol=0.40, voices=voices)
+    return out
+
+
+def build_story(music_id: str, out: Path, clips: dict | None = None, copy: dict | None = None):
+    """copy (B4): {"beats": [{"role","kind"?,"ko","ko2"?,"narration"?,"box"?} ...]} — the Writer's
+    grounded payoff-first arc. None = the hardcoded PROOF (soccer story) below, unchanged."""
     c = clips or DEFAULT_CLIPS
     print(f"story  {music_id}")
+    if copy and copy.get("beats"):
+        return _build_story_from_beats(c, copy["beats"], music_id, out)
     soccer, play1, swim, play2, belly = (_resolve_clip(c[k]) for k in ("soccer", "play1", "swim", "play2", "belly"))
     climax = best_motion_window(soccer, 2.6)          # the payoff moment
     soc_build = top_motion_windows(soccer, 2, 2.4)
@@ -637,13 +697,14 @@ GRAMMARS = {
 }
 
 
-def render_grammar(grammar: str, out, *, clips: dict | None = None, music: str | None = None):
+def render_grammar(grammar: str, out, *, clips: dict | None = None, music: str | None = None,
+                   copy: dict | None = None):
     """Production entry (Phase B): render one grammar to `out` from an injected `clips`
-    dict (role→asset_id or file path; roles: soccer/play1/swim/play2/belly). Defaults to
-    the proof footage. NOTE: captions/narration are still the proof TEXT — B4 (Writer)
-    must generate grammar-appropriate copy per episode before this goes live."""
+    dict (role→asset_id or file path; roles: soccer/play1/swim/play2/belly) and an injected
+    `copy` object (B4 Writer output, grammar-specific — see each build_* docstring). With
+    `copy=None` the hardcoded PROOF text is used (standalone proof runs unchanged)."""
     fn, default_music, _ = GRAMMARS[grammar]
-    return fn(music or default_music, Path(out), clips=clips) or Path(out)
+    return fn(music or default_music, Path(out), clips=clips, copy=copy) or Path(out)
 
 
 def main():
