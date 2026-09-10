@@ -792,6 +792,29 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   이번엔 진짜 반려였다), C12(episode_stories/pd_notes는 생성기에도 닿아야), A24(생성기·검수기 lockstep).
 
 ### 4.4 실사(RF)
+- **C_dedupblind. RF dedup 3중 게이트가 몇 달간 실명이었다 — 카드가 '무슨 클립을 썼는지'를 안 적었다(9/10)** —
+  PD "9-12 12:30·18:00 RF가 같은 클립(med_2026_08_16_125328)에 날조 캡션". 세 근본이 한 story-first RF 경로에
+  겹쳤다. ①**dedup 실명(핵심)**: single-pass/story-first RF 컨셉은 클립을 안 고른다 — cameraman이 렌더 시점에
+  바인딩하므로 카드 payload cuts[].asset_id가 None으로 남는다. 그런데 RF dedup 게이트 3개
+  (`_recently_used_rf_assets`·`_scheduled_window_rf_assets`·`_recently_used_rf_primary_sessions`)가 **전부 그
+  cuts[].asset_id로 키를 잡아서**, story-first 에피소드가 무슨 클립을 썼는지 아무도 못 봤다 → 같은 클립이 같은 날 두
+  슬롯에. (clip-first RF는 asset_id를 실어 정상 — 그래서 "가끔만" 터지는 것처럼 보였다: 14편 중 4편만 None, 죄다
+  4~5컷 story-first.) Fix=렌더 직후 cameraman이 workdir `sources.json`에 이미 적어둔 컷별 클립을 카드 cuts[]에
+  writeback(`_writeback_rf_asset_ids`, `_render_realfootage_direct` 한 곳 — 배치 retry와 직접 렌더 공통 경로라
+  전 RF가 dedup-visible). ②**날조**: 같은 story-first 경로가 평온한 footage(콘솔/방석에 누운 레오)에 "쾅! 천둥 →
+  소파 방공호 대피" 위기서사를 통째로 지어냄. `realfootage_concept.md`가 이미 "없는 사건 지어내지 마라"를 금지하나
+  advisory → LLM이 어기고 Giri가 러버스탬프. Fix=Giri CHECK 0 캡(rule95 없는-사건 + rule96 감정-모순의 교집합을
+  명시: off-screen 사운드/급발사건[천둥·사이렌·대피·패닉] 위기서사는 프레임의 startle 반응[귀납작·움찔·튀어오름]이
+  유일 증거 — calm이면 cap≤5, 반응 보이면 면제=오탐가드). 회귀=천둥원본 점수3·mismatch 3컷 캡물음, 정직본 mismatch0.
+  ③**int 크래시**: `_robust_json_parse`가 malformed 배열에서 int 원소를 반환하면 `c["render_style"]=`가 uncaught
+  크래시로 슬롯을 비우고, self-heal 진단 LLM은 존재하지 않는 파일을 지목(환각). Fix=파싱 직후 dict-only 필터.
+  ★교훈 3겹: ①**dedup은 '무엇을 썼나'를 기록해야 비로소 작동한다 — 선택을 안 적으면 게이트가 아무리 많아도 실명**이다
+  (여기선 렌더 산출물 sources.json이 ground truth였고, 그걸 카드로 되돌려 적는 한 줄이 3개 게이트를 동시에 살렸다).
+  ②생성기 규칙 존재 ≠ 커버리지 — 체커 캡이 있어야 물린다(cf. [[caption_frame_grounding_and_coined_concept_gate]]·
+  §4.3 giri). ③파서는 malformed에 graceful — 한 원소가 전체 슬롯을 죽이면 안 된다(cf. [[D_nonjsonparse]]). SHIPPED
+  라이브 교체(예약본, 미공개 중 수정): 12:30 재캡션(TDlJXf8bS9c 따로국밥)·18:00 신선 듀오클립 재선택(cZBiXbOLToc,
+  dup 해소). db71e3d·d559a4e. 부산물=pd_reviewer가 같은 dup 클립을 2회 재캡션하며 슬롯 churn(kHR084→vxTsd)→
+  옛 카드 archive로 정지(재캡션만으론 dup·footage 결함을 못 고친다 — 클립 재선택이 필요).
 - **C_freshbias. 신선 클립이 안 만들어진 건 인입이 아니라 선택 편향 + 리뷰어 자기강화였다(9/7)** — PD "왜 함미하비가
   공유한 신선 클립이 에피소드가 안 되나, 풀 문제야?". 검증하니 풀은 정상(최근 usable 151개, home 81·outdoor 21) — 인입도
   사용가능성(dur≥12·VLM·q≥0.7)도 병목이 아니었다. 진짜 근본 2겹: ①**RF writer가 잔잔한 신선 홈 클립보다 드라마틱한 옛
@@ -1244,6 +1267,21 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   ③**"한 번 검증했다"는 프로덕션에서 유지되지 않는다** — [[D_rfcache]]의 9/5 라이브 검증은 작은 프롬프트였고, SDK 업그레이드
   (0.103→0.116)가 클라이언트 가드를 조용히 조였으며 max_tokens/프롬프트가 프로덕션에서 임계를 넘자 무너졌다. 라이브
   경로는 실제 스케일·실제 SDK로 재검증하라. cf. [[D_rfcache]]·[[D_writertrunc]]·D18(진단 실패).
+- **D_b4copy. edit_grammar 프로덕션화 = 엔진은 타이밍, Writer는 카피 — 그리고 JSON 파서는 또 물렸다(9/10)** —
+  impact_edit 3-arm은 클립만 주입 가능하고 캡션/내레이션은 프루프(랴니 축구) 텍스트가 하드코딩이라, 신선 클립에 옛 축구
+  자막이 그대로 떠 못 썼다(PD "지난번 테스트 내용이 고대로 나오면 어떡해"). B4의 크럭스는 **관심사 분리**: 엔진
+  (`scripts/impact_edit.py`)은 모션-윈도우 픽·세그먼트 타이밍·슬로모를 소유하고, Writer(`agents/edit_grammar_writer.py`)는
+  **캐스팅**(클립→역할 by 콘텐츠 fit, 설정 코히어런스 선호)+**그라운딩 카피**(클립 sc에 없는 사건 금지, 내레이션은 TTS라
+  짧게)를 소유한다. build_*에 `copy=` 주입(copy None이면 proof 무변경=회귀0), story는 beat-driven으로 일반화. ★그런데
+  파서가 [[D_nonjsonparse]]를 **그대로 재발**시켰다: reasoning 모델이 JSON 앞에 프로즈 서문("I need to cast the clips…")+
+  ```json 펜스를 붙였고, 균형-스캔 파서가 안쪽 `beats [...]`를 먼저 잡아 beat 하나를 top으로 오인→clips/copy 없는 빈 결과.
+  Fix=`_extract_json_object`(펜스 우선, 문자열-인식으로 첫 balanced OBJECT만, 배열 아님)+프롬프트 "첫 글자는 여는 중괄호,
+  추론/서문 금지". ★교훈 2겹: ①**프로덕션 문법은 형태(엔진)와 목소리(Writer)를 분리**해야 재사용 가능 — 카피를 엔진에
+  박으면 클립만 갈아도 이야기가 안 맞는다. ②**"JSON only" 프롬프트 규칙은 reasoning 모델의 서문을 못 막는다** — 파서가
+  top-level 오브젝트를 견고히 뽑아야 하고, 이건 한 번 고쳐도 새 LLM 호출지점마다 재발하니 공용 추출기로 수렴시켜라
+  (D_nonjsonparse가 AV/RF에서 두 번, 여기 세 번째). B4는 dry-run으로만 검증(라이브 무배선)—PD 품질 사인오프 후 B2(슬롯
+  배정)·B3(cameraman seam)·B5(밴딧) 배선. ★잔여 나이트=story가 calm 비트에 실내 distractor 클립을 캐스팅해 야외 물스토리에
+  살짝 튐(코히어런스 부분준수)→프로덕션 상류 클립선택이 코히어런트 풀을 주면 감소. cf. [[D_nonjsonparse]]·[[rf_dedup_blind_and_fabrication_9-10]].
 - **D_openaicost. per-cut best-of가 상류 컨셉-ref best-of와 예산을 이중 지출했다 + 엔진 이름이 틀린 죽은 config(9/4)** —
   OpenAI gpt-image 비용이 과했다. 근본: AV 스틸은 컨셉 레퍼런스를 이미 best-of-4(`AV_CONCEPT_REF_BEST_OF`)로 검증하고
   그 예산을 상류에 쓰는 이유가 **컷마다 재롤하지 않게** 하려는 것인데, per-cut `REGEN_BEST_OF` 기본이 여전히 2라 지배적 비용
