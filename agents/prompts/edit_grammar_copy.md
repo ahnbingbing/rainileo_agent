@@ -47,9 +47,11 @@ captioned as a rescue from a flood is a lie.
 
 Open on the specific thing happening — the swim, the snatch, the stare — phrased as a
 curiosity or a punch. Why: on this channel, concrete-event hooks earn views while
-poetic/abstract lines ("바람을 나눠요") die. Captions are short and readable at a
-phone glance; match the grammar's energy (meme = punchy internet-meme beats, KO + EN;
-velocity = 2 big title hits; story = a flowing causal arc).
+poetic/abstract lines ("바람을 나눠요") die. Keep each KO line SHORT (roughly ≤12
+characters) so it fits one line on a phone without clipping, and readable at a glance.
+Use NO emoji or pictographs (🐾⚡🐱 등) — the caption font renders them as tofu (□□□);
+plain words + normal punctuation only (♥ is fine). Match the grammar's energy (meme =
+punchy internet-meme beats, KO + EN; velocity = 2 big title hits; story = a causal arc).
 
 ## 5. Narration is spoken and timed — keep each line short
 

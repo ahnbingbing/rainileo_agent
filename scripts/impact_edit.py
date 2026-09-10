@@ -281,6 +281,24 @@ def _tts(tmp: Path, idx: int, text: str, *, rate: int = 188) -> Path:
         return aiff
 
 
+def _sanitize_caption(text: str) -> str:
+    """Strip glyphs Pretendard can't render (they burn as □□□ tofu). The grammar-copy Writer
+    likes to sprinkle emoji (🐾⚡🐱😺) into captions; Pretendard has no emoji/pictograph glyphs,
+    so drawtext renders them as tofu. Remove emoji / pictographs / dingbats / variation selectors,
+    keep Hangul + Latin + normal punctuation + ♥ (which Pretendard DOES have). Deterministic
+    backstop so no Writer output can leak tofu, regardless of the prompt."""
+    keep = []
+    for ch in text or "":
+        o = ord(ch)
+        if ch == "♥":
+            keep.append(ch); continue
+        if (0x1F000 <= o <= 0x1FFFF or 0x2600 <= o <= 0x27BF or 0x2B00 <= o <= 0x2BFF
+                or o in (0x200D, 0xFE0E, 0xFE0F, 0x2122, 0x2139) or 0x1F1E6 <= o <= 0x1F1FF):
+            continue
+        keep.append(ch)
+    return " ".join("".join(keep).split())
+
+
 def assemble(seq: list[dict], caps: list[tuple], music_id: str, out: Path, *,
              music_start: float = 6.0, music_vol: float = 0.85,
              sfx: list[tuple] | None = None, voices: list[tuple] | None = None) -> Path:
@@ -312,7 +330,23 @@ def assemble(seq: list[dict], caps: list[tuple], music_id: str, out: Path, *,
 
     # captions — chained in small GROUPS over the CFR-normalized concat (the old segfault
     # was VFR-timebase-specific; grouping keeps many captions cheap without one pass each).
+    def _fit_fs(text: str, fs: int) -> int:
+        """Shrink fontsize until the widest line fits ~88% of frame width — drawtext does NOT
+        wrap, so a long KO line at a fixed fs overflows and clips at BOTH side edges (PD 9/10)."""
+        maxw = W * 0.88
+
+        def _wpx(s: str, f: int) -> float:  # CJK ~0.98*fs wide, Latin/punct ~0.56*fs
+            return sum((0.98 if ord(c) > 0x2000 else 0.56) * f for c in s)
+        longest = max(text.split("\n"), key=len) if text else text
+        while fs > 34 and _wpx(longest, fs) > maxw:
+            fs -= 2
+        return fs
+
     def _one(text, fs, y, font, box, st, en, tag):
+        text = _sanitize_caption(text)          # strip emoji/tofu glyphs
+        if not text:
+            return ""
+        fs = _fit_fs(text, fs)                  # auto-fit so it never clips the sides
         tf = tmp / f"cap_{tag}.txt"
         tf.write_text(text)
         boxpart = ":box=1:boxcolor=black@0.55:boxborderw=22" if box else ""
@@ -331,13 +365,15 @@ def assemble(seq: list[dict], caps: list[tuple], music_id: str, out: Path, *,
             # clear BOTH boxes' borders (22px each) + a visible gap, else EN hugs KO on top rows
             en_y = y + fs + (2 * 22 + 16 if box else 22)
             draws.append(_one(eng, en_fs, en_y, FONT_XBOLD, box, st, en, f"{i}e"))
-        return ",".join(draws)
+        return ",".join(d for d in draws if d)
 
     cur = vcat
     GROUP = 4
     for g in range(0, len(caps), GROUP):
         chunk = caps[g:g + GROUP]
-        vf = ",".join(_draw(cap, g + j) for j, cap in enumerate(chunk))
+        vf = ",".join(d for j, cap in enumerate(chunk) if (d := _draw(cap, g + j)))
+        if not vf:
+            continue
         nxt = tmp / f"vtxt_{g}.mp4"
         _run([FF, "-y", "-v", "error", "-i", str(cur), "-vf", vf,
               "-c:v", "libx264", "-crf", "20", "-preset", "veryfast", "-an", str(nxt)])
@@ -349,21 +385,28 @@ def assemble(seq: list[dict], caps: list[tuple], music_id: str, out: Path, *,
     extra: list[tuple] = []   # (delay_s, path, vol)
     for (tt, kind, vol) in (sfx or []):
         extra.append((tt, _gen_sfx(tmp, kind), vol))
-    # narration: fit each line INTO its scene window (atempo) so line N finishes before
-    # scene N+1's line starts — otherwise the voice bleeds across the cut (PD 9/9).
+    # narration: SEQUENTIAL — each line starts no earlier than the previous line's audio ENDS,
+    # so voices can never overlap (PD 9/9, 9/10: bled across cuts even with per-window atempo,
+    # because the window keyed on the next line's FIXED start, not on when this line finishes).
+    # Each line still atempo-fits toward its scene window; if it can't, it just pushes the next
+    # line slightly later (a voiceover drifting off the exact beat reads far better than overlap).
     vlist = voices or []
+    _cursor = 0.0
     for j, (tt, text, vol) in enumerate(vlist):
         p = _tts(tmp, j, text)
-        dur = probe_dur(str(p))
+        dur = probe_dur(str(p)) or 1.5
+        start = max(tt, _cursor)                     # never begin before the prior line ends
         nxt = vlist[j + 1][0] if j + 1 < len(vlist) else total
-        window = max(0.6, nxt - tt - 0.12)          # 0.12s gap before the next line/scene
+        window = max(0.7, min(nxt, total) - start - 0.12)
         if dur > window:
-            tempo = min(1.6, dur / window)          # speed up to fit (cap keeps it natural)
+            tempo = min(1.7, dur / window)
             fitted = tmp / f"tts_fit_{j:02d}.mp3"
             _run([FF, "-y", "-v", "error", "-i", str(p), "-filter:a", f"atempo={tempo:.3f}",
                   "-c:a", "libmp3lame", "-q:a", "3", str(fitted)])
             p = fitted
-        extra.append((tt, p, vol))
+            dur = probe_dur(str(p)) or (dur / tempo)
+        extra.append((start, p, vol))
+        _cursor = start + dur + 0.10                 # next line waits for this one to finish
 
     inputs = ["-i", music]
     for (_, pth, _) in extra:
