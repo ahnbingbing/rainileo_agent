@@ -558,8 +558,24 @@ def launch_pipeline(target: dt.date, *,
                f"{Path(pin['output']).name}")
             concept = {"title": pin.get("title") or "예약 에피소드", "cuts": []}
             outs = [pin["output"]]
+        # B2/B3 (PD 2026-09-10): edit_grammar RF slots. When EDIT_GRAMMAR_MODE=1 an RF slot
+        # is produced by the grammar path (B4 Writer casts clips + grounded copy → impact_edit
+        # render) instead of standard trim→burn→assemble. ANY failure falls through to the
+        # standard produce below (never an empty slot). Off by default → standard RF.
+        if not pin and not dry_run and lane == "real_footage":
+            from agents.grammar_slot import edit_grammar_for_slot, produce_grammar_episode
+            _grammar = edit_grammar_for_slot(target, hhmm, assignments)
+            if _grammar:
+                try:
+                    _gout, _gconcept = produce_grammar_episode(
+                        _grammar, target, hhmm, progress_cb=sp,
+                        exclude_asset_ids=batch_used_assets)
+                    concept, outs = _gconcept, [_gout]
+                except Exception as e:
+                    log.warning("grammar %s %s failed → standard RF: %s", hhmm, _grammar, e)
+                    sp(f":warning: {hhmm} grammar={_grammar} 렌더 실패 → 표준 RF 폴백: {str(e)[:120]}")
         for _att in range(1, max_repropose + 1):
-            if pin:
+            if pin or outs:
                 break
             suffix = f" (재제안 {_att}/{max_repropose})" if _att > 1 else ""
             sp(f":bulb: {hhmm} {lane_lbl} 컨셉 생성 중...{suffix}")

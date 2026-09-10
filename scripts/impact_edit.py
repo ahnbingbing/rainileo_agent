@@ -38,11 +38,21 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
 import shutil as _shutil
-# Host-agnostic: prefer PATH (VM = /usr/bin, Mac = /opt/homebrew/bin) so this runs on
-# the dev Mac AND the VM (needed once Phase B wires the grammars into the VM render
-# path). Falls back to the Mac Homebrew path.
-FF = _shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
-FP = _shutil.which("ffprobe") or "/opt/homebrew/bin/ffprobe"
+
+
+def _pick_ff(name: str) -> str:
+    """Host-portable ffmpeg/ffprobe. Prefer the stable system binary at /usr/bin (VM's
+    ffmpeg 5.1 supports our arg set incl. -vsync), THEN PATH, THEN Mac Homebrew. The VM
+    ALSO has a ~/.local/bin static build that dropped -vsync ("Option not found") and can
+    win a bare PATH lookup — so /usr/bin is checked first."""
+    for c in (f"/usr/bin/{name}", f"/opt/homebrew/bin/{name}"):
+        if os.path.exists(c):
+            return c
+    return _shutil.which(name) or f"/opt/homebrew/bin/{name}"
+
+
+FF = _pick_ff("ffmpeg")
+FP = _pick_ff("ffprobe")
 DB = ROOT / "data" / "agent.db"
 
 
