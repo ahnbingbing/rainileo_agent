@@ -154,6 +154,7 @@ def _persist_grammar_card(target: dt.date, concept: dict, out_path) -> str:
             "render_style": "real_footage",
             "edit_grammar": concept.get("edit_grammar"),
             "episode_format": "short",
+            "tone": {"primary": "warm", "intensity": 0.6},  # cards.tone_primary is NOT NULL
             "subjects": concept.get("subjects", ["ryani", "leo"]),
             "duration_target_sec": 20,
             "writer_confidence": 0.85,
