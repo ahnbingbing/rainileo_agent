@@ -4825,6 +4825,11 @@ def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.dat
         except Exception:
             _rfdur = 0.0
         _rfmin = float(os.getenv("RF_MIN_SECONDS", "16"))
+        # edit_grammar episodes (velocity/meme/story) are a DIFFERENT format: velocity is an
+        # intentionally short, fast-cut edit (~15s), so the 16s "gutted stub" floor false-positives
+        # on it. Use a lower floor for grammar (still catches a truly broken 2-3s render).
+        if payload.get("edit_grammar"):
+            _rfmin = float(os.getenv("RF_GRAMMAR_MIN_SECONDS", "12"))
         if 0 < _rfdur < _rfmin:
             log.warning("RF upload guard: card %s is %.1fs < %.0fs — gutted stub, refusing to schedule",
                         card_id[:8], _rfdur, _rfmin)
