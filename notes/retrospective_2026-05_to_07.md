@@ -815,6 +815,19 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   라이브 교체(예약본, 미공개 중 수정): 12:30 재캡션(TDlJXf8bS9c 따로국밥)·18:00 신선 듀오클립 재선택(cZBiXbOLToc,
   dup 해소). db71e3d·d559a4e. 부산물=pd_reviewer가 같은 dup 클립을 2회 재캡션하며 슬롯 churn(kHR084→vxTsd)→
   옛 카드 archive로 정지(재캡션만으론 dup·footage 결함을 못 고친다 — 클립 재선택이 필요).
+- **C_cooldownrelax. 전-기간 쿨다운이 가장 신선한 클립을 굶겼다 — 완화는 recency-aware여야 한다(9/11)** — PD "셀프힐이
+  안 멈춰… 컨셉이 없대". 근본=[[C_dedupblind]]의 asset_id writeback(db71e3d)이 전-기간 쿨다운(`RF_USED_CLIP_ALLTIME`)을
+  **비로소 제대로** 채우자, 그 쿨다운이 배제하는 게 하필 **최근-사용=가장 신선한** 클립이었다. 기존 완화 게이트는 정제 풀
+  전체가 <6일 때만 발동하는데, 아카이브가 수년치라 전체는 늘 크다(발동 0) — 반면 writer가 "신선 우선"으로 안내받는 **fresh
+  창**은 조용히 붕괴(09-13 진단: fresh ≤75일 26개가 전부 쿨다운, 생존 0). fresh 0 → 홈/신선 컨셉이 클립을 못 캐스팅 →
+  footage 부족 → 재제안, 그리고 그게 self-heal 라운드마다 반복돼 **무한 루프처럼 보였다**(PD가 "안 멈춰"로 체감). Fix=
+  recency-aware 완화(`_propose_realfootage_singlepass`): fresh(≤`RF_FRESH_RELAX_DAYS`75일) 생존이 `RF_FRESH_RELAX_MIN`(8)
+  밑이면 **쿨다운된 fresh 클립만 재-admit**(옛 footage 전-기간 배제는 유지, non-relaxable 이웃/최근7일-공개 하드플로어도
+  유지). 라이브 검증=로그 "신선 클립 부족(0<8) — 자동완화: 최근 75일 사용클립 20개 재-admit" 후 풀 정상 빌드. 더해서
+  self-heal 무한재시도엔 wall-clock 하드캡(`SELFHEAL_MAX_SECONDS`·`RF_SLOT_MAX_SECONDS`, b378348). ★교훈=**"전체 풀은
+  큰데 왜 굶나"의 답은 풀의 형태다 — 전-기간 배제는 정확히 최신 클립을 지우고, writer가 쓰는 부분집합(fresh)이 마르면
+  전체 크기 기준 완화는 절대 안 터진다. 완화의 임계는 '실제로 소비되는 부분집합'에 걸어라.** 부수 확인=PD 지목 원인
+  ("$440 크레딧" 인시던트)은 무관(로그가 진실), 진짜 근본은 오늘 RF 변경 자체였다(cf. [[D_streamguard]] 같은 스파인). 486254e.
 - **C_freshbias. 신선 클립이 안 만들어진 건 인입이 아니라 선택 편향 + 리뷰어 자기강화였다(9/7)** — PD "왜 함미하비가
   공유한 신선 클립이 에피소드가 안 되나, 풀 문제야?". 검증하니 풀은 정상(최근 usable 151개, home 81·outdoor 21) — 인입도
   사용가능성(dur≥12·VLM·q≥0.7)도 병목이 아니었다. 진짜 근본 2겹: ①**RF writer가 잔잔한 신선 홈 클립보다 드라마틱한 옛
@@ -1282,6 +1295,26 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   (D_nonjsonparse가 AV/RF에서 두 번, 여기 세 번째). B4는 dry-run으로만 검증(라이브 무배선)—PD 품질 사인오프 후 B2(슬롯
   배정)·B3(cameraman seam)·B5(밴딧) 배선. ★잔여 나이트=story가 calm 비트에 실내 distractor 클립을 캐스팅해 야외 물스토리에
   살짝 튐(코히어런스 부분준수)→프로덕션 상류 클립선택이 코히어런트 풀을 주면 감소. cf. [[D_nonjsonparse]]·[[rf_dedup_blind_and_fabrication_9-10]].
+- **D_grammarlive. 우회 경로는 자기가 우회한 경로의 숨은 계약을 전부 상속한다 — grammar A/B를 라이브에 배선하며 4겹 고아(9/11)** —
+  [[D_b4copy]]의 B4(Writer 카피)를 PD 사인오프 후 라이브(B2/B3/B5)에 배선했다. **설계 확정=편집문법 A/B는 footage를
+  통제·edit를 변인**으로 한다(PD "컨셉이 달라서 같은 영상으로 변인해도 돼"): 3 grammar를 **한 번 캐스팅→같은 클립으로
+  병렬 렌더**(`produce_grammar_episodes_shared`, `propose_grammar_copy(fixed_clips=)`로 copy-only). ★함정 1=오케스트레이션:
+  launch_selfheal는 슬롯을 **슬롯별 개별 launch_pipeline 호출**(slot_filter)로 돈다 — (a)필터된 assignments로 문법을 뽑으니
+  모든 슬롯이 index 0(velocity)로, (b)호출당 캐시는 공유 캐스트를 3번 재빌드. Fix=무필터 `day_assignments`로 문법 해석 +
+  **모듈-레벨 캐시(target 키)**로 프로세스 내 슬롯 호출들이 한 빌드를 공유. ★함정 2=**고아 4겹**: grammar 렌더가
+  `produce_and_render`를 우회하니 그 경로가 조용히 이행하던 계약을 전부 잃었다 — ①카드 행 없음(`_auto_upload_episode`는
+  `output_video_path`로 카드를 찾음→[ORPHAN-SKIP] no-card) ②`runs.agent` CHECK(writer/pd/cameraman/memory/scheduler만) ③
+  `cards.tone_primary` NOT NULL ④RF 업로드 최소길이 가드(16s)가 velocity의 **설계상 짧은 고속컷(15.6s)**을 gutted-stub으로 오탐.
+  넷 다 렌더 성공 뒤 **예약 단계에서만**, 한 번에 하나씩(각 ~렌더 1사이클 간격) 드러났다. Fix=grammar 카드 생성 헬퍼(agent=
+  'cameraman'·tone 기본·output_video_path 링크)+grammar 전용 최소길이 `RF_GRAMMAR_MIN_SECONDS`(12s). ★교훈 3겹:
+  ①**오케스트레이터를 건너뛰는 렌더 경로는 그 오케스트레이터가 하던 모든 것(카드 생성+컬럼/CHECK 제약+하류 가드)을 열거해
+  복제하거나 명시적으로 면제하라** — 안 그러면 "성공했는데 예약 0"으로 조용히 샌다. ②**결정론 가드는 자기가 튜닝된 콘텐츠
+  형태에만 맞다** — RF≥16s 플로어는 표준 RF엔 맞지만 새 형태(velocity)엔 오탐, 새 형태엔 자기 플로어를 줘라. ③**비싼 전체
+  실행 전에 싼 하위 단계를 격리 검증하라** — 카드 INSERT(5초)를 먼저 테스트했으면 17분 렌더를 세 번 헛돌리지 않았다(실제로
+  세 번째부터 격리 테스트로 tone/agent 제약을 잡음). 2 vCPU에서 3 병렬 CPU 렌더는 thrash(loadavg 7, 2-wide보다 느림)라
+  `GRAMMAR_RENDER_CONCURRENCY=2` 캡. 킬스위치 `EDIT_GRAMMAR_MODE=0`(라이브 기본 ON)로 다음 배치부터 표준 RF 즉시 복귀.
+  09-13 실증=같은 물놀이 footage로 velocity(직격)/meme(리액션)/story(페이오프-선공개) 3편, 그라운딩 구체-훅 제목. cf.
+  [[D_b4copy]]·[[D_lanemix]]·[[view_data_concrete_hook_title]].
 - **D_openaicost. per-cut best-of가 상류 컨셉-ref best-of와 예산을 이중 지출했다 + 엔진 이름이 틀린 죽은 config(9/4)** —
   OpenAI gpt-image 비용이 과했다. 근본: AV 스틸은 컨셉 레퍼런스를 이미 best-of-4(`AV_CONCEPT_REF_BEST_OF`)로 검증하고
   그 예산을 상류에 쓰는 이유가 **컷마다 재롤하지 않게** 하려는 것인데, per-cut `REGEN_BEST_OF` 기본이 여전히 2라 지배적 비용
