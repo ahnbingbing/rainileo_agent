@@ -130,6 +130,50 @@ def produce_grammar_episode(grammar: str, target: dt.date, hhmm: str,
     return out, concept
 
 
+def _persist_grammar_card(target: dt.date, concept: dict, out_path) -> str:
+    """Register a card row for a rendered grammar episode + link the mp4 via output_video_path.
+    Without this the launch scheduler's _auto_upload_episode (which looks a card up BY
+    output_video_path) hits [ORPHAN-SKIP] and the slot never schedules — the grammar path
+    bypasses produce_and_render, which is what normally creates the card. Returns the card_id."""
+    import uuid as _uuid
+    import datetime as _dt
+    from agents.producer import _db
+    from agents.writer import persist_card
+    title = concept.get("title") or "랴니와 레오"
+    con = _db()
+    try:
+        card = {
+            "card_id": str(_uuid.uuid4()),
+            "created_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+            "author": "grammar_slot",
+            "card_type": "daily",
+            "date": target.isoformat(),
+            "theme": concept.get("theme") or title,
+            "title": title,
+            "narrative_oneliner": concept.get("narrative_oneliner") or title,
+            "render_style": "real_footage",
+            "edit_grammar": concept.get("edit_grammar"),
+            "episode_format": "short",
+            "subjects": concept.get("subjects", ["ryani", "leo"]),
+            "duration_target_sec": 20,
+            "writer_confidence": 0.85,
+            "ask_pd": False,
+            "cuts": concept.get("cuts", []),
+            "draft": {"title": title, "description": title,
+                      "hashtags": ["#랴니", "#레오", "#일상"], "caption_burnin": title},
+        }
+        run_cur = con.execute("INSERT INTO runs (agent, status) VALUES ('grammar_slot', 'ok')")
+        con.commit()
+        persist_card(con, card, run_cur.lastrowid)
+        con.execute("UPDATE cards SET state='approved', output_video_path=?, "
+                    "updated_at=datetime('now') WHERE card_id=?",
+                    (str(out_path), card["card_id"]))
+        con.commit()
+        return card["card_id"]
+    finally:
+        con.close()
+
+
 def _concept_for(grammar: str, clips: dict, copy: dict) -> dict:
     title = _title_from_copy(grammar, copy)
     return {
@@ -179,11 +223,23 @@ def produce_grammar_episodes_shared(grammars: list, target: dt.date, hhmm_by_gra
         render_grammar(grammar, out, clips=shared_clips, copy=copy)
         if not out.exists():
             raise RuntimeError("grammar render produced no file")
+        concept = _concept_for(grammar, shared_clips, copy)
+        # Register a card + link the mp4 so the launch scheduler can find and schedule it
+        # (otherwise [ORPHAN-SKIP] → slot never fills). Non-fatal: a card failure shouldn't
+        # discard a good render — the slot would just need a manual schedule.
+        try:
+            concept["card_id"] = _persist_grammar_card(target, concept, out)
+        except Exception as e:
+            log.warning("grammar %s card persist failed (slot will orphan): %s", grammar, e)
         _sp(f":white_check_mark: {hh} grammar={grammar} 렌더 완료(공유 footage) → {out.name}")
-        return out, _concept_for(grammar, shared_clips, copy)
+        return out, concept
 
+    # Cap concurrency: the VM has 2 vCPUs, so 3 simultaneous CPU-bound renders thrash (loadavg ~7,
+    # slower wall-clock than 2-wide). 2-wide keeps it parallel without starving. GRAMMAR_RENDER_
+    # CONCURRENCY tunes it (a bigger VM can raise it).
+    _cc = min(len(grammars), max(1, int(os.getenv("GRAMMAR_RENDER_CONCURRENCY", "2"))))
     results: dict = {}
-    with ThreadPoolExecutor(max_workers=max(1, len(grammars))) as ex:
+    with ThreadPoolExecutor(max_workers=_cc) as ex:
         futs = {ex.submit(_one, g): g for g in grammars}
         for fut in as_completed(futs):
             g = futs[fut]
