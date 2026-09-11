@@ -2862,6 +2862,34 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         before = len(avail_videos)
         filtered = [v for v in avail_videos
                     if not _rf_is_cooled(v, cooldown, _cool_sessions, _visual_cool)]
+        # PD 2026-09-11: recency-aware relax (the "쿨다운 얇으면 자동완화"). The all-time
+        # cooldown (RF_USED_CLIP_ALLTIME) excludes recently-USED clips — which are exactly the
+        # FRESHEST ones (just shipped). The pool overall stays large (archive is years deep), so
+        # the wholesale >=6 relax below never fires; yet the FRESH window the writer is TOLD to
+        # prefer ("available_videos는 신선한 클립부터") quietly collapses. A fresh/home directive
+        # then can't cast enough recent clips → "footage insufficient" → re-propose hang (the
+        # 09-13 empty-slot root, surfaced once the asset_id writeback [db71e3d] correctly
+        # populated the exact-id cooldown). Fix: keep the all-time exclusion for OLD footage, but
+        # if too few fresh clips survive the cooldown, re-admit the cooled FRESH ones only — so
+        # the fresh window is replenished without reopening the whole archive to reuse.
+        _fresh_days = int(os.getenv("RF_FRESH_RELAX_DAYS", "75"))
+        _fresh_min = int(os.getenv("RF_FRESH_RELAX_MIN", "8"))
+
+        def _is_fresh(_v: dict) -> bool:
+            try:
+                return (target - dt.date.fromisoformat((_v.get("date") or "")[:10])).days <= _fresh_days
+            except Exception:
+                return False
+        _fresh_surviving = [v for v in filtered if _is_fresh(v)]
+        if len(_fresh_surviving) < _fresh_min:
+            _readmit = [v for v in avail_videos
+                        if _is_fresh(v)
+                        and _rf_is_cooled(v, cooldown, _cool_sessions, _visual_cool)]
+            if _readmit:
+                filtered = filtered + _readmit  # disjoint: _readmit = cooled, filtered = non-cooled
+                if progress_cb:
+                    progress_cb(f":ocean: 신선 클립 부족({len(_fresh_surviving)}<{_fresh_min}) — "
+                                f"쿨다운 자동완화: 최근 {_fresh_days}일 사용클립 {len(_readmit)}개 재-admit")
         # Safety: don't starve the writer. If the cooldown leaves too few clips
         # for a full episode, relax it (still prefer fresh, but allow reuse).
         if len(filtered) >= 6:
