@@ -162,7 +162,9 @@ def _persist_grammar_card(target: dt.date, concept: dict, out_path) -> str:
             "draft": {"title": title, "description": title,
                       "hashtags": ["#랴니", "#레오", "#일상"], "caption_burnin": title},
         }
-        run_cur = con.execute("INSERT INTO runs (agent, status) VALUES ('grammar_slot', 'ok')")
+        # runs.agent has a CHECK constraint (writer/pd/cameraman/memory/scheduler) — the grammar
+        # render is a cameraman-lane render, so log it as 'cameraman'.
+        run_cur = con.execute("INSERT INTO runs (agent, status) VALUES ('cameraman', 'ok')")
         con.commit()
         persist_card(con, card, run_cur.lastrowid)
         con.execute("UPDATE cards SET state='approved', output_video_path=?, "
