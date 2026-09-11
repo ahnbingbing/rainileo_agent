@@ -1,15 +1,15 @@
 """B2/B3 — edit_grammar production wiring (Phase B).
 
 `edit_grammar_for_slot` assigns velocity/meme/story to the day's 3 RF slots (fixed for the
-launch month) behind the **EDIT_GRAMMAR_MODE kill-switch** (default off → standard RF). When
-on, `produce_grammar_episodes_shared` casts ONE clip set and renders all three grammars from
+launch month) behind the **EDIT_GRAMMAR_MODE kill-switch** (default ON for the launch-month A/B;
+EDIT_GRAMMAR_MODE=0 → standard RF). When on, `produce_grammar_episodes_shared` casts ONE clip set and renders all three grammars from
 that SAME footage in parallel — a controlled A/B where footage is the control and the edit is
 the only variable (the B4 grammar-copy Writer writes grammar-specific grounded copy per arm).
 The launch slot pipeline builds this once, then each RF slot pulls its grammar's pre-rendered
 mp4; on ANY failure a slot falls back to the standard RF produce (never an empty slot).
 (`produce_grammar_episode` — the older per-slot cast+render — is retained for dry-run/standalone.)
 
-Reversibility (the D_lanemix lesson): EDIT_GRAMMAR_MODE=0 (default) reverts every RF slot to
+Reversibility (the D_lanemix lesson): EDIT_GRAMMAR_MODE=0 reverts every RF slot to
 standard trim→burn→assemble on the next batch — no redeploy, no in-flight impact.
 """
 from __future__ import annotations
@@ -29,7 +29,7 @@ _GRAMMAR_CYCLE = ["velocity", "meme", "story"]
 def edit_grammar_for_slot(target: dt.date, hhmm: str, assignments: list) -> str | None:
     """The grammar assigned to this RF slot, or None (→ standard RF). Off unless
     EDIT_GRAMMAR_MODE=1. `assignments` = day_assignments() output [(lane, hhmm), ...]."""
-    if os.getenv("EDIT_GRAMMAR_MODE", "0") != "1":
+    if os.getenv("EDIT_GRAMMAR_MODE", "1") != "1":
         return None
     rf_slots = sorted(hh for ln, hh in assignments if ln == "real_footage")
     if hhmm not in rf_slots:
