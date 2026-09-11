@@ -3935,7 +3935,18 @@ def _render_realfootage_with_retry(concept: dict, target: dt.date,
         except Exception as e:
             log.warning("arc record (rf) failed: %s", e)
 
+    import time as _time
+    _slot_deadline = _time.time() + int(os.getenv("RF_SLOT_MAX_SECONDS", "900"))
     for attempt in range(1, max_attempts + 1):
+        # HARD wall-clock cap (PD 2026-09-11 runaway): each RF attempt is a SLOW streamed
+        # Anthropic re-write + render + Giri, so a slot that keeps failing Giri can grind for
+        # hours (the 8h batch: ~5 attempts × 3 RF slots × 3 self-heal rounds of slow attempts).
+        # Past the per-slot deadline, STOP retrying and ship the best attempt so far (or leave
+        # empty) — a mediocre/empty slot beats an all-day batch runaway. RF_SLOT_MAX_SECONDS reverts.
+        if attempt > 1 and _time.time() > _slot_deadline:
+            if progress_cb:
+                progress_cb(f":alarm_clock: RF 슬롯 시간초과 — 재시도 중단, 최고 결과 사용(시도 {attempt-1})")
+            return _finish(best_out or last_out)
         if progress_cb:
             progress_cb(f":repeat: real_footage 시도 {attempt}/{max_attempts}")
         out, report, card_id = _render_realfootage_direct(cur_concept, target, con, progress_cb)

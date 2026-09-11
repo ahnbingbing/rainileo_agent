@@ -281,6 +281,12 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
     _rounds = max(max_rounds, int(os.getenv("RF_SELFHEAL_ROUNDS", "6"))) \
         if any(l == "real_footage" for l, _ in want) else max_rounds
 
+    import time as _t
+    # HARD batch wall-clock cap (PD 2026-09-11 runaway): RF self-heal runs up to 6 rounds and
+    # each RF attempt is a SLOW streamed re-write + render + Giri, so a batch of slots that keep
+    # failing Giri ground for ~8h. Stop starting new rounds past the deadline — leave empty slots
+    # for the next batch / manual fill rather than grind all day. SELFHEAL_MAX_SECONDS reverts.
+    _batch_deadline = _t.time() + int(os.getenv("SELFHEAL_MAX_SECONDS", "5400"))
     for rnd in range(1, _rounds + 1):
         # Cooperative stop (PD 2026-09-04): honor a Slack "stop" between rounds so a bad
         # self-heal can be halted instead of grinding all its rounds. The in-flight render
@@ -289,6 +295,10 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
         if stop_requested():
             cap(f":octagonal_sign: [self-heal] STOP 요청 — 남은 라운드 중단"
                 f"{(' ('+stop_reason()+')') if stop_reason() else ''}. `go`로 재개.")
+            break
+        if _t.time() > _batch_deadline:
+            cap(f":alarm_clock: [self-heal] 배치 시간초과({os.getenv('SELFHEAL_MAX_SECONDS','5400')}s) "
+                f"— 라운드 {rnd} 시작 안 함, 남은 빈 슬롯은 다음 배치/수동. (런어웨이 방지)")
             break
         pending = [(l, h) for (l, h) in want if (l, h) not in done and (l, h) not in terminal]
         if not pending:
