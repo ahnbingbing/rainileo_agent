@@ -2,9 +2,12 @@
 
 `edit_grammar_for_slot` assigns velocity/meme/story to the day's 3 RF slots (fixed for the
 launch month) behind the **EDIT_GRAMMAR_MODE kill-switch** (default off → standard RF). When
-on, `produce_grammar_episode` builds a fresh clip pool → the B4 grammar-copy Writer casts +
-writes grounded copy → impact_edit renders the grammar edit. The launch slot pipeline calls
-this and, on ANY failure, falls back to the standard RF produce (never an empty slot).
+on, `produce_grammar_episodes_shared` casts ONE clip set and renders all three grammars from
+that SAME footage in parallel — a controlled A/B where footage is the control and the edit is
+the only variable (the B4 grammar-copy Writer writes grammar-specific grounded copy per arm).
+The launch slot pipeline builds this once, then each RF slot pulls its grammar's pre-rendered
+mp4; on ANY failure a slot falls back to the standard RF produce (never an empty slot).
+(`produce_grammar_episode` — the older per-slot cast+render — is retained for dry-run/standalone.)
 
 Reversibility (the D_lanemix lesson): EDIT_GRAMMAR_MODE=0 (default) reverts every RF slot to
 standard trim→burn→assemble on the next batch — no redeploy, no in-flight impact.
@@ -125,3 +128,68 @@ def produce_grammar_episode(grammar: str, target: dt.date, hhmm: str,
     }
     _sp(f":white_check_mark: {hhmm} grammar={grammar} 렌더 완료 → {out.name}")
     return out, concept
+
+
+def _concept_for(grammar: str, clips: dict, copy: dict) -> dict:
+    title = _title_from_copy(grammar, copy)
+    return {
+        "render_style": "real_footage", "edit_grammar": grammar,
+        "title": title, "theme": title, "narrative_oneliner": title,
+        "subjects": ["ryani", "leo"],
+        "cuts": [{"asset_id": aid} for aid in dict.fromkeys(clips.values())],
+    }
+
+
+def produce_grammar_episodes_shared(grammars: list, target: dt.date, hhmm_by_grammar: dict,
+                                    progress_cb=None, exclude_asset_ids=None) -> dict:
+    """Controlled edit_grammar A/B: cast ONE clip set, then render every grammar from the SAME
+    footage IN PARALLEL — footage is the control, the edit is the only variable. Returns
+    {grammar: (mp4_path, concept)}. Raises if the shared cast itself fails (caller falls back to
+    standard RF for all slots); a single grammar's render failure just omits that grammar from the
+    result (its slot falls back to standard RF). This is why the 3 daily RF slots share footage and
+    run together instead of each casting its own clips sequentially."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from scripts.impact_edit import render_grammar
+    from agents.edit_grammar_writer import propose_grammar_copy
+
+    def _sp(m):
+        if progress_cb:
+            progress_cb(m)
+
+    pool = _fresh_pool(set(exclude_asset_ids or []))
+    if len(pool) < 4:
+        raise RuntimeError(f"grammar pool too thin ({len(pool)} clips)")
+    # Cast ONCE via story — its beat structure references all 5 roles, so it produces the
+    # fullest cast for the other grammars to reuse.
+    _sp(f":art: RF grammar A/B — 클립 {len(pool)}개서 공유 캐스팅(1회) 중")
+    base = propose_grammar_copy("story", pool, slot_hhmm=hhmm_by_grammar.get("story"))
+    shared_clips = base["clips"]
+    base_copy = base["copy"]
+    for aid in dict.fromkeys(shared_clips.values()):
+        _ensure_local(aid)
+    ts = target.strftime("%Y%m%d")
+
+    def _one(grammar: str):
+        hh = hhmm_by_grammar.get(grammar, "")
+        copy = (base_copy if grammar == "story"
+                else propose_grammar_copy(grammar, pool, slot_hhmm=hh,
+                                          fixed_clips=shared_clips)["copy"])
+        out = Path(f"data/output/episodes/episode_rf_{grammar}_{ts}_{hh.replace(':', '')}.mp4")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        render_grammar(grammar, out, clips=shared_clips, copy=copy)
+        if not out.exists():
+            raise RuntimeError("grammar render produced no file")
+        _sp(f":white_check_mark: {hh} grammar={grammar} 렌더 완료(공유 footage) → {out.name}")
+        return out, _concept_for(grammar, shared_clips, copy)
+
+    results: dict = {}
+    with ThreadPoolExecutor(max_workers=max(1, len(grammars))) as ex:
+        futs = {ex.submit(_one, g): g for g in grammars}
+        for fut in as_completed(futs):
+            g = futs[fut]
+            try:
+                results[g] = fut.result()
+            except Exception as e:
+                log.warning("grammar %s failed in shared render → standard RF: %s", g, e)
+                _sp(f":warning: grammar={g} 렌더 실패 → 표준 RF 폴백: {str(e)[:120]}")
+    return results

@@ -454,6 +454,12 @@ def launch_pipeline(target: dt.date, *,
     except Exception as e:
         log.warning("batch_concepts seed failed: %s", e)
 
+    # edit_grammar A/B (PD 2026-09-11): the day's RF grammar slots share ONE cast and render
+    # together (footage = control, edit = variable), so they can't each cast their own clips
+    # sequentially. Built lazily on the first RF grammar slot, then every RF slot pulls its
+    # grammar's pre-rendered mp4 from here. RF slots run sequentially within the lane, so no race.
+    _grammar_cache: dict = {}
+
     def _slot_pipeline(lane: str, hhmm: str) -> dict | None:
         # PD 2026-06-08: each slot proposes ITS OWN concept and renders it in one
         # thread, so the slow av Writer/Director proposals overlap each other AND
@@ -563,17 +569,33 @@ def launch_pipeline(target: dt.date, *,
         # render) instead of standard trim→burn→assemble. ANY failure falls through to the
         # standard produce below (never an empty slot). Off by default → standard RF.
         if not pin and not dry_run and lane == "real_footage":
-            from agents.grammar_slot import edit_grammar_for_slot, produce_grammar_episode
+            from agents.grammar_slot import edit_grammar_for_slot, produce_grammar_episodes_shared
             _grammar = edit_grammar_for_slot(target, hhmm, assignments)
             if _grammar:
-                try:
-                    _gout, _gconcept = produce_grammar_episode(
-                        _grammar, target, hhmm, progress_cb=sp,
-                        exclude_asset_ids=batch_used_assets)
-                    concept, outs = _gconcept, [_gout]
-                except Exception as e:
-                    log.warning("grammar %s %s failed → standard RF: %s", hhmm, _grammar, e)
-                    sp(f":warning: {hhmm} grammar={_grammar} 렌더 실패 → 표준 RF 폴백: {str(e)[:120]}")
+                # Build the shared-footage A/B ONCE (all RF grammars, same cast, parallel render),
+                # then each RF slot pulls its grammar's pre-rendered result. Any failure leaves the
+                # cache empty/partial → standard RF fallback for the missing slots (never empty).
+                if not _grammar_cache:
+                    _rf_slots = sorted(hh for ln, hh in assignments if ln == "real_footage")
+                    _hhmm_by_g: dict = {}
+                    for _hh in _rf_slots:
+                        _g = edit_grammar_for_slot(target, _hh, assignments)
+                        if _g and _g not in _hhmm_by_g:
+                            _hhmm_by_g[_g] = _hh
+                    try:
+                        sp(f":art: RF grammar A/B — {len(_hhmm_by_g)}개 문법을 같은 footage로 "
+                           "병렬 생성(footage=통제, 편집=변인)")
+                        _built = produce_grammar_episodes_shared(
+                            list(_hhmm_by_g), target, _hhmm_by_g, progress_cb=sp,
+                            exclude_asset_ids=batch_used_assets)
+                        _grammar_cache.update(_built or {})
+                    except Exception as e:
+                        log.warning("shared grammar build failed → standard RF: %s", e)
+                        sp(f":warning: RF grammar 공유 캐스팅 실패 → 표준 RF 폴백: {str(e)[:120]}")
+                    _grammar_cache["_built"] = True  # don't rebuild for later slots
+                _hit = _grammar_cache.get(_grammar)
+                if _hit:
+                    concept, outs = _hit[1], [_hit[0]]
         for _att in range(1, max_repropose + 1):
             if pin or outs:
                 break

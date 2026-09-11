@@ -106,9 +106,13 @@ def _extract_json_object(text: str) -> dict:
 
 
 def propose_grammar_copy(grammar: str, pool: list[dict], *, slot_hhmm: str | None = None,
-                         model: str | None = None) -> dict:
+                         model: str | None = None, fixed_clips: dict | None = None) -> dict:
     """Cast clips + write grounded copy for one grammar. Returns {"clips": {...}, "copy": {...}}.
-    Raises ValueError on an unknown grammar; raises on parse failure so the dry-run surfaces it."""
+    Raises ValueError on an unknown grammar; raises on parse failure so the dry-run surfaces it.
+
+    fixed_clips (the edit_grammar A/B): when given, the cast is HELD CONSTANT across grammars —
+    the same role→asset_id map is reused and the Writer only writes copy grounded to those clips
+    (footage is the control, the edit is the variable). The returned clips are always fixed_clips."""
     if grammar not in GRAMMAR_SPEC:
         raise ValueError(f"unknown grammar: {grammar}")
     from agents import prompt_loader as _pl
@@ -116,19 +120,30 @@ def propose_grammar_copy(grammar: str, pool: list[dict], *, slot_hhmm: str | Non
 
     spec = GRAMMAR_SPEC[grammar]
     system = _pl.load(_PROMPT_PATH)
-    user = json.dumps({
+    _payload = {
         "grammar": grammar,
         "roles": ROLES,
         "beat_structure": spec["beats"],
         "output_shape": spec["shape"],
         "slot_hhmm": slot_hhmm,
         "candidate_clips": _pool_for_prompt(pool),
-    }, ensure_ascii=False)
+    }
+    if fixed_clips:
+        # Copy-only mode: the cast is already decided (shared across the A/B). Show only the
+        # cast clips and forbid re-casting — return this exact clips map + copy grounded to it.
+        _cast_ids = set(fixed_clips.values())
+        _payload["fixed_clips"] = fixed_clips
+        _payload["candidate_clips"] = [c for c in _payload["candidate_clips"]
+                                       if c.get("asset_id") in _cast_ids]
+        _payload["instruction_override"] = (
+            "clips는 이미 배정되어 있다(fixed_clips). 재캐스팅 금지 — clips에는 fixed_clips를 "
+            "그대로 반환하고, 배정된 각 클립의 sc에 그라운딩된 copy만 이 grammar 스타일로 작성하라.")
+    user = json.dumps(_payload, ensure_ascii=False)
 
     raw = _llm.call_text_cached(system, user, max_tokens=6000,
                                 model=model or os.getenv("GRAMMAR_WRITER_MODEL"))
     obj = _extract_json_object(raw)
-    clips = obj.get("clips") or {}
+    clips = fixed_clips or (obj.get("clips") or {})
     copy = obj.get("copy") or {}
     if not clips or not copy:
         raise RuntimeError(f"grammar writer returned incomplete output (clips={bool(clips)}, copy={bool(copy)})")
