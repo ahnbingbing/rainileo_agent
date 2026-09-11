@@ -5937,14 +5937,26 @@ def _clip_has_human_face(mp4_path: Path, n_frames: int = 4) -> bool:
                 "answer false. Answer true ONLY when the eyes are visible enough to "
                 "identify the person (a clear or near-clear face, incl. a mirror). "
                 "Return ONLY JSON: {\"face_visible\": true|false}.")
-            resp = client.models.generate_content(
-                model=os.getenv("VLM_MODEL", "gemini-2.5-flash"),
-                contents=parts,
-                config=_gt.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    thinking_config=_gt.ThinkingConfig(thinking_budget=0)))
             import json as _json
-            return bool(_json.loads((resp.text or "{}").strip()).get("face_visible"))
+
+            def _ask() -> bool:
+                resp = client.models.generate_content(
+                    model=os.getenv("VLM_MODEL", "gemini-2.5-flash"),
+                    contents=parts,
+                    config=_gt.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        thinking_config=_gt.ThinkingConfig(thinking_budget=0)))
+                return bool(_json.loads((resp.text or "{}").strip()).get("face_visible"))
+
+            # Corroborate (PD 2026-09-11): the single gemini-flash call FALSE-POSITIVES —
+            # it hallucinates a human face on clips that have none (PD: ~90% of "face" drops are
+            # wrong), and every false drop then PERMANENTLY poisons the pool via the has_human
+            # backfill, eroding the clean pool until RF can't fill a slot (the runaway). Require a
+            # SECOND independent call to AGREE before calling it a face. Real faces read true both
+            # times; a flaky hallucination rarely repeats. RF_FACE_CORROBORATE=0 reverts.
+            if os.getenv("RF_FACE_CORROBORATE", "1") == "0":
+                return _ask()
+            return _ask() and _ask()
     except Exception as e:
         log.warning("face gate check failed (%s) — keeping", e)
         return False
@@ -5970,6 +5982,22 @@ def _rf_face_gate(manifests: dict, anim_dir: Path,
             if progress_cb:
                 progress_cb(f":no_entry: {tag} 사람 얼굴 감지 — 컷 드롭(절대 노출 금지)")
             log.warning("RF face gate: dropping %s (human face survived crop)", tag)
+    # ALL-DROP GUARD (PD 2026-09-11): if the gate would drop EVERY cut (leaving < min), that's
+    # implausible — a whole RF episode of nothing-but-human-faces almost never happens, so it's
+    # the face VLM false-positiving across the board. Dropping all → "too few cuts" → render fails
+    # → self-heal re-proposes the same clips → same hallucination → an all-day runaway, AND the
+    # has_human backfill below would permanently exclude those (good) clips, eroding the pool. So
+    # when the gate would empty the episode, treat it as a hallucination: KEEP the cuts, skip the
+    # backfill. A real single-cut face still gets dropped (partial drop leaves cuts); this only
+    # trips on the implausible all/most-cuts case. RF_FACE_ALLDROP_GUARD=0 reverts.
+    if drop and (len(cuts) - len(drop)) < int(os.getenv("RF_MIN_CUTS", "2")) \
+            and os.getenv("RF_FACE_ALLDROP_GUARD", "1") != "0":
+        if progress_cb:
+            progress_cb(f":warning: 얼굴게이트가 전 컷({len(drop)}/{len(cuts)}) 드롭하려 함 "
+                        f"— 오탐(할루시네이션)으로 판단, 컷 유지·백필 안 함")
+        log.warning("RF face gate: would drop ALL/most cuts (%d/%d) → treating as VLM false-positive, "
+                    "keeping cuts, no backfill", len(drop), len(cuts))
+        return
     # PD 2026-08-13 SELF-CORRECTING POOL: the render-time face VLM is STRICTER than the
     # ingest `has_human` tag, so a clip tagged has_human=0 can still leak a face here and get
     # dropped — and since the RF selection excludes on the tag (producer: _rf_long_candidates /
