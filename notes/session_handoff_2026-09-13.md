@@ -1,4 +1,4 @@
-# Session handoff — 2026-09-13 (grammar A/B 라이브화 + RF 쿨다운 런어웨이 근본)
+# Session handoff — 2026-09-13 (grammar A/B 라이브화 + RF 쿨다운 런어웨이 근본 / 오후 후속: 라이브 배치 PD 리뷰 → 품질 3근본 + 교체)
 
 **스파인:** 이 세션 = 하나의 인시던트에서 시작해(PD "셀프힐이 안 멈춰"·"컨셉이 없대"·"9-13 다 안 찼어") 두 근본을
 파고, edit_grammar 3-arm을 **라이브 프로덕션에 배선**했다. 관통 교훈 셋:
@@ -10,7 +10,7 @@
    17분 렌더 전에 잡았다.
 
 ## VM authoritative · push=deploy
-- **VM HEAD**: `dac41bc`+ (이 세션 마지막 = d399812 retro). `rianileo-deploy.timer`(2분 폴, **active**)가 pull→smoke→봇 재기동.
+- **VM HEAD**: `18639cc` (오후 후속 = e797b7f fix + 18639cc retro). `rianileo-deploy.timer`(2분 폴, **active**)가 pull→smoke→봇 재기동.
 - 하루 스케줄(KST): 03:00 launch_selfheal / 09:10 slot_topup / 09:40 pd_reviewer. **cron 재시작됨**(인시던트 때 stop분).
 - `LAUNCH_LEAD_DAYS=2` — 03:00 배치는 발화일 +2를 만든다(09-13 03:00 → 09-15).
 
@@ -56,11 +56,42 @@ PD가 "$440 크레딧 자동충전 실패로 배치가 안 돈 것 같다"고 �
 - **grammar A/B = daily 기본 ON** (laun치-월). RF 3슬롯 = velocity/meme/story, 같은 footage. 이후 밴딧(B5).
 - **AV는 grammar 검증용으로 재실행 불필요**(PD) — 정규 daily 배치엔 1 AV 포함(3rf1av 유지).
 
-## ★ NEXT
-- **내일(09-13) 03:00 배치 = 09-15 생산** 첫 실전 스팟체크: (a)cron이 정상 발화해 09-15 4/4 채우는지(현재 09-15=0),
-  (b)09-15 RF 3슬롯이 grammar A/B(같은 footage velocity/meme/story)로 나오는지, (c)cooldown recency-완화가 03:00
-  대량 배치서 fresh 굶김 없이 도는지, (d)고아 재발 없는지(카드 4겹 fix 첫 자동 실전).
-- 정상 2일-선행 리듬 복귀 확인: 09-13→09-15, 09-14→09-16 …
-- 미착수(선택): B5 밴딧(edit_grammar arm 성과→다음달 자동 선택)·틱톡 주말 구현(PD 숙제=dev앱 video.upload 키).
+## 세션 후속 (09-13 오후) — 라이브 grammar 배치 PD 리뷰 → 품질 3근본 + 교체 (C_grammarquality · e797b7f)
+PD 리뷰: "새 RF 풀이 적다 + 앞 범퍼 없어짐 + 9/13 story 분수 처음·마지막에 랴니 없음". 셋 다 grammar 우회 경로가 뿌리.
+**스파인 확장(위 교훈 1의 날 세움):** 예외를 던지는 계약은 트리아지에 걸리지만, **조용히 실패하는 계약(범퍼)은 로그로
+안 보인다 — 우회 경로는 산출물끼리 diff(표준RF엔 범퍼·grammar엔 없음, 프레임 보면 즉시)로 계약을 열거하라.**
 
-cf. 메모리 [[grammar_live_shared_ab_and_cooldown_relax]] · 회고 §4.4 C_cooldownrelax · §4.5 D_grammarlive · §4.1 표.
+### 근본 3 (모두 `scripts/impact_edit.py`·`agents/grammar_slot.py`, 다음 배치부터 자동 적용)
+1. **범퍼 실종 = D_grammarlive의 5번째(조용한) 고아.** grammar body는 `assemble`이 직접 만들고 `assemble_episode.py`
+   (범퍼 붙이는 유일한 곳)를 우회 → 전 grammar 편 범퍼 無. Fix=`assemble`이 `_wrap_bumpers`로 intro+body+outro 감쌈
+   (body 자체 오디오 보존, WxH/FPS/setsar+오디오트랙 보장, gotcha #8/#9). 스모크 1.5+body+2.5 검증.
+2. **subject-blind 윈도우**(분수 랴니 실종). story가 컷 구간을 모션 에너지만으로 골라(`best_motion_window`) 분수는
+   물튀김=모션최대=랴니 프레임밖. Fix=`salient_motion_window`(모션 × **공간 집중도**, block-pool 프레임차 상위1/8 블록
+   비중)를 cold_open/payoff에 배선. 달리는 개는 둘 다 높아 무회귀·확산모션(물/비/바람)만 밀림(합성필드로 검증).
+3. **A/B가 timeslot 교란**. grammar↔슬롯 정적매핑이 story를 거의 매일 21:00(최강)에 고정 → 문법효과·슬롯빨 분리불가.
+   Fix=`edit_grammar_for_slot`에 날짜 로테이션(offset=ordinal%3) → 12일간 각 문법이 4슬롯 균등 순회(검증). 단일 소스라
+   launch.py 매핑 전 경로 전파. **밴딧(B5) attribution 개선**.
+
+### 라이브 교체 (조회수 손실 0)
+- **meme** `LUApXRa8Na8` → **`FkFNT6HVG0I`**(기존 body 범퍼-wrap, 재캐스팅 없음). **story** `dHQ6knakFa0` →
+  **`mG0WjiQ3v74`**(원본 4클립 강제-재렌더로 분수 컨셉 유지+salient로 랴니 확보+범퍼, 프레임 스트립 검증). 둘 다
+  예약-비공개 상태라 발행 전 교체=손실0. **velocity `ACwb6d5zGMQ`는 유지**(이미 공개 796조회·범퍼-only 결함→PD 결정).
+- 교체법=`_auto_upload_episode`(같은 카드 output_video_path 갱신→재업로드→이전 vid 자동 veto). 카드는 `date`+
+  `youtube_video_id`로 찾음. veto는 eventually-consistent(publishAt 잔존→1회 재시도 내장).
+- ★롤백(함정): **공개 편 재렌더는 producer 재실행이 아니다** — 재실행하면 원본 클립이 uploaded=1 쿨다운 배제→비결정
+  재캐스트로 **다른 에피(레오-실외)** 생성. 원본 캐스트를 강제하라. 미래과제=grammar copy/역할 카드 미영속(clip
+  asset_id만)→충실 재현 불가, 영속화 필요.
+- gotcha=VM 수동 렌더는 `sudo systemd-run --uid=rianileo -p EnvironmentFile=/etc/rianileo/env -p PYTHONPATH=<repo>`
+  (SSH 끊김 견딤·env 로드). LLM 캐스트 ~11분/편. `.env` 참조는 하네스가 차단(EnvironmentFile 경로만).
+
+## ★ NEXT
+- **09-13 오후 교체분 발행 스팟체크(오늘 밤)**: 18:00 meme `FkFNT6HVG0I`·21:00 story `mG0WjiQ3v74`가 **범퍼 달고**
+  공개되는지 (story는 분수 hook에 랴니 + payoff 벤치 랴니 확인). velocity는 그대로 공개 중.
+- **09-15 배치(오늘 03:00 생산) = 3근본 첫 자동 실전**: (a)RF 3편 전부 **범퍼 있는지**(assemble wrap), (b)story arm에
+  물/확산 footage 걸릴 때 salient가 피사체 잡는지, (c)grammar↔슬롯 로테이션으로 story가 21:00 아닌 슬롯에도 가는지,
+  (d)09-11 세션 항목: cron 정상발화·cooldown recency완화·고아 재발 없음.
+- 정상 2일-선행 리듬 복귀 확인: 09-13→09-15, 09-14→09-16 …
+- 미착수(선택): **grammar copy/역할 카드 영속화**(충실 재렌더 가능하게, C_grammarquality 미래과제)·B5 밴딧(edit_grammar
+  arm→다음달 자동 선택)·틱톡 주말 구현(PD 숙제=dev앱 video.upload 키).
+
+cf. 메모리 [[grammar_live_shared_ab_and_cooldown_relax]] · 회고 §4.4 C_cooldownrelax·C_grammarquality · §4.5 D_grammarlive · §4.1 표.
