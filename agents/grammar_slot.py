@@ -28,13 +28,23 @@ _GRAMMAR_CYCLE = ["velocity", "meme", "story"]
 
 def edit_grammar_for_slot(target: dt.date, hhmm: str, assignments: list) -> str | None:
     """The grammar assigned to this RF slot, or None (→ standard RF). Off unless
-    EDIT_GRAMMAR_MODE=1. `assignments` = day_assignments() output [(lane, hhmm), ...]."""
+    EDIT_GRAMMAR_MODE=1. `assignments` = day_assignments() output [(lane, hhmm), ...].
+
+    A/B validity: footage is the control (all grammars share one cast), so timeslot MUST NOT
+    stay bound to a grammar — otherwise 'story wins' is inseparable from 'story always ran at
+    21:00' (the strongest slot). A STATIC position→grammar map does exactly that (story pins to
+    the last RF slot ≈ 21:00 nearly every day). So the map ROTATES by day (offset = ordinal % 3):
+    over the cycle each grammar visits every RF position, timeslot averages out across grammars,
+    and the bandit reads a clean grammar marginal (same reason lane rotates across slots). This
+    is the single source of the grammar↔slot mapping — launch.py builds hhmm_by_grammar from it,
+    so the shared render and the per-slot lookup stay consistent."""
     if os.getenv("EDIT_GRAMMAR_MODE", "1") != "1":
         return None
     rf_slots = sorted(hh for ln, hh in assignments if ln == "real_footage")
     if hhmm not in rf_slots:
         return None
-    return _GRAMMAR_CYCLE[rf_slots.index(hhmm) % len(_GRAMMAR_CYCLE)]
+    offset = target.toordinal() % len(_GRAMMAR_CYCLE)
+    return _GRAMMAR_CYCLE[(rf_slots.index(hhmm) + offset) % len(_GRAMMAR_CYCLE)]
 
 
 def _fresh_pool(exclude: set | None = None, limit: int = 12) -> list[dict]:

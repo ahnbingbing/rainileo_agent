@@ -72,6 +72,12 @@ FONT_BLACK = _font("Pretendard-Black.otf", "Pretendard-ExtraBold.otf", "Pretenda
 FONT_XBOLD = _font("Pretendard-ExtraBold.otf", "Pretendard-Bold.otf")
 W, H, FPS = 1080, 1920, 30
 BGM = ROOT / "assets" / "bgm"
+# Channel bumpers — the grammar path renders its OWN body (concat+caption+music) and so
+# bypasses assemble_episode.py, which is what prepends/appends the bumpers on the standard
+# RF path. Without wrapping here, every grammar RF episode ships with NO intro/outro
+# (the D_grammarlive lesson: a bypass inherits the bypassed path's hidden contracts).
+INTRO_BUMPER = ROOT / "assets" / "branding" / "intro_bumper.mp4"
+OUTRO_BUMPER = ROOT / "assets" / "branding" / "outro_bumper.mp4"
 
 
 def _run(cmd: list[str]):
@@ -155,6 +161,51 @@ def best_motion_window(clip: str, win: float, *, guard: float = 0.3) -> tuple[fl
     """The single most kinetic window — used as the story COLD-OPEN payoff."""
     w = top_motion_windows(clip, 1, win, guard=guard)
     return w[0] if w else (guard, win)
+
+
+def motion_field(clip: str, fps: int = 10, edge: int = 64, block: int = 8) -> tuple[np.ndarray, float]:
+    """Per-frame, block-pooled abs frame-difference: (T, block*block) — the SPATIAL layout of
+    motion over time (motion_curve is this averaged over space). Used to tell a localized moving
+    subject (a few hot blocks) from diffuse full-frame motion (water splash, wind, rain)."""
+    raw = subprocess.run(
+        [FF, "-v", "error", "-i", clip, "-vf", f"fps={fps},scale={edge}:{edge},format=gray",
+         "-f", "rawvideo", "-"], capture_output=True).stdout
+    n = len(raw) // (edge * edge)
+    if n < 3:
+        return np.zeros((1, block * block), np.float32), float(fps)
+    a = np.frombuffer(raw[: n * edge * edge], np.uint8).astype(np.float32).reshape(n, edge, edge)
+    d = np.abs(np.diff(a, axis=0))                       # (n-1, edge, edge)
+    s = edge // block
+    d = d.reshape(d.shape[0], block, s, block, s).mean(axis=(2, 4))   # pool → (n-1, block, block)
+    return d.reshape(d.shape[0], block * block), float(fps)
+
+
+def salient_motion_window(clip: str, win: float, *, guard: float = 0.3) -> tuple[float, float]:
+    """The window maximizing motion × spatial CONCENTRATION — favors a localized moving SUBJECT
+    over diffuse full-frame motion, so a story hook/payoff frame actually contains the pet rather
+    than empty splashing water. A running pet scores high on BOTH (energy + concentration) so it
+    still wins on normal clips (no regression); on a fountain clip it picks the leap-in moment
+    (dog + splash) instead of the pure-splash motion max where the dog is out of frame. Falls back
+    to best_motion_window when the field is uninformative (very calm clip)."""
+    f, efps = motion_field(clip)
+    dur = probe_dur(clip)
+    wlen = max(1, int(win * efps))
+    if f.shape[0] <= wlen or f.max() <= 1e-6:
+        return best_motion_window(clip, win, guard=guard)
+    csum = np.cumsum(np.insert(f, 0, 0, axis=0), axis=0)      # (T+1, blocks)
+    winsum = csum[wlen:] - csum[:-wlen]                       # (Twin, blocks)
+    energy = winsum.sum(axis=1)
+    k = max(1, winsum.shape[1] // 8)                          # top ~1/8 of blocks = the "subject"
+    top = np.sort(winsum, axis=1)[:, -k:].sum(axis=1)
+    conc = top / (energy + 1e-6)                              # ~1 = energy in few blocks (localized)
+    en = energy / (energy.max() + 1e-6)                       # normalize so the product is balanced
+    score = en * conc
+    for i in np.argsort(score)[::-1]:
+        t = i / efps
+        if t < guard or t + win > dur - guard * 0.5:
+            continue
+        return (round(float(i) / efps, 2), win)
+    return best_motion_window(clip, win, guard=guard)
 
 
 def even_windows(clip: str, n: int, win: float, *, guard: float = 0.4) -> list[tuple[float, float]]:
@@ -331,9 +382,60 @@ def _sanitize_caption(text: str) -> str:
     return " ".join("".join(keep).split())
 
 
+def _has_audio(path) -> bool:
+    r = subprocess.run([FP, "-v", "error", "-select_streams", "a", "-show_entries",
+                        "stream=index", "-of", "csv=p=0", str(path)],
+                       capture_output=True, text=True)
+    return bool(r.stdout.strip())
+
+
+def _wrap_bumpers(body: Path, out: Path, tmp: Path,
+                  intro: Path = INTRO_BUMPER, outro: Path = OUTRO_BUMPER) -> Path:
+    """Prepend the intro bumper + append the outro bumper to a finished grammar body,
+    PRESERVING the body's own mixed audio (music/TTS). Each segment is normalized to the
+    channel WxH/FPS/yuv420p/setsar=1 and guaranteed an audio track before concat
+    (gotchas #8 SAR/res mismatch, #9 bumper theme audio). Bumper-less hosts (files absent)
+    just get the body back untouched."""
+    segs = [p for p in (intro, body, outro) if p and Path(p).exists()]
+    if len(segs) <= 1:            # no bumpers present → nothing to wrap
+        if Path(body) != Path(out):
+            _shutil.copy(str(body), str(out))
+        return out
+    vf = (f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
+          f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={FPS},format=yuv420p")
+    norm = []
+    for i, seg in enumerate(segs):
+        np_ = tmp / f"bwrap_{i}.mp4"
+        if _has_audio(seg):
+            _run([FF, "-y", "-v", "error", "-i", str(seg), "-vf", vf,
+                  "-c:v", "libx264", "-crf", "18", "-preset", "veryfast",
+                  "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
+                  "-shortest", str(np_)])
+        else:                     # silent bumper → synthesize a matched silent track
+            dur = probe_dur(str(seg)) or 1.5
+            _run([FF, "-y", "-v", "error", "-i", str(seg),
+                  "-f", "lavfi", "-t", f"{dur:.3f}", "-i", "anullsrc=r=48000:cl=stereo",
+                  "-vf", vf, "-map", "0:v", "-map", "1:a",
+                  "-c:v", "libx264", "-crf", "18", "-preset", "veryfast",
+                  "-c:a", "aac", "-b:a", "192k", "-shortest", str(np_)])
+        norm.append(np_)
+    inputs = []
+    for f in norm:
+        inputs += ["-i", str(f)]
+    n = len(norm)
+    fc = "".join(f"[{i}:v][{i}:a]" for i in range(n)) + f"concat=n={n}:v=1:a=1[v][a]"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    _run([FF, "-y", "-v", "error", *inputs, "-filter_complex", fc,
+          "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-crf", "18",
+          "-preset", "medium", "-c:a", "aac", "-b:a", "192k",
+          "-movflags", "+faststart", str(out)])
+    return out
+
+
 def assemble(seq: list[dict], caps: list[tuple], music_id: str, out: Path, *,
              music_start: float = 6.0, music_vol: float = 0.85,
-             sfx: list[tuple] | None = None, voices: list[tuple] | None = None) -> Path:
+             sfx: list[tuple] | None = None, voices: list[tuple] | None = None,
+             bumpers: bool = True) -> Path:
     """seq: segment dicts. caps: (st,en,txt,fontsize,y[,font,box]). sfx: (t,kind,vol).
     voices: (t,text,vol) — TTS narration mixed over ducked music."""
     tmp = Path(tempfile.mkdtemp(prefix="impact_"))
@@ -461,9 +563,12 @@ def assemble(seq: list[dict], caps: list[tuple], music_id: str, out: Path, *,
         amap = "[a]"
     else:
         amap = "[m]"
+    body = (tmp / "body.mp4") if bumpers else out
     _run([FF, "-y", "-v", "error", *inputs, "-filter_complex", ";".join(parts),
           "-map", f"{video_idx}:v", "-map", amap, "-c:v", "copy", "-c:a", "aac",
-          "-b:a", "192k", "-shortest", "-movflags", "+faststart", str(out)])
+          "-b:a", "192k", "-shortest", "-movflags", "+faststart", str(body)])
+    if bumpers:
+        _wrap_bumpers(body, out, tmp)     # intro/outro channel bumpers (D_grammarlive fix)
     print(f"→ {out}  ({total:.1f}s)")
     return out
 
@@ -670,7 +775,8 @@ def _build_story_from_beats(c: dict, beats: list[dict], music_id: str, out: Path
     def _win(role: str, kind: str):
         clip = _resolve_clip(c[role])
         if kind in ("cold_open", "payoff"):
-            return clip, best_motion_window(clip, 2.6)
+            # subject-aware: the hook & climax MUST show the pet, not empty splashing water
+            return clip, salient_motion_window(clip, 2.6)
         wp = winpool.setdefault(role, {"clip": clip, "ws": even_windows(clip, 3, 3.6), "i": 0})
         s, d = wp["ws"][wp["i"] % len(wp["ws"])]
         wp["i"] += 1
