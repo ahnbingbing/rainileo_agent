@@ -337,6 +337,7 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
 | 긴 여운 클로저(7-8s) | (상시) | 6/26 | 리텐션 후반 새그 → 타이트 버튼(3-5s) |
 | twist 포맷 25s | 6/2 | 6/14 | short에 미스터리 불가 → 이후 캡 자체도 supersede |
 | **edit_grammar 기본 ON (a8f2bcd)** | 9/11 | 9/11 되돌림→복원 | 런어웨이 트리아지 때 grammar를 의심해 revert(4f7f670)했으나 진짜 근본은 RF 쿨다운(C_cooldownrelax) → grammar 검증 후 기본 ON 복원(dac41bc). 킬스위치 EDIT_GRAMMAR_MODE=0 유지 |
+| **공개 편 재렌더 = producer 재실행 (9/13)** | 9/13 | 즉시 폐기 | 재실행이 비결정 재캐스트→다른 에피(원본 클립이 쿨다운 배제). 대신 원본 캐스트 강제-재렌더 (C_grammarquality) |
 
 ### 4.2 AV 렌더 / Seedance
 - **A★. 랴니 마킹 잡기 — 프로젝트 최대 난제(상시, 부분해결)** — 가장 오래·가장 자주 싸운 단일 문제.
@@ -829,6 +830,27 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   큰데 왜 굶나"의 답은 풀의 형태다 — 전-기간 배제는 정확히 최신 클립을 지우고, writer가 쓰는 부분집합(fresh)이 마르면
   전체 크기 기준 완화는 절대 안 터진다. 완화의 임계는 '실제로 소비되는 부분집합'에 걸어라.** 부수 확인=PD 지목 원인
   ("$440 크레딧" 인시던트)은 무관(로그가 진실), 진짜 근본은 오늘 RF 변경 자체였다(cf. [[D_streamguard]] 같은 스파인). 486254e.
+- **C_grammarquality. 자동 선택기가 프록시(모션)를 최적화하면 진짜 목표(피사체)와 갈리는 지점에서 조용히 어긴다 +
+  통제 실험은 nuisance 변수도 처치에 안 묶여야 한다(9/13, `e797b7f`)** — PD "9/13 story 분수 처음·마지막에 랴니가 안
+  나와". 근본 둘. ①**subject-blind 윈도우**: story 엔진이 각 클립에서 컷 구간을 **모션 에너지만으로** 골랐는데
+  (`best_motion_window`), 분수 클립은 **물튀김이 모션 최대 = 하필 랴니가 프레임 밖인 프레임**이라 hook/payoff가 빈
+  물만 잡았다. Fix=`salient_motion_window`(모션 × **공간 집중도** — block-pool한 프레임차의 상위 1/8 블록 에너지 비중)를
+  cold_open/payoff에 배선: 국소적으로 움직이는 피사체(달리는 개)는 에너지·집중도 둘 다 높아 그대로 이기고(정상 클립
+  무회귀), 확산 모션(분수/비/바람)만 밀려 랴니 있는 도약 순간을 잡는다. ★원칙=**프록시를 최적화하는 결정론 선택기는
+  프록시와 목표가 일치하는 한에서만 옳다 — 둘이 갈리는 데이터(물·군중·바람)를 열거해 그 지점만 목표-정렬 신호로 보정하라.**
+  ②**A/B가 timeslot과 교란**: grammar↔슬롯 매핑이 정적(정렬된 RF 위치→문법)이라 story가 거의 매일 ~21:00(최강 슬롯)에
+  고정 → "story가 이긴다"가 "story가 21:00에 돌았다"와 분리 불가. footage는 통제했으면서 timeslot은 처치에 묶어둔 것.
+  Fix=매핑을 날짜로 로테이션(offset=ordinal%3) → 주기 안에 각 문법이 모든 슬롯을 균등 순회 → timeslot이 문법 전반에
+  평균화 → 밴딧이 깨끗한 문법 marginal을 읽는다(레인이 슬롯을 순회하는 것과 같은 이유). ★원칙=**한 변수를 통제한
+  실험도 다른 nuisance 변수가 처치에 상관되면 통제된 게 아니다 — 관심 없는 변수는 전부 처치에 걸쳐 회전시켜라.**
+  ★롤백(충실 재렌더의 함정): 공개된 story를 **producer 재실행으로 재렌더하니 완전히 다른 에피(레오-실외)**가 나왔다 —
+  원본 클립이 uploaded=1 카드라 [[C_cooldownrelax]] 쿨다운에 배제돼 writer가 딴 클립을 캐스팅. 게다가 grammar copy/역할
+  매핑은 카드에 저장 안 돼(클립 asset_id만) 정확한 편집 재구성 불가. Fix=원본 4클립으로 **강제 캐스팅**(fresh_pool 우회)해
+  분수 컨셉 유지 + salient 윈도우로 랴니 확보, 프레임 스트립으로 검증 후 교체. ★교훈=**공개 편을 "고치는" 재렌더는
+  파이프라인 재실행이 아니다(비결정 재캐스트가 원하던 클립을 쿨다운으로 배제) — 원본 캐스트를 강제하라. 그리고 재현
+  가능한 충실 수정을 원하면 편집 산출(copy/역할)을 카드에 영속화해야 한다(현재 미영속=미래 과제).** 라이브 교체=meme
+  FkFNT6HVG0I·story mG0WjiQ3v74(둘 다 예약-비공개라 손실 0), velocity는 이미 공개(796 조회)라 범퍼-only 결함이면 리셋값
+  없어 PD가 유지 결정. cf. [[D_grammarlive]]·[[C_cooldownrelax]]·[[view_data_concrete_hook_title]].
 - **C_freshbias. 신선 클립이 안 만들어진 건 인입이 아니라 선택 편향 + 리뷰어 자기강화였다(9/7)** — PD "왜 함미하비가
   공유한 신선 클립이 에피소드가 안 되나, 풀 문제야?". 검증하니 풀은 정상(최근 usable 151개, home 81·outdoor 21) — 인입도
   사용가능성(dur≥12·VLM·q≥0.7)도 병목이 아니었다. 진짜 근본 2겹: ①**RF writer가 잔잔한 신선 홈 클립보다 드라마틱한 옛
@@ -1314,8 +1336,16 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   실행 전에 싼 하위 단계를 격리 검증하라** — 카드 INSERT(5초)를 먼저 테스트했으면 17분 렌더를 세 번 헛돌리지 않았다(실제로
   세 번째부터 격리 테스트로 tone/agent 제약을 잡음). 2 vCPU에서 3 병렬 CPU 렌더는 thrash(loadavg 7, 2-wide보다 느림)라
   `GRAMMAR_RENDER_CONCURRENCY=2` 캡. 킬스위치 `EDIT_GRAMMAR_MODE=0`(라이브 기본 ON)로 다음 배치부터 표준 RF 즉시 복귀.
-  09-13 실증=같은 물놀이 footage로 velocity(직격)/meme(리액션)/story(페이오프-선공개) 3편, 그라운딩 구체-훅 제목. cf.
-  [[D_b4copy]]·[[D_lanemix]]·[[view_data_concrete_hook_title]].
+  09-13 실증=같은 물놀이 footage로 velocity(직격)/meme(리액션)/story(페이오프-선공개) 3편, 그라운딩 구체-훅 제목.
+  ★09-13 후속(다섯 번째 고아 = **범퍼**, `e797b7f`): 첫 스윕이 놓친 계약이 하나 더 있었다 — grammar body는
+  `impact_edit.assemble`이 직접 만들고 `assemble_episode.py`(표준 RF에서 intro/outro 채널 범퍼를 붙이는 유일한 곳)를
+  우회하므로 **모든 grammar 편이 범퍼 없이 발행**됐다. Fix=`assemble`이 `_wrap_bumpers`로 intro+body+outro를 감싸되
+  body의 자체 믹스 오디오(음악/TTS)를 보존하고 각 세그를 WxH/FPS/setsar+오디오트랙 보장(gotcha #8/#9)으로 정규화.
+  ★교훈 ①의 날을 세운다: **네 고아는 넷 다 예외를 던져서(ORPHAN-SKIP·CHECK·NOT NULL·길이가드 reject) 트리아지에
+  걸렸지만, 범퍼는 아무것도 던지지 않고 조용히 "성공"했다** — 예외를 기다리는 트리아지는 조용히 빠진 계약을 절대
+  못 잡는다. 우회 경로의 계약은 "무엇이 에러났나"가 아니라 우회당한 경로의 **출력물을 산출물끼리 diff**해 열거하라
+  (표준 RF엔 범퍼가 있고 grammar엔 없다 = 프레임을 보면 즉시 보인다, 로그로는 안 보인다). cf.
+  [[D_b4copy]]·[[D_lanemix]]·[[view_data_concrete_hook_title]]·[[C_grammarquality]].
 - **D_openaicost. per-cut best-of가 상류 컨셉-ref best-of와 예산을 이중 지출했다 + 엔진 이름이 틀린 죽은 config(9/4)** —
   OpenAI gpt-image 비용이 과했다. 근본: AV 스틸은 컨셉 레퍼런스를 이미 best-of-4(`AV_CONCEPT_REF_BEST_OF`)로 검증하고
   그 예산을 상류에 쓰는 이유가 **컷마다 재롤하지 않게** 하려는 것인데, per-cut `REGEN_BEST_OF` 기본이 여전히 2라 지배적 비용
