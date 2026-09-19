@@ -86,14 +86,22 @@ def _vphash_of(r) -> str | None:
 
 
 def _diversity_sample(rows: list, k: int, *, loc_col: str, act_col: str,
-                      year_col: str = "captured_iso", near_dup: int | None = None) -> list:
+                      year_col: str | None = "captured_iso", near_dup: int | None = None) -> list:
     """Pick ≤k rows spread across (loc × year × activity) strata.
 
     `rows` MUST arrive in within-stratum preference order (e.g. both-pets first,
     flattering composition, quality DESC, recency DESC) — that order is preserved
     inside each stratum. Round-robin over strata gives breadth; vis_phash Hamming
     ≤ near_dup skips visual repeats. Missing vis_phash → never treated as a dup
-    (best-effort; coverage grows as clips download)."""
+    (best-effort; coverage grows as clips download).
+
+    PD 2026-09-19: `year_col=None` DROPS the year axis (strata = loc × activity only).
+    The recurring "empty RF slot" root: for the FRESH pool (available_videos) the year
+    axis round-robins old years (2020/2021/…) into equal footing with the current year,
+    so the ~556 recent usable clips got crowded down to ~26 in the k=100 sample — RF
+    then starved and reached into stale footage. Memory-lane's OLD footage is served
+    SEPARATELY by archive_videos (its own per-year spread), so the fresh pool must NOT
+    year-flatten. Photos/other callers keep the year axis by leaving year_col set."""
     if k <= 0 or len(rows) <= k:
         return list(rows)
     from collections import OrderedDict
@@ -102,9 +110,8 @@ def _diversity_sample(rows: list, k: int, *, loc_col: str, act_col: str,
         near_dup = _NEAR_DUP
     strata: "OrderedDict[tuple, list]" = OrderedDict()
     for r in rows:
-        key = (str(r[loc_col] or "?"),
-               (str(r[year_col] or "?"))[:4],
-               str(r[act_col] or "?"))
+        key = ((str(r[loc_col] or "?"), str(r[act_col] or "?")) if year_col is None
+               else (str(r[loc_col] or "?"), (str(r[year_col] or "?"))[:4], str(r[act_col] or "?")))
         strata.setdefault(key, []).append(r)
     queues = list(strata.values())
     picked: list = []
@@ -299,8 +306,12 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
           captured_iso DESC
         """,
     ).fetchall()
+    # PD 2026-09-19: available_videos is the FRESH pool — sample by location × activity
+    # only (year_col=None). Year-stratifying here starved recent clips (556 usable → ~26
+    # in the sample) and emptied RF slots; archive_videos below carries the year-spread
+    # memory-lane footage, so the fresh pool must stay recency-weighted.
     _video_rows = _diversity_sample(_video_rows, 100, loc_col="location_type",
-                                    act_col="activity")
+                                    act_col="activity", year_col=None)
     best_videos = [
         {"id": r["asset_id"], "act": r["activity"] or "", "sub": _ground_subjects(r["subjects_csv"], r["captured_iso"]),
          "mood": r["mood"] or "", "sc": _ground_truth_sc(r),
