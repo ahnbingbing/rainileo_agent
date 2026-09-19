@@ -33,6 +33,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
+# Ensure the repo root is importable even when run as a bare path
+# (`python scripts/tag_assets_vlm.py`) — the reground path imports `agents.*`.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 log = logging.getLogger("tag_assets_vlm")
 
@@ -388,6 +392,90 @@ def backfill_pre_leo(con: sqlite3.Connection, dry: bool = False) -> tuple[int, i
     return n, len(rows)
 
 
+def reground_with_pd_notes(con: sqlite3.Connection, *, limit: int = 0,
+                           only_asset: str | None = None, min_conf: float = 0.45,
+                           dry: bool = False, workers: int = 4) -> tuple[int, int]:
+    """pd_notes-authoritative re-tag (PD 2026-09-20). For slack assets that carry a
+    human description in pd_notes, re-derive the grounding-critical fields
+    (subjects_csv / focus_subject / location_type / scene_description) with
+    gpt-4o-mini reading the WHOLE clip span + obeying pd_notes as ground truth.
+
+    Why not the flash tagger: bake-off showed flash (a) misses the smaller/darker
+    pet on a mid frame → subject erasure, and (b) IGNORES the pd_notes override →
+    keeps mislabelling a cafe-terrace outing as home/indoor. gpt-4o-mini obeys the
+    note and reads the union across frames. We touch ONLY the four grounding fields;
+    the flash-tagged activity/mood/micro-behaviors/props are preserved (notes.flash_scene
+    keeps the original so this is idempotent + reversible). Returns (updated, scanned)."""
+    from agents import openai_vision
+
+    where = "source='slack' AND pd_notes IS NOT NULL AND trim(pd_notes) != ''"
+    if only_asset:
+        where += f" AND asset_id LIKE '{only_asset}%'"
+    limit_clause = f"LIMIT {int(limit)}" if limit else ""
+    rows = con.execute(
+        f"SELECT asset_id, kind, file_path, captured_iso, pd_notes, scene_description, notes "
+        f"FROM assets WHERE {where} ORDER BY captured_iso DESC {limit_clause}").fetchall()
+    scanned = len(rows)
+    print(f"==> pd_notes reground: {scanned} slack assets with pd_notes")
+    if scanned == 0:
+        return 0, 0
+
+    def _work(row) -> tuple[str, dict | None, dict]:
+        r = dict(row)
+        g = openai_vision.ground_asset(
+            r["file_path"], kind=r["kind"], pd_notes=r["pd_notes"],
+            captured_iso=r.get("captured_iso"))
+        return r["asset_id"], g, r
+
+    updated = 0
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    results: list = []
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
+        futs = [ex.submit(_work, row) for row in rows]
+        for fut in as_completed(futs):
+            try:
+                results.append(fut.result())
+            except Exception as e:  # noqa: BLE001
+                log.warning("reground worker failed: %s", str(e)[:160])
+
+    for idx, (aid, g, r) in enumerate(results, 1):
+        if not g or (g.get("confidence") or 0) < min_conf or not g.get("subjects"):
+            print(f"[{idx}/{scanned}] {aid[:44]} … (skip: low-conf/empty)", flush=True)
+            continue
+        try:
+            notes = json.loads(r.get("notes") or "{}")
+            if not isinstance(notes, dict):
+                notes = {}
+        except Exception:
+            notes = {}
+        # Preserve the original flash scene once, so this stays idempotent + reversible.
+        if "flash_scene" not in notes:
+            notes["flash_scene"] = r.get("scene_description")
+        notes["pd_grounding"] = g
+        flash_scene = notes.get("flash_scene") or ""
+        scene = g.get("scene_ko") or ""
+        if flash_scene:
+            scene = (scene + "\n" + flash_scene).strip()
+        loc = g.get("location_type")
+        line = (f"[{idx}/{scanned}] {aid[:44]} … ✓ subjects={g['subjects_csv']} "
+                f"loc={loc}/{g['indoor_outdoor']} conf={g['confidence']:.2f}")
+        print(line, flush=True)
+        if dry:
+            continue
+        con.execute(
+            "UPDATE assets SET subjects_csv=?, focus_subject=?, "
+            "location_type=COALESCE(?, location_type), scene_description=?, notes=?, "
+            "vlm_analyzed_at=datetime('now') WHERE asset_id=?",
+            (g["subjects_csv"], g["focus_subject"],
+             (loc if loc and loc != "other" else None),
+             scene or None, json.dumps(notes, ensure_ascii=False), aid))
+        con.commit()
+        updated += 1
+    print(f"\n=== pd_notes reground done: {updated} updated / {scanned} scanned"
+          f"{' (dry-run)' if dry else ''} ===")
+    return updated, scanned
+
+
 def update_asset_tags(con: sqlite3.Connection, asset_id: str, tags: dict) -> None:
     """Write VLM analysis results to the DB."""
     _loc_type = _coarse_location(tags.get("location_specific"))
@@ -509,9 +597,31 @@ def main() -> int:
     p.add_argument("--backfill-pre-leo", action="store_true",
                    help="deterministic one-shot: strip impossible Leo tags from assets "
                         "captured before Leo existed (2025-09-25). No API calls.")
+    p.add_argument("--pd-notes-reground", action="store_true",
+                   help="pd_notes-authoritative re-tag (PD 2026-09-20): for slack assets "
+                        "with pd_notes, re-derive subjects/location/scene via gpt-4o-mini "
+                        "reading the whole clip span + obeying grandma's note. Upgrades only "
+                        "the 4 grounding fields; flash tags preserved. Then rebuild RAG.")
+    p.add_argument("--min-conf", type=float, default=0.45,
+                   help="min grounding confidence to accept a pd_notes reground (default 0.45)")
     args = p.parse_args()
 
     con = _db()
+
+    if args.pd_notes_reground:
+        reground_with_pd_notes(con, limit=args.limit, only_asset=args.asset,
+                               min_conf=args.min_conf, dry=args.dry_run,
+                               workers=max(1, args.workers))
+        if not args.dry_run:
+            try:
+                from agents import asset_embed
+                print("==> rebuilding asset embedding index (RAG) …")
+                n = asset_embed.build_index(rebuild=True)
+                print(f"==> RAG rebuilt: {n} embeddings")
+            except Exception as e:  # noqa: BLE001
+                print(f"[warn] RAG rebuild failed (run `python -m agents.asset_embed --build` "
+                      f"on VM): {e}")
+        return 0
 
     if args.backfill_pre_leo:
         n, scanned = backfill_pre_leo(con, dry=args.dry_run)

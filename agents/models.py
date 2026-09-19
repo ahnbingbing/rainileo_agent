@@ -32,6 +32,14 @@ CAPTION_JUDGE = _m("CAPTION_JUDGE_MODEL", OPENAI_TEXT)
 
 # ── Vision (VLM tagging / review / scene+character gates) ───────────────────
 VLM = _m("VLM_MODEL", "gemini-2.5-flash")
+# Grounding VLM (PD 2026-09-20): a model that OBEYS pd_notes (grandma's clip
+# descriptions) as ground truth and reads subject presence / location across a
+# multi-frame span. gemini-2.5-flash is the throughput tagger but IGNORES the
+# pd_notes override (bake-off: it kept mislabelling a two-pet cafe-terrace outing
+# as one pet / indoor even with the human note in the prompt). gpt-4o-mini obeys
+# it and reads the union correctly at a fraction of gemini-pro's cost. Used by the
+# pd_notes re-tag path and the render-time per-cut grounding gate.
+VLM_GROUNDING = _m("VLM_GROUNDING_MODEL", "gpt-4o-mini")
 
 # ── Image generation ───────────────────────────────────────────────────────
 IMAGE_GEN = _m("IMAGE_GEN_MODEL", "gemini-2.5-flash-image")  # regen / scene stills
