@@ -99,6 +99,7 @@ Pick the segment matching the story's time setting:
 - **Nose**: Wide, flat (brachycephalic), black
 - **Eyes**: Had corneal transplant surgery — wears elizabethan collar during recovery
 - **NO TAIL** — French Bulldogs don't have tails. Never draw a tail.
+- **Sex & underbelly** — Ryani is a **spayed female** (she/her). Her lower belly and underside are plain, smooth, featureless black fur with **NO genitalia of any kind** (no male anatomy, no protrusion). Keep the underside smooth in every pose — *especially* when she is airborne, belly-up (발라당), or her underside faces a low camera (hero/leap shots). This is the same tier of rule as NO TAIL: i2v models hallucinate male genitalia on a low-angle belly exactly as they sprout a tail on a raised rump, so it must be asserted, not assumed.
 - **Wrinkles**: Subtle facial wrinkles around nose/forehead (Frenchie characteristic)
 - **Signature pose**: Sitting upright with dignity, or lying with chin on paws. Posture reads calm and ladylike, but keep the classic Frenchie compact silhouette.
 - **Startles easily**: When Leo pounces on her, she goes "웡!" — surprised but never angry

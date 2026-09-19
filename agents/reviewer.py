@@ -808,14 +808,21 @@ def _check_ryani_nape(client, model_name, frames, _types) -> dict:
                         "and toes.")
         prompt = (
             "These are frames from an animal video featuring a black French Bulldog "
-            "(Ryani) and an orange tabby cat." + ref_note + " Examine the DOG. Her BACK, "
-            "the NAPE (back of the neck / behind the head) and spine must be PURE BLACK. "
-            "Set nape_white=true ONLY if you clearly see a WHITE spot, dot, patch, stripe "
-            "or line on the BACK of her neck / nape / spine / back in a frame where that "
-            "area is clearly visible. Her FRONT-of-throat / chin / chest white is CORRECT "
-            "— do NOT flag that. If her back/nape is black, or is not clearly visible, set "
-            'false. Return ONLY JSON: {"nape_white": true|false, "worst_frame": <1-based '
-            'int, or 0>, "detail": "<where the white appears, or empty>"}.')
+            "(Ryani) and an orange tabby cat." + ref_note + " Examine the DOG. Two checks:\n"
+            "(1) NAPE — her BACK, the NAPE (back of the neck / behind the head) and spine "
+            "must be PURE BLACK. Set nape_white=true ONLY if you clearly see a WHITE spot, "
+            "dot, patch, stripe or line on the BACK of her neck / nape / spine / back in a "
+            "frame where that area is clearly visible. Her FRONT-of-throat / chin / chest "
+            "white is CORRECT — do NOT flag that. If her back/nape is black, or is not "
+            "clearly visible, set false.\n"
+            "(2) ANATOMY — Ryani is a SPAYED FEMALE; her lower belly / underside must be "
+            "smooth, featureless black fur with NO genitalia. Set genitalia_visible=true "
+            "ONLY if you clearly see male genitalia (a penis) or an obvious protrusion on "
+            "her underside in a frame where the belly is clearly visible (an airborne, "
+            "belly-up, or low-angle shot). Fur, shadow, a leg or a normal smooth belly is "
+            "NOT genitalia — set false unless it is unmistakable.\n"
+            'Return ONLY JSON: {"nape_white": true|false, "genitalia_visible": true|false, '
+            '"worst_frame": <1-based int, or 0>, "detail": "<what/where the defect is, or empty>"}.')
         parts.append(prompt)
         resp = client.models.generate_content(
             model=model_name, contents=parts,
@@ -825,14 +832,15 @@ def _check_ryani_nape(client, model_name, frames, _types) -> dict:
         t = re.sub(r"\s*```$", "", t)
         data = json.loads(t)
         if isinstance(data, list):
-            hit = next((d for d in data
-                        if isinstance(d, dict) and d.get("nape_white")), None)
-            data = hit or {"nape_white": False, "worst_frame": 0, "detail": ""}
+            hit = next((d for d in data if isinstance(d, dict)
+                        and (d.get("nape_white") or d.get("genitalia_visible"))), None)
+            data = hit or {"nape_white": False, "genitalia_visible": False,
+                           "worst_frame": 0, "detail": ""}
         return data if isinstance(data, dict) else {
-            "nape_white": False, "worst_frame": 0, "detail": ""}
+            "nape_white": False, "genitalia_visible": False, "worst_frame": 0, "detail": ""}
     except Exception as e:
-        log.warning("nape-white check failed: %s", e)
-        return {"nape_white": False, "worst_frame": 0, "detail": ""}
+        log.warning("nape/anatomy check failed: %s", e)
+        return {"nape_white": False, "genitalia_visible": False, "worst_frame": 0, "detail": ""}
 
 
 # Tokens that mark a caption as narrating an archive clip's time-distance
@@ -1575,6 +1583,96 @@ def _caption_hold_gate(concept: "dict | None", report: dict) -> None:
              report.get("점수"))
 
 
+def _subject_location_grounding_gate(concept: "dict | None", report: dict) -> None:
+    """Deterministic subject-erasure + wrong-location cap (PD 2026-09-20). Two RF failures Giri
+    rubber-stamped: (a) a two-pet outing whose title/captions name only ONE pet, erasing the
+    other who is right there (m1AFJiWzGx0 story-grammar '레오가 나무를 짚었다' dropped Ryani); (b) an
+    outdoor outing (cafe terrace / park / walk) captioned '집/실내'.
+
+    Ground truth = the authoritative grounding the render-time gate attaches to the concept
+    (_grounding_union + cuts[].grounding, from the pd_notes+gpt-4o-mini multi-frame grounder),
+    with a fallback to the asset subjects_csv / location_type in the DB (pd_notes-corrected for
+    slack clips by the re-tag). RF-scoped — this INCLUDES grammar episodes (render_style=
+    real_footage), which was the exact lane that bypassed grounding. cap ≤6, 수정 필요.
+    GIRI_SUBJECT_LOCATION_GATE=0 reverts."""
+    if not concept or (concept.get("render_style") or "") != "real_footage":
+        return
+    if os.getenv("GIRI_SUBJECT_LOCATION_GATE", "1") != "1":
+        return
+    subj: set = set()
+    any_outdoor = False
+    gu = concept.get("_grounding_union") or {}
+    if gu:
+        subj |= {str(s).lower() for s in (gu.get("subjects") or [])}
+        any_outdoor = bool(gu.get("any_outdoor"))
+    for c in (concept.get("cuts") or []):
+        g = c.get("grounding") or {}
+        subj |= {str(s).lower() for s in (g.get("subjects") or [])}
+        if g.get("indoor_outdoor") == "outdoor" or g.get("location_type") in ("outdoor", "cafe"):
+            any_outdoor = True
+    # Fallback to the DB (subjects_csv now pd_notes-corrected for slack clips) when the concept
+    # carries no render-time grounding (e.g. a pin/older card).
+    if not gu:
+        aids = [c.get("asset_id") or c.get("secondary_asset_id") for c in (concept.get("cuts") or [])]
+        aids = [a for a in aids if a]
+        if aids:
+            try:
+                con = sqlite3.connect(str(ROOT / "data" / "agent.db"))
+                try:
+                    qs = ",".join("?" * len(aids))
+                    for scsv, ltype in con.execute(
+                            f"SELECT subjects_csv, location_type FROM assets WHERE asset_id IN ({qs})",
+                            aids):
+                        for p in (scsv or "").lower().split(","):
+                            if p.strip() in ("ryani", "leo"):
+                                subj.add(p.strip())
+                        if (ltype or "").lower() in ("outdoor", "cafe"):
+                            any_outdoor = True
+                finally:
+                    con.close()
+            except Exception as e:
+                log.warning("subject/location gate DB fallback failed: %s", e)
+    if not subj:
+        return
+    texts = [str(concept.get(k, "")) for k in ("title", "theme", "narrative_oneliner")]
+    for _label, sc in _caption_scene_sets(concept):
+        for s in sc:
+            if isinstance(s, dict):
+                texts.append(str(s.get("ko") or ""))
+                texts.append(str(s.get("en") or ""))
+    blob = " ".join(texts).lower()
+    if not blob.strip():
+        return
+    reasons = []
+    if {"ryani", "leo"} <= subj:
+        has_leo = ("레오" in blob) or ("leo" in blob)
+        has_ry = ("랴니" in blob) or ("ryani" in blob) or ("라니" in blob)
+        if has_leo != has_ry:  # names exactly one pet while both are in the footage
+            reasons.append("주체 소거 — 둘 다 나오는데 제목·캡션이 한 마리만 부른다(다른 하나 삭제)")
+    if any_outdoor:
+        says_home = any(w in blob for w in ("집에서", "우리 집", "우리집", "실내", "방 안", "거실"))
+        says_out = any(w in blob for w in ("밖", "실외", "야외", "카페", "공원", "산책", "테라스",
+                                           "마당", "놀이터", "outdoor", "outside", "cafe", "park", "walk"))
+        if says_home and not says_out:
+            reasons.append("장소 오표기 — 실외 나들이인데 '집/실내'로 서술")
+    if not reasons:
+        return
+    note = ("그라운딩 위반(결정론): " + " / ".join(reasons) +
+            " — 화면의 피사체·장소와 제목/캡션이 어긋난다.")
+    prev = report.get("가장_큰_문제", "") or ""
+    report["가장_큰_문제"] = note if (not prev or "없" in prev[:6]) else f"{note} / {prev}"
+    try:
+        report["점수"] = min(int(report.get("점수", 10) or 10), 6)
+    except Exception:
+        report["점수"] = 6
+    if report.get("판정", "") in ("업로드", "즉시 업로드", "소폭 수정 후 업로드", ""):
+        report["판정"] = "수정 필요"
+    report["최종_결정"] = report.get("판정", "수정 필요")
+    report["_subject_location_override"] = note
+    log.info("subject/location gate FIRED: %s → 판정=%s 점수=%s", reasons,
+             report.get("판정"), report.get("점수"))
+
+
 def review(video: Path, storyboard: list[dict] | None = None,
            concept: dict | None = None) -> dict:
     """Full review: extract frames + audio check + VLM review.
@@ -1891,8 +1989,25 @@ def review(video: Path, storyboard: list[dict] | None = None,
                 report["가장_큰_문제"] = _note if (not _prev or "없" in _prev[:6]) else f"{_note} / {_prev}"
                 report["_nape_white_override"] = _note
                 log.info("nape-white gate: → 판정=%s 점수=%s", report["판정"], report["점수"])
+            # Ryani anatomy gate (PD 2026-09-20): she is a spayed FEMALE. Seedance hallucinates
+            # male genitalia on a low-angle/airborne belly (the 물속 슈퍼히어로 랴니 cut4 defect that
+            # shipped). The generator now guards it at both still + motion; this is the reviewer
+            # backstop — reuses the same anatomy VLM call, AV-scoped (real footage is the real dog).
+            # cap ≤5, 수정 필요 (a body-anatomy violation on the same tier as a marking defect).
+            if nz.get("genitalia_visible"):
+                report["점수"] = min(int(report.get("점수", 10) or 10), 5)
+                if report.get("판정") in ("업로드", "즉시 업로드", "소폭 수정 후 업로드"):
+                    report["판정"] = "수정 필요"
+                report["최종_결정"] = report["판정"]
+                _wf = nz.get("worst_frame")
+                _note = ("랴니 성기 환각 — 랴니는 암컷(중성화), 하복부는 매끈한 검정이어야 함"
+                         + (f" [frame {_wf}]" if _wf else ""))
+                _prev = report.get("가장_큰_문제", "") or ""
+                report["가장_큰_문제"] = _note if (not _prev or "없" in _prev[:6]) else f"{_note} / {_prev}"
+                report["_genitalia_override"] = _note
+                log.info("anatomy gate: genitalia → 판정=%s 점수=%s", report["판정"], report["점수"])
     except Exception as e:
-        log.warning("nape-white gate failed: %s", e)
+        log.warning("nape/anatomy gate failed: %s", e)
 
     # Deterministic no-story cap (PD 2026-07-12): the '무훅·무사건' rule existed but the
     # holistic reviewer kept rubber-stamping an eventless AV (a '거실이 커진다면' abstract mood
@@ -1974,6 +2089,14 @@ def review(video: Path, storyboard: list[dict] | None = None,
         _caption_hold_gate(concept, report)
     except Exception as e:
         log.warning("Caption-hold gate failed: %s", e)
+
+    # Subject-erasure + wrong-location gate (PD 2026-09-20): RF caption/title must not erase a
+    # present pet (둘 다인데 한 마리만) or mislabel an outdoor outing as '집'. Grounds on the
+    # render-time authoritative grounding (or DB subjects_csv fallback). Includes grammar RF.
+    try:
+        _subject_location_grounding_gate(concept, report)
+    except Exception as e:
+        log.warning("Subject/location grounding gate failed: %s", e)
 
     # Deterministic caption-mismatch handling — runs LAST so its false-reject relief can see whether
     # any OTHER deterministic gate already fired (scrub + real-mismatch cap are order-independent).

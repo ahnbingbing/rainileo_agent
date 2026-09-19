@@ -35,6 +35,8 @@ RYANI = {
     "sex_ko": "암컷(중성화)",
     "age_years": 11,                 # NEVER "막내"/young/8개월
     "tail": "NO tail",               # French Bulldog — never render a tail
+    "anatomy": "smooth featureless lower belly — no genitalia of any kind (spayed female, "
+               "no male anatomy); underside stays plain black in every pose",  # esp. low-angle/airborne/belly-up
     "blaze": "THIN narrow white blaze (a fine pencil-width line)",  # a fine line, NOT a wide splash
     "ears": "large UPRIGHT bat ears (erect, pointed up — NOT folded rose ears)",  # PD 2026-06-10
     "muzzle": "short brachycephalic muzzle with characteristic wrinkles (nose-rope fold over the nose bridge + cheek/brow folds) — NOT a smooth snout",  # PD 2026-07-01
@@ -334,6 +336,11 @@ RYANI_MARKING = (
     "rump is RAISED (play-bow, butt-up), when she TURNS AWAY, or is seen FROM BEHIND; do NOT "
     "sprout a tail, tail-nub or stub on a raised/rear-facing rump (Seedance tends to add one "
     "there — that is WRONG). Her joy is a tailless BUTT-WIGGLE, never a wagging tail. "
+    "★SHE IS A SPAYED FEMALE — her lower belly and underside are plain, smooth, featureless "
+    "black fur with NO genitalia of any kind: no penis, no male anatomy, no protrusion or "
+    "bump on the underside. Keep the underside completely smooth and flat in EVERY pose, "
+    "ESPECIALLY when she is airborne, belly-up (발라당), or her underside faces a low camera "
+    "(hero/leap/flying poses) — Seedance hallucinates male genitalia there and that is WRONG. "
     "Her white is ONLY: the forehead blaze, chin, the FRONT of the throat (the "
     "chin-white flows down the FRONT of the neck into the chest patch — that "
     "front-of-throat white is CORRECT, keep it), and toes. Her BACK, the NAPE (back "

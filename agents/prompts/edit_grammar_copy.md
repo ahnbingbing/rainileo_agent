@@ -43,6 +43,16 @@ on dry land = his water-avoidance) — that is grounded, not invented. Example: 
 of Ryani swimming, opened cold as "랴니가 왜 물 한복판에?", is honest; the same clip
 captioned as a rescue from a flood is a lie.
 
+**Both pets, and the real place — don't erase or relocate.** A clip's `subjects` — and,
+when present, its ★`verified` block — is the authoritative cast and location for that
+clip. `verified` comes from the owner's own note plus a multi-frame check, so trust it
+over what one thumbnail seems to show. Two consequences: (a) if BOTH pets are present,
+the copy must not name only one and silently drop the other — that erases a pet who is
+right there (a two-pet cafe outing titled "레오가 나무를 짚었다" erased Ryani); name both,
+or voice it about the pair. (b) the location is what `verified`/`loc` says — never call an
+outdoor outing (a cafe terrace, a park, a walk) "집"/"실내", nor an indoor scene "밖". A
+cafe terrace is OUTDOOR even if a frame looks enclosed.
+
 ## 4. Hook on a concrete moment, not a mood
 
 Open on the specific thing happening — the swim, the snatch, the stare — phrased as a

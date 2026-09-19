@@ -7963,6 +7963,24 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         except Exception as _ple:
             log.warning("prop lock inject failed: %s", _ple)
 
+        # Ryani anatomy guard (PD 2026-09-20): she is a SPAYED FEMALE. Seedance hallucinates
+        # male genitalia when her underbelly faces a low camera — an airborne hero/leap/발라당
+        # pose (the 물속 슈퍼히어로 랴니 cut4 defect). The still-regen preserve block already guards
+        # this; assert it in the MOTION prompt too so the FIRST Seedance pass can't add it (it
+        # was absent here, which is why the defect shipped). Only when Ryani is in the cut; the
+        # fact is the same one canon.RYANI carries, so still + motion never disagree.
+        try:
+            _who_cut, _ = _who_and_emph(prompt + " " + (cc.get("action") or ""))
+            if _who_cut in ("both", "ryani") and "no genitalia" not in prompt.lower():
+                prompt = prompt + (
+                    " Ryani is a SPAYED FEMALE dog: her lower belly and underside are plain, "
+                    "smooth, featureless black fur with ABSOLUTELY NO genitalia — no penis, no "
+                    "male anatomy, no protrusion of any kind — the underside stays completely "
+                    "smooth and flat at ALL times, especially while she is airborne, belly-up, "
+                    "or her underside faces the low camera.")
+        except Exception as _ae:
+            log.warning("anatomy guard inject failed: %s", _ae)
+
         # Sanctioned costume (PD 2026-06-30): when an episode's whole premise IS an
         # outfit (e.g. 우비 패션쇼 = raincoat fashion show), the garment is the payoff,
         # not anthropomorphization — so the bare-furred default must NOT strip it.
