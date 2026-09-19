@@ -38,7 +38,12 @@ def edit_grammar_for_slot(target: dt.date, hhmm: str, assignments: list) -> str 
     and the bandit reads a clean grammar marginal (same reason lane rotates across slots). This
     is the single source of the grammar↔slot mapping — launch.py builds hhmm_by_grammar from it,
     so the shared render and the per-slot lookup stay consistent."""
-    if os.getenv("EDIT_GRAMMAR_MODE", "1") != "1":
+    # PD 2026-09-19: the same-footage A/B currently schedules all 3 grammars on the SAME day
+    # (a viewer sees the same clip 3× that day). PD wants them SPREAD across 3 days (rolling
+    # window). Until that rolling-window scheduling ships, HOLD the feature OFF (default 0) so no
+    # new same-day triplet is produced — standard RF fills the slots. Re-enable (default 1, or
+    # via EDIT_GRAMMAR_MODE=1) together with the rolling-window change. See notes handoff.
+    if os.getenv("EDIT_GRAMMAR_MODE", "0") != "1":
         return None
     rf_slots = sorted(hh for ln, hh in assignments if ln == "real_footage")
     if hhmm not in rf_slots:
