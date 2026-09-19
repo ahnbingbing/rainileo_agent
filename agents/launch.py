@@ -570,37 +570,29 @@ def launch_pipeline(target: dt.date, *,
         # render) instead of standard trim→burn→assemble. ANY failure falls through to the
         # standard produce below (never an empty slot). Off by default → standard RF.
         if not pin and not dry_run and lane == "real_footage":
-            from agents.grammar_slot import edit_grammar_for_slot, produce_grammar_episodes_shared
-            # UNFILTERED assignments: launch_selfheal calls this per-slot (slot_filter set), so the
-            # local `assignments` is shrunk to one slot — mapping every slot to grammar index 0.
-            # day_assignments(target) gives the true RF slot order so each slot gets its own grammar.
+            # Rolling window (PD 2026-09-20): only the day's ONE designated grammar slot is
+            # produced by the grammar path — the other RF slots are standard RF. On a WINDOW-START
+            # day the cast is rendered as velocity/meme/story and PINNED across D/D+1/D+2 (one
+            # variant per day, never 3 same-day); on the other 2 days the pin made here is picked
+            # up by _pinned_episode_for above (so we only reach this branch on a window-start day,
+            # or as a no-op fallback). ANY failure → standard RF (never empty). EDIT_GRAMMAR_MODE=0
+            # → this returns None everywhere.
+            from agents.grammar_slot import edit_grammar_for_slot, ensure_rolling_window
             _all_assign = day_assignments(target)
             _grammar = edit_grammar_for_slot(target, hhmm, _all_assign)
             if _grammar:
-                # Build the shared-footage A/B ONCE per day (all RF grammars, one cast, parallel
-                # render) into the module cache, then each RF slot — even a separate per-slot
-                # launch_pipeline call — pulls its grammar's pre-rendered result. Any failure leaves
-                # the cache empty/partial → standard RF fallback for the missing slots (never empty).
                 _cache = _GRAMMAR_AB_CACHE.setdefault(target.isoformat(), {})
                 if not _cache.get("_built"):
-                    _rf_slots = sorted(h for ln, h in _all_assign if ln == "real_footage")
-                    _hhmm_by_g: dict = {}
-                    for _hh in _rf_slots:
-                        _g = edit_grammar_for_slot(target, _hh, _all_assign)
-                        if _g and _g not in _hhmm_by_g:
-                            _hhmm_by_g[_g] = _hh
                     try:
-                        sp(f":art: RF grammar A/B — {len(_hhmm_by_g)}개 문법을 같은 footage로 "
-                           "병렬 생성(footage=통제, 편집=변인)")
-                        _built = produce_grammar_episodes_shared(
-                            list(_hhmm_by_g), target, _hhmm_by_g, progress_cb=sp,
-                            exclude_asset_ids=batch_used_assets)
-                        _cache.update(_built or {})
+                        sp(":art: RF grammar 롤링윈도우 — 한 캐스트를 3일(D/D+1/D+2)로 분산 "
+                           "(footage=통제, 편집=변인)")
+                        _cache["_today"] = ensure_rolling_window(
+                            target, progress_cb=sp, exclude_asset_ids=batch_used_assets)
                     except Exception as e:
-                        log.warning("shared grammar build failed → standard RF: %s", e)
-                        sp(f":warning: RF grammar 공유 캐스팅 실패 → 표준 RF 폴백: {str(e)[:120]}")
-                    _cache["_built"] = True  # don't rebuild for later slots this day
-                _hit = _cache.get(_grammar)
+                        log.warning("rolling-window build failed → standard RF: %s", e)
+                        sp(f":warning: RF grammar 롤링윈도우 실패 → 표준 RF 폴백: {str(e)[:120]}")
+                    _cache["_built"] = True
+                _hit = _cache.get("_today")
                 if _hit:
                     concept, outs = _hit[1], [_hit[0]]
         for _att in range(1, max_repropose + 1):

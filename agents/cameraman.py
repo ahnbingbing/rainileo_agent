@@ -2628,6 +2628,153 @@ def _rf_cross_cut_coherence_gate(manifests: dict, anim_dir: Path,
         progress_cb(f":broken_chain: 컷간 일관성 — 무관 outing 컷 드롭: {', '.join(sorted(drop))}")
 
 
+def _apply_grounding_to_concept(concept: dict, src_map: dict, grounding: dict) -> None:
+    """Attach the per-cut authoritative grounding onto the concept cuts (by asset_id) and
+    compute an episode-level union, so the checker (Giri) grounds on the SAME truth the
+    generator was given. No DB write — episode-scoped (a cut is a trim of the asset, so its
+    subject union ⊆ the asset's; we don't clobber the asset row here)."""
+    if not concept or not grounding:
+        return
+    aid_to_g = {}
+    for tag, g in grounding.items():
+        s = src_map.get(tag)
+        aid = (s.get("asset_id") if isinstance(s, dict) else s) or ""
+        if aid:
+            aid_to_g[str(aid)] = g
+    subj_union: set = set()
+    any_outdoor = False
+    for c in (concept.get("cuts") or []):
+        aid = str(c.get("asset_id") or c.get("secondary_asset_id") or "")
+        g = aid_to_g.get(aid)
+        if not g:
+            continue
+        c["grounding"] = {"subjects": g.get("subjects") or [],
+                          "location_type": g.get("location_type"),
+                          "indoor_outdoor": g.get("indoor_outdoor")}
+        subj_union.update(g.get("subjects") or [])
+    for g in grounding.values():
+        subj_union.update(g.get("subjects") or [])
+        if g.get("indoor_outdoor") == "outdoor" or g.get("location_type") in ("outdoor", "cafe"):
+            any_outdoor = True
+    concept["_grounding_union"] = {
+        "subjects": sorted(subj_union),
+        "any_outdoor": any_outdoor,
+    }
+
+
+def _rf_grounded_truth(manifests: dict, anim_dir: Path,
+                       progress_cb=None, dry_run: bool = False) -> dict:
+    """PD 2026-09-20: authoritative per-cut SUBJECT-UNION + LOCATION grounding for RF.
+
+    The flash caption stages miss the smaller/darker pet on a mid frame (→ a two-pet outing
+    captioned as one, erasing Ryani) and can't read an ambiguous location (a cafe terrace read
+    as indoor/home). This runs the pd_notes-obeying gpt-4o-mini grounder across each cut's WHOLE
+    frame span (agents.openai_vision) — grandma's clip note is ground truth — to establish the
+    true subject union + indoor/outdoor. The result is (a) fed to the caption generator as a hard
+    constraint (see _rf_action_grounded_captions) so it stops erasing a present pet / mislabelling
+    location, and (b) attached to the concept so Giri caps against the same truth. Only the few
+    clips the episode actually uses are graded — cheap + output-direct. RF_GROUNDING_TRUTH=0 off."""
+    if dry_run or os.getenv("RF_GROUNDING_TRUTH", "1") == "0":
+        return {}
+    try:
+        from agents import openai_vision
+    except Exception as e:
+        log.warning("grounded-truth: openai_vision unavailable: %s", e)
+        return {}
+    src_map = {}
+    try:
+        sp = Path(manifests.get("sources") or "")
+        if sp.exists():
+            src_map = json.loads(sp.read_text(encoding="utf-8"))
+    except Exception:
+        src_map = {}
+    tags = []
+    cap_path = Path(manifests.get("captions") or "")
+    if cap_path.exists():
+        try:
+            cap = json.loads(cap_path.read_text(encoding="utf-8"))
+            tags = [k for k in cap if not str(k).startswith("_")]
+        except Exception:
+            tags = []
+    if not tags:
+        tags = [t for t in src_map if not str(t).startswith("_")]
+    if not tags:
+        return {}
+    con = None
+    try:
+        con = sqlite3.connect(str(ROOT / "data" / "agent.db"))
+    except Exception:
+        con = None
+
+    def _asset_ctx(tag):
+        s = src_map.get(tag)
+        aid = (s.get("asset_id") if isinstance(s, dict) else s) or ""
+        pdn, cap_iso = "", None
+        if aid and con is not None:
+            try:
+                row = con.execute(
+                    "SELECT pd_notes, captured_iso FROM assets WHERE asset_id=?",
+                    (str(aid),)).fetchone()
+                if row:
+                    pdn = (row[0] or "").strip()
+                    cap_iso = row[1]
+            except Exception:
+                pass
+        for mk in ("[BRANDING]", "[EXCLUDE]"):
+            pdn = pdn.replace(mk, "")
+        return aid, pdn.strip(), cap_iso
+
+    if progress_cb:
+        progress_cb(":mag: [1a/3] 피사체·장소 그라운딩 (pd_notes + gpt-4o-mini 다중프레임)")
+    out = {}
+    for tag in tags:
+        mp4 = anim_dir / f"{tag}.mp4"
+        if not mp4.exists():
+            continue
+        _aid, pdn, cap_iso = _asset_ctx(tag)
+        try:
+            g = openai_vision.ground_video(mp4, pd_notes=pdn or None, captured_iso=cap_iso)
+        except Exception as e:
+            log.warning("grounded-truth VLM %s: %s", tag, str(e)[:120])
+            g = None
+        if g and g.get("subjects"):
+            out[tag] = g
+    if con is not None:
+        con.close()
+    if out:
+        manifests["_grounding"] = out
+        try:
+            _apply_grounding_to_concept(manifests.get("concept") or {}, src_map, out)
+        except Exception as e:
+            log.warning("grounded-truth: concept apply failed: %s", e)
+        if progress_cb:
+            _both = sum(1 for g in out.values() if len(g.get("subjects") or []) == 2)
+            progress_cb(f":mag: 그라운딩 — {len(out)}컷 (둘 다 {_both}컷)")
+    return out
+
+
+def _grounding_constraint_line(g: dict) -> str:
+    """Turn a grounding dict into a hard authoritative caption constraint (Korean)."""
+    if not g:
+        return ""
+    subs = g.get("subjects") or []
+    who = ("랴니와 레오가 둘 다" if len(subs) == 2 else
+           ("랴니만" if subs == ["ryani"] else ("레오만" if subs == ["leo"] else "")))
+    io = g.get("indoor_outdoor")
+    loc = g.get("location_specific") or g.get("location_type") or ""
+    line = "[검증된 사실 — 반드시 반영, 어기지 말 것]: "
+    parts_ = []
+    if who:
+        parts_.append(f"이 컷에는 {who} 나온다. 둘 다 나오면 한 마리만 말해 다른 하나를 지우지 마라")
+    if io in ("indoor", "outdoor"):
+        io_ko = "실외" if io == "outdoor" else "실내"
+        loc_sfx = f"({loc})" if loc else ""
+        parts_.append(f"장소는 {io_ko}{loc_sfx}다. 실외를 '집/실내'로, 실내를 '실외'로 쓰지 마라")
+    if not parts_:
+        return ""
+    return line + ". ".join(parts_) + "."
+
+
 def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path,
                                  progress_cb=None, dry_run: bool = False) -> None:
     """PD 2026-07-06 (Layer 2 — upstream): write RF captions FROM the clip's observed
@@ -2765,6 +2912,13 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
                 "PD(주인)가 직접 알려준 진짜 이야기다. 화면만으로는 다 안 보여도 이 맥락을 캡션의 중심 이야기로 "
                 "살려라(프레임에 없는 감정·사연도 PD가 겪은 사실이면 존중; 단 화면과 정면으로 모순되는 물리적 동작은 "
                 "지어내지 마라). 촬영 메타/질문답변 파편은 무시:\n" + _pdn[:700])
+        # PD 2026-09-20: hard subject-union + location constraint from the authoritative
+        # pd_notes+gpt-4o-mini grounder (_rf_grounded_truth). flash under-detects the smaller
+        # pet and mislabels a terrace as indoor; told the fact as a rule, the captioner stops
+        # erasing a present pet / calling outdoor "집".
+        _gline = _grounding_constraint_line((manifests.get("_grounding") or {}).get(tag))
+        if _gline:
+            parts.append(_gline)
         parts.append(f"Clip length ≈ {dur:.1f}s. Caption the action beats.")
         # A caption-fix re-render carries PD's specific caption direction via env — honor it
         # while still grounding to the real on-screen beats (roadmap A2 caption mode).
@@ -2855,6 +3009,17 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
         return
     if progress_cb:
         progress_cb(":detective: [1b/3] 캡션 그라운딩 게이트 (주인공 가시성·일치 검수)")
+    # PD 2026-09-20: the authoritative pd_notes+gpt-4o-mini multi-frame grounder
+    # (_rf_grounded_truth) supersedes this flash 2-frame check for SUBJECT PRESENCE. When it
+    # confirms a pet is in the cut (union across the whole span), this gate must NOT rewrite the
+    # caption to drop that pet just because ITS 2 frames missed it — that was re-erasing the
+    # smaller pet the union fix just restored. (Mirrors Giri's _caption_mismatch_gate, which
+    # already scrubs RF pet-identity/absence as unreliable from a sparse sample.)
+    _grounding = manifests.get("_grounding") or {}
+
+    def _grounded_present(tag: str, pet: str) -> bool:
+        g = _grounding.get(tag)
+        return bool(g) and pet in (g.get("subjects") or [])
     try:
         from google import genai as _g
         from google.genai import types as _gt
@@ -3011,7 +3176,10 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
         _valid = [vv for _, _, vv in scene_vs if vv]
         _viewable = [vv for vv in _valid if vv.get("frame_ok") is not False]
         _pet_seen = any(vv.get("ryani_visible") or vv.get("leo_visible") for vv in _valid)
-        if _viewable and not _pet_seen and not cut_oa.strip():
+        # Authoritative grounding confirms a pet in this cut → not a pet-absent (human/scenery)
+        # cut, even if these 2 frames missed it. Don't drop it.
+        _grounded_any = bool((_grounding.get(tag) or {}).get("subjects"))
+        if _viewable and not _pet_seen and not cut_oa.strip() and not _grounded_any:
             pet_absent_tags.append(tag)
         # Finished-product source (PD 2026-07-12): if the source already carries baked-in
         # caption text / stickers / hearts, it's an edited short, not raw footage — never
@@ -3033,9 +3201,11 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
                              tag, idx, r, ko)
                 continue
             reasons = []
-            if (("랴니" in ko) or ("ryani" in low)) and not v.get("ryani_visible"):
+            if (("랴니" in ko) or ("ryani" in low)) and not v.get("ryani_visible") \
+                    and not _grounded_present(tag, "ryani"):
                 reasons.append("랴니 미등장")
-            if (("레오" in ko) or ("leo" in low)) and not v.get("leo_visible"):
+            if (("레오" in ko) or ("leo" in low)) and not v.get("leo_visible") \
+                    and not _grounded_present(tag, "leo"):
                 reasons.append("레오 미등장")
             # Names on the wrong animals (both pets visible so the checks above pass) — PD 2026-07-12.
             if v.get("subject_swapped") is True and (("랴니" in ko) or ("레오" in ko)
@@ -6118,6 +6288,14 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
         # blown-out), leaving matching captions untouched. Catches the corgi≠retriever /
         # Ryani-not-in-frame fabrications PD flagged.
         log.info("real_footage single-pass: action-grounded captions + grounding gate")
+        # Layer 0 (PD 2026-09-20): authoritative subject-UNION + location grounding
+        # (pd_notes + gpt-4o-mini multi-frame) BEFORE captioning, so the generator is TOLD
+        # the true union+location as a hard constraint and stops erasing a present pet /
+        # mislabelling an outdoor outing as home. Also attaches truth to the concept for Giri.
+        try:
+            _rf_grounded_truth(manifests, anim_dir, progress_cb=progress_cb, dry_run=dry_run)
+        except Exception as ex:
+            log.warning("subject/location grounding skipped: %s", ex)
         # Layer 2 (PD 2026-07-06): regenerate captions FROM the clip's observed action arc,
         # anchored to when each beat happens (sniff→walk→squat=mark). Runs BEFORE the
         # grounding gate, which then verifies + the count-cap/여운 tail finish.

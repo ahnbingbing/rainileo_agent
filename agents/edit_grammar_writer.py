@@ -56,18 +56,37 @@ GRAMMAR_SPEC = {
 }
 
 
-def _pool_for_prompt(pool: list[dict]) -> list[dict]:
-    """Trim each candidate clip to the grounded fields the Writer needs to cast + ground copy."""
+def _pool_for_prompt(pool: list[dict], grounding: dict | None = None) -> list[dict]:
+    """Trim each candidate clip to the grounded fields the Writer needs to cast + ground copy.
+
+    `grounding` (PD 2026-09-20): asset_id → authoritative {subjects, indoor_outdoor,
+    location_specific} from the pd_notes+gpt-4o-mini multi-frame grounder. When present it
+    OVERRIDES the DB subjects/loc for that clip and is marked ★verified so the Writer trusts
+    it over what a single frame implies — this is what stops a two-pet outing being captioned
+    as one pet, or an outdoor cafe terrace as '집'."""
+    grounding = grounding or {}
     out = []
     for a in pool:
-        out.append({
-            "asset_id": a.get("asset_id"),
+        aid = a.get("asset_id")
+        g = grounding.get(aid) or {}
+        subs = g.get("subjects")
+        io = g.get("indoor_outdoor")
+        rec = {
+            "asset_id": aid,
             "sc": (a.get("scene_description") or a.get("sc") or "")[:220],
             "activity": a.get("activity"),
-            "subjects": a.get("subjects_csv") or a.get("subjects"),
+            "subjects": (",".join(subs) if subs else (a.get("subjects_csv") or a.get("subjects"))),
             "dur": round(float(a.get("duration_sec") or a.get("dur") or 0), 1),
-            "loc": a.get("location_type") or a.get("loc"),
-        })
+            "loc": (g.get("location_specific") or g.get("location_type")
+                    or a.get("location_type") or a.get("loc")),
+        }
+        if g:
+            rec["verified"] = {
+                "subjects": subs, "indoor_outdoor": io,
+                "note": "★검증된 사실(pd_notes+다중프레임): 이 subjects/장소가 진실이다. "
+                        "둘 다면 한 마리만 말하지 말고, 실외를 실내로 쓰지 마라.",
+            }
+        out.append(rec)
     return out
 
 
@@ -106,7 +125,8 @@ def _extract_json_object(text: str) -> dict:
 
 
 def propose_grammar_copy(grammar: str, pool: list[dict], *, slot_hhmm: str | None = None,
-                         model: str | None = None, fixed_clips: dict | None = None) -> dict:
+                         model: str | None = None, fixed_clips: dict | None = None,
+                         grounding: dict | None = None) -> dict:
     """Cast clips + write grounded copy for one grammar. Returns {"clips": {...}, "copy": {...}}.
     Raises ValueError on an unknown grammar; raises on parse failure so the dry-run surfaces it.
 
@@ -126,7 +146,7 @@ def propose_grammar_copy(grammar: str, pool: list[dict], *, slot_hhmm: str | Non
         "beat_structure": spec["beats"],
         "output_shape": spec["shape"],
         "slot_hhmm": slot_hhmm,
-        "candidate_clips": _pool_for_prompt(pool),
+        "candidate_clips": _pool_for_prompt(pool, grounding),
     }
     if fixed_clips:
         # Copy-only mode: the cast is already decided (shared across the A/B). Show only the
