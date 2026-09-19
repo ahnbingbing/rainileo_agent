@@ -554,6 +554,16 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   '실제 벌어지는 한 방' 요구 디렉티브로 재작성. writer_story kick 원칙(제목만 봐도 무슨 일이 터지는지
   보여야) + Giri 캡('kick 부재'). ★교훈: **장치가 펫을 '관찰/분석'하는 틀은 사건을 안 만든다 — kick은
   UI 팝업이 아니라 두 펫 사이에 실제로 터지는 순간에서 온다.** cf A25(역할스왑 — 같은 저-kick 메타프레이밍 계열).
+- **A27. Seedance가 암컷 랴니에 수컷 성기를 환각했다 — 착용물처럼 없는 것도 단언해야 한다(9/20)** — 9/21 08:00
+  '물속 슈퍼히어로 랴니' cut4_peak(공중 히어로 포즈, 배가 저각도 카메라를 향함)에 Seedance가 수컷 성기를 그렸다.
+  근본: no-tail 가드는 still·motion 양쪽에 있었지만 **성별/무성기 가드는 still-regen(GPT preserve)에만 있고 Seedance
+  MOTION 프롬프트엔 없었다** — 정작 결함은 i2v 모션 패스에서 났다. 이는 no-tail과 정확히 같은 계열의 실패다:
+  i2v는 raised rump에 꼬리를 돋우듯 저각도 배에 성기를 돋운다 — **없는 것도 명시적으로 단언하지 않으면 채워 넣는다**.
+  Fix(9/20): canon.RYANI anatomy 필드 + RYANI_MARKING 무성기 절 + character_sheets/director_shots + **cameraman이
+  Ryani가 든 모든 컷의 모션 프롬프트에 무성기 가드 주입**(still이 이미 하던 걸 motion에도 = 두 생성 지점 합의,
+  cf [[harness_pairing_and_fantasy_gate]]). Giri 백스톱: AV 해부 VLM이 genitalia_visible 리포트→cap≤5. ★교훈:
+  **부재하는 해부/착용물의 연속성은 두 생성 지점(still+motion) 모두에서 결정론적으로 단언해야 한다 — 한쪽만 하면
+  다른 쪽이 드리프트한다.** cf no-tail(같은 "없는 것 단언" 계열)·harness pairing.
 
 ### 4.3 리뷰어 / Giri
 - **B0. Writer가 영상을 안 보고 캡션을 우김 → 캡션↔프레임 상시 불일치(상시, 최다 재발)** — 파이프라인
@@ -1235,6 +1245,28 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   확정 → 자막 그라운딩 + grammar 경로도 이 게이트 타게. **전수 재태깅 아님**(비용). Slack→Discord 장기전환(원본/GPS
   보존, description-capture는 이식). ★교훈: 사람이 이미 준 그라운드 트루스를 파이프라인이 버리고 픽셀·키워드로 추측하지
   마라 — 주인의 firsthand 설명이 최고의 그라운딩 소스다.
+  **SHIPPED(9/20):** ①공유 그라운더 `agents/openai_vision.py`(한 컷의 전 프레임 span을 gpt-4o-mini 한 번에 보내
+  pd_notes를 authoritative로 obey → 피사체 유니온+실내외 복원). ②`tag_assets_vlm --pd-notes-reground`로 slack+pd_notes 247개
+  재태깅(4개 그라운딩 필드만 업그레이드, flash 리치 보존=notes.flash_scene, 멱등)→RAG rebuild. **검증**: clip5가
+  ryani/cafe→**ryani,leo(both)/cafe 테라스**로 교정(flash가 못 하던 걸 gpt-4o-mini가 pd_notes obey해 잡음). ③렌더타임
+  `_rf_grounded_truth`(cameraman)가 캡션 생성 전에 유니온+실내외를 **하드 제약**으로 생성기에 주입 + concept에 붙여 Giri가
+  같은 진실로 캡. grammar 경로도 그라운딩 카피(`edit_grammar_writer` grounding 파라미터)+결정론 백스톱으로 우회 제거.
+  ④Giri `_subject_location_grounding_gate`(cap≤6, RF+grammar; 회귀검증 bad 2건 잡고 good/AV 오탐0). ★추가 교훈 둘:
+  **(a) 더 신뢰도 높은 체크가 낮은 걸 이겨야 한다** — flash 2프레임 그라운딩 게이트가 유니온 픽스 뒤에서 작은 펫을 *다시
+  지우려* 했다(자기 2프레임서 못 봤다고); 권위 그라운딩이 확인한 피사체는 flash가 못 되돌리게 defer시켰다(Giri의
+  identity-scrub와 같은 원리). **(b) 모델을 "obey하는 놈"으로 골라라** — flash는 프롬프트의 pd_notes 오버라이드를 무시,
+  gpt-4o-mini는 순종. 그라운딩은 픽셀 성능이 아니라 *사람 정답에 대한 순종*의 문제였다.
+- **C_grammarroll. grammar 롤링윈도우 — 같은 footage 3편을 당일이 아니라 3일에 분산해 재활성(9/20)** — grammar A/B는
+  한 캐스트로 velocity/meme/story를 뽑는데, 예전 배선은 셋을 **같은 날** 3 RF 슬롯에 다 걸어 시청자가 같은 클립을 하루
+  3번 봤다 → PD가 금지, 기능을 OFF 홀드(55eb300). 근본은 문법 자체가 아니라 *같은 날 배치*였다(예전 8h self-heal
+  런어웨이는 별개 근본 — 얼굴게이트 환각 6fe509d + 벽시계 캡 b378348 — 이미 수정됨). Fix(9/20): 3일 롤링윈도우 —
+  window-start 날에 한 번 캐스트→3 variant 렌더→각 variant를 D/D+1/D+2의 그날 지정 RF 슬롯에 **핀**(하루 한 편,
+  절대 당일 3편). 문법·슬롯은 (day-in-window + window-id)로 회전해 각 문법이 모든 타임슬롯을 돌아 A/B가 깨끗하다.
+  핀 메커니즘=`launch._pinned_episode_for`(state='rendered'+youtube_publish_at 매칭); D+1/D+2는 window-start 배치가 미리
+  핀해둔 걸 각자 배치가 집어감. 캐스트 클립은 그라운딩(C_grounding)해 카피에 주입 + 서브젝트소거/위치 백스톱이 나쁜
+  variant를 스킵(→표준 RF). 재활성=EDIT_GRAMMAR_MODE 기본 ON(킬스위치 =0 즉시 롤백). ★교훈: **PD가 금지한 건
+  기능이 아니라 그 기능의 한 스케줄링 특성일 수 있다 — 근본(같은 날)만 고치면 기능은 되살아난다.** cf [[D_grammarlive]]
+  (우회 경로 계약 상속 — 롤링윈도우도 표준 RF의 그라운딩 계약을 이제 상속한다).
 
 ### 4.5 인프라 / 파이프라인
 - **D_lanemix. 라이브 채널 변경은 되돌림을 런타임 플래그로 출하하라 — git-revert만으론 부족하다(9/9)** —
