@@ -861,6 +861,31 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   가능한 충실 수정을 원하면 편집 산출(copy/역할)을 카드에 영속화해야 한다(현재 미영속=미래 과제).** 라이브 교체=meme
   FkFNT6HVG0I·story mG0WjiQ3v74(둘 다 예약-비공개라 손실 0), velocity는 이미 공개(796 조회)라 범퍼-only 결함이면 리셋값
   없어 PD가 유지 결정. cf. [[D_grammarlive]]·[[C_cooldownrelax]]·[[view_data_concrete_hook_title]].
+- **C_grammarfit. 편집 문법은 footage에 형태를 강요한다 — footage가 그 형태의 에너지를 못 받치면 형태가 footage와
+  싸운다("허접"). 그리고 형태-레벨 결함은 대개 배선 안 된 설계·정적 지시다(9/20)** — PD "요즘 클럽(velocity)·meme
+  버전이 좀 허접". 프레임으로 파보니 근본 3겹이 전부 **형태(form)** 문제였다. ①**클럽 색이 죽은 코드**: velocity의 "club"
+  grade가 `CLUB[]` colorbalance 테이블(피사체는 읽히고 씬만 네온 라이트캐스트로 물드는, PD가 원래 설계한 것)을 두고도
+  `hue=h=mod(t*speed)` **전체 색상 회전**을 써 개·고양이가 통째로 초록/마젠타로 뒤집혔다(PD가 9/8-9 거부한 그것). 테이블은
+  정의만 되고 배선이 안 됐던 것 → 컷별 `club_cast` 주입으로 실제 배선(스트로브는 컷마다 색을 바꿔 얻는다, 컷 안 hue-spin
+  아님). ②**footage-fit 미검증**: 문법이 form을 강요하나 캐스트가 그 에너지를 가졌는지 아무도 안 봤다 — [[C_freshpool]]로
+  신선풀이 차분(냄새·산책·낮잠)해지자 velocity가 냄새맡는 개에 hue-strobe를, meme이 가만히 앉은 고양이에 "텐션 미쳤다"를
+  씌웠다. Fix=`clip_motion_peak` 스칼라(달리기·수영≈23-30, 냄새·산책≈8-14, 낮잠≈6)로 게이트: velocity=고모션 climax≥16 +
+  움직이는 build(≥2클립≥11), meme=반응비트≥11; 못 넘으면 그 문법을 **스킵→표준RF 폴백**(빈슬롯 없음, 롤링윈도우·공유A/B·단일
+  세 캐스트경로 전부). story는 시네마틱이라 차분해도 읽혀 무게이트. ★원칙=**[[D_b4copy]]의 "form은 footage가 받칠 때만
+  강하다"를 모션 게이트로 일반화 — 형태를 footage에 강요하지 말고, footage가 못 받치면 그 형태를 접고 맞는 걸 써라(정직한
+  표준RF ≫ hue-strobe 냄새 몽타주).** ③**meme 정적 arc가 날조를 지시**: meme `beat_structure`가 "[4]다른 펫 등장 / [5]그
+  펫의 부인"을 **정적으로** 지시 → 한 마리뿐인 캐스트에도 없는 레오를 지어내라 강제해 그라운딩 규율([[C_grounding]])을
+  무력화했다(그게 "레오 등장"이 레오 없는 클립에 박히던 근본). Fix=그라운딩된 캐스트 subject-union으로 arc 선택(둘 다=blame
+  arc, 한 마리=self-reaction arc); 엔진 무변경(7 캡션 슬롯 그대로), Writer 프롬프트 데이터만 조건부. ★원칙=**정적 템플릿이
+  콘텐츠를 지시하면(‘다른 펫이 부인한다’) 그라운딩 게이트보다 상위에서 날조를 강제한다 — 템플릿의 콘텐츠 가정은 실제
+  그라운딩으로 분기시켜라.** ④부차: meme SFX가 정적 사인/노이즈 버스트(테스트톤 티) → 제대로 된 DSP(하강 피치 처프 붐·비화성
+  파셜 벨·상승 스윕, 스펙트로그램 검증) + 실샘플 오버라이드(`assets/sfx/<kind>.*`). 줌펀치는 이미 `top_motion_windows`라 모션정렬됨.
+  ★음악(라이브러리에 클럽 뱅어 0): CC0 소싱은 청취 불가·CDN 로그인게이트라 막힘 → **Vertex Lyria(`lyria-002`)로 생성**(Veo와
+  같은 GCP 프로젝트, 새 키·의존성 불요; 32s 48kHz stereo/콜). `scripts/gen_music.py`가 문법별 브리프로 N개 뽑고, 컨벤션
+  `assets/bgm/<grammar>_music.mp3`(→`_grammar_music`)로 코드·env 없이 라이브. 검증=클럽트랙 129BPM 감지→velocity 비트그리드가
+  거기 맞춤. ★후속 미완=PD "꽤 괜찮은데 좀 더 흥"→프롬프트 정교화 후 promote(현재 보류, 9/22 velocity는 색수정+기존 트랙으로 예정대로).
+  ★메타 corollary=**라이브러리 공백은 새 의존성이 아니라 이미 깔린 인프라로 메운다**(Lyria=Veo용 Vertex 재활용). VM 미러 주의:
+  `assets/bgm/`는 gitignore라 새 오디오는 렌더호스트로 별도 전달 필요. cf. [[D_b4copy]]·[[C_grammarquality]]·[[C_freshpool]]·[[C_grounding]].
 - **C_freshbias. 신선 클립이 안 만들어진 건 인입이 아니라 선택 편향 + 리뷰어 자기강화였다(9/7)** — PD "왜 함미하비가
   공유한 신선 클립이 에피소드가 안 되나, 풀 문제야?". 검증하니 풀은 정상(최근 usable 151개, home 81·outdoor 21) — 인입도
   사용가능성(dur≥12·VLM·q≥0.7)도 병목이 아니었다. 진짜 근본 2겹: ①**RF writer가 잔잔한 신선 홈 클립보다 드라마틱한 옛
