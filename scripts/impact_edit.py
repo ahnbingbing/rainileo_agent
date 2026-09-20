@@ -249,7 +249,7 @@ def render_segment(clip: str, src_start: float, src_dur: float, target: float,
                    hue_speed: float = 460.0, phase: float = 0.0,
                    sat: float = 1.35, flash: bool = False, zoom_crop: float = 1.0,
                    hflip: bool = False, zoom_ramp: str | None = None,
-                   rotate_amp: float = 0.0) -> Path:
+                   rotate_amp: float = 0.0, club_cast: tuple | None = None) -> Path:
     """Motion FX (PD 2026-09-10, velocity punch-up): hflip (좌우반전), zoom_ramp
     ('in'=wide→tight / 'out'=tight→wide, a live push over the cut), rotate_amp (radians —
     a rhythmic dutch wobble). Applied on top of the club color cycle."""
@@ -276,10 +276,17 @@ def render_segment(clip: str, src_start: float, src_dur: float, target: float,
                      f"crop={W}:{H}")
         c.append(f"fps={FPS}")
         if grade == "club":
-            # CONTINUOUS fast hue cycle (PD 9/8: 색 변환 frequency 작게·빠르게) — reads as club
-            # lighting because the color never HOLDS. hue_speed = deg/sec; drop cuts push higher.
-            c.append(f"hue=h=mod(t*{hue_speed:.0f}+{phase:.0f}\\,360):s={sat:.3f}")
-            c.append("eq=contrast=1.20:brightness=0.006")
+            # Club look = a bold colored LIGHT cast per cut (colorbalance shifts shadows/mids/
+            # highlights toward one hue) so the SUBJECT stays readable while the scene bathes in
+            # neon — and the cast changes BOLDLY cut-to-cut (velocity cuts fast), which reads as
+            # club strobe. This is deliberately NOT a full `hue` rotation: rotating every hue
+            # turned the dog itself green/magenta (an awkward broken-filter look PD rejected on
+            # 9/8-9). `club_cast` = one CLUB[] tuple assigned per segment by build_velocity; the
+            # saturation lift + contrast curve give the neon punch the old hue-cycle provided.
+            rs, gs, bs, rm, gm, bm, rh, gh, bh = club_cast or CLUB[0]
+            c.append(f"colorbalance=rs={rs}:gs={gs}:bs={bs}:rm={rm}:gm={gm}:bm={bm}"
+                     f":rh={rh}:gh={gh}:bh={bh}")
+            c.append(f"eq=contrast=1.20:brightness=0.006:saturation={sat:.3f}")
             c.append("curves=preset=lighter,eq=brightness=0.10" if flash
                      else "curves=preset=increase_contrast")
         elif grade == "cinematic":
@@ -450,7 +457,7 @@ def assemble(seq: list[dict], caps: list[tuple], music_id: str, out: Path, *,
                               phase=sg.get("phase", 0.0), sat=sg.get("sat", 1.35),
                               flash=sg.get("flash", False), zoom_crop=sg.get("zoom_crop", 1.0),
                               hflip=sg.get("hflip", False), zoom_ramp=sg.get("zoom_ramp"),
-                              rotate_amp=sg.get("rotate_amp", 0.0))
+                              rotate_amp=sg.get("rotate_amp", 0.0), club_cast=sg.get("club_cast"))
         seg_files.append(f)
         t += sg["target"]
     total = t
@@ -653,6 +660,10 @@ def build_velocity(music_id: str, out: Path, clips: dict | None = None, copy: di
     # a dutch wobble (subtle on build, hard on the drop burst); a left-right flip every 3rd cut
     # for variety. The HOOK/PAYOFF flash hits stay a clean zoom-in punch (no wobble/flip) so the
     # bookends read strong; the slow beauty anchor stays still.
+    # Color casts cycle through CLUB[] so consecutive club cuts land on DIFFERENT neon hues
+    # (the strobe now comes from bold per-cut CHANGE, not a within-cut hue spin). The drop
+    # burst strides across the wheel (×3) so its faster cuts jump further per cut = harder
+    # strobe; build/bookends step by 1.
     ci = 0
     for sg in seq:
         role = sg.get("role")
@@ -662,10 +673,10 @@ def build_velocity(music_id: str, out: Path, clips: dict | None = None, copy: di
         if ci % 2 == 1:                                    # alternate tight(punch)↔wide → in/out push
             sg["zoom_ramp"] = "in"
         if sg.get("flash"):                                # hook / payoff — clean strong punch
-            sg["grade"] = "club"; sg["hue_speed"] = 520.0; sg["phase"] = (ci * 90) % 360; sg["sat"] = 1.4
+            sg["grade"] = "club"; sg["club_cast"] = CLUB[ci % len(CLUB)]; sg["sat"] = 1.4
             sg["zoom_ramp"] = "in"
-        elif role == "drop":                               # DROP burst — full strobe + hard spin-wobble + flips
-            sg["grade"] = "club"; sg["hue_speed"] = 900.0; sg["phase"] = (ci * 90) % 360; sg["sat"] = 1.4
+        elif role == "drop":                               # DROP burst — bold cast jumps + hard spin-wobble + flips
+            sg["grade"] = "club"; sg["club_cast"] = CLUB[(ci * 3) % len(CLUB)]; sg["sat"] = 1.4
             sg["rotate_amp"] = 0.11
             sg["hflip"] = (ci % 2 == 0)
         elif ci % 2 == 0:                                  # BUILD — original color + gentle wobble
@@ -674,7 +685,7 @@ def build_velocity(music_id: str, out: Path, clips: dict | None = None, copy: di
             if ci % 3 == 0:
                 sg["hflip"] = True
         else:                                              # BUILD — club color + gentle wobble
-            sg["grade"] = "club"; sg["hue_speed"] = 520.0; sg["phase"] = (ci * 90) % 360; sg["sat"] = 1.4
+            sg["grade"] = "club"; sg["club_cast"] = CLUB[ci % len(CLUB)]; sg["sat"] = 1.4
             sg["rotate_amp"] = 0.05
         ci += 1
 
