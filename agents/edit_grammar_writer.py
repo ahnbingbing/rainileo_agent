@@ -37,10 +37,10 @@ GRAMMAR_SPEC = {
     },
     "meme": {
         "shape": '{"clips": {<role>: <asset_id> ...}, "copy": {"captions": [{"ko": "..","en": ".."} × 7]}}',
-        "beats": ("7 reaction-meme captions IN ORDER, each bilingual (short KO + short EN), over jump-cuts/"
-                  "zoom-punches/freezes: [0] HOOK (our-house-energy title), [1] first ?!?! reaction, "
-                  "[2] caught-in-4K freeze, [3] hold-up beat, [4] enter-the-other-pet, [5] that pet's deadpan denial, "
-                  "[6] AGAIN?! climax. Punchy internet-meme voice; KO ≤12 chars, EN ≤18 chars."),
+        # default = the TWO-PET blame arc; propose_grammar_copy swaps in _MEME_BEATS_SOLO when the
+        # grounded cast has only one pet (so we never instruct "enter Leo / Leo denies" over footage
+        # with no Leo — the m1AFJiWzGx0-class fabrication).
+        "beats": None,   # filled per-cast in propose_grammar_copy
     },
     "story": {
         "shape": ('{"clips": {<role>: <asset_id> ...}, "copy": {"beats": [{"role": <role>, "kind": '
@@ -54,6 +54,46 @@ GRAMMAR_SPEC = {
                   "ko = on-screen caption (short). box=true only for punchy title/hook beats."),
     },
 }
+
+
+# Meme beat structure is chosen by the grounded cast (P1-b, PD 2026-09-20). The two-pet arc's
+# "enter-the-other-pet / that pet denies" beats are a two-character joke; imposing them on a
+# single-pet cast forces the Writer to invent a pet who isn't on screen (the "레오 등장" over
+# no-Leo footage fabrication). So a solo cast gets a single-subject self-reaction arc instead.
+_MEME_BEATS_BOTH = (
+    "7 reaction-meme captions IN ORDER, each bilingual (short KO + short EN), over jump-cuts/"
+    "zoom-punches/freezes. BOTH pets are in this footage, so the two-pet blame joke is grounded: "
+    "[0] HOOK (our-house-energy title), [1] first ?!?! reaction, [2] caught-in-4K freeze, "
+    "[3] hold-up beat, [4] enter-the-other-pet (the one who appears in that clip), [5] that pet's "
+    "deadpan denial, [6] AGAIN?! climax. Name a pet only in a beat whose clip actually shows it. "
+    "Punchy internet-meme voice; KO ≤12 chars, EN ≤18 chars.")
+_MEME_BEATS_SOLO = (
+    "7 reaction-meme captions IN ORDER, each bilingual (short KO + short EN), over jump-cuts/"
+    "zoom-punches/freezes. ONLY ONE pet is in this footage — do NOT invent a second pet entering "
+    "or blame another pet; keep every beat about the pet actually on screen: [0] HOOK (this pet's "
+    "energy title), [1] first ?!?! reaction, [2] caught-in-4K freeze (현행범 포착), [3] hold-up beat "
+    "(잠깐만), [4] the 'evidence' close-up, [5] the pet's deadpan SELF-denial (나 아닌데), [6] AGAIN?! "
+    "climax. Punchy internet-meme voice; KO ≤12 chars, EN ≤18 chars.")
+
+
+def _cast_subjects(pool: list[dict], clips: dict | None, grounding: dict | None) -> set:
+    """Lower-cased subject union over the CAST clips (or the whole pool if no cast fixed yet),
+    preferring authoritative grounding subjects over the DB subjects_csv. Used to pick the meme
+    beat arc (two-pet vs solo)."""
+    grounding = grounding or {}
+    ids = set((clips or {}).values()) or {a.get("asset_id") for a in pool}
+    subs: set = set()
+    for a in pool:
+        aid = a.get("asset_id")
+        if aid not in ids:
+            continue
+        g = grounding.get(aid) or {}
+        vals = g.get("subjects") or (str(a.get("subjects_csv") or a.get("subjects") or "")).split(",")
+        for x in vals:
+            x = (x or "").strip().lower()
+            if x:
+                subs.add(x)
+    return subs
 
 
 def _pool_for_prompt(pool: list[dict], grounding: dict | None = None) -> list[dict]:
@@ -139,11 +179,18 @@ def propose_grammar_copy(grammar: str, pool: list[dict], *, slot_hhmm: str | Non
     from agents import llm_cascade as _llm
 
     spec = GRAMMAR_SPEC[grammar]
+    beats = spec["beats"]
+    if grammar == "meme":
+        # pick the two-pet blame arc vs the solo self-reaction arc by the grounded cast (P1-b)
+        cast_subs = _cast_subjects(pool, fixed_clips, grounding)
+        both = {"ryani", "leo"} <= cast_subs
+        beats = _MEME_BEATS_BOTH if both else _MEME_BEATS_SOLO
+        log.info("meme beat arc: %s (cast subjects=%s)", "both" if both else "solo", sorted(cast_subs))
     system = _pl.load(_PROMPT_PATH)
     _payload = {
         "grammar": grammar,
         "roles": ROLES,
-        "beat_structure": spec["beats"],
+        "beat_structure": beats,
         "output_shape": spec["shape"],
         "slot_hhmm": slot_hhmm,
         "candidate_clips": _pool_for_prompt(pool, grounding),

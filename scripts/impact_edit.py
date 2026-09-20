@@ -349,21 +349,48 @@ def render_freeze(clip: str, at: float, dur: float, tmp: Path, idx: int, *,
 # ──────────────────────────────────────────────────────────────────────
 # Shared assembler: concat CFR → captions (separate passes) → music + SFX
 # ──────────────────────────────────────────────────────────────────────
+_SFX_DIR = ROOT / "assets" / "sfx"
+# Meme SFX. A REAL CC0 sample at assets/sfx/<kind>.{wav,mp3,ogg,m4a} wins — a genuine vine-boom /
+# air-horn / ding reads far punchier than a synth tone, and a pure sine/noise burst is the "허접"
+# tell PD flagged. Drop samples in (Mixkit/Pixabay CC0) and they override, mirroring the BGM dir.
+# The synthesized fallbacks below are tuned to be punchier than a bare sine (decaying transient +
+# an octave/second partial) so the edit still lands with no samples installed.
+_SFX_CAP = {"boom": 0.8, "ding": 0.5, "riser": 0.9, "whoosh": 0.5}
+
+
+def _sfx_sample(kind: str) -> Path | None:
+    for ext in ("wav", "mp3", "ogg", "m4a"):
+        p = _SFX_DIR / f"{kind}.{ext}"
+        if p.exists():
+            return p
+    return None
+
+
 def _gen_sfx(tmp: Path, kind: str) -> Path:
     p = tmp / f"sfx_{kind}.wav"
-    if kind == "boom":
-        _run([FF, "-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=56:duration=0.42",
-              "-af", "afade=t=out:st=0.10:d=0.30,volume=2.2", str(p)])
-    elif kind == "ding":
-        _run([FF, "-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=1040:duration=0.18",
-              "-af", "afade=t=out:st=0.05:d=0.12,volume=1.4", str(p)])
-    elif kind == "riser":                       # pitch sweep into the drop
+    sample = _sfx_sample(kind)
+    if sample:                                   # real CC0 sting — trim short, gentle out-fade
+        cap = _SFX_CAP.get(kind, 0.8)
+        _run([FF, "-y", "-v", "error", "-i", str(sample), "-t", f"{cap}",
+              "-af", f"afade=t=out:st={max(0.0, cap - 0.12):.2f}:d=0.12,aresample=48000",
+              "-ac", "2", str(p)])
+        return p
+    if kind == "boom":                           # vine-boom-ish: sharp-decay sub + octave punch
+        _run([FF, "-y", "-v", "error", "-f", "lavfi",
+              "-i", "aevalsrc='exp(-9*t)*(sin(2*PI*52*t)+0.5*sin(2*PI*104*t))':d=0.5:s=48000",
+              "-af", "volume=2.4", str(p)])
+    elif kind == "ding":                         # bell-ish: fundamental + a partial, decaying
+        _run([FF, "-y", "-v", "error", "-f", "lavfi",
+              "-i", "aevalsrc='exp(-7*t)*(sin(2*PI*1040*t)+0.4*sin(2*PI*2080*t))':d=0.35:s=48000",
+              "-af", "volume=1.5", str(p)])
+    elif kind == "riser":                        # pitch sweep into the drop
         _run([FF, "-y", "-v", "error", "-f", "lavfi", "-i",
               "aevalsrc=0.3*sin(2*PI*(220+900*t)*t):d=0.7",
               "-af", "afade=t=in:d=0.55,afade=t=out:st=0.58:d=0.12,volume=1.2", str(p)])
-    elif kind == "whoosh":                       # accents a zoom punch / hard cut
-        _run([FF, "-y", "-v", "error", "-f", "lavfi", "-i", "anoisesrc=d=0.32:c=pink:a=0.5",
-              "-af", "highpass=f=700,afade=t=in:d=0.12,afade=t=out:st=0.17:d=0.15,volume=1.0", str(p)])
+    elif kind == "whoosh":                        # accents a zoom punch / hard cut
+        _run([FF, "-y", "-v", "error", "-f", "lavfi", "-i", "anoisesrc=d=0.34:c=pink:a=0.6",
+              "-af", "bandpass=f=1200:width_type=h:w=1400,afade=t=in:d=0.10,"
+              "afade=t=out:st=0.20:d=0.14,volume=1.1", str(p)])
     else:
         raise ValueError(kind)
     return p
