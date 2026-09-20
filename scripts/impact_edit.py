@@ -582,30 +582,38 @@ def assemble(seq: list[dict], caps: list[tuple], music_id: str, out: Path, *,
     extra: list[tuple] = []   # (delay_s, path, vol)
     for (tt, kind, vol) in (sfx or []):
         extra.append((tt, _gen_sfx(tmp, kind), vol))
-    # narration: SEQUENTIAL — each line starts no earlier than the previous line's audio ENDS,
-    # so voices can never overlap (PD 9/9, 9/10: bled across cuts even with per-window atempo,
-    # because the window keyed on the next line's FIXED start, not on when this line finishes).
-    # Each line still atempo-fits toward its scene window; if it can't, it just pushes the next
-    # line slightly later (a voiceover drifting off the exact beat reads far better than overlap).
+    # narration: SEQUENTIAL — each line starts no earlier than the previous line's audio ENDS, so
+    # voices can never overlap. The story ENGINE now sizes each scene to fit its narration up front
+    # (see _prerender_and_size), so lines already fit their windows and the atempo below is a GENTLE
+    # safety only (cap 1.15 — a big speed-up sounds jarring; a hair of drift reads far better). A
+    # voice item may carry a 4th element = a pre-rendered TTS path (skip re-synthesis). The dur
+    # fallback estimates from text length (~7 KO chars/sec) instead of a flat 1.5 so a failed probe
+    # can't under-count and cause an overlap.
     vlist = voices or []
     _cursor = 0.0
-    for j, (tt, text, vol) in enumerate(vlist):
-        p = _tts(tmp, j, text)
-        dur = probe_dur(str(p)) or 1.5
+    for j, item in enumerate(vlist):
+        tt, text, vol = item[0], item[1], item[2]
+        pre = item[3] if len(item) > 3 else None
+        p = Path(pre) if pre else _tts(tmp, j, text)
+        dur = probe_dur(str(p)) or max(1.2, len(text) / 7.0)
         start = max(tt, _cursor)                     # never begin before the prior line ends
         nxt = vlist[j + 1][0] if j + 1 < len(vlist) else total
         window = max(0.7, min(nxt, total) - start - 0.12)
-        if dur > window:
-            tempo = min(1.7, dur / window)
+        if dur > window * 1.03:                       # only if genuinely over — scenes are pre-fit
+            tempo = min(1.15, dur / window)
             fitted = tmp / f"tts_fit_{j:02d}.mp3"
             _run([FF, "-y", "-v", "error", "-i", str(p), "-filter:a", f"atempo={tempo:.3f}",
                   "-c:a", "libmp3lame", "-q:a", "3", str(fitted)])
             p = fitted
             dur = probe_dur(str(p)) or (dur / tempo)
         extra.append((start, p, vol))
-        _cursor = start + dur + 0.10                 # next line waits for this one to finish
+        _cursor = start + dur + 0.08                  # next line waits for this one to finish
 
-    inputs = ["-i", music]
+    # LOOP the BGM so it always covers the whole body: generated Lyria tracks are only ~32.8s, but
+    # a narrated story body runs 40s+, and atrim + the final -shortest would otherwise truncate the
+    # VIDEO to the music length (a story cut off mid-payoff). -stream_loop -1 repeats the track; the
+    # atrim below bounds it to exactly the body length. Short bodies (velocity/meme ~15s) never loop.
+    inputs = ["-stream_loop", "-1", "-i", music]
     for (_, pth, _) in extra:
         inputs += ["-i", str(pth)]
     video_idx = 1 + len(extra)
@@ -829,6 +837,28 @@ def build_meme(music_id: str, out: Path, clips: dict | None = None, copy: dict |
 # ──────────────────────────────────────────────────────────────────────
 # STORY (payoff-first) — climax cold-open → rewind → build → return
 # ──────────────────────────────────────────────────────────────────────
+_NARR_PAD = 0.7   # lead-in + tail around a narration line so a scene isn't wall-to-wall speech
+
+
+def _prerender_and_size(seq: list[dict], narr_by_idx: dict) -> dict:
+    """TTS each scene's narration UP FRONT and grow that scene's target to fit the natural speech
+    (dur + _NARR_PAD), so the voice is never sped up and never overruns into the next scene's
+    caption. Returns {scene_idx: (tts_path, dur)}; scenes without narration are untouched. This is
+    the fix for the three story-voice bugs (caption↔story desync, sudden fast speech, overlap):
+    size the PICTURE to the words, instead of cramming the words into a pre-cut picture."""
+    pre: dict = {}
+    if not narr_by_idx:
+        return pre
+    d = Path(tempfile.mkdtemp(prefix="narr_"))
+    for idx, text in narr_by_idx.items():
+        p = _tts(d, idx, text)
+        dur = probe_dur(str(p)) or max(1.2, len(text) / 7.0)
+        pre[idx] = (p, dur)
+        if 0 <= idx < len(seq):
+            seq[idx]["target"] = max(seq[idx]["target"], dur + _NARR_PAD)
+    return pre
+
+
 def _build_story_from_beats(c: dict, beats: list[dict], music_id: str, out: Path) -> Path:
     """B4 beat-driven story: the Writer supplies ordered beats — each a role (soccer/play1/
     swim/play2/belly, cast by the Writer), an optional kind (cold_open|payoff|calm), KO caption
@@ -854,6 +884,9 @@ def _build_story_from_beats(c: dict, beats: list[dict], music_id: str, out: Path
         mult = {"cold_open": 1.15, "payoff": 1.5, "calm": 1.2}.get(kind, 1.0)
         seq.append(dict(clip=clip, start=s, dur=d, target=d * mult, grade="cinematic",
                         sat=1.05 if kind in ("cold_open", "payoff") else 0.97))
+    # size each narration-bearing scene to fit its natural TTS length (fixes fast/overlap/desync)
+    narr = {i: b["narration"] for i, b in enumerate(beats) if b.get("narration")}
+    pre = _prerender_and_size(seq, narr)
     ts = _times(seq)
     total = sum(sg["target"] for sg in seq)
     F, Y = FONT_XBOLD, H * 0.15
@@ -868,7 +901,7 @@ def _build_story_from_beats(c: dict, beats: list[dict], music_id: str, out: Path
         elif ko:
             caps.append((ts[i] + 0.10, seg_end - 0.1, ko, b.get("fs", 74), Y, F, box))
         if b.get("narration"):
-            voices.append((ts[i] + 0.15, b["narration"], 1.45))
+            voices.append((ts[i] + 0.15, b["narration"], 1.45, str(pre[i][0])))
     caps.append((total - 2.0, total, "@ryani_n_leo", 58, H * 0.82, F, False))
     assemble(seq, caps, music_id, out, music_start=4.0, music_vol=0.40, voices=voices)
     return out
@@ -915,6 +948,19 @@ def build_story(music_id: str, out: Path, clips: dict | None = None, copy: dict 
         # 8 ── RESOLVE: Leo unbothered ──
         C(belly, b_belly, 1, slow=1.2),
     ]
+    # one narration line per scene; pre-render + size each scene to fit before timing the captions
+    narr_lines = {
+        0: "결론부터 말할게요. 랴니가 왜 혼자 밖에서 축구를 하고 있냐면.",
+        1: "세 시간 전. 레오는 방에서 배를 까고 자고 있었어요.",
+        2: "그런데 랴니가, 심심했어요.",
+        3: "에너지는 이미 만렙.",
+        4: "레오를 툭툭 건드려 봤지만, 무관심.",
+        5: "그래서 랴니는 밖으로 나갔어요.",
+        6: "그러다, 마당에서 축구공을 발견합니다.",
+        7: "그래서 지금, 혼자 신나게 축구 중이에요.",
+        8: "레오는, 자긴 모르는 일이래요.",
+    }
+    pre = _prerender_and_size(seq, narr_lines)
     ts = _times(seq)
     total = sum(s["target"] for s in seq)
     F = FONT_XBOLD
@@ -942,19 +988,10 @@ def build_story(music_id: str, out: Path, clips: dict | None = None, copy: dict 
         cap(8, 0.10, 2.4, "레오: …나는 모르는 일이다", 74),
         (total - 2.0, total, "@ryani_n_leo", 58, H * 0.82, F, False),
     ]
-    # OpenAI neural TTS narration reading the causal arc — music ducked underneath.
+    # OpenAI neural TTS narration reading the causal arc — pre-rendered above, placed at each
+    # scene start (scenes already sized to fit), music ducked underneath.
     V = 1.45
-    voices = [
-        (ts[0] + 0.15, "결론부터 말할게요. 랴니가 왜 혼자 밖에서 축구를 하고 있냐면.", V),
-        (ts[1] + 0.15, "세 시간 전. 레오는 방에서 배를 까고 자고 있었어요.", V),
-        (ts[2] + 0.15, "그런데 랴니가, 심심했어요.", V),
-        (ts[3] + 0.15, "에너지는 이미 만렙.", V),
-        (ts[4] + 0.15, "레오를 툭툭 건드려 봤지만, 무관심.", V),
-        (ts[5] + 0.15, "그래서 랴니는 밖으로 나갔어요.", V),
-        (ts[6] + 0.15, "그러다, 마당에서 축구공을 발견합니다.", V),
-        (ts[7] + 0.15, "그래서 지금, 혼자 신나게 축구 중이에요.", V),
-        (ts[8] + 0.15, "레오는, 자긴 모르는 일이래요.", V),
-    ]
+    voices = [(ts[i] + 0.15, narr_lines[i], V, str(pre[i][0])) for i in sorted(narr_lines)]
     assemble(seq, caps, music_id, out, music_start=4.0, music_vol=0.40, voices=voices)
 
 
