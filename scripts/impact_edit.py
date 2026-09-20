@@ -131,6 +131,22 @@ def motion_curve(clip: str, fps: int = 10, edge: int = 64) -> tuple[np.ndarray, 
     return d, float(fps)
 
 
+def clip_motion_peak(clip: str, win: float = 1.2) -> float:
+    """Mean frame-motion in the clip's single most kinetic `win`-second window — a scalar
+    'how energetic is this clip at its peak' used by the footage-fit gate. Calibrated scale
+    (64×64 gray abs-frame-diff): a running/swimming/playing pet peaks ~23-30, a calm nap ~6,
+    a sniff/walk ~8-14. So a velocity edit (which NEEDS a genuine kinetic climax) can require
+    the cast to clear a floor, and fall back to standard RF instead of hue-strobing a sniff."""
+    d, efps = motion_curve(clip)
+    if d.size < 2:
+        return 0.0
+    wlen = max(1, int(win * efps))
+    if d.size <= wlen:
+        return float(d.mean())
+    csum = np.cumsum(np.insert(d, 0, 0))
+    return float(((csum[wlen:] - csum[:-wlen]) / wlen).max())
+
+
 def top_motion_windows(clip: str, n: int, win: float, *, guard: float = 0.3) -> list[tuple[float, float]]:
     """Pick `n` non-overlapping HIGH-motion windows of length `win` seconds."""
     d, efps = motion_curve(clip)

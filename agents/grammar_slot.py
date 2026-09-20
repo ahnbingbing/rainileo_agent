@@ -115,6 +115,62 @@ def _ensure_local(aid: str):
         gcs.download_to(fp)
 
 
+# ── Footage-fit gate (PD 2026-09-20 quality) ────────────────────────────────
+# A grammar imposes a FORM (velocity = kinetic beat-cut montage; meme = reaction beats). If the
+# cast footage lacks the energy that form needs — the fresh RF pool trends calm (sniffing/walking/
+# napping) after the 9/20 fresh-pool fix — the form fights the footage: velocity hue-strobes a dog
+# sniffing plants, meme claims "텐션 미쳤다" over a cat sitting still. That's the deepest root of the
+# "허접" club/meme edits (same lesson as story B4: form is only strong when the footage carries it).
+# So before rendering a grammar we check the shared cast clears that grammar's motion floor; if not,
+# skip it → standard RF fallback (never an empty slot). Story is cinematic and reads fine on calm
+# footage, so it is ungated. Floors calibrated on scripts.impact_edit.clip_motion_peak (running/
+# swimming/playing pet ≈ 23-30, sniff/walk ≈ 8-14, nap ≈ 6).
+_VELOCITY_MOTION_FLOOR = float(os.getenv("VELOCITY_MOTION_FLOOR", "16.0"))
+_VELOCITY_BUILD_FLOOR = float(os.getenv("VELOCITY_BUILD_FLOOR", "11.0"))
+_MEME_MOTION_FLOOR = float(os.getenv("MEME_MOTION_FLOOR", "11.0"))
+
+
+def _cast_motion_peaks(clips: dict) -> dict:
+    """asset_id → peak-window motion for each distinct cast clip (computed once, reused across the
+    3 grammars that share the cast). Clips must already be local (_ensure_local run first)."""
+    from scripts.impact_edit import clip_motion_peak
+    peaks: dict = {}
+    con = sqlite3.connect(str(Path("data/agent.db")))
+    try:
+        from icloud import gcs
+        for aid in dict.fromkeys(clips.values()):
+            row = con.execute("SELECT file_path FROM assets WHERE asset_id=?", (aid,)).fetchone()
+            if not row:
+                continue
+            try:
+                peaks[aid] = clip_motion_peak(gcs.local_path(row[0]))
+            except Exception as e:
+                log.warning("motion peak %s: %s", aid, str(e)[:80])
+    finally:
+        con.close()
+    return peaks
+
+
+def _footage_fit(grammar: str, peaks: dict) -> str | None:
+    """Does the cast carry the ENERGY this grammar's form needs? Returns a reason to SKIP
+    (→ standard RF) or None to proceed. velocity needs a genuine kinetic climax + a non-calm
+    build; meme needs at least one reaction-level motion beat; story is ungated."""
+    vals = sorted(peaks.values(), reverse=True) if peaks else [0.0]
+    top = vals[0] if vals else 0.0
+    if grammar == "velocity":
+        if top < _VELOCITY_MOTION_FLOOR:
+            return (f"velocity needs a kinetic climax but cast peak motion {top:.1f} "
+                    f"< {_VELOCITY_MOTION_FLOOR:.0f} (all-calm footage → hue-strobing a sniff)")
+        if sum(1 for v in vals if v >= _VELOCITY_BUILD_FLOOR) < 2:
+            return (f"velocity needs a moving build but only {sum(1 for v in vals if v >= _VELOCITY_BUILD_FLOOR)} "
+                    f"cast clip(s) ≥ {_VELOCITY_BUILD_FLOOR:.0f}")
+    elif grammar == "meme":
+        if top < _MEME_MOTION_FLOOR:
+            return (f"meme needs a reaction beat but cast peak motion {top:.1f} "
+                    f"< {_MEME_MOTION_FLOOR:.0f} (calm footage → claimed chaos never shown)")
+    return None
+
+
 def _title_from_copy(grammar: str, copy: dict) -> str:
     if grammar == "story":
         for b in copy.get("beats", []):
@@ -147,6 +203,9 @@ def produce_grammar_episode(grammar: str, target: dt.date, hhmm: str,
     clips, copy = res["clips"], res["copy"]
     for aid in dict.fromkeys(clips.values()):
         _ensure_local(aid)
+    fit = _footage_fit(grammar, _cast_motion_peaks(clips))   # form must match footage energy
+    if fit:
+        raise RuntimeError(f"footage-fit: {fit}")
     ts = target.strftime("%Y%m%d")
     out = Path(f"data/output/episodes/episode_rf_{grammar}_{ts}_{hhmm.replace(':', '')}.mp4")
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -248,10 +307,14 @@ def produce_grammar_episodes_shared(grammars: list, target: dt.date, hhmm_by_gra
     base_copy = base["copy"]
     for aid in dict.fromkeys(shared_clips.values()):
         _ensure_local(aid)
+    peaks = _cast_motion_peaks(shared_clips)          # footage-fit: does the shared cast carry each form?
     ts = target.strftime("%Y%m%d")
 
     def _one(grammar: str):
         hh = hhmm_by_grammar.get(grammar, "")
+        fit = _footage_fit(grammar, peaks)            # skip a grammar the footage can't carry → standard RF
+        if fit:
+            raise RuntimeError(f"footage-fit: {fit}")
         copy = (base_copy if grammar == "story"
                 else propose_grammar_copy(grammar, pool, slot_hhmm=hh,
                                           fixed_clips=shared_clips)["copy"])
@@ -459,7 +522,9 @@ def ensure_rolling_window(target: dt.date, progress_cb=None, exclude_asset_ids=N
         _ensure_local(aid)
     grounding = _ground_cast_clips(shared_clips)
     union = _grounding_union(grounding)
-    _sp(f":mag: 캐스트 그라운딩 — subjects={union['subjects']} outdoor={union['any_outdoor']}")
+    peaks = _cast_motion_peaks(shared_clips)          # footage-fit: does the cast carry each form?
+    _sp(f":mag: 캐스트 그라운딩 — subjects={union['subjects']} outdoor={union['any_outdoor']} "
+        f"peak_motion={max(peaks.values()) if peaks else 0:.1f}")
 
     from scripts.impact_edit import render_grammar
     ts0 = target.strftime("%Y%m%d")
@@ -470,6 +535,12 @@ def ensure_rolling_window(target: dt.date, progress_cb=None, exclude_asset_ids=N
         if not grammar or not slot:
             continue
         try:
+            fit = _footage_fit(grammar, peaks)         # form must match the footage's energy
+            if fit:
+                log.warning("rolling-window %s %s footage-fit skip → standard RF: %s",
+                            air_day, grammar, fit)
+                _sp(f":warning: {air_day.isoformat()} grammar={grammar} footage 부적합({fit}) → 표준 RF")
+                continue
             copy = propose_grammar_copy(grammar, pool, slot_hhmm=slot,
                                         fixed_clips=shared_clips, grounding=grounding)["copy"]
             viol = _grounding_violation(copy, grammar, union)
