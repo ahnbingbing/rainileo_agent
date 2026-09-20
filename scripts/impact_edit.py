@@ -1001,7 +1001,9 @@ def main():
     grammars = list(GRAMMARS) if args.grammar == "all" else [args.grammar]
     for g in grammars:
         fn, music, out = GRAMMARS[g]
-        fn(args.music or music, Path(args.out or out))
+        # honor the convention override (assets/bgm/<g>_music.mp3) so the CLI matches the live
+        # render path (render_grammar) instead of always using the hardcoded default.
+        fn(args.music or _grammar_music(g, music), Path(args.out or out))
 
 
 if __name__ == "__main__":

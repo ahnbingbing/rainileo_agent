@@ -6,7 +6,16 @@ __pycache__/
 .pytest_cache/
 # Heavy generated/data dirs — code-only repo (PD 2026-06-04: A/B/C branch test)
 data/
-assets/bgm/
+# The 93-track royalty-free library stays out of git (bulk, reached the VM another way).
+# But AI-GENERATED grammar music IS tracked: it must persist (PD "만든 음악은 계속 저장") AND
+# reach the render host, and git push is the deploy path. So ignore bgm CONTENTS but re-include
+# the per-grammar convention files + the generated archive (small mp3s).
+assets/bgm/*
+!assets/bgm/velocity_music.mp3
+!assets/bgm/meme_music.mp3
+!assets/bgm/story_music.mp3
+!assets/bgm/generated/
+!assets/bgm/generated/**
 assets/branding/
 *.mp4
 *.mov
@@ -39,3 +48,7 @@ youtube/client_secret.json
 *.lock
 assets/**/*.bak
 osxphotos_crash.log
+
+youtube/*.bak
+youtube/client_secret_mac.json
+youtube/token_mac.json

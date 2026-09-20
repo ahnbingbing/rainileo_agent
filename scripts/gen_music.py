@@ -52,16 +52,23 @@ except Exception:
 REGION = os.getenv("LYRIA_REGION", "us-central1")
 MODEL = "lyria-002"
 BGM = ROOT / "assets" / "bgm"
+# Every generation is archived here with a manifest (PD "만든 음악은 계속 저장") — durable + git-
+# tracked (see .gitignore), so nothing generated is ever lost and each track's prompt/seed is
+# recoverable. The live convention file (assets/bgm/<grammar>_music.mp3) is a COPY of a chosen
+# archive entry.
+ARCHIVE = BGM / "generated"
+MANIFEST = ARCHIVE / "manifest.jsonl"
 
 # Per-grammar music briefs. velocity is the one the library can't cover; meme/story have decent
 # library tracks but are here so a matched custom track is one command away. Keep prompts about
 # ENERGY + INSTRUMENTATION, always instrumental (burned captions + optional TTS carry meaning).
 GRAMMAR_PROMPTS = {
     "velocity": {
-        "prompt": ("high-energy EDM club banger, 128 BPM four-on-the-floor kick, driving "
-                   "sidechained bassline, bright plucky synth stabs, a rising riser into a big "
-                   "festival drop, energetic and playful, punchy and danceable, instrumental"),
-        "negative": "vocals, lyrics, slow, lo-fi, ambient, sad, sparse",
+        "prompt": ("explosive big-room EDM festival banger, 128 BPM four-on-the-floor kick, "
+                   "punchy supersaw leads, driving sidechained bassline, euphoric hands-up build "
+                   "with a snare roll and riser into a HUGE party drop, relentless high energy, "
+                   "bouncy and exciting, crowd-anthem hype, danceable, instrumental"),
+        "negative": "vocals, lyrics, slow, lo-fi, ambient, chill, calm, sad, sparse, minimal",
     },
     "meme": {
         "prompt": ("quirky bouncy comedic groove, snappy off-beat plucks, playful pizzicato and "
@@ -133,6 +140,26 @@ def to_mp3(wav: Path, mp3: Path) -> Path:
     return mp3
 
 
+def archive(mp3: Path, *, grammar: str | None, prompt: str, negative: str, seed) -> Path:
+    """Persist a generated track into the durable, git-tracked archive with a manifest entry
+    (prompt/seed recoverable). Returns the archived path. Idempotent-ish: name carries date+seed."""
+    import datetime as _dt
+    import hashlib
+    ARCHIVE.mkdir(parents=True, exist_ok=True)
+    ph = hashlib.sha1(prompt.encode()).hexdigest()[:6]
+    stamp = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    name = f"{stamp}_{grammar or 'freeform'}_seed{seed if seed is not None else 'x'}_{ph}.mp3"
+    dst = ARCHIVE / name
+    if dst.resolve() != mp3.resolve():
+        import shutil
+        shutil.copy(str(mp3), str(dst))
+    rec = {"file": name, "grammar": grammar, "seed": seed, "prompt": prompt,
+           "negative": negative, "created": _dt.datetime.now().isoformat(timespec="seconds")}
+    with MANIFEST.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    return dst
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--grammar", choices=list(GRAMMAR_PROMPTS))
@@ -151,30 +178,35 @@ def main():
     prompt = args.prompt or brief.get("prompt")
     negative = args.negative if args.negative is not None else brief.get("negative", "")
 
-    outs = []
+    archived = []
     for i in range(max(1, args.count)):
         seed = args.seed if args.seed is not None else (None if args.count == 1 else i + 1)
-        if args.out and args.count == 1:
-            mp3 = Path(args.out)
-        elif args.promote and args.grammar:
-            mp3 = BGM / f"{args.grammar}_music.mp3"
-        elif args.grammar:
-            mp3 = BGM / (f"{args.grammar}_music.mp3" if args.count == 1
-                         else f"{args.grammar}_music_v{i + 1}.mp3")
-        else:
-            mp3 = Path(args.out or f"/tmp/lyria_{i + 1}.mp3")
-        wav = mp3.with_suffix(".wav")
-        print(f"[{i+1}/{args.count}] Lyria → {mp3.name}  (seed={seed})", flush=True)
+        tmp_mp3 = Path(args.out) if (args.out and args.count == 1) else (ARCHIVE / f"_tmp_{i}.mp3")
+        wav = tmp_mp3.with_suffix(".wav")
+        print(f"[{i+1}/{args.count}] Lyria (seed={seed}) …", flush=True)
         generate_wav(prompt, wav, negative=negative, seed=seed)
-        to_mp3(wav, mp3)
+        to_mp3(wav, tmp_mp3)
         wav.unlink(missing_ok=True)
-        outs.append(str(mp3))
-    print("\ndone:")
-    for o in outs:
-        print(" ", o)
-    if args.grammar and not args.promote and args.count > 1:
-        print(f"\naudition, then promote the best:\n  cp {outs[0]} "
-              f"{BGM / (args.grammar + '_music.mp3')}")
+        # ALWAYS archive (durable + git-tracked) — nothing generated is lost
+        arc = archive(tmp_mp3, grammar=args.grammar, prompt=prompt, negative=negative, seed=seed)
+        if tmp_mp3.parent == ARCHIVE and tmp_mp3.name.startswith("_tmp_"):
+            tmp_mp3.unlink(missing_ok=True)
+        archived.append(arc)
+        print(f"    archived → {arc.relative_to(ROOT)}")
+
+    live = None
+    if args.grammar and (args.promote or (args.count == 1 and not args.out)):
+        import shutil
+        live = BGM / f"{args.grammar}_music.mp3"
+        shutil.copy(str(archived[0]), str(live))
+        print(f"\npromoted → {live.relative_to(ROOT)}  (live for {args.grammar})")
+
+    print("\ndone. archived:")
+    for a in archived:
+        print("  ", a.relative_to(ROOT))
+    if args.grammar and not live:
+        print(f"\naudition, then promote the best:\n  cp {archived[0].relative_to(ROOT)} "
+              f"assets/bgm/{args.grammar}_music.mp3   # or re-run with --promote")
 
 
 if __name__ == "__main__":
