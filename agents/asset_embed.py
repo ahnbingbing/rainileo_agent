@@ -24,11 +24,15 @@ Index persisted to data/asset_embeddings.npz (vectors + asset_ids + meta).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+log = logging.getLogger("agents.asset_embed")
 
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
@@ -44,14 +48,37 @@ def _client():
 
 
 def embed_texts(texts: list[str]) -> "list[list[float]]":
-    """Embed a batch of texts with Gemini text-embedding-004."""
+    """Embed a batch of texts with Gemini embeddings.
+
+    Retries transient API errors (503 UNAVAILABLE / 429 / timeout) with backoff — a full
+    rebuild is ~25k one-per-call requests, so a SINGLE unretried transient error used to abort
+    the whole index build (and the lazy build_index() find_similar triggers on first use), which
+    is exactly how the 2026-09-20 pd_notes-reground RAG rebuild died at ~74%. Never let one blip
+    kill a 25k-call job."""
     client = _client()
     out = []
+    max_retries = int(os.getenv("EMBED_MAX_RETRIES", "6"))
     # The SDK embeds one content per call reliably; batch in a loop (cheap).
     for t in texts:
-        r = client.models.embed_content(model=EMBED_MODEL, contents=(t or " ")[:8000])
-        vec = r.embeddings[0].values if getattr(r, "embeddings", None) else r.embedding.values
-        out.append(list(vec))
+        last_err = None
+        for attempt in range(max_retries):
+            try:
+                r = client.models.embed_content(model=EMBED_MODEL, contents=(t or " ")[:8000])
+                vec = r.embeddings[0].values if getattr(r, "embeddings", None) else r.embedding.values
+                out.append(list(vec))
+                break
+            except Exception as e:  # noqa: BLE001
+                last_err = e
+                msg = str(e)
+                transient = any(s in msg for s in (
+                    "503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "500", "INTERNAL",
+                    "deadline", "timeout", "Timeout", "temporarily"))
+                if transient and attempt < max_retries - 1:
+                    time.sleep(min(2 ** attempt + 0.5, 30))
+                    continue
+                raise
+        else:  # pragma: no cover — loop exhausted without break
+            raise last_err
     return out
 
 
