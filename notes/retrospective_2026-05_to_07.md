@@ -883,9 +883,12 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   ★음악(라이브러리에 클럽 뱅어 0): CC0 소싱은 청취 불가·CDN 로그인게이트라 막힘 → **Vertex Lyria(`lyria-002`)로 생성**(Veo와
   같은 GCP 프로젝트, 새 키·의존성 불요; 32s 48kHz stereo/콜). `scripts/gen_music.py`가 문법별 브리프로 N개 뽑고, 컨벤션
   `assets/bgm/<grammar>_music.mp3`(→`_grammar_music`)로 코드·env 없이 라이브. 검증=클럽트랙 129BPM 감지→velocity 비트그리드가
-  거기 맞춤. ★후속 미완=PD "꽤 괜찮은데 좀 더 흥"→프롬프트 정교화 후 promote(현재 보류, 9/22 velocity는 색수정+기존 트랙으로 예정대로).
-  ★메타 corollary=**라이브러리 공백은 새 의존성이 아니라 이미 깔린 인프라로 메운다**(Lyria=Veo용 Vertex 재활용). VM 미러 주의:
-  `assets/bgm/`는 gitignore라 새 오디오는 렌더호스트로 별도 전달 필요. cf. [[D_b4copy]]·[[C_grammarquality]]·[[C_freshpool]]·[[C_grounding]].
+  거기 맞춤. PD 결정=**9/22 velocity 첫 라이브도 생성 파이프라인으로**(색+생성 클럽트랙; hype 프롬프트로 129BPM promote→
+  `velocity_music.mp3`, VM HEAD 2504328·`_grammar_music`이 VM서 그 파일로 resolve 확인). "좀 더 흥"=프롬프트 더 밀어 재생성·재promote.
+  ★영구저장(PD "만든 음악은 계속 저장")=`gen_music.py`가 모든 생성물을 `assets/bgm/generated/`+`manifest.jsonl`(프롬프트/시드)로 아카이브.
+  ★VM 전달 = **생성음악은 git-추적**(`.gitignore`: `assets/bgm/*` 무시 + 컨벤션파일·`generated/**` 재포함) → git push가 영구저장이자
+  배포(기존 93트랙은 여전히 무시, bgm 첫 바이너리 커밋). `assets/sfx/`는 아직 gitignore(실샘플 드롭시 별도 전달).
+  ★메타 corollary=**라이브러리 공백은 새 의존성이 아니라 이미 깔린 인프라로 메운다**(Lyria=Veo용 Vertex 재활용). cf. [[D_b4copy]]·[[C_grammarquality]]·[[C_freshpool]]·[[C_grounding]].
 - **C_freshbias. 신선 클립이 안 만들어진 건 인입이 아니라 선택 편향 + 리뷰어 자기강화였다(9/7)** — PD "왜 함미하비가
   공유한 신선 클립이 에피소드가 안 되나, 풀 문제야?". 검증하니 풀은 정상(최근 usable 151개, home 81·outdoor 21) — 인입도
   사용가능성(dur≥12·VLM·q≥0.7)도 병목이 아니었다. 진짜 근본 2겹: ①**RF writer가 잔잔한 신선 홈 클립보다 드라마틱한 옛
