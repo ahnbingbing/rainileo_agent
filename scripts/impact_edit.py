@@ -375,22 +375,33 @@ def _gen_sfx(tmp: Path, kind: str) -> Path:
               "-af", f"afade=t=out:st={max(0.0, cap - 0.12):.2f}:d=0.12,aresample=48000",
               "-ac", "2", str(p)])
         return p
-    if kind == "boom":                           # vine-boom-ish: sharp-decay sub + octave punch
+    if kind == "boom":                           # vine-boom: DOWNWARD pitch chirp 190→~40Hz + a
+        # click transient, exp decay. sin(2π(f0·t − k·t²)) has instantaneous freq f0−2k·t, so
+        # k=(f0−f1)/(2T) sweeps f0→f1 over T=0.55 (190→~20). A sub octave under it thickens the
+        # body; the leading 0.5·exp(−90t) burst is the "thud" attack. This reads as a real boom,
+        # not the static tone a bare sine gives.
         _run([FF, "-y", "-v", "error", "-f", "lavfi",
-              "-i", "aevalsrc='exp(-9*t)*(sin(2*PI*52*t)+0.5*sin(2*PI*104*t))':d=0.5:s=48000",
-              "-af", "volume=2.4", str(p)])
-    elif kind == "ding":                         # bell-ish: fundamental + a partial, decaying
+              "-i", "aevalsrc='exp(-6*t)*sin(2*PI*(190*t-155*t*t))"
+                    "+0.45*exp(-5*t)*sin(2*PI*(95*t-77*t*t))"
+                    "+0.5*exp(-90*t)*sin(2*PI*140*t)':d=0.55:s=48000",
+              "-af", "volume=2.3", str(p)])
+    elif kind == "ding":                         # bright bell: INHARMONIC partials, each decaying
+        # at its own rate (higher = faster) — the inharmonicity + differential decay is what makes
+        # a sine sound like a struck bell instead of a test tone.
         _run([FF, "-y", "-v", "error", "-f", "lavfi",
-              "-i", "aevalsrc='exp(-7*t)*(sin(2*PI*1040*t)+0.4*sin(2*PI*2080*t))':d=0.35:s=48000",
+              "-i", "aevalsrc='exp(-6*t)*sin(2*PI*1150*t)+0.5*exp(-9*t)*sin(2*PI*2560*t)"
+                    "+0.22*exp(-13*t)*sin(2*PI*5300*t)':d=0.45:s=48000",
               "-af", "volume=1.5", str(p)])
-    elif kind == "riser":                        # pitch sweep into the drop
+    elif kind == "riser":                        # UPWARD chirp + amplitude swell into the drop
         _run([FF, "-y", "-v", "error", "-f", "lavfi", "-i",
-              "aevalsrc=0.3*sin(2*PI*(220+900*t)*t):d=0.7",
-              "-af", "afade=t=in:d=0.55,afade=t=out:st=0.58:d=0.12,volume=1.2", str(p)])
-    elif kind == "whoosh":                        # accents a zoom punch / hard cut
+              "aevalsrc='min(1,t/0.6)*sin(2*PI*(180*t+650*t*t))':d=0.8",
+              "-af", "afade=t=out:st=0.66:d=0.12,volume=1.2", str(p)])
+    elif kind == "whoosh":                        # airy noise transition: band-limited pink noise
+        # with a fast in-swell and out-fade. (bandpass `f` takes no time-expression, so the sweep
+        # feel comes from the sharp amplitude envelope rather than a moving centre.)
         _run([FF, "-y", "-v", "error", "-f", "lavfi", "-i", "anoisesrc=d=0.34:c=pink:a=0.6",
-              "-af", "bandpass=f=1200:width_type=h:w=1400,afade=t=in:d=0.10,"
-              "afade=t=out:st=0.20:d=0.14,volume=1.1", str(p)])
+              "-af", "highpass=f=900,lowpass=f=6000,afade=t=in:d=0.08,"
+              "afade=t=out:st=0.19:d=0.15,volume=1.2", str(p)])
     else:
         raise ValueError(kind)
     return p
