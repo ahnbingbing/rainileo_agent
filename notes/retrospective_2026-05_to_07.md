@@ -880,6 +880,13 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   콘텐츠를 지시하면(‘다른 펫이 부인한다’) 그라운딩 게이트보다 상위에서 날조를 강제한다 — 템플릿의 콘텐츠 가정은 실제
   그라운딩으로 분기시켜라.** ④부차: meme SFX가 정적 사인/노이즈 버스트(테스트톤 티) → 제대로 된 DSP(하강 피치 처프 붐·비화성
   파셜 벨·상승 스윕, 스펙트로그램 검증) + 실샘플 오버라이드(`assets/sfx/<kind>.*`). 줌펀치는 이미 `top_motion_windows`라 모션정렬됨.
+  ⑤**story 음성 3버그 = 그림을 말에 욱여넣은 결과**: assemble이 비디오 타이밍을 **먼저 고정**하고 내레이션을 그 창에 끼워넣어 —
+  긴 라인은 1.7x로 speed-up(갑자기 빨라짐)·오버런해 다음 라인이 밀림(내레이션이 제 자막서 떨어져 desync)·probe 실패시 dur
+  과소추정(겹침). Fix=**그림을 말에 맞춘다** — `_prerender_and_size`가 각 씬 내레이션을 먼저 TTS·측정해 그 씬 target을 dur+0.7로
+  키움 → speed-up 불요·라인이 제 씬 안(자막 정렬)·겹침 불가. assemble은 사전렌더 path 수용 + gentle cap 1.15(was 1.7)·글자수 기반
+  dur 폴백. ★원칙=**타이밍이 종속인 두 스트림(그림·말) 중 가변적인 쪽(말 길이)에 고정적인 쪽(컷)을 맞춰라 — 반대로 하면 압축이
+  품질을 먹는다.** +truncation: 생성 트랙이 ~32.8s인데 story body 44s+ → `atrim`+최종 `-shortest`가 **비디오를 음악 길이로 잘랐다**
+  (payoff 중간 32.7s 끊김) → BGM `-stream_loop -1`로 body 전체 커버(짧은 velocity/meme 무해). VM HEAD cbe1248 검증.
   ★음악(라이브러리에 클럽 뱅어 0): CC0 소싱은 청취 불가·CDN 로그인게이트라 막힘 → **Vertex Lyria(`lyria-002`)로 생성**(Veo와
   같은 GCP 프로젝트, 새 키·의존성 불요; 32s 48kHz stereo/콜). `scripts/gen_music.py`가 문법별 브리프로 N개 뽑고, 컨벤션
   `assets/bgm/<grammar>_music.mp3`(→`_grammar_music`)로 코드·env 없이 라이브. 검증=클럽트랙 129BPM 감지→velocity 비트그리드가
