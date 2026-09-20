@@ -958,6 +958,19 @@ GRAMMARS = {
 }
 
 
+def _grammar_music(grammar: str, default: str) -> str:
+    """Convention override so PD can swap a grammar's music with NO code edit and NO env (both
+    are hard to change on the VM): drop `assets/bgm/<grammar>_music.{mp3,wav,m4a}` and it wins.
+    This is how a real club/EDM banger gets under `velocity` — the 93-track library has none, so
+    velocity currently rides a chill-house default that reads too calm for the club edit. Falls
+    back to `<GRAMMAR>_MUSIC` env, then the hardcoded default."""
+    for ext in ("mp3", "wav", "m4a"):
+        p = BGM / f"{grammar}_music.{ext}"
+        if p.exists():
+            return p.name
+    return os.getenv(f"{grammar.upper()}_MUSIC") or default
+
+
 def render_grammar(grammar: str, out, *, clips: dict | None = None, music: str | None = None,
                    copy: dict | None = None):
     """Production entry (Phase B): render one grammar to `out` from an injected `clips`
@@ -965,7 +978,7 @@ def render_grammar(grammar: str, out, *, clips: dict | None = None, music: str |
     `copy` object (B4 Writer output, grammar-specific — see each build_* docstring). With
     `copy=None` the hardcoded PROOF text is used (standalone proof runs unchanged)."""
     fn, default_music, _ = GRAMMARS[grammar]
-    return fn(music or default_music, Path(out), clips=clips, copy=copy) or Path(out)
+    return fn(music or _grammar_music(grammar, default_music), Path(out), clips=clips, copy=copy) or Path(out)
 
 
 def main():
