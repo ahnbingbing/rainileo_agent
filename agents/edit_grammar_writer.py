@@ -56,24 +56,34 @@ GRAMMAR_SPEC = {
 }
 
 
-# Meme beat structure is chosen by the grounded cast (P1-b, PD 2026-09-20). The two-pet arc's
-# "enter-the-other-pet / that pet denies" beats are a two-character joke; imposing them on a
-# single-pet cast forces the Writer to invent a pet who isn't on screen (the "레오 등장" over
-# no-Leo footage fabrication). So a solo cast gets a single-subject self-reaction arc instead.
-_MEME_BEATS_BOTH = (
-    "7 reaction-meme captions IN ORDER, each bilingual (short KO + short EN), over jump-cuts/"
-    "zoom-punches/freezes. BOTH pets are in this footage, so the two-pet blame joke is grounded: "
-    "[0] HOOK (our-house-energy title), [1] first ?!?! reaction, [2] caught-in-4K freeze, "
-    "[3] hold-up beat, [4] enter-the-other-pet (the one who appears in that clip), [5] that pet's "
-    "deadpan denial, [6] AGAIN?! climax. Name a pet only in a beat whose clip actually shows it. "
+# Meme beats are FUNCTIONS, not fixed phrases (PD 2026-09-20). Two coupled disciplines:
+#   • Grounding (P1-b): the two-pet "enter-the-other-pet / that pet denies" joke only works when
+#     both pets are on screen; a single-pet cast gets a self-reaction arc so the Writer never
+#     invents an absent pet (the "레오 등장" over no-Leo footage fabrication).
+#   • Variety: prescribing the exact wording ("?!?!", "현행범 포착", "또?!") made every meme come
+#     out the same. So the beats below name each beat's JOB and hand the Writer a menu of meme
+#     registers to draw from — the wording must be fresh per episode and grounded in THIS clip,
+#     never a stock template replayed.
+_MEME_VARIETY = (
+    "These beats are FUNCTIONS, not fixed lines — write FRESH wording every episode and never "
+    "default to stock phrases (?!?! / 포착.jpg / 또?! / 현행범 / 나 아닌데). Vary the meme register "
+    "cut-to-cut and episode-to-episode — draw from 자막예능 리액션, 짤방 캡션, 다큐 내레이션 패러디, "
+    "채팅체/급식체, 과장 감탄 — and ground each line in the specific thing THIS clip shows. "
     "Punchy internet-meme voice; KO ≤12 chars, EN ≤18 chars.")
+_MEME_BEATS_BOTH = (
+    "7 reaction-meme beats IN ORDER, each a short bilingual caption (KO + EN), over jump-cuts/"
+    "zoom-punches/freezes. BOTH pets are on screen, so the two-pet joke is grounded. Functions: "
+    "[0] HOOK — set the chaos/energy; [1] first spike — react to what just happened; [2] freeze / "
+    "'caught' evidence beat; [3] a beat/pause before the turn; [4] the OTHER pet enters (name the "
+    "pet that clip actually shows); [5] that pet's deadpan reaction or denial; [6] climax button — "
+    "the 'again / of course' punch. Name a pet only in a beat whose clip shows it. " + _MEME_VARIETY)
 _MEME_BEATS_SOLO = (
-    "7 reaction-meme captions IN ORDER, each bilingual (short KO + short EN), over jump-cuts/"
-    "zoom-punches/freezes. ONLY ONE pet is in this footage — do NOT invent a second pet entering "
-    "or blame another pet; keep every beat about the pet actually on screen: [0] HOOK (this pet's "
-    "energy title), [1] first ?!?! reaction, [2] caught-in-4K freeze (현행범 포착), [3] hold-up beat "
-    "(잠깐만), [4] the 'evidence' close-up, [5] the pet's deadpan SELF-denial (나 아닌데), [6] AGAIN?! "
-    "climax. Punchy internet-meme voice; KO ≤12 chars, EN ≤18 chars.")
+    "7 reaction-meme beats IN ORDER, each a short bilingual caption (KO + EN), over jump-cuts/"
+    "zoom-punches/freezes. ONLY ONE pet is on screen — never invent a second pet or blame another; "
+    "keep every beat about the pet present. Functions: [0] HOOK — this pet's energy/chaos; "
+    "[1] first spike reaction; [2] freeze / 'evidence' close-up beat; [3] a beat/pause before the "
+    "turn; [4] the 'proof' shot; [5] the pet's deadpan SELF-reaction or denial; [6] climax button. "
+    + _MEME_VARIETY)
 
 
 def _cast_subjects(pool: list[dict], clips: dict | None, grounding: dict | None) -> set:

@@ -71,9 +71,10 @@ GRAMMAR_PROMPTS = {
         "negative": "vocals, lyrics, slow, lo-fi, ambient, chill, calm, sad, sparse, minimal",
     },
     "meme": {
-        "prompt": ("quirky bouncy comedic groove, snappy off-beat plucks, playful pizzicato and "
-                   "woodblocks, light and mischievous, meme-video energy, upbeat, instrumental"),
-        "negative": "vocals, lyrics, dark, epic, slow, ambient",
+        "prompt": ("high-energy comedic meme beat, bouncy trap-influenced groove, punchy 808 bass, "
+                   "snappy fast hi-hats, playful brass and pizzicato stabs, cheeky and mischievous, "
+                   "hype viral internet-meme energy, fast fun and exciting, instrumental"),
+        "negative": "vocals, lyrics, dark, epic, slow, ambient, calm, sad, sparse",
     },
     "story": {
         "prompt": ("warm cinematic cozy instrumental, gentle piano and soft strings, hopeful and "

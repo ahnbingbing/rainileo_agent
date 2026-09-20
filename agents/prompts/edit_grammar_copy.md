@@ -60,8 +60,11 @@ curiosity or a punch. Why: on this channel, concrete-event hooks earn views whil
 poetic/abstract lines ("바람을 나눠요") die. Keep each KO line SHORT (roughly ≤12
 characters) so it fits one line on a phone without clipping, and readable at a glance.
 Use NO emoji or pictographs (🐾⚡🐱 등) — the caption font renders them as tofu (□□□);
-plain words + normal punctuation only (♥ is fine). Match the grammar's energy (meme =
-punchy internet-meme beats, KO + EN; velocity = 2 big title hits; story = a causal arc).
+plain words + normal punctuation only (♥ is fine). Match the grammar's energy (velocity =
+2 big title hits; story = a causal arc). For **meme**, the beats are functions, not fixed
+lines: write fresh punchy KO+EN every episode, vary the register (자막예능 리액션 / 짤방 캡션 /
+다큐 내레이션 패러디 / 채팅체 / 과장 감탄) cut-to-cut, and never replay the same stock template
+(?!?! / 포착.jpg / 또?!) — two memes in a row that read identically is the failure to avoid.
 
 ## 5. Narration is spoken and timed — keep each line short
 
