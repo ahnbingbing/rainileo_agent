@@ -281,7 +281,8 @@ def _concept_for(grammar: str, clips: dict, copy: dict) -> dict:
 
 
 def produce_grammar_episodes_shared(grammars: list, target: dt.date, hhmm_by_grammar: dict,
-                                    progress_cb=None, exclude_asset_ids=None) -> dict:
+                                    progress_cb=None, exclude_asset_ids=None,
+                                    pool=None) -> dict:
     """Controlled edit_grammar A/B: cast ONE clip set, then render every grammar from the SAME
     footage IN PARALLEL — footage is the control, the edit is the only variable. Returns
     {grammar: (mp4_path, concept)}. Raises if the shared cast itself fails (caller falls back to
@@ -296,7 +297,12 @@ def produce_grammar_episodes_shared(grammars: list, target: dt.date, hhmm_by_gra
         if progress_cb:
             progress_cb(m)
 
-    pool = _fresh_pool(set(exclude_asset_ids or []))
+    # PD 2026-09-21 (v2): when the senior director supplies a source's cast, render the 3
+    # grammars from THAT footage (pool override) instead of self-casting from _fresh_pool. Each
+    # of the batch's 3 sources thus keeps its own distinct footage (the footage-diversity gate
+    # already guaranteed <60% overlap across sources). No override → legacy self-cast, unchanged.
+    if pool is None:
+        pool = _fresh_pool(set(exclude_asset_ids or []))
     if len(pool) < 4:
         raise RuntimeError(f"grammar pool too thin ({len(pool)} clips)")
     # Cast ONCE via story — its beat structure references all 5 roles, so it produces the
