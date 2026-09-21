@@ -1904,6 +1904,20 @@ def handle_thread_replies(message, client, context):
     text_lower = text.lower()
     log.info("message event: ch=%s thread_ts=%s text=%r", channel[:8], thread_ts, text[:50])
 
+    # ── Panic-stop: deterministic, punctuation-robust, ANY channel, thread or not. ──
+    # PD 2026-09-21: a runaway job could NOT be stopped from Slack because "stop!" was
+    # silently dropped by BOTH paths — in the workroom the exact-set match `text_lower in
+    # {"stop",...}` failed on the trailing "!", and in the board channel EVERY message
+    # (incl. "stop!") is handed to the LLM assistant, so a panic-stop depended on a slow,
+    # fallible LLM round-trip that never replied while the job ran away. A stop must NEVER
+    # route through the LLM and must NOT require being inside a thread. Match the normalized
+    # command up here — before every channel/thread branch — and act immediately.
+    _stopcmd = re.sub(r"[\s!.?~,。！？…]+$", "", text_lower).strip()
+    if _stopcmd in {"중지", "정지", "stop", "스탑", "멈춰", "멈춤", "그만",
+                    "취소", "cancel", "abort", "kill", "중단"}:
+        _handle_stop(event, client)
+        return
+
     # ── Background channel: save reference images ──
     if channel == BACKGROUND_CHANNEL:
         files = event.get("files", [])
