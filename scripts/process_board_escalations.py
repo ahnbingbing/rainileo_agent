@@ -38,6 +38,7 @@ import os
 import subprocess
 import sqlite3
 import sys
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -346,11 +347,52 @@ def main() -> int:
         print("BOARD_PICKER_ENABLED != 1 — disabled")
         return 0
     LOCK.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        fd = os.open(str(LOCK), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        os.write(fd, str(os.getpid()).encode()); os.close(fd)
-    except FileExistsError:
-        print("another executor run holds the lock — exiting")
+
+    def _pid_alive(pid: int) -> bool:
+        if not pid:
+            return False
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True  # exists, just not ours to signal
+
+    # PD 2026-09-21: a SIGKILL/crash between acquire and the finally-unlink leaves a stale
+    # lock that wedges EVERY future run forever. The real one sat since Aug 19 — "another
+    # executor run holds the lock — exiting" printed 9278× and the board auto-executor was
+    # dead for a MONTH with nobody noticing. Steal the lock when the recorded holder pid is
+    # gone or the lock is older than any real run could hold it (MAX_PER_RUN × per-esc timeout).
+    _stale_s = int(os.getenv("BOARD_LOCK_STALE_SECONDS", "1800"))
+    _acquired = False
+    for _attempt in (1, 2):
+        try:
+            fd = os.open(str(LOCK), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode()); os.close(fd)
+            _acquired = True
+            break
+        except FileExistsError:
+            try:
+                _holder = int((LOCK.read_text() or "0").strip() or "0")
+            except Exception:
+                _holder = 0
+            try:
+                _age = time.time() - LOCK.stat().st_mtime
+            except OSError:
+                _age = 0.0
+            if (not _pid_alive(_holder)) or _age > _stale_s:
+                print(f"stealing stale board lock (holder={_holder} "
+                      f"alive={_pid_alive(_holder)} age={_age:.0f}s)")
+                try:
+                    LOCK.unlink()
+                except OSError:
+                    pass
+                continue  # retry the acquire once
+            print("another executor run holds the lock — exiting")
+            return 0
+    if not _acquired:
+        print("could not acquire board lock — exiting")
         return 0
     try:
         con = _db()

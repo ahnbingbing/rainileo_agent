@@ -135,8 +135,20 @@ def run(days_ahead: int = 2, dry_run: bool = False, do_upload: bool = True) -> d
     log.warning("slot_topup: %d empty slot(s): %s", len(gaps), result["gaps"])
     if dry_run:
         return result
-    for g in gaps:
+    # PD 2026-09-21: OVERALL wall-clock cap. run_with_selfheal caps a SINGLE slot (RF 900s /
+    # batch 5400s), but topup loops it PER gap — 4 gaps × up to 5400s = a 6-hour runaway (the
+    # 9/23 topup ground 2.25h grinding empty slots, un-killable from Slack). Bound the WHOLE
+    # job: once the deadline passes, defer the remaining gaps to the next scheduled run instead
+    # of grinding. A truly empty slot is filled next time, not by burning the morning.
+    import time as _t
+    _deadline = _t.monotonic() + int(os.getenv("TOPUP_MAX_SECONDS", "1800"))
+    for gi, g in enumerate(gaps):
         tag = f"{g['date']} {g['slot']} {g['lane']}"
+        if _t.monotonic() > _deadline:
+            for gg in gaps[gi:]:
+                result["failed"].append(f"{gg['date']} {gg['slot']} {gg['lane']} (지연: topup 벽시계 캡)")
+            log.warning("slot_topup: wall-clock cap hit — deferring %d gap(s) to next run", len(gaps) - gi)
+            break
         try:
             # single-slot self-heal (now reroll + human-exclusion + face-gate backfill aware)
             res = run_with_selfheal(g["date"], lane_filter=g["lane"], slot_filter=g["slot"],

@@ -1331,6 +1331,30 @@ def _robust_json_parse(text: str, allow_llm_repair: bool = True):
     # extractor below (it grabbed the prose "[" → parsed garbage → 'Expecting value char 1'
     # even when a valid JSON array sat later in the SAME response). Try string-aware balanced
     # slices from every "[" / "{" first — same fix as writer_director._parse_json_loose.
+    #
+    # PD 2026-09-21: returning the FIRST parseable slice was itself the 9/23 empty-batch root.
+    # The grounding-heavy clip-reading prose writes trim ranges like "[0,8] only, 155s long",
+    # so the first balanced "[" slice json-loaded to [0, 8] (a bare int list) — the concept
+    # array sitting LATER in the same response was never reached. producer then filters to
+    # dict-only → 0 concepts → no_concept → empty slot → self-heal runaway. A concept payload
+    # is ALWAYS an object or an array containing objects — never a bare [int,int]. So collect
+    # every parseable slice and pick the most concept-shaped one (cuts-bearing > structured >
+    # anything), preferring the LARGEST such slice (the full concept array is bigger than any
+    # stray object/range in the prose). Falls back to first-parseable only if nothing better.
+    def _has_cuts(v) -> bool:
+        if isinstance(v, dict):
+            return bool(v.get("cuts"))
+        if isinstance(v, list):
+            return any(isinstance(x, dict) and x.get("cuts") for x in v)
+        return False
+
+    def _structured(v) -> bool:
+        if isinstance(v, dict) and v:
+            return True
+        if isinstance(v, list):
+            return any(isinstance(x, dict) for x in v)
+        return False
+
     try:
         from agents.writer_director import _balanced_json_slice as _bal
         _t = (text or "").strip()
@@ -1338,6 +1362,8 @@ def _robust_json_parse(text: str, allow_llm_repair: bool = True):
             _t = _t.split("\n", 1)[1] if "\n" in _t else _t[3:]
             if _t.rstrip().endswith("```"):
                 _t = _t.rstrip()[:-3]
+        _cands: list[tuple[int, int, object]] = []  # (rank, source_len, value)
+        _first = None
         for _op, _cl in (("[", "]"), ("{", "}")):
             _i = 0
             while True:
@@ -1348,10 +1374,21 @@ def _robust_json_parse(text: str, allow_llm_repair: bool = True):
                 if _fr:
                     for _c in (_fr, re.sub(r',\s*([}\]])', r'\1', _fr)):
                         try:
-                            return json.loads(_c, strict=False)
+                            _v = json.loads(_c, strict=False)
                         except Exception:
-                            pass
+                            continue
+                        if _first is None:
+                            _first = _v
+                        _rank = 2 if _has_cuts(_v) else (1 if _structured(_v) else 0)
+                        if _rank:
+                            _cands.append((_rank, len(_c), _v))
+                        break
                 _i = _st + 1
+        if _cands:
+            _cands.sort(key=lambda x: (x[0], x[1]))  # cuts-bearing first, then largest
+            return _cands[-1][2]
+        if _first is not None:
+            return _first
     except Exception:
         pass
     s = _extract(text)

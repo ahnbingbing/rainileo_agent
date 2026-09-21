@@ -2199,9 +2199,16 @@ def _handle_stop(event: dict, client) -> None:
     # Set global stop flag — all background threads check this
     _stop_flag.set()
 
-    # Kill subprocesses
+    # Kill subprocesses. PD 2026-09-21: the pattern MUST include the orchestrators that own the
+    # renders — slot_topup / launch_selfheal / agents.launch — not just the leaf stage scripts.
+    # The 9/23 runaway was `python -m agents.slot_topup` grinding empty slots; "중지" reported
+    # "0개 종료" because slot_topup (the parent) and its animate_seedance child matched NOTHING
+    # here (the list predated the launch/self-heal/Seedance era), so the parent instantly
+    # respawned the next Seedance cut and the stop looked like a no-op. Kill parent + children.
     result = _sp.run(
-        ["pgrep", "-f", "animate_hero_veo3|cameraman|producer|burn_captions|assemble_episode|extract_clips|generate_character|preprocess_for_i2v|build_bumpers|qa_review|tag_assets"],
+        ["pgrep", "-f", "slot_topup|launch_selfheal|agents\\.launch|impact_edit|"
+         "animate_seedance|animate_hero_veo3|cameraman|producer|burn_captions|assemble_episode|"
+         "extract_clips|generate_character|preprocess_for_i2v|build_bumpers|qa_review|tag_assets"],
         capture_output=True, text=True,
     )
     pids = result.stdout.strip().split("\n") if result.stdout.strip() else []

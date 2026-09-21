@@ -792,8 +792,13 @@ def _act_stop_renders() -> str:
     render kept running (it spawns setsid subprocesses it never tracked) — so 'stop' was a
     lie. This pkills the render processes for real. Does NOT touch the bot (slack.app) or
     the deploy timer — only render workers."""
-    pats = ["agents.launch_selfheal", "recaption_slot.py", "scripts/_render_",
-            "scripts/_rf_", "scripts/_recap_", "animate_seedance", "seedance_i2v"]
+    # PD 2026-09-21: include the PARENT orchestrators (slot_topup, the launch batch), not just
+    # leaf renders. This path already pkilled animate_seedance/seedance_i2v, but slot_topup —
+    # the parent that spawns them — survived and instantly respawned the next Seedance cut, so
+    # "중지" looked like a no-op during the 9/23 runaway. Kill the parent and the tree dies.
+    pats = ["agents.slot_topup", "agents.launch_selfheal", "agents.launch", "impact_edit",
+            "recaption_slot.py", "scripts/_render_", "scripts/_rf_", "scripts/_recap_",
+            "animate_seedance", "seedance_i2v"]
     killed = []
     for p in pats:
         try:
