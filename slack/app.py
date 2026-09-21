@@ -1904,17 +1904,21 @@ def handle_thread_replies(message, client, context):
     text_lower = text.lower()
     log.info("message event: ch=%s thread_ts=%s text=%r", channel[:8], thread_ts, text[:50])
 
-    # ── Panic-stop: deterministic, punctuation-robust, ANY channel, thread or not. ──
-    # PD 2026-09-21: a runaway job could NOT be stopped from Slack because "stop!" was
-    # silently dropped by BOTH paths — in the workroom the exact-set match `text_lower in
-    # {"stop",...}` failed on the trailing "!", and in the board channel EVERY message
-    # (incl. "stop!") is handed to the LLM assistant, so a panic-stop depended on a slow,
-    # fallible LLM round-trip that never replied while the job ran away. A stop must NEVER
-    # route through the LLM and must NOT require being inside a thread. Match the normalized
-    # command up here — before every channel/thread branch — and act immediately.
-    _stopcmd = re.sub(r"[\s!.?~,。！？…]+$", "", text_lower).strip()
-    if _stopcmd in {"중지", "정지", "stop", "스탑", "멈춰", "멈춤", "그만",
-                    "취소", "cancel", "abort", "kill", "중단"}:
+    # ── Panic-stop: deterministic, NL-tolerant, ANY channel, thread or not. ──
+    # PD 2026-09-21: a runaway job could NOT be stopped from Slack. Ground truth from the
+    # journal — PD sent "stop!", "제작 멈추라고", "셀프힐 멈춰줘", "셀프힐 멈추게 할래!?" and NONE
+    # worked: in the workroom the stop dispatch was an EXACT keyword set (so "stop!" ≠ "stop",
+    # and any natural phrasing missed entirely), and in the board channel EVERY message went to
+    # the LLM assistant — a panic-stop that depends on a slow, fallible LLM round-trip that
+    # never replied while the job ran away. A stop is a SAFETY control: it must be deterministic,
+    # must not route through the LLM, must not require a thread, and must tolerate natural
+    # phrasing. So: a SHORT message containing a stop verb = stop intent → act immediately, here,
+    # before every channel/thread branch. The length guard keeps it from firing on a long
+    # conversational message that merely mentions "멈추다".
+    _txt = text_lower.strip()
+    _ko_stop = ("중지", "정지", "멈춰", "멈추", "멈춤", "그만", "중단", "스탑", "스톱")
+    if _txt and len(_txt) <= 28 and (
+            any(s in _txt for s in _ko_stop) or re.search(r"\b(stop|halt|abort)\b", _txt)):
         _handle_stop(event, client)
         return
 
