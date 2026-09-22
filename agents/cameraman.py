@@ -2604,6 +2604,51 @@ def _rf_cross_cut_coherence_gate(manifests: dict, anim_dir: Path,
     drop = set(_decide_incoherent_drops(info))
     if not drop:
         return
+    # VIABILITY GUARD (PD 2026-09-22): the recurring 15.9s "gutted stub" that the RF upload
+    # floor rejects is this gate over-dropping — a themed_compilation cast from several outings
+    # gets nuked to a single surviving cut (body ~11.9s + ~4s bumpers = 15.9s < 16s floor) →
+    # ORPHAN → empty slot / 90-min self-heal grind. Same shape as the face gate's ALLDROP guard:
+    # a deterministic drop that guts the episode below viability is worse than a mild incoherence.
+    # So if dropping everything in `drop` would leave the body below floor+margin, keep back the
+    # LONGEST dropped cuts (fewest re-admitted) until the body clears floor+margin — leaving
+    # headroom above the reject floor instead of landing 0.1s under it. If keeping ALL cuts is
+    # still too short, we drop nothing and let the downstream floor reject a genuinely short
+    # episode (we never fabricate length). Loud-logged for PD spot-check. RF_COHERENCE_VIABILITY_GUARD=0 reverts.
+    if os.getenv("RF_COHERENCE_VIABILITY_GUARD", "1") != "0":
+        def _cut_secs(tag: str) -> float:
+            p = anim_dir / f"{tag}.mp4"
+            try:
+                if p.exists():
+                    return float(subprocess.run(
+                        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                         "-of", "default=nw=1:nk=1", str(p)],
+                        capture_output=True, text=True, timeout=15).stdout.strip() or 0)
+            except Exception:
+                pass
+            return 0.0
+        _floor = float(os.getenv("RF_MIN_SECONDS", "16"))
+        _margin = float(os.getenv("RF_COHERENCE_MARGIN_SECONDS", "2.0"))
+        _bumper = 4.0  # intro 1.5s + outro 2.5s (assets/branding/*_bumper.mp4)
+        _target_body = max(0.0, _floor - _bumper + _margin)
+        _all_tags = [c.get("tag") for c in cuts_meta]
+        _body = sum(_cut_secs(t) for t in _all_tags if t not in drop)
+        if _body < _target_body:
+            _restored = []
+            for t in sorted(drop, key=_cut_secs, reverse=True):
+                if _body >= _target_body:
+                    break
+                _body += _cut_secs(t)
+                _restored.append(t)
+            if _restored:
+                drop -= set(_restored)
+                log.info("rf coherence gate: viability guard kept %s (body→%.1fs ≥ %.1fs target) "
+                         "rather than gut below the %.0fs floor",
+                         ", ".join(sorted(_restored)), _body, _target_body, _floor)
+                if progress_cb:
+                    progress_cb(f":shield: 컷간 일관성 — viability 가드: gutting 방지로 "
+                                f"{', '.join(sorted(_restored))} 유지(본문 {_body:.1f}s, floor+여유 확보)")
+        if not drop:
+            return
     manifests["cuts"] = [c for c in cuts_meta if c.get("tag") not in drop]
     for key in ("concept_cuts",):
         lst = manifests.get(key)
