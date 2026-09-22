@@ -206,7 +206,23 @@ def submit_job(api_key: str, model: str, *,
                   file=sys.stderr)
             seconds = 5
 
-    content: list[dict] = [{"type": "text", "text": prompt}]
+    # PD 2026-09-22: Seedance hallucinates its own on-screen CAPTION into the frame —
+    # cutesy garbled Korean + a color-emoji heart (the wink closer rendered "오늘도 합찌 ❤"
+    # baked into cut6, then our drawtext burned the real "오늘도 햅삐 ♥" on top → a doubled,
+    # misspelled caption). The API `watermark:False` only suppresses Seedance's OWN watermark,
+    # not this generated text. We NEVER want the model to render text: every caption in this
+    # pipeline is burned by drawtext downstream, and Seedance cannot spell Hangul anyway. So
+    # deterministically append a clean-frame negative to EVERY call (all lanes/modes) — this is
+    # the single chokepoint through which i2v/interp/ref prompts reach the API.
+    _NO_TEXT_GUARD = (
+        " The frame is clean with NO on-screen text, NO captions, NO subtitles, "
+        "NO letters, NO words, NO Korean or Hangul characters, NO numbers, NO logos, "
+        "NO emoji, and NO watermark anywhere in the image."
+    )
+    _prompt = (prompt or "").rstrip()
+    if "NO on-screen text" not in _prompt:
+        _prompt = _prompt + _NO_TEXT_GUARD
+    content: list[dict] = [{"type": "text", "text": _prompt}]
 
     if mode == "i2v":
         if image is None:
