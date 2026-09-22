@@ -564,6 +564,22 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   cf [[harness_pairing_and_fantasy_gate]]). Giri 백스톱: AV 해부 VLM이 genitalia_visible 리포트→cap≤5. ★교훈:
   **부재하는 해부/착용물의 연속성은 두 생성 지점(still+motion) 모두에서 결정론적으로 단언해야 한다 — 한쪽만 하면
   다른 쪽이 드리프트한다.** cf no-tail(같은 "없는 것 단언" 계열)·harness pairing.
+- **A28. 캡션 "오늘도 합찌"의 정체는 Seedance가 프레임에 직접 구운 환각 텍스트였다 — 화면의 글자도 렌더러가 지어낸다(9/22)** —
+  PD가 AV 클로저 자막이 "오늘도 햅삐"가 아니라 "**오늘도 합찌 ❤**"로 자꾸 나온다고 지적. 처음엔 손글씨 폰트 오독이나
+  LLM 오탈자를 의심했으나 **DB·소스 전수 스캔에 "합찌"가 단 한 글자도 없었다**(카드엔 정확히 "오늘도 햅삐 ♥"만). 진실은
+  프레임에 있었다: **번인 전 Seedance 원본 컷**(`seedance_raw/…/cut6_wink_ending.mp4`)에 이미 "오늘도 합찌 ❤"가
+  구워져 있었다 — AI 영상모델이 한글을 못 써서 "햅삐/해피"를 깨뜨린 화면 캡션 + 컬러 이모지 하트를 스스로 생성한 것.
+  그 위에 우리 drawtext가 진짜 "오늘도 햅삐 / Happy as ever"를 얹어 **오탈자 이중 자막**이 됐다. Seedance API의
+  `watermark:False`는 자기 워터마크만 죽이지, 이 생성 텍스트는 못 막는다. Fix(aaa79b0): 우리는 Seedance가 텍스트를
+  그리길 **결코** 원하지 않는다(모든 자막은 하류 drawtext가 굽고, Seedance 한글은 어차피 판독 불가) → i2v/interp/ref
+  모든 호출이 거치는 **단일 초크포인트 `animate_seedance_i2v.submit_job`**에 "NO on-screen text/letters/Hangul/emoji/
+  watermark, clean frame" 네거티브를 상시 부착(양 레인). 이는 신설이 아니라 **기존 설계의 강제**다 — director_shots.md는
+  이미 스코어보드·마퀴·플로팅 숫자 같은 그래픽을 Seedance가 아니라 `overlay_fx` 후처리로 돌리라고 규정한다(Seedance는
+  텍스트를 안 그린다는 전제). 검증: 해피-윙크 트리거 재현 렌더가 텍스트 0으로 나왔다(단, 환각은 확률적이라 근절 증명은
+  아님 → PD 스팟체크, 재발 시 후처리 OCR/crop 백스톱). ★교훈: **화면에 나타나는 글자의 출처를 DB·코드에서 못 찾으면
+  렌더러가 지어낸 것이다 — 프레임(번인 전 원본)이 ground truth다. 그리고 "생성기가 안 하리라 기대하는 것"은
+  단일 초크포인트에서 결정론으로 금지해야 한다(A27과 같은 "없는 것/원치 않는 것을 명시 단언" 계열).**
+  cf A24(canon 사실도 렌더-safe한 형태로만)·A27(무성기 단언)·[[grounding_pd_notes_gpt4omini]].
 
 ### 4.3 리뷰어 / Giri
 - **B0. Writer가 영상을 안 보고 캡션을 우김 → 캡션↔프레임 상시 불일치(상시, 최다 재발)** — 파이프라인
