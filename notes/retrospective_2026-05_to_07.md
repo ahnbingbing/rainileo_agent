@@ -1044,6 +1044,15 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   "unavailable photos"(일시적)는 클래스서 제외(회귀). 라이브 검증: 재롤이 viable 컨셉 찾아 온전한 에피소드 렌더.
   **★교훈: "빈 슬롯"의 근본은 게이트가 아니라 자동복구가 '실제로 복구'하지 못한 것 — self-heal은 실패의 성격(일시적 vs
   결정론)에 따라 재시도 전략을 바꿔야 한다. 그리고 "빈 슬롯"엔 원인이 하나가 아니다(D-salvage 참조).**
+  **후속(9/22) — gutting을 뒤(reroll)가 아니라 앞(게이트)에서 막는다:** content_gutted-reroll로 라우팅해도 얇은 풀에선
+  fresh 컨셉이 안 나와 self-heal이 90분을 갈리다 슬롯을 잃는다(9/24 12:30). 그리고 코어런스 게이트의 과드롭은 정확히
+  **반복되는 15.9s 시그니처**를 남겼다 — themed_compilation(여러 outing) 캐스트가 cut1 앵커 기준 전부 incoherent로
+  드롭돼 **1컷만 생존**(본문 ~11.9s + 범퍼 4s = 15.9s < 16s floor). 그래서 코어런스 게이트에 **viability 가드**를 달았다
+  (face 게이트 ALLDROP 가드와 동형): 드롭이 본문을 floor+여유(RF_MIN_SECONDS-4s범퍼+2s=14s) 아래로 gutting하면 **가장 긴
+  드롭 컷부터 되살려**(재-admit 최소) floor 위 여유를 확보하고, 전 컷을 살려도 짧으면 아무것도 안 되살려 downstream
+  floor가 정직하게 거부(길이 날조 금지). Giri는 미세-stitch backstop으로 그대로. ★교훈 정련: **결정론 드롭이 정당해도
+  그 결과가 에피소드를 생존선 아래로 gutting한다면, 드롭 자체를 viability로 상한해야 한다 — 사후 reroll은 풀이 뒷받침될
+  때만 복구고, 안 될 땐 "약한 일관성 > 빈 슬롯"이다.** cf [[harness_pairing_and_fantasy_gate]](ALLDROP 가드 계열)·C19(front-run floor 정렬).
 - **C16. 0.7초 버스트 클립이 에피소드 근간이 됐다 — 그리고 self-heal 진단이 없는 파일을 지목했다(7/23)** —
   07-25 12:30 RF가 빈 슬롯. self-heal LLM 진단: `agents/real_footage/branding_cards.py`가 항상 'Ryani & Leo'
   콜라주라 불일치 → **그 파일은 존재하지 않았다**. 로그의 `RF pool: dropping branding asset`(PD가 마크한 채널
