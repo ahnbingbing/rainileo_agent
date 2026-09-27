@@ -67,6 +67,15 @@ def edit_grammar_for_slot(target: dt.date, hhmm: str, assignments: list) -> str 
     call still resolves the true day-wide slot.)"""
     if not _grammar_mode_on():
         return None
+    # PD 2026-09-27 (v2): the senior-director model casts grammar per source (run_v2_batch),
+    # replacing this rolling window. Return None under v2 so a carry-day RF fallback (missing pin)
+    # produces a plain standard RF instead of invoking the stale 4-slot rolling-window map.
+    try:
+        from agents import launch_v2
+        if launch_v2.enabled():
+            return None
+    except Exception:
+        pass
     grammar, slot = _day_grammar_slot(target)
     return grammar if (slot and hhmm == slot) else None
 
@@ -282,7 +291,7 @@ def _concept_for(grammar: str, clips: dict, copy: dict) -> dict:
 
 def produce_grammar_episodes_shared(grammars: list, target: dt.date, hhmm_by_grammar: dict,
                                     progress_cb=None, exclude_asset_ids=None,
-                                    pool=None) -> dict:
+                                    pool=None, tag: str | None = None) -> dict:
     """Controlled edit_grammar A/B: cast ONE clip set, then render every grammar from the SAME
     footage IN PARALLEL — footage is the control, the edit is the only variable. Returns
     {grammar: (mp4_path, concept)}. Raises if the shared cast itself fails (caller falls back to
@@ -324,7 +333,11 @@ def produce_grammar_episodes_shared(grammars: list, target: dt.date, hhmm_by_gra
         copy = (base_copy if grammar == "story"
                 else propose_grammar_copy(grammar, pool, slot_hhmm=hh,
                                           fixed_clips=shared_clips)["copy"])
-        out = Path(f"data/output/episodes/episode_rf_{grammar}_{ts}_{hh.replace(':', '')}.mp4")
+        # PD 2026-09-27 (v2): 3 senior-director sources each render the same grammar, so the
+        # slot-based name collides across sources (episode_rf_velocity_<ts>_.mp4 ×3 → overwrite).
+        # A per-source `tag` disambiguates the filename; falls back to the slot for the live path.
+        _fn = tag if tag else hh.replace(':', '')
+        out = Path(f"data/output/episodes/episode_rf_{grammar}_{ts}_{_fn}.mp4")
         out.parent.mkdir(parents=True, exist_ok=True)
         render_grammar(grammar, out, clips=shared_clips, copy=copy)
         if not out.exists():

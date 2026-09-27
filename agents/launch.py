@@ -218,6 +218,22 @@ def day_assignments(target: dt.date) -> list[tuple[str, str]]:
     return out
 
 
+def effective_assignments(target: dt.date) -> list[tuple[str, str]]:
+    """The (lane, "HH:MM") slots actually in force for `target`, honoring the v2 6-slot
+    senior-director model when LAUNCH_MODEL=v2. Single-slot paths (slot_topup, a manual
+    --slot re-render) resolve the RIGHT slot set through here, so a v2-only slot (09:00/
+    13:00/20:00) isn't invisibly dropped by the 4-slot day_assignments. Flag off → the live
+    4-slot Latin square, unchanged."""
+    try:
+        from agents import launch_v2
+        if launch_v2.enabled():
+            plan = launch_v2.day_plan(target)
+            return [(s["lane"], hh) for hh, s in sorted(plan["slots"].items())]
+    except Exception as e:  # noqa: BLE001
+        log.warning("effective_assignments: v2 lookup failed → 4-slot: %s", e)
+    return day_assignments(target)
+
+
 def publish_at_for(target: dt.date, hhmm: str) -> str:
     """ISO-UTC scheduled-public time for `hhmm` KST on `target`. YouTube requires
     publishAt > now; if the slot already passed (or is <1h away), roll it to the
@@ -292,7 +308,8 @@ def launch_pipeline(target: dt.date, *,
                     lane_filter: str | None = None,
                     slot_filter: str | None = None,
                     exclude_asset_ids: list | None = None,
-                    consolidate_videos: bool = False) -> list[dict]:
+                    consolidate_videos: bool = False,
+                    assignments_override: list | None = None) -> list[dict]:
     """Produce the day's 4 launch episodes per the Latin-square assignment.
 
     Returns a list of slot result dicts: {lane, slot, output, video_id,
@@ -331,7 +348,10 @@ def launch_pipeline(target: dt.date, *,
                 pass
         except Exception as _e:
             log.warning("trend_feed refresh failed (non-fatal): %s", _e)
-    assignments = day_assignments(target)
+    # PD 2026-09-27 (v2): the senior-director 6-slot model drives arbitrary (lane, slot) pairs
+    # (an AV at 20:00, pinned carry RF at slots day_assignments never emits). An explicit plan is
+    # honored verbatim; otherwise effective_assignments picks v2 vs the live 4-slot Latin square.
+    assignments = list(assignments_override) if assignments_override else effective_assignments(target)
     # PD 2026-06-25: GUARANTEE that one of the two daily AVs rides a timely (시의성) hook —
     # World Cup, Halloween, a viral pet challenge — instead of leaving it to chance. The
     # trends were only SUGGESTED to the brainstorm, so a day could ship zero timely AVs.
@@ -812,7 +832,7 @@ def main() -> int:
     target = (dt.date.fromisoformat(args.date) if args.date
               else (dt.datetime.now(KST) + dt.timedelta(days=_lead)).date())
     if args.dry_run:
-        for lane, hhmm in day_assignments(target):
+        for lane, hhmm in effective_assignments(target):
             print(f"  {hhmm}  {lane}  → publish_at {publish_at_for(target, hhmm)}")
         return 0
 

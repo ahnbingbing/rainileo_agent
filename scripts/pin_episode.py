@@ -34,7 +34,7 @@ try:
 except Exception:
     pass
 
-from agents.launch import publish_at_for, day_assignments  # noqa: E402
+from agents.launch import publish_at_for, effective_assignments  # noqa: E402
 from agents.producer import _db  # noqa: E402
 
 
@@ -57,8 +57,8 @@ def main() -> int:
         return 1
     target = dt.date.fromisoformat(args.date)
 
-    # Sanity: does the Latin square put `lane` at this slot on this date?
-    assigned = dict((hh, ln) for ln, hh in day_assignments(target))
+    # Sanity: does the day's plan (v2 6-slot or the 4-slot Latin square) put `lane` at this slot?
+    assigned = dict((hh, ln) for ln, hh in effective_assignments(target))
     if assigned.get(args.slot) != args.lane:
         print(f"⚠️  경고: {args.date} {args.slot} 슬롯은 라틴스퀘어상 "
               f"'{assigned.get(args.slot)}' 인데 '{args.lane}'로 핀하려 합니다. "

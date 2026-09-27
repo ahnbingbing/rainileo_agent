@@ -4908,7 +4908,16 @@ def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.dat
         try:
             from agents.slot_topup import slot_occupancy, _nearest_slot
             from agents.launch import TIMESLOTS, KST
+            # v2: snap to the 6 senior-director slots so this key matches slot_occupancy's
+            # (also v2-aware) — else a 09:00/13:00/20:00 video snaps to a 4-slot key and the
+            # collision lookup misses/false-hits. Flag off → 4-slot grid, unchanged.
             _slots = [s.strip() for s in TIMESLOTS if s.strip()]
+            try:
+                from agents import launch_v2
+                if launch_v2.enabled():
+                    _slots = [s.strip() for s in launch_v2.SLOTS_V2 if s.strip()]
+            except Exception:
+                pass
             _pt = dt.datetime.fromisoformat(publish_at.replace("Z", "+00:00")).astimezone(KST)
             _d = _pt.strftime("%Y-%m-%d")
             _slot = _nearest_slot(_pt.hour * 60 + _pt.minute, _slots)

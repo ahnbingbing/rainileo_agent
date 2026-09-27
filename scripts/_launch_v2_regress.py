@@ -68,6 +68,51 @@ check("dominant when top1 ≥ 2× top2", _mode(400, 150) == "dominant", detail=_
 check("spread when similar", _mode(300, 250) == "spread", detail=_mode(300, 250))
 check("dominant when single winner", _mode(400, None) == "dominant")
 
+# ── orchestrator wiring (PD 2026-09-27) ──
+import os
+
+# helpers pick the right slots per role
+check("_rf_slots(produce, fresh) = 5", launch_v2._rf_slots(p0, "rf_fresh") == sorted(rf0))
+check("_av_slots(produce) = [20:00]", launch_v2._av_slots(p0) == ["20:00"])
+check("_rf_slots(carry, carry) = 4", launch_v2._rf_slots(p1, "rf_carry") == sorted(rf1))
+check("_av_slots(carry) = 2", launch_v2._av_slots(p1) == ["08:00", "20:00"])
+
+# produce day's 4 carry pins align with the NEXT day's 4 carry slots
+carry_slots_next = launch_v2._rf_slots(launch_v2.day_plan(d0 + dt.timedelta(days=1)), "rf_carry")
+check("produce pins (5..9) map onto next-day carry slots",
+      len(carry_slots_next) == 4, detail=f"carry_slots={carry_slots_next}")
+
+# per-source filename tag is unique + filesystem-safe (no collisions across 3 sources)
+tags = [launch_v2._safe_tag(sid, i) for i, sid in enumerate(["A", "B", "C"])]
+check("_safe_tag unique across sources", len(set(tags)) == 3, detail=str(tags))
+check("_safe_tag alnum-safe", all(t.replace("src", "").isalnum() for t in tags))
+check("_safe_tag handles empty source_id", bool(launch_v2._safe_tag("", 7)))
+
+# effective_assignments: flag OFF = live 4-slot; flag ON = v2 6-slot (both days)
+from agents import launch as _launch
+_prev = os.environ.pop("LAUNCH_MODEL", None)
+try:
+    off = _launch.effective_assignments(d0)
+    check("flag OFF → 4-slot live grid", len(off) == 4, detail=f"{len(off)} slots")
+    check("flag OFF → 12:30 present (legacy)", any(hh == "12:30" for _, hh in off))
+    os.environ["LAUNCH_MODEL"] = "v2"
+    on_p = _launch.effective_assignments(d0)
+    on_c = _launch.effective_assignments(d1)
+    check("flag ON produce → 6 slots (5RF+1AV)",
+          len(on_p) == 6 and sum(1 for l, _ in on_p if l == "real_footage") == 5,
+          detail=str(on_p))
+    check("flag ON carry → 6 slots (4RF+2AV)",
+          len(on_c) == 6 and sum(1 for l, _ in on_c if l == "ai_vtuber") == 2,
+          detail=str(on_c))
+    check("flag ON → no legacy 12:30", not any(hh == "12:30" for _, hh in on_p))
+finally:
+    os.environ.pop("LAUNCH_MODEL", None)
+    if _prev is not None:
+        os.environ["LAUNCH_MODEL"] = _prev
+
+# enabled() reflects the flag
+check("enabled() False without flag", launch_v2.enabled() is False)
+
 print()
 if FAILS:
     print(f"REGRESS FAILED: {FAILS}")

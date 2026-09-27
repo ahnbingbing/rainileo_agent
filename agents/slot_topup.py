@@ -56,7 +56,16 @@ def slot_occupancy(day_strs: set[str], yt=None) -> dict[tuple[str, str], dict]:
     misses already-PUBLIC ones, so a public-filled slot reads as empty. Raises on API failure
     so the caller chooses fail-open vs fail-closed."""
     from agents.launch import TIMESLOTS, KST
+    # v2 (LAUNCH_MODEL=v2): snap videos to the 6 senior-director slots, not the 4-slot grid —
+    # else a 09:00/13:00/20:00 video mis-snaps to the nearest legacy slot and a real fill reads
+    # as an empty slot (or double-books). Flag off → the 4-slot grid, unchanged.
     slots = [s.strip() for s in TIMESLOTS if s.strip()]
+    try:
+        from agents import launch_v2
+        if launch_v2.enabled():
+            slots = [s.strip() for s in launch_v2.SLOTS_V2 if s.strip()]
+    except Exception:
+        pass
     if yt is None:
         from youtube.oauth import get_youtube
         yt = get_youtube()
@@ -98,7 +107,7 @@ def _occupied(day_strs: set[str]) -> set[tuple[str, str]]:
 
 def find_gaps(days_ahead: int = 2) -> list[dict]:
     """Empty FUTURE slots across [today .. today+days_ahead], each with its assigned lane."""
-    from agents.launch import day_assignments, publish_at_for, KST
+    from agents.launch import effective_assignments, publish_at_for, KST
     today = dt.datetime.now(KST).date()
     now = dt.datetime.now(dt.timezone.utc)
     day_strs = {(today + dt.timedelta(days=o)).isoformat() for o in range(days_ahead + 1)}
@@ -106,7 +115,7 @@ def find_gaps(days_ahead: int = 2) -> list[dict]:
     gaps: list[dict] = []
     for off in range(days_ahead + 1):
         d = today + dt.timedelta(days=off)
-        for lane, slot in day_assignments(d):
+        for lane, slot in effective_assignments(d):
             pub = publish_at_for(d, slot)
             try:
                 pub_dt = dt.datetime.fromisoformat(pub.replace("Z", "+00:00"))

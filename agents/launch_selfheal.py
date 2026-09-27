@@ -159,7 +159,7 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
                       do_upload: bool = True, progress_cb=None) -> dict:
     """Run the launch slots; re-run failed ones with remediation up to `max_rounds`.
     Returns {done, failed, diagnoses}."""
-    from agents.launch import launch_pipeline, day_assignments
+    from agents.launch import launch_pipeline, effective_assignments
 
     # Slack wiring (PD 2026-06-10): post to the workroom + open per-slot threads,
     # exactly like launch.main — without this the self-heal run was stdout-only and
@@ -180,6 +180,20 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
     except Exception as e:
         log.warning("self-heal slack wiring failed (stdout only): %s", e)
 
+    # PD 2026-09-27: v2 senior-director 6-slot batch. When LAUNCH_MODEL=v2 the whole batch is
+    # produced by launch_v2.run_v2_batch (produce-day 9RF+1AV → carry-day 4RF+2AV), which owns its
+    # own render/schedule/carry-pin + summary. The 4-slot self-heal loop below is bypassed
+    # entirely. A single-slot re-render (--lane/--slot) still uses the per-slot path (it works in
+    # both models). Flag off → this branch is skipped and the live 4-slot path is byte-identical.
+    try:
+        from agents import launch_v2
+        if launch_v2.enabled() and not lane_filter and not slot_filter:
+            return launch_v2.run_v2_batch(
+                target, do_upload=do_upload, progress_cb=progress_cb,
+                slack_client=slack_client, slack_channel=slack_channel)
+    except Exception as e:
+        log.exception("launch_v2 branch failed — falling back to 4-slot self-heal: %s", e)
+
     def cap(m, buf=None):
         if buf is not None:
             buf.append(m)
@@ -198,7 +212,7 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
         if progress_cb:
             progress_cb(m)
 
-    assignments = day_assignments(target)
+    assignments = effective_assignments(target)
     if lane_filter:
         assignments = [(l, h) for l, h in assignments if l == lane_filter]
     if slot_filter:
