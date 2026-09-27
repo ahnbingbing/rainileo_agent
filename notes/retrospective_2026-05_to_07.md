@@ -1461,6 +1461,24 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   못 잡는다. 우회 경로의 계약은 "무엇이 에러났나"가 아니라 우회당한 경로의 **출력물을 산출물끼리 diff**해 열거하라
   (표준 RF엔 범퍼가 있고 grammar엔 없다 = 프레임을 보면 즉시 보인다, 로그로는 안 보인다). cf.
   [[D_b4copy]]·[[D_lanemix]]·[[view_data_concrete_hook_title]]·[[C_grammarquality]].
+- **D_v2wiring. dry-run 통과가 죽은 플래그를 가린다 — "구현대기 behind a flag"가 실은 프로덕션에 아예 안 연결돼 있었다(9/27)** —
+  PD "왜 새벽 배치가 2개만 만들었나 + 준비해둔 6슬롯 배치로 바꾸자." 진단(9/29용 배치 2/4): 실패 자체(08:00 AV giri_fail·
+  21:00 RF orphan)보다 **4슬롯 파이프라인의 구조적 취약**이 근본 — 배치 시점 렌더 후 실패 슬롯을 **직렬 self-heal(90분
+  벽시계 캡)**로 재시도하는데, 슬롯 2개가 재작업 필요하면 라운드 2가 예산 안에 못 돌아 빵꾸가 남는다(캡은 [[streaming_guard_masked_dead_primary]]
+  런어웨이 방지책이지만, 그게 곧 복구를 잘라먹는다). 이 취약이 v2(사전배치 2일사이클: 3소스×3grammar=9RF를 미리 렌더해
+  5편 발행+4편 이월)를 낳은 이유다. ★진짜 함정=v2가 `LAUNCH_MODEL=v2` 플래그 뒤에 "구현대기"로 있다고 믿었지만 **플래그가
+  죽어 있었다**: 프로덕션 진입점(`launch_selfheal`)에 `LAUNCH_MODEL` 참조가 0건이고, `plan_sources_to_grammar`는 코드에 명시적
+  "NO render"로 계획만 했다. 9/21 "dry-run 검증 완료"가 **초록불 dry-run이 완전 미배선 경로를 가린** 것 — [[D_streamguard]]의
+  "작동하는 폴백이 죽은 주력을 가린다"의 자매(여기선 통과하는 dry-run이 배선 부재를 가림). Fix=`run_v2_batch`(실제 렌더/예약/
+  carry-pin, 기존 `produce_grammar_episodes_shared`·`_auto_upload_episode`·`_pin_grammar_card` 재사용)+`launch_selfheal`가
+  flag ON·무필터 시 위임. ★교훈 ①**플래그는 프로덕션 진입점이 그걸 읽고 렌더/예약 프리미티브까지 배선돼야 "플립 준비 완료"다
+  — dry-run 통과가 아니라 진입점에서 플래그를 grep해 확인하라.** ②**슬롯 세트는 수많은 스테이지가 스냅하는 계약**이다:
+  4→6슬롯 변경의 블래스트 반경이 `slot_occupancy`·producer `SLOT_COLLISION_GUARD`(둘 다 nearest-slot 스냅)·grammar
+  rolling-window(day_assignments로 RF슬롯 해석)·bandit timeslot arm까지 뻗어, 한 곳만 v2-aware면 v2 영상이 4슬롯 키로
+  오스냅→충돌 오탐/유령갭이 난다. 단일 진실원 `effective_assignments`(v2면 6슬롯 day_plan, 아니면 4슬롯 라틴스퀘어)로
+  수렴시키고 occupancy/collision을 6슬롯 스냅으로. 플래그 OFF=바이트-동일(라이브 4슬롯 무영향, 회귀 26/26). 배선은 SHIPPED
+  (02eadd5, flag off)·라이브 플립은 PD가 VM dry-run 스팟체크 후 결정. day1_winners 판타지(LEAD_DAYS=2라 생산일 미발행→48h
+  데이터 없음)·bandit v2 timeslot·PD mp4-in-thread 리뷰는 후속. cf. [[D_streamguard]]·[[D_lanemix]]·[[D_b4copy]].
 - **D_openaicost. per-cut best-of가 상류 컨셉-ref best-of와 예산을 이중 지출했다 + 엔진 이름이 틀린 죽은 config(9/4)** —
   OpenAI gpt-image 비용이 과했다. 근본: AV 스틸은 컨셉 레퍼런스를 이미 best-of-4(`AV_CONCEPT_REF_BEST_OF`)로 검증하고
   그 예산을 상류에 쓰는 이유가 **컷마다 재롤하지 않게** 하려는 것인데, per-cut `REGEN_BEST_OF` 기본이 여전히 2라 지배적 비용
