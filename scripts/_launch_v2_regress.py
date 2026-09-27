@@ -113,6 +113,24 @@ finally:
 # enabled() reflects the flag
 check("enabled() False without flag", launch_v2.enabled() is False)
 
+# ── AV role-swap gate: the 9/30 leak (a role-swap premise reached Seedance render) ──
+from agents.producer import _av_role_swap_hit as _swap
+_SWAP_HITS = [
+    {"title": "자다가 우리 리듬이 바뀌어버렸다고요?!"},                    # 9/30 leak: 리듬(=루틴) 동의어
+    {"cuts": [{"captions": [{"ko": "서로 바뀐 밥 그릇 앞, 랴니도 레오"}]}]},  # 9/30 leak: 수동 '바뀐'+물건 스왑
+    {"title": "생활 패턴이 뒤바뀐 하루"}, {"title": "역할 반전 도전"},
+    {"theme": "루틴 체인지"}, {"title": "서로의 역할을 바꿔보기"},
+]
+_SWAP_MISS = [  # innocent — must NOT trip (incl. the real 9/30 RF concepts)
+    {"title": "레오가 낮잠 리듬을 탄다"}, {"title": "산책 루틴 브이로그"},
+    {"cuts": [{"action": "밥 그릇 앞에서 기다린다"}]}, {"title": "풀숲 속 레오를 찾아라"},
+    {"title": "같은 쇼파 다른 꿈"}, {"title": "뽀뽀는 싫어 근데 도망은 못 가"},
+]
+check("role-swap gate catches all swap premises (incl. 9/30 leak)",
+      all(_swap(c) for c in _SWAP_HITS), detail=str([_swap(c) for c in _SWAP_HITS]))
+check("role-swap gate no false-positive on innocent concepts",
+      all(_swap(c) is None for c in _SWAP_MISS))
+
 print()
 if FAILS:
     print(f"REGRESS FAILED: {FAILS}")

@@ -393,18 +393,32 @@ def run_v2_batch(target: dt.date, *, do_upload: bool = True, dry_run: bool = Fal
                     "판타지 재해석 배선은 리드타임 모델 확정 후(현재 일반 시의성 AV로 렌더)")
         except Exception as e:  # noqa: BLE001
             log.warning("v2 day1_winners failed: %s", e)
+    # One fresh-concept reroll on AV failure (PD 2026-09-27): a single AV attempt via
+    # launch_pipeline has produce_and_render's INNER caption-salvage but no OUTER reroll, so one
+    # bad concept (e.g. a role-swap premise Giri caps, 9/30) shipped the slot empty for the whole
+    # batch. Mirror the 4-slot self-heal's SELFHEAL_REROLL: retry once with a fresh concept (the
+    # failed one is now a recent card → AV_DEDUP_GATE/role-swap gate steer the re-propose away).
+    # One extra Seedance render — bounded, PD's call. V2_AV_REROLL=0 disables.
+    _av_tries = 1 + max(0, int(os.getenv("V2_AV_REROLL", "1")))
     for hh in _av_slots(plan):
         if hh in occupied:
             continue
-        r = _render_av_slot(target, hh, timely=not produce, do_upload=do_upload,
-                            progress_cb=_sp,
-                            slack_client=slack_client, slack_channel=slack_channel)
+        r = None
+        for _att in range(_av_tries):
+            r = _render_av_slot(target, hh, timely=not produce, do_upload=do_upload,
+                                progress_cb=_sp,
+                                slack_client=slack_client, slack_channel=slack_channel)
+            if r and r.get("video_id"):
+                break
+            if _att + 1 < _av_tries:
+                _sp(f":game_die: {hh} AV 미통과 — 완전히 새 컨셉으로 재롤 "
+                    f"({_att + 2}/{_av_tries})")
         if r and r.get("video_id"):
             done[("ai_vtuber", hh)] = r
             _sp(f":white_check_mark: {hh} AV 예약완료 — `{r['video_id']}`")
         else:
             failed.append(("ai_vtuber", hh))
-            _sp(f":x: {hh} AV 실패 — 슬롯 비움(junk 금지)")
+            _sp(f":x: {hh} AV 실패({_av_tries}회 시도) — 슬롯 비움(junk 금지)")
 
     # ── summary ─────────────────────────────────────────────────────────────
     n_live = len(done)

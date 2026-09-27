@@ -704,15 +704,23 @@ def _backfill_av_set_anchor(concept: dict, style_filter: str | None) -> dict:
 
 # PD 2026-08-31: the two-pet cast makes "서로의 역할/루틴을 바꿔보기" (role reversal / routine
 # swap) an easy structure the AV Writer keeps re-landing on (8/22 '역할 반전 도전', 9/1 '루틴
-# 체인지'). The content-dedup gate misses it because differently-worded swap episodes share no
-# content NOUNS — so detect the PREMISE itself and forbid it. One rule, applied wherever a
-# concept is proposed for the AV lane.
+# 체인지', 9/30 '자다가 우리 리듬이 바뀌어버렸다'+'서로 바뀐 밥 그릇'). The content-dedup gate misses
+# it because differently-worded swap episodes share no content NOUNS — so detect the PREMISE itself.
+# NOTE: this is a CHEAP lexical PRE-FILTER, not the authority — a regex can't cover every synonym
+# ("리듬"↔"루틴", passive "바뀌"↔active "바꿔") and WILL keep leaking new phrasings. The real
+# backstops are Giri's semantic 역할스왑 cap (reviewer.py) + the launch AV reroll (a leaked swap that
+# reaches render is caught by Giri and re-rolled to a fresh concept). Widen it opportunistically when
+# a new phrasing leaks (as 9/30 did), but don't rely on it alone. PD 2026-09-27: +리듬/생활패턴/페이스/
+# 일과 synonyms, +passive 바뀌/뒤바뀌/뒤섞, +"서로 바뀐 <물건>"(밥그릇/자리/방석 swapped between the pets).
+# incl. Korean passive-past surface forms 바뀐/뒤바뀐 (바뀌+ㄴ contracts to 바뀐 — a distinct
+# string that "바뀌" doesn't cover); "바뀐" also matches inside "뒤바뀐".
+_SWAP_VERB = r"(?:뒤바꾸|뒤바뀌|뒤바뀐|바꾸|바꿔|바뀌|바뀐|반전|체인지|체험|교체|교환|스왑|뒤섞|흉내)"
 _AV_ROLESWAP_RX = re.compile(
-    r"역할\s*(?:바꾸|반전|체인지|교체|교환|스왑|뒤바)|"
-    r"루틴\s*(?:바꾸|반전|체인지|체험|교체|교환|스왑)|"
-    r"서로\s*(?:의)?\s*(?:루틴|역할|습관|자리|입장)\s*(?:을|를)?\s*(?:바꾸|체험|교체|스왑|흉내)|"
+    r"역할\s*(?:이|가|을|를)?\s*" + _SWAP_VERB + r"|"
+    r"(?:루틴|리듬|생활\s*패턴|생활\s*리듬|일과|페이스|순서)\s*(?:이|가|을|를)?\s*" + _SWAP_VERB + r"|"
+    r"서로\s*(?:의)?\s*(?:루틴|리듬|역할|습관|자리|입장|밥\s*그릇|그릇|방석|일과)\s*(?:이|가|을|를)?\s*" + _SWAP_VERB + r"|"
     r"(?:레오|랴니)\s*루틴\s*체험|"
-    r"입장\s*바꿔|처지\s*바꿔|서로\s*바꿔"
+    r"입장\s*바꿔|처지\s*바꿔|서로\s*(?:바꿔|바뀐|바뀌|뒤바뀐|뒤바뀌)"
 )
 
 
