@@ -317,10 +317,21 @@ def run_v2_batch(target: dt.date, *, do_upload: bool = True, dry_run: bool = Fal
 
     # ── RF ────────────────────────────────────────────────────────────────
     if produce:
+        from agents.launch import _pinned_episode_for
         day1_slots = [hh for hh in _rf_slots(plan, "rf_fresh") if hh not in occupied]
-        carry_plan = day_plan(target + dt.timedelta(days=1))
-        carry_slots = _rf_slots(carry_plan, "rf_carry")   # tomorrow's 4 RF slots
-        episodes = _render_9_rf(target, progress_cb=progress_cb)
+        carry_date = target + dt.timedelta(days=1)
+        # Only pin carry slots that AREN'T already pinned — so a re-run of a produce day (or a
+        # manual run followed by the cron re-targeting the same date) doesn't double-pin tomorrow.
+        carry_slots = [hh for hh in _rf_slots(day_plan(carry_date), "rf_carry")
+                       if not _pinned_episode_for(carry_date, "real_footage", hh)]
+        if not day1_slots and not carry_slots:
+            # Idempotent produce day: every fresh RF slot is already filled AND tomorrow is fully
+            # pinned → this batch already ran (or a manual run beat it). Skip the 9-RF render + pin
+            # entirely (rendering to schedule/pin nothing is pure waste); still handle AV below.
+            _sp(":information_source: 생산일 RF가 이미 완료(슬롯 채워짐+이월 핀 존재) — RF 렌더/이월 스킵. AV만 확인.")
+            episodes = []
+        else:
+            episodes = _render_9_rf(target, progress_cb=progress_cb)
         # Day-1: schedule the first N into today's fresh RF slots.
         for (mp4, _concept), hh in zip(episodes[:len(day1_slots)], day1_slots):
             r = _schedule_rf(target, hh, mp4, do_upload, progress_cb=_sp)
