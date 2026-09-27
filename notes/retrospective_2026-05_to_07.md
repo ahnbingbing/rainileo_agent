@@ -1479,6 +1479,16 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   수렴시키고 occupancy/collision을 6슬롯 스냅으로. 플래그 OFF=바이트-동일(라이브 4슬롯 무영향, 회귀 26/26). 배선은 SHIPPED
   (02eadd5, flag off)·라이브 플립은 PD가 VM dry-run 스팟체크 후 결정. day1_winners 판타지(LEAD_DAYS=2라 생산일 미발행→48h
   데이터 없음)·bandit v2 timeslot·PD mp4-in-thread 리뷰는 후속. cf. [[D_streamguard]]·[[D_lanemix]]·[[D_b4copy]].
+  ★9/30 첫 실전(수동 `LAUNCH_MODEL=v2` 주입 후 PD가 deploy.env로 플립, 75eac28): RF는 완벽(3소스 다양성✓·9편
+  렌더·5 예약+4 이월)이었고 **20:00 AV만 Giri 5/10으로 빈 슬롯** — 두 겹 근본. ①**v2 AV에 outer 리롤이 없었다**:
+  `run_v2_batch`가 AV를 `launch_pipeline` 1회 호출로 렌더(내부 캡션-salvage만·fresh-concept 리롤 없음)라 나쁜 컨셉 하나가
+  배치 내내 슬롯을 비웠다 → `V2_AV_REROLL`(기본 1)로 4슬롯 self-heal의 SELFHEAL_REROLL을 미러(Giri 실패 시 새 컨셉 1회
+  재롤). ②**금지된 역할스왑 프리미스가 비싼 Seedance 렌더까지 샜다**(컨셉 "자다가 우리 리듬이 바뀌어버렸다"+"서로 바뀐 밥
+  그릇"): `_AV_ROLESWAP_RX`가 역할/루틴+능동 스왑동사만 알아 "리듬"(=루틴 동의어)·수동 "바뀐"을 놓쳤고 Giri만 **렌더비 지불
+  후** 의미로 잡았다. 이건 [[baby_leo_timeframe_and_roleswap_gate]]가 이미 기록한 **"같은 형태 다른 단어" whack-a-mole의
+  재발**. ★교훈=**어휘 기반 premise 게이트는 비용절감용 PRE-FILTER지 authority가 아니다** — regex는 모든 동의어를 못 덮고
+  계속 샌다. 진짜 백스톱은 Giri의 의미 캡(작동함)+리롤(렌더된 leak을 새 컨셉으로 회수). 게이트는 새 표현이 샐 때마다
+  기회주의적으로 넓히되(9/30처럼) 그것만 믿지 마라. 회귀=9/30 두 leak 문자열이 이제 걸리고 실제 무고한 RF 컨셉은 clean.
 - **D_openaicost. per-cut best-of가 상류 컨셉-ref best-of와 예산을 이중 지출했다 + 엔진 이름이 틀린 죽은 config(9/4)** —
   OpenAI gpt-image 비용이 과했다. 근본: AV 스틸은 컨셉 레퍼런스를 이미 best-of-4(`AV_CONCEPT_REF_BEST_OF`)로 검증하고
   그 예산을 상류에 쓰는 이유가 **컷마다 재롤하지 않게** 하려는 것인데, per-cut `REGEN_BEST_OF` 기본이 여전히 2라 지배적 비용
