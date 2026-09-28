@@ -1510,7 +1510,17 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   chosen 파일로 repoint(모든 return 경로 균일). 교훈=한 카드에 여러 산출물이 매달리면 "무엇이 최종인지"를 초크 직전에
   단일화하라. ③**bandit timeslot 버킷이 4슬롯 전용** — v2 09:00/13:00/20:00 영상이 최근접 레거시 슬롯으로 오스냅→
   timeslot marginal 오염. `_timeslot_of`가 영상 **자기 발행일의 grid**로 스냅(occupancy·find_gaps·충돌가드·측정까지
-  per-date-grid 원칙 일관). 남은 후속=day1_winners 판타지(리드타임 대기)·PD mp4 리뷰.
+  per-date-grid 원칙 일관).
+  ★9/30 첫 실전 라인업 = 같은 footage 3연속(`a3c5c83`): PD 스크린샷 "똑같은 걸 세 개 연달아". 9/30이 코 클립
+  3편(08/09/13, src0A의 velocity/meme/story)+정원 2편(18/21, src1B)이었다. **근본=footage-다양성 게이트는
+  소스 간 CLIP 오버랩만 봤지, 한 소스의 3 grammar가 같은 footage라는 건 안 봤다** — "산책 3개(다른 footage) OK"는
+  맞지만 "같은 footage 3편집 같은 날"은 전혀 다른 축. run_v2_batch가 소스-major(A-v,A-m,A-s,…)로 방출해 소스 A의
+  3편이 Day-1에 통째로 몰렸다. Fix=`_interleave` grammar-major(A-v,B-v,C-v,A-m,…) → 5슬롯 Day-1 slice가
+  ABCAB(각 footage ≤2×/일·3연속 없음, PD "볼륨 유지·2×까지 OK"). 라이브 9/30은 소스당 1편 남기고 3편 veto(private).
+  교훈=**"다양성"은 한 축이 아니다 — 클립-오버랩(소스 간)과 편집-반복(소스 내 같은 footage)을 따로 막아라.** ②같은 커밋:
+  **day1_winners 판타지 재해석 실배선**(그간 로그만) — strict Day-1(LEAD=2라 항상 empty)을 **"가장 최근 실측된
+  발행일"**로 재정의(PD "그 정도 시차 OK"), carry AV가 `PD_RERENDER_DIRECTIVE`(arc.next_directive 최우선 훅)로
+  최근 인기편을 상상 판타지로 재해석(dominant→1편 2앵글·spread→top2 각각). 남은 후속=PD mp4 리뷰·bandit v2 arm 운용.
 - **D_openaicost. per-cut best-of가 상류 컨셉-ref best-of와 예산을 이중 지출했다 + 엔진 이름이 틀린 죽은 config(9/4)** —
   OpenAI gpt-image 비용이 과했다. 근본: AV 스틸은 컨셉 레퍼런스를 이미 best-of-4(`AV_CONCEPT_REF_BEST_OF`)로 검증하고
   그 예산을 상류에 쓰는 이유가 **컷마다 재롤하지 않게** 하려는 것인데, per-cut `REGEN_BEST_OF` 기본이 여전히 2라 지배적 비용
