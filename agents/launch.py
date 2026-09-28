@@ -226,7 +226,7 @@ def effective_assignments(target: dt.date) -> list[tuple[str, str]]:
     4-slot Latin square, unchanged."""
     try:
         from agents import launch_v2
-        if launch_v2.enabled():
+        if launch_v2.active_for(target):   # date-gated: pre-flip days stay 4-slot (no phantom gaps)
             plan = launch_v2.day_plan(target)
             return [(s["lane"], hh) for hh, s in sorted(plan["slots"].items())]
     except Exception as e:  # noqa: BLE001

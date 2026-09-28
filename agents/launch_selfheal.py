@@ -187,7 +187,7 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
     # both models). Flag off → this branch is skipped and the live 4-slot path is byte-identical.
     try:
         from agents import launch_v2
-        if launch_v2.enabled() and not lane_filter and not slot_filter:
+        if launch_v2.active_for(target) and not lane_filter and not slot_filter:
             return launch_v2.run_v2_batch(
                 target, do_upload=do_upload, progress_cb=progress_cb,
                 slack_client=slack_client, slack_channel=slack_channel)
@@ -232,8 +232,11 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
             from agents.producer import _db as _pdb
             from agents.slot_topup import slot_occupancy
             # YouTube truth incl. already-PUBLIC videos (list_scheduled_videos returned only
-            # future-private ones, so a public-filled slot read as EMPTY and got piled on).
-            _occ = slot_occupancy({target.isoformat()})
+            # future-private ones, so a public-filled slot read as EMPTY and got piled on). Snap to
+            # THIS target's grid (v2 branch already returned for v2-active dates, so here it's a
+            # 4-slot date even when the flag is on — pass its 4-slot grid explicitly).
+            _occ = slot_occupancy({target.isoformat()},
+                                  slots=sorted({h for _, h in assignments}))
             with _pdb() as _con:
                 _known_vids = _rec._card_video_ids(_con)
             _filled = set()

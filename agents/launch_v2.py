@@ -38,6 +38,27 @@ def enabled() -> bool:
     return os.getenv("LAUNCH_MODEL", "").lower() == "v2"
 
 
+# The first date v2 GOVERNS. Days before it were produced under the 4-slot model, so treating
+# them as v2's 6 slots makes slot_topup see the 2 extra v2 slots (09:00 RF, 20:00 AV) as empty
+# and fill phantom gaps — a paid Seedance AV on a day that was intentionally 4 videos (the 9/28
+# flip-day symptom). Gate v2 by date so pre-flip days stay 4-slot; unset → v2 governs every day.
+def _start_date() -> "dt.date | None":
+    s = os.getenv("V2_START_DATE", "2026-09-30").strip()
+    try:
+        return dt.date.fromisoformat(s) if s else None
+    except ValueError:
+        return None
+
+
+def active_for(target: dt.date) -> bool:
+    """v2 governs `target` = flag on AND target is on/after V2_START_DATE. Use this (not the
+    date-blind enabled()) anywhere a specific date's plan is decided."""
+    if not enabled():
+        return False
+    sd = _start_date()
+    return sd is None or target >= sd
+
+
 # ── 2-day cycle ────────────────────────────────────────────────────────────
 
 def is_produce_day(target: dt.date) -> bool:
@@ -188,7 +209,8 @@ def _occupied_slots(target: dt.date) -> set:
     truth — never double-book). Best-effort; a lookup failure means 'fill everything'."""
     try:
         from agents.slot_topup import slot_occupancy
-        occ = slot_occupancy({target.isoformat()})
+        # snap to THIS batch's 6 v2 slots (run_v2_batch only runs for a v2-active date)
+        occ = slot_occupancy({target.isoformat()}, slots=list(SLOTS_V2))
         return {slot for (d, slot), _ in occ.items() if d == target.isoformat()}
     except Exception as e:  # noqa: BLE001
         log.warning("v2 occupancy check failed (filling all slots): %s", e)

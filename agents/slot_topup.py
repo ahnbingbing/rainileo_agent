@@ -42,7 +42,7 @@ def _nearest_slot(hhmm_min: int, slots: list[str]) -> str:
     return min(slots, key=lambda s: abs(_slot_min(s) - hhmm_min))
 
 
-def slot_occupancy(day_strs: set[str], yt=None) -> dict[tuple[str, str], dict]:
+def slot_occupancy(day_strs: set[str], yt=None, slots=None) -> dict[tuple[str, str], dict]:
     """{(YYYY-MM-DD, 'HH:MM'): {video_id, title, status, when}} for every slot that already
     holds a video — PUBLIC *or* SCHEDULED — on the channel, within day_strs. Each video's
     publishAt (scheduled) OR publishedAt (already public) is mapped to its KST day + nearest
@@ -56,16 +56,20 @@ def slot_occupancy(day_strs: set[str], yt=None) -> dict[tuple[str, str], dict]:
     misses already-PUBLIC ones, so a public-filled slot reads as empty. Raises on API failure
     so the caller chooses fail-open vs fail-closed."""
     from agents.launch import TIMESLOTS, KST
-    # v2 (LAUNCH_MODEL=v2): snap videos to the 6 senior-director slots, not the 4-slot grid —
-    # else a 09:00/13:00/20:00 video mis-snaps to the nearest legacy slot and a real fill reads
-    # as an empty slot (or double-books). Flag off → the 4-slot grid, unchanged.
-    slots = [s.strip() for s in TIMESLOTS if s.strip()]
-    try:
-        from agents import launch_v2
-        if launch_v2.enabled():
-            slots = [s.strip() for s in launch_v2.SLOTS_V2 if s.strip()]
-    except Exception:
-        pass
+    # Snap videos to the grid the CALLER specifies (find_gaps passes each day's OWN grid — a
+    # pre-flip 4-slot day vs a v2 6-slot day — so a 4-slot day isn't measured against 6 slots and
+    # its 2 non-existent v2 slots don't read as empty phantom gaps). No override → v2 6-slot when
+    # the flag is on (date-blind), else the 4-slot grid.
+    if slots is not None:
+        slots = [s.strip() for s in slots if s.strip()]
+    else:
+        slots = [s.strip() for s in TIMESLOTS if s.strip()]
+        try:
+            from agents import launch_v2
+            if launch_v2.enabled():
+                slots = [s.strip() for s in launch_v2.SLOTS_V2 if s.strip()]
+        except Exception:
+            pass
     if yt is None:
         from youtube.oauth import get_youtube
         yt = get_youtube()
@@ -110,12 +114,14 @@ def find_gaps(days_ahead: int = 2) -> list[dict]:
     from agents.launch import effective_assignments, publish_at_for, KST
     today = dt.datetime.now(KST).date()
     now = dt.datetime.now(dt.timezone.utc)
-    day_strs = {(today + dt.timedelta(days=o)).isoformat() for o in range(days_ahead + 1)}
-    occ = _occupied(day_strs)
     gaps: list[dict] = []
     for off in range(days_ahead + 1):
         d = today + dt.timedelta(days=off)
-        for lane, slot in effective_assignments(d):
+        plan = effective_assignments(d)   # this day's OWN grid (v2 6-slot or 4-slot, date-gated)
+        # Measure occupancy against THAT grid, so a pre-flip 4-slot day's videos don't leave its
+        # (non-existent) v2 slots reading as empty phantom gaps to fill.
+        occ = slot_occupancy({d.isoformat()}, slots=sorted({hh for _, hh in plan}))
+        for lane, slot in plan:
             pub = publish_at_for(d, slot)
             try:
                 pub_dt = dt.datetime.fromisoformat(pub.replace("Z", "+00:00"))

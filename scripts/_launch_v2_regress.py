@@ -96,6 +96,7 @@ try:
     check("flag OFF → 4-slot live grid", len(off) == 4, detail=f"{len(off)} slots")
     check("flag OFF → 12:30 present (legacy)", any(hh == "12:30" for _, hh in off))
     os.environ["LAUNCH_MODEL"] = "v2"
+    os.environ["V2_START_DATE"] = "2020-01-01"   # test the STRUCTURE regardless of the flip date
     on_p = _launch.effective_assignments(d0)
     on_c = _launch.effective_assignments(d1)
     check("flag ON produce → 6 slots (5RF+1AV)",
@@ -107,11 +108,37 @@ try:
     check("flag ON → no legacy 12:30", not any(hh == "12:30" for _, hh in on_p))
 finally:
     os.environ.pop("LAUNCH_MODEL", None)
+    os.environ.pop("V2_START_DATE", None)
     if _prev is not None:
         os.environ["LAUNCH_MODEL"] = _prev
 
 # enabled() reflects the flag
 check("enabled() False without flag", launch_v2.enabled() is False)
+
+# ── date-gating: v2 governs only dates >= V2_START_DATE (no transition phantom gaps) ──
+_pm = os.environ.pop("LAUNCH_MODEL", None)
+_ps = os.environ.pop("V2_START_DATE", None)
+try:
+    os.environ["LAUNCH_MODEL"] = "v2"
+    os.environ["V2_START_DATE"] = "2026-09-30"
+    check("active_for(before start) False", launch_v2.active_for(dt.date(2026, 9, 29)) is False)
+    check("active_for(on start) True", launch_v2.active_for(dt.date(2026, 9, 30)) is True)
+    check("active_for(after start) True", launch_v2.active_for(dt.date(2026, 10, 1)) is True)
+    from agents import launch as _l2
+    pre = _l2.effective_assignments(dt.date(2026, 9, 29))   # pre-flip day → 4-slot, NOT 6
+    post = _l2.effective_assignments(dt.date(2026, 9, 30))  # v2 day → 6-slot
+    check("pre-start day stays 4-slot (no phantom v2 slots)", len(pre) == 4, detail=f"{len(pre)}")
+    check("start day is v2 6-slot", len(post) == 6, detail=f"{len(post)}")
+    os.environ.pop("V2_START_DATE", None)  # unset → falls back to the built-in default (flip date)
+    check("default start gates pre-flip dates", launch_v2.active_for(dt.date(2026, 9, 1)) is False)
+    check("default start admits post-flip dates", launch_v2.active_for(dt.date(2026, 10, 5)) is True)
+finally:
+    os.environ.pop("LAUNCH_MODEL", None)
+    os.environ.pop("V2_START_DATE", None)
+    if _pm is not None:
+        os.environ["LAUNCH_MODEL"] = _pm
+    if _ps is not None:
+        os.environ["V2_START_DATE"] = _ps
 
 # ── AV role-swap gate: the 9/30 leak (a role-swap premise reached Seedance render) ──
 from agents.producer import _av_role_swap_hit as _swap
