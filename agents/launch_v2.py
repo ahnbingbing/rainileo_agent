@@ -524,7 +524,52 @@ def run_v2_batch(target: dt.date, *, do_upload: bool = True, dry_run: bool = Fal
     for (l, h), v in sorted(done.items(), key=lambda kv: kv[0][1]):
         lines.append(f"  ✅ {h} {'AV' if l=='ai_vtuber' else 'RF'} — `{v.get('video_id','-')}` "
                      f"(공개 {v.get('publish_at','?')})")
-    _sp("\n".join(lines))
+    if done:
+        lines.append("  ↳ 아래 이 쓰레드에 오늘 영상 전부 올려요 — 리뷰는 여기서. "
+                     "취소는 이 쓰레드에 `veto <파일명>` 답글 (또는 `/veto <video_id>`).")
+
+    # PD mp4-in-thread review (PD 2026-09-28): post the summary as the thread PARENT, then upload
+    # every produced mp4 as a reply under it + register (thread, fname)→video_id so an in-thread
+    # `veto <fname>` cancels THAT video. Mirrors the 4-slot run_with_selfheal review thread — the v2
+    # RF produce path skips launch_pipeline (no per-slot thread), so this is their ONLY review surface.
+    summary_ts = None
+    if slack_client and slack_channel:
+        try:
+            summary_ts = slack_client.chat_postMessage(
+                channel=slack_channel, text="\n".join(lines)).get("ts")
+        except Exception as e:  # noqa: BLE001
+            log.warning("v2 summary post failed: %s", e)
+            _sp("\n".join(lines))
+    else:
+        _sp("\n".join(lines))
+    if progress_cb:
+        progress_cb("\n".join(lines))
+    if summary_ts and slack_client and slack_channel:
+        from agents.launch import record_batch_video
+        from agents.producer import _db
+        for (l, h), v in sorted(done.items(), key=lambda kv: kv[0][1]):
+            outp = v.get("output")
+            fname = v.get("fname") or f"{target.strftime('%y%m%d')}_{'AV' if l=='ai_vtuber' else 'RF'}{h.replace(':', '')}"
+            vid = v.get("video_id")
+            if outp and Path(outp).exists():
+                cmt = f":movie_camera: *{fname}* — 공개 {v.get('publish_at', '?')}"
+                if vid:
+                    cmt += f" · `{vid}` · 취소: `veto {fname}`"
+                try:
+                    slack_client.files_upload_v2(channel=slack_channel, thread_ts=summary_ts,
+                                                 file=str(outp), title=f"{fname}.mp4",
+                                                 initial_comment=cmt)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("v2 thread mp4 upload failed (%s): %s", fname, e)
+            if vid:
+                try:
+                    _c = _db()
+                    record_batch_video(_c, thread_ts=summary_ts, fname=fname,
+                                       channel=slack_channel, video_id=vid, lane=l, slot=h,
+                                       target=target, publish_at=v.get("publish_at"))
+                    _c.close()
+                except Exception as e:  # noqa: BLE001
+                    log.warning("v2 record_batch_video failed (%s): %s", fname, e)
     return {
         "done": {f"{l}/{h}": v for (l, h), v in done.items()},
         "failed": [f"{h} {l}" for l, h in failed],
