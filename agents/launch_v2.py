@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import sqlite3
+import time
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -32,6 +33,11 @@ GRAMMARS = ("velocity", "meme", "story")
 DAY1_RF_COUNT = int(os.getenv("V2_DAY1_RF", "5"))
 # Day-2 AV feedback: a Day-1 winner is "dominant" when its early views ≥ this × the runner-up.
 AV_DOMINANCE_RATIO = float(os.getenv("V2_AV_DOMINANCE", "2.0"))
+# HARD batch wall-clock cap (mirrors the 4-slot SELFHEAL_MAX_SECONDS runaway backstop). run_v2_batch
+# renders up to 9 RF + up to 2 AV × the reroll — bounded, but a slow day could still grind for hours.
+# Stop starting new EXPENSIVE units (a source's 3-grammar render, an AV attempt) past the deadline;
+# leave the rest for the next batch / manual. Default 3h (v2 does more than the 4-slot's 90-min cap).
+BATCH_MAX_SECONDS = int(os.getenv("V2_BATCH_MAX_SECONDS", "10800"))
 
 
 def enabled() -> bool:
@@ -261,10 +267,11 @@ def _schedule_rf(target: dt.date, hhmm: str, mp4, do_upload: bool, progress_cb=N
             "fname": f"{target.strftime('%y%m%d')}_RF{hhmm.replace(':', '')}"}
 
 
-def _render_9_rf(target: dt.date, progress_cb=None) -> list[tuple]:
+def _render_9_rf(target: dt.date, progress_cb=None, deadline: float | None = None) -> list[tuple]:
     """Senior director → 3 sources → render each source's cast into the 3 grammars.
     Returns up to 9 (mp4_path, concept) pairs (a source with a thin cast or a failed
-    grammar render is skipped — the caller leaves those slots empty / falls back)."""
+    grammar render is skipped — the caller leaves those slots empty / falls back).
+    Stops starting a new source's render past `deadline` (monotonic) — runaway backstop."""
     from agents import senior_director, grammar_slot
 
     def _sp(m):
@@ -277,6 +284,10 @@ def _render_9_rf(target: dt.date, progress_cb=None) -> list[tuple]:
         return []
     episodes: list[tuple] = []
     for idx, s in enumerate(sources[:3]):
+        if deadline is not None and time.monotonic() > deadline:
+            _sp(f":alarm_clock: 배치 시간초과 — 남은 소스 렌더 중단(소스 {idx+1}/{len(sources[:3])}부터). "
+                "렌더된 것만 예약/이월, 나머지는 다음 배치.")
+            break
         pool = _pool_from_cast(s.get("cast") or [])
         if len(pool) < 4:
             _sp(f":warning: source {s.get('source_id')} 캐스트<4({len(pool)}) → 스킵")
@@ -321,6 +332,7 @@ def run_v2_batch(target: dt.date, *, do_upload: bool = True, dry_run: bool = Fal
     plan = day_plan(target)
     produce = plan["produce_day"]
     occupied = _occupied_slots(target) if (do_upload and not dry_run) else set()
+    _deadline = time.monotonic() + BATCH_MAX_SECONDS   # runaway backstop (see BATCH_MAX_SECONDS)
     done: dict = {}
     pinned: list = []
     failed: list = []
@@ -353,7 +365,7 @@ def run_v2_batch(target: dt.date, *, do_upload: bool = True, dry_run: bool = Fal
             _sp(":information_source: 생산일 RF가 이미 완료(슬롯 채워짐+이월 핀 존재) — RF 렌더/이월 스킵. AV만 확인.")
             episodes = []
         else:
-            episodes = _render_9_rf(target, progress_cb=progress_cb)
+            episodes = _render_9_rf(target, progress_cb=progress_cb, deadline=_deadline)
         # Day-1: schedule the first N into today's fresh RF slots.
         for (mp4, _concept), hh in zip(episodes[:len(day1_slots)], day1_slots):
             r = _schedule_rf(target, hh, mp4, do_upload, progress_cb=_sp)
@@ -425,6 +437,10 @@ def run_v2_batch(target: dt.date, *, do_upload: bool = True, dry_run: bool = Fal
     for hh in _av_slots(plan):
         if hh in occupied:
             continue
+        if time.monotonic() > _deadline:
+            failed.append(("ai_vtuber", hh))
+            _sp(f":alarm_clock: {hh} AV — 배치 시간초과로 렌더 안 함(다음 배치/수동). 빈 슬롯.")
+            continue
         r = None
         for _att in range(_av_tries):
             r = _render_av_slot(target, hh, timely=not produce, do_upload=do_upload,
@@ -432,9 +448,12 @@ def run_v2_batch(target: dt.date, *, do_upload: bool = True, dry_run: bool = Fal
                                 slack_client=slack_client, slack_channel=slack_channel)
             if r and r.get("video_id"):
                 break
-            if _att + 1 < _av_tries:
+            if _att + 1 < _av_tries and time.monotonic() <= _deadline:
                 _sp(f":game_die: {hh} AV 미통과 — 완전히 새 컨셉으로 재롤 "
                     f"({_att + 2}/{_av_tries})")
+            elif _att + 1 < _av_tries:
+                _sp(f":alarm_clock: {hh} AV 미통과 — 배치 시간초과로 재롤 생략")
+                break
         if r and r.get("video_id"):
             done[("ai_vtuber", hh)] = r
             _sp(f":white_check_mark: {hh} AV 예약완료 — `{r['video_id']}`")

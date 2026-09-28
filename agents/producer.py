@@ -3967,10 +3967,27 @@ def _render_realfootage_with_retry(concept: dict, target: dt.date,
     best_key = (-1, -1)  # (intro_satisfied, score)
     attempt_outs: list = []   # PD 2026-06-08: every attempt writes episode_rf_*.mp4;
                               # delete the rejected ones so retries don't flood episodes/.
+    out_to_card: dict = {}    # PD 2026-09-28: which card owns each attempt's mp4 — so _finish can
+                              # repoint the WINNING card to the chosen file (see below).
     _editor_loops = 0         # #3: bounded (≤EDITOR_MAX_LOOPS) editor-driven re-proposes
                               # when the Editor says the CLIP can't deliver the intent.
 
     def _finish(chosen):
+        # PD 2026-09-28: repoint the chosen file's card to it BEFORE cleanup. Root of the
+        # recurring RF [ORPHAN-SKIP] no-card-for-output (9/29 21:00): salvage repoints card A to
+        # …_salvaged.mp4, but when the loop then ships a DIFFERENT (pre-salvage) attempt of the
+        # SAME card A as best_out, card A points at the salvaged file, not the chosen one →
+        # _auto_upload_episode's lookup-by-output_video_path misses → slot ships empty. One card
+        # can only point at one path; force it to the chosen path so the upload choke finds it.
+        if chosen is not None:
+            _cid = out_to_card.get(str(chosen))
+            if _cid:
+                try:
+                    con.execute("UPDATE cards SET output_video_path=?, "
+                                "updated_at=datetime('now') WHERE card_id=?", (str(chosen), _cid))
+                    con.commit()
+                except Exception as e:
+                    log.warning("_finish: could not repoint card %s → %s: %s", _cid, chosen, e)
         for p in attempt_outs:
             try:
                 if chosen is None or str(p) != str(chosen):
@@ -4038,6 +4055,8 @@ def _render_realfootage_with_retry(concept: dict, target: dt.date,
         last_card_id = card_id or last_card_id
         if out:
             attempt_outs.append(out)
+            if card_id:
+                out_to_card[str(out)] = card_id
         # track best-scoring attempt so we ship the best after the cap (not last).
         # NEVER track a face-violating attempt as best — a human face must not ship.
         intro_ok = (not intro_day) or _is_self_intro(cur_concept)
@@ -4097,6 +4116,7 @@ def _render_realfootage_with_retry(concept: dict, target: dt.date,
                     salv = _csv.salvage(card_id, report, progress_cb=progress_cb)
                     if salv and Path(salv).exists():
                         attempt_outs.append(salv)
+                        out_to_card[str(salv)] = card_id
                         srep = _giri_review_realfootage(salv, cur_concept, target, progress_cb)
                         sverdict = (srep or {}).get("판정", "")
                         if sverdict in GIRI_PASS_VERDICTS:

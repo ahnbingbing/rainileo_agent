@@ -90,12 +90,21 @@ def ensure_table(con: sqlite3.Connection) -> None:
 
 
 def _timeslot_of(publish_at_iso: str | None) -> str:
-    """Map a publishAt (ISO-UTC) to the nearest launch timeslot label (KST)."""
+    """Map a publishAt (ISO-UTC) to the nearest launch timeslot label (KST), using the grid IN
+    FORCE FOR THAT PUBLISH DATE. v2 publishes at 6 slots (08/09/13/18/20/21); bucketing a v2
+    09:00/13:00/20:00 video against the 4-slot grid mis-snaps it (→ 08:00/12:30/21:00) and
+    corrupts the timeslot marginal. Pre-flip dates stay 4-slot. So each era buckets on its own grid."""
     try:
         from agents.launch import TIMESLOTS, KST
-        slots = [s.strip() for s in TIMESLOTS if s.strip()]
         t = dt.datetime.strptime(publish_at_iso[:19], "%Y-%m-%dT%H:%M:%S")
         t = t.replace(tzinfo=dt.timezone.utc).astimezone(KST)
+        slots = [s.strip() for s in TIMESLOTS if s.strip()]
+        try:
+            from agents import launch_v2
+            if launch_v2.active_for(t.date()):
+                slots = [s.strip() for s in launch_v2.SLOTS_V2 if s.strip()]
+        except Exception:
+            pass
         mins = t.hour * 60 + t.minute
         def slot_min(s):
             h, m = (int(x) for x in s.split(":"))
@@ -409,8 +418,16 @@ def choose_timeslot(con: sqlite3.Connection | None = None) -> str:
     a = analyze(con)
     slots = a["levels"].get("timeslot", {})
     if not slots:
+        # no data yet → a sensible default from the grid in force (v2 6-slot when active, else 4-slot)
         from agents.launch import TIMESLOTS
-        return TIMESLOTS[0].strip()
+        default = [s.strip() for s in TIMESLOTS if s.strip()]
+        try:
+            from agents import launch_v2
+            if launch_v2.enabled():
+                default = [s.strip() for s in launch_v2.SLOTS_V2 if s.strip()]
+        except Exception:
+            pass
+        return default[0]
     draws = {k: random.gauss(v["mu"], v["sd"]) for k, v in slots.items()}
     return max(draws, key=draws.get)
 
