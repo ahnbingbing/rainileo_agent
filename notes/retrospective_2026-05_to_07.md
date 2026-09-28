@@ -1489,6 +1489,18 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   재발**. ★교훈=**어휘 기반 premise 게이트는 비용절감용 PRE-FILTER지 authority가 아니다** — regex는 모든 동의어를 못 덮고
   계속 샌다. 진짜 백스톱은 Giri의 의미 캡(작동함)+리롤(렌더된 leak을 새 컨셉으로 회수). 게이트는 새 표현이 샐 때마다
   기회주의적으로 넓히되(9/30처럼) 그것만 믿지 마라. 회귀=9/30 두 leak 문자열이 이제 걸리고 실제 무고한 RF 컨셉은 clean.
+  ★9/28 플립 다음날 = 전환일 phantom-gap 런어웨이(`6e73d99`): 플립 후 slot_topup이 30분 캡을 넘겨 돌며 **유료
+  Seedance AV를 9/28 20:00에 렌더**(PD "셀프힐 계속 도는 느낌"). 근본=**슬롯-세트 변경의 블래스트 반경은 전환기까지
+  뻗는다** — 플립 前 4슬롯으로 생산된 날(9/28·9/29, 의도적으로 4편)을 date-blind v2가 6슬롯으로 읽어, find_gaps가
+  없던 2개 슬롯(09:00 RF·20:00 AV)을 빈 phantom 갭으로 보고 채웠다(20:00=유료). +캡의 맹점: topup 30분 벽시계 캡은
+  **갭 사이에서만** 체크돼 긴 Seedance 렌더 하나가 넘겨버린다(단위 사이 캡은 단일 긴 단위를 못 묶는다). Fix=v2를
+  **날짜 게이팅**(`V2_START_DATE`, 기본=플립일 2026-09-30): `active_for(date)`가 enabled()+date≥start일 때만 v2 →
+  플립 前 날은 4슬롯 유지(phantom 갭 0). 그리고 **grid 일관성**: `slot_occupancy(slots=)` 오버라이드로 find_gaps가
+  각 날을 그 날의 grid(4 or 6)로 측정(안 그러면 4슬롯 날의 12:30이 6슬롯 occupancy의 13:00과 어긋나 또 phantom).
+  producer 충돌가드·selfheal skip-filled도 per-date grid. 기본을 코드에 박아(deploy.env 추가편집 불요, .env 쓰기는
+  분류기 차단) VM이 재배포만으로 즉시 고쳐짐. VM 실증: find_gaps=NONE, 9/28·9/29 4슬롯 full·진짜 공백0·9/30 6슬롯 full.
+  ★교훈=**모델을 플립할 땐 "언제부터"를 명시하라 — 새 gap-finder는 옛 모델로 만든 과거를 자기 격자로 읽어 헛것을
+  채운다.** 회귀=pre-start→4슬롯·on/after→6슬롯. cf. [[D_lanemix]](가역성)·[[streaming_guard_masked_dead_primary]].
 - **D_openaicost. per-cut best-of가 상류 컨셉-ref best-of와 예산을 이중 지출했다 + 엔진 이름이 틀린 죽은 config(9/4)** —
   OpenAI gpt-image 비용이 과했다. 근본: AV 스틸은 컨셉 레퍼런스를 이미 best-of-4(`AV_CONCEPT_REF_BEST_OF`)로 검증하고
   그 예산을 상류에 쓰는 이유가 **컷마다 재롤하지 않게** 하려는 것인데, per-cut `REGEN_BEST_OF` 기본이 여전히 2라 지배적 비용
