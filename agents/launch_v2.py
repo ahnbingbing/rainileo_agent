@@ -160,35 +160,49 @@ def _first_caption(copy: dict) -> str:
 
 # ── Day-2 AV timeliness feedback ───────────────────────────────────────────
 
-def day1_winners(target_day2: dt.date) -> dict:
-    """Rank Day-1's published videos by early views, decide the Day-2 AV amplification shape.
+def day1_winners(target_day2: dt.date | None = None) -> dict:
+    """Rank the MOST RECENTLY MEASURED published day's videos by early views, decide the Day-2 AV
+    amplification shape. PD 2026-09-28: originally keyed on strictly Day-1 (target-1), but with
+    LAUNCH_LEAD_DAYS=2 the produce day hasn't aired when the carry batch runs, so that always
+    returned 'none'. Redefined to "the most recent day that HAS 48h data" — a small recency lag
+    is fine, and it makes the feedback actually fire. `target_day2` is accepted for signature
+    compat but no longer constrains the date.
 
-    Returns {"mode": "dominant"|"spread"|"none", "winners": [row, ...]}:
+    Returns {"mode": "dominant"|"spread"|"none", "winners": [row(+theme), ...]}:
       dominant → 2 fantasy takes on the single top video (top1 ≥ RATIO × top2).
       spread   → 1 fantasy take each on top-1 and top-2 (views were similar).
-      none     → no measurable Day-1 signal → caller falls back to arc-originated AV."""
-    day1 = (target_day2 - dt.timedelta(days=1)).isoformat()
+      none     → no measurable signal at all → caller falls back to arc-originated AV."""
     db = sqlite3.connect(str(ROOT / "data" / "agent.db"))
     db.row_factory = sqlite3.Row
     try:
-        rows = [dict(r) for r in db.execute(
+        allrows = [dict(r) for r in db.execute(
             "SELECT video_id, card_id, lane, timeslot, publish_at, views_48h "
-            "FROM video_performance WHERE substr(publish_at,1,10)=? "
-            "AND views_48h IS NOT NULL ORDER BY views_48h DESC", (day1,)).fetchall()]
+            "FROM video_performance WHERE views_48h IS NOT NULL "
+            "AND publish_at IS NOT NULL ORDER BY publish_at DESC, views_48h DESC").fetchall()]
+        if not allrows:
+            return {"mode": "none", "winners": []}
+        latest_day = str(allrows[0]["publish_at"])[:10]          # most recent MEASURED day
+        rows = sorted((r for r in allrows if str(r["publish_at"])[:10] == latest_day),
+                      key=lambda r: r["views_48h"] or 0, reverse=True)
+        # attach each winner's theme (for the fantasy directive) from its card
+        for r in rows[:2]:
+            try:
+                tr = db.execute("SELECT theme FROM cards WHERE card_id=?", (r["card_id"],)).fetchone()
+                r["theme"] = (tr["theme"] if tr else "") or ""
+            except Exception:
+                r["theme"] = ""
     except Exception as e:  # noqa: BLE001
         log.warning("day1_winners: %s", e)
-        rows = []
+        return {"mode": "none", "winners": []}
     finally:
         db.close()
-    if not rows:
-        return {"mode": "none", "winners": []}
     top1 = rows[0]
     top2 = rows[1] if len(rows) > 1 else None
     v1 = top1["views_48h"] or 0
     v2 = (top2["views_48h"] or 0) if top2 else 0
     if not top2 or v1 >= AV_DOMINANCE_RATIO * max(v2, 1):
-        return {"mode": "dominant", "winners": [top1]}
-    return {"mode": "spread", "winners": [top1, top2]}
+        return {"mode": "dominant", "winners": [top1], "day": latest_day}
+    return {"mode": "spread", "winners": [top1, top2], "day": latest_day}
 
 
 # ── production batch (render + schedule + carry) ─────────────────────────────
@@ -224,14 +238,20 @@ def _occupied_slots(target: dt.date) -> set:
 
 
 def _render_av_slot(target: dt.date, hhmm: str, *, timely: bool, do_upload: bool,
-                    progress_cb=None, slack_client=None, slack_channel=None) -> dict | None:
+                    directive: str = "", progress_cb=None,
+                    slack_client=None, slack_channel=None) -> dict | None:
     """Render one AV slot by reusing the live per-slot pipeline via assignments_override.
     `timely=False` (produce-day AV) suppresses the forced-timely hook; `timely=True`
-    (carry-day AV) keeps it. Returns the slot-result dict or None (empty slot)."""
+    (carry-day AV) keeps it. `directive` (non-empty on carry days) is injected via
+    PD_RERENDER_DIRECTIVE — arc.next_directive's top-priority hook — so the AV concept
+    re-imagines a recent winner as fantasy. Returns the slot-result dict or None (empty slot)."""
     from agents.launch import launch_pipeline
     prev = os.environ.get("SELFHEAL_DROP_TIMELY")
+    prev_dir = os.environ.get("PD_RERENDER_DIRECTIVE")
     if not timely:
         os.environ["SELFHEAL_DROP_TIMELY"] = "1"   # launch_pipeline honors this to skip timely-force
+    if directive:
+        os.environ["PD_RERENDER_DIRECTIVE"] = directive
     try:
         res = launch_pipeline(target, progress_cb=progress_cb, do_upload=do_upload,
                               lane_filter="ai_vtuber", slot_filter=hhmm,
@@ -239,10 +259,11 @@ def _render_av_slot(target: dt.date, hhmm: str, *, timely: bool, do_upload: bool
                               slack_client=slack_client, slack_channel=slack_channel,
                               consolidate_videos=True)
     finally:
-        if prev is None:
-            os.environ.pop("SELFHEAL_DROP_TIMELY", None)
-        else:
-            os.environ["SELFHEAL_DROP_TIMELY"] = prev
+        for _k, _v in (("SELFHEAL_DROP_TIMELY", prev), ("PD_RERENDER_DIRECTIVE", prev_dir)):
+            if _v is None:
+                os.environ.pop(_k, None)
+            else:
+                os.environ[_k] = _v
     return res[0] if res else None
 
 
@@ -282,7 +303,7 @@ def _render_9_rf(target: dt.date, progress_cb=None, deadline: float | None = Non
     if not sources:
         _sp(":warning: senior director가 소스를 못 냈어요 — RF 0편(다음 배치/수동)")
         return []
-    episodes: list[tuple] = []
+    per_source: list[dict] = []   # [{grammar: (mp4, concept)}] per rendered source, in order
     for idx, s in enumerate(sources[:3]):
         if deadline is not None and time.monotonic() > deadline:
             _sp(f":alarm_clock: 배치 시간초과 — 남은 소스 렌더 중단(소스 {idx+1}/{len(sources[:3])}부터). "
@@ -291,6 +312,7 @@ def _render_9_rf(target: dt.date, progress_cb=None, deadline: float | None = Non
         pool = _pool_from_cast(s.get("cast") or [])
         if len(pool) < 4:
             _sp(f":warning: source {s.get('source_id')} 캐스트<4({len(pool)}) → 스킵")
+            per_source.append({})
             continue
         tag = _safe_tag(s.get("source_id"), idx)
         try:
@@ -299,13 +321,28 @@ def _render_9_rf(target: dt.date, progress_cb=None, deadline: float | None = Non
                 pool=pool, tag=tag)
         except Exception as e:  # noqa: BLE001
             _sp(f":warning: source {s.get('source_id')} 공유 렌더 실패 → 스킵: {str(e)[:120]}")
+            per_source.append({})
             continue
-        for g in GRAMMARS:
-            if g in results:
-                mp4, concept = results[g]
-                episodes.append((mp4, concept))
-        _sp(f":clapper: source {s.get('source_id')} → {sum(1 for g in GRAMMARS if g in results)}/3 grammar 렌더")
-    return episodes
+        per_source.append({g: results[g] for g in GRAMMARS if g in results})
+        _sp(f":clapper: source {s.get('source_id')} → {len(per_source[-1])}/3 grammar 렌더")
+    # INTERLEAVE grammar-major, source-minor (PD 2026-09-28): a source's 3 grammar variants share
+    # the SAME footage, so emitting them source-major (A-v,A-m,A-s,B-v,…) put all 3 of source A on
+    # Day-1 back-to-back → 9/30 shipped the same nose clip 3× (08/09/13). Round-robin instead
+    # (A-v,B-v,C-v,A-m,B-m,C-m,A-s,B-s,C-s): the day-slice then spreads each footage set across the
+    # day (a source appears ≤2×/day for a 5-slot day, never 3-in-a-row). See _launch_v2_regress.
+    return _interleave(per_source)
+
+
+def _interleave(per_source: list[dict]) -> list:
+    """Flatten [{grammar: item}] grammar-major, source-minor so a source's same-footage grammar
+    variants are spread out (A-v,B-v,C-v,A-m,…), not clustered (A-v,A-m,A-s,…). Keeps the day-slice
+    from airing one footage set 3× back-to-back. Pure — see _launch_v2_regress."""
+    out: list = []
+    for g in GRAMMARS:
+        for src in per_source:
+            if g in src:
+                out.append(src[g])
+    return out
 
 
 def run_v2_batch(target: dt.date, *, do_upload: bool = True, dry_run: bool = False,
@@ -414,17 +451,32 @@ def run_v2_batch(target: dt.date, *, do_upload: bool = True, dry_run: bool = Fal
                 _sp(f":rotating_light: {hh} RF(이월) 핀 없음/예약실패 — 손수정 필요")
 
     # ── AV ────────────────────────────────────────────────────────────────
+    # Carry-day AV = timeliness feedback (PD 2026-09-28): re-imagine the MOST RECENTLY MEASURED
+    # popular video as an ai_vtuber fantasy. dominant (top1 ≥ 2× top2) → both AV slots re-imagine
+    # the single winner two different ways; spread → each slot takes one of the top-2. Injected via
+    # _render_av_slot's `directive` (PD_RERENDER_DIRECTIVE). Falls back to a normal timely AV when
+    # there's no measured signal yet.
+    av_directives: dict[str, str] = {}
     if not produce:
-        # Day-2 timeliness signal (logged only for now). day1_winners ranks Day-1's early
-        # views to shape a fantasy re-imagining, but with LAUNCH_LEAD_DAYS=2 the produce day
-        # hasn't aired when this batch runs → no 48h data → 'none'. Wiring the winner into the
-        # AV concept is DEFERRED until the lead-time model is resolved; carry AVs render as
-        # normal timely concepts meanwhile.
         try:
             w = day1_winners(target)
+            av_slots_sorted = _av_slots(plan)
             if w["mode"] != "none" and w["winners"]:
-                _sp(f":crystal_ball: Day-1 인기 신호 감지({w['mode']}) — "
-                    "판타지 재해석 배선은 리드타임 모델 확정 후(현재 일반 시의성 AV로 렌더)")
+                wins = w["winners"]
+                def _fant(theme: str) -> str:
+                    t = (theme or "인기편").strip()
+                    return (f"최근 인기편 「{t}」의 그 순간을, 랴니와 레오가 주인공인 상상/판타지로 "
+                            f"재해석하라 (ai_vtuber만의 '가본 적 없는 곳/될 수 없는 것' 연출을 살려라). "
+                            f"캐릭터 사실·마킹·해부는 그대로.")
+                if w["mode"] == "dominant":
+                    ang = ["더 크게 부풀린 스케일(우주·거인 등)", "정반대 상황으로 뒤집은 역발상"]
+                    for i, hh in enumerate(av_slots_sorted):
+                        av_directives[hh] = _fant(wins[0].get("theme")) + f" 앵글: {ang[i % len(ang)]}."
+                else:  # spread → one winner per slot
+                    for i, hh in enumerate(av_slots_sorted):
+                        av_directives[hh] = _fant(wins[min(i, len(wins) - 1)].get("theme"))
+                _sp(f":crystal_ball: Day-2 AV 시의성({w['mode']}, {w.get('day','?')}) — "
+                    f"최근 인기편 판타지 재해석 배선: {list(av_directives.keys())}")
         except Exception as e:  # noqa: BLE001
             log.warning("v2 day1_winners failed: %s", e)
     # One fresh-concept reroll on AV failure (PD 2026-09-27): a single AV attempt via
@@ -444,7 +496,7 @@ def run_v2_batch(target: dt.date, *, do_upload: bool = True, dry_run: bool = Fal
         r = None
         for _att in range(_av_tries):
             r = _render_av_slot(target, hh, timely=not produce, do_upload=do_upload,
-                                progress_cb=_sp,
+                                directive=av_directives.get(hh, ""), progress_cb=_sp,
                                 slack_client=slack_client, slack_channel=slack_channel)
             if r and r.get("video_id"):
                 break

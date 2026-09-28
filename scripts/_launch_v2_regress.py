@@ -158,6 +158,28 @@ check("role-swap gate catches all swap premises (incl. 9/30 leak)",
 check("role-swap gate no false-positive on innocent concepts",
       all(_swap(c) is None for c in _SWAP_MISS))
 
+# ── interleave: a source's 3 same-footage grammar variants must NOT cluster (9/30 nose ×3) ──
+_per = [{"velocity": "A", "meme": "A", "story": "A"},   # each source's 3 grammars share footage
+        {"velocity": "B", "meme": "B", "story": "B"},
+        {"velocity": "C", "meme": "C", "story": "C"}]
+_ep = launch_v2._interleave(_per)
+_day1 = _ep[:5]        # produce-day airs the first 5
+_carry = _ep[5:9]      # 4 carry to next day
+def _max_run(seq):     # longest run of the same source
+    best = run = 1
+    for i in range(1, len(seq)):
+        run = run + 1 if seq[i] == seq[i - 1] else 1
+        best = max(best, run)
+    return best if seq else 0
+from collections import Counter
+check("interleave: 9 episodes preserved", sorted(_ep) == sorted("ABC" * 3), detail="".join(_ep))
+check("interleave: Day1 no source 3× (≤2)", max(Counter(_day1).values()) <= 2, detail=str(dict(Counter(_day1))))
+check("interleave: Day1 no 3-in-a-row", _max_run(_day1) < 3, detail="".join(_day1))
+check("interleave: Day2 no 3-in-a-row", _max_run(_carry) < 3, detail="".join(_carry))
+# a source with a failed grammar just contributes fewer — no crash, still interleaved
+_ep2 = launch_v2._interleave([{"velocity": "A", "story": "A"}, {"meme": "B"}, {}])
+check("interleave: partial sources ok", _ep2 == ["A", "B", "A"], detail=str(_ep2))
+
 print()
 if FAILS:
     print(f"REGRESS FAILED: {FAILS}")
