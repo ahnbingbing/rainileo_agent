@@ -1501,6 +1501,16 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   분류기 차단) VM이 재배포만으로 즉시 고쳐짐. VM 실증: find_gaps=NONE, 9/28·9/29 4슬롯 full·진짜 공백0·9/30 6슬롯 full.
   ★교훈=**모델을 플립할 땐 "언제부터"를 명시하라 — 새 gap-finder는 옛 모델로 만든 과거를 자기 격자로 읽어 헛것을
   채운다.** 회귀=pre-start→4슬롯·on/after→6슬롯. cf. [[D_lanemix]](가역성)·[[streaming_guard_masked_dead_primary]].
+  ★9/28 견고화 3종(`3bbefcf`): ①**run_v2_batch 벽시계 캡 부재** — 9RF+2AV×리롤을 배치 데드라인 없이 돌렸다(4슬롯
+  run_with_selfheal엔 SELFHEAL_MAX_SECONDS 있음). 교훈=**옛 모델을 대체하는 새 오케스트레이터는 옛 모델의 런어웨이
+  백스톱도 함께 상속하라**(V2_BATCH_MAX_SECONDS, 소스 렌더/AV 시도 전 monotonic 데드라인). ②**RF [ORPHAN-SKIP]
+  no-card-for-output 근본**(9/29 21:00 + 손수정을 죽인 것): caption-salvage가 카드를 …_salvaged.mp4로 repoint하는데
+  retry 루프가 **같은 카드의 다른(pre-salvage) attempt를 best로** 고르면 카드는 salvaged를 가리켜 업로드 초크의
+  path-조회가 빗나감. **카드는 output 경로를 하나만 가진다** — attempt→card_id 맵으로 `_finish(chosen)`에서 우승 카드를
+  chosen 파일로 repoint(모든 return 경로 균일). 교훈=한 카드에 여러 산출물이 매달리면 "무엇이 최종인지"를 초크 직전에
+  단일화하라. ③**bandit timeslot 버킷이 4슬롯 전용** — v2 09:00/13:00/20:00 영상이 최근접 레거시 슬롯으로 오스냅→
+  timeslot marginal 오염. `_timeslot_of`가 영상 **자기 발행일의 grid**로 스냅(occupancy·find_gaps·충돌가드·측정까지
+  per-date-grid 원칙 일관). 남은 후속=day1_winners 판타지(리드타임 대기)·PD mp4 리뷰.
 - **D_openaicost. per-cut best-of가 상류 컨셉-ref best-of와 예산을 이중 지출했다 + 엔진 이름이 틀린 죽은 config(9/4)** —
   OpenAI gpt-image 비용이 과했다. 근본: AV 스틸은 컨셉 레퍼런스를 이미 best-of-4(`AV_CONCEPT_REF_BEST_OF`)로 검증하고
   그 예산을 상류에 쓰는 이유가 **컷마다 재롤하지 않게** 하려는 것인데, per-cut `REGEN_BEST_OF` 기본이 여전히 2라 지배적 비용
