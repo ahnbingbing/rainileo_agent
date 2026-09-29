@@ -480,7 +480,10 @@ def _grounding_violation(copy: dict, grammar: str, union: dict) -> str | None:
     if not text.strip():
         return None
     subs = set(union.get("subjects") or [])
-    if {"ryani", "leo"} <= subs:
+    # Velocity is 2 short title-hits (≤10 chars each), not narration — it legitimately spotlights
+    # one pet or the action ("레오, 숲으로"), so the both-present→name-both rule (written for
+    # story/meme narration, the m1AFJiWzGx0 case) is a false positive here. Exempt velocity.
+    if grammar != "velocity" and {"ryani", "leo"} <= subs:
         has_leo = ("레오" in text) or ("leo" in text)
         has_ry = ("랴니" in text) or ("ryani" in text) or ("라니" in text)
         if has_leo != has_ry:  # names exactly one pet while both are present
