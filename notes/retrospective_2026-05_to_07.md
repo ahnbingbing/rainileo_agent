@@ -1327,6 +1327,31 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   variant를 스킵(→표준 RF). 재활성=EDIT_GRAMMAR_MODE 기본 ON(킬스위치 =0 즉시 롤백). ★교훈: **PD가 금지한 건
   기능이 아니라 그 기능의 한 스케줄링 특성일 수 있다 — 근본(같은 날)만 고치면 기능은 되살아난다.** cf [[D_grammarlive]]
   (우회 경로 계약 상속 — 롤링윈도우도 표준 RF의 그라운딩 계약을 이제 상속한다).
+- **C_grammargrounding. 대체 경로는 대체된 경로의 계약을 자동 상속하지 않는다 — 출력을 diff해 무엇이 사라졌는지
+  열거하라(9/29)** — PD "요즘 RF 캡셔닝이 너무 별로"(10/1 21:00 story `PWpkuDo6gWI`: ①랴니 정지·레오 이동인데
+  '둘이 멈췄다' ②전부 쇼파인데 '침대→쇼파' ③마지막이 첫 샷과 같은데 캡션 불일치 ④중간 폰트 축소). PD 가설이 근본을
+  짚었다 — "최초 스토리를 기준으로 동영상을 맞춘다"(story-first). 진짜 시스템 근본은 한 겹 더: **v2 senior-director의
+  `produce_grammar_episodes_shared`가 9/30부터 모든 RF의 기본 경로가 됐는데, 이 경로는 grammar 캡션 그라운딩
+  (subject/location + `_grounding_violation` 가드)을 아예 안 했다.** 그 배선은 옛 rolling 경로(`ensure_rolling_window`)
+  에만 있었고, shared 경로는 story의 ungrounded `base_copy`까지 재사용했다. 즉 impact_edit.render_grammar가 표준 RF의
+  렌더타임 캡션 그라운더(`_rf_action_grounded_captions` 등)를 우회하는 위에, Writer-side 그라운딩마저 없어 캡션이 100%
+  story-first로 회귀 — v2가 grammar를 RF 기본으로 승격한 순간(9/30) 그라운딩이 조용히 소실됐다. 더해 grammar 캡션은
+  태생이 story-first(premise→beat→클립 캐스팅)라 프레임 진실과 갈린다: 특히 **모션은 Writer에 없던 신호**였다 —
+  엔진은 `salient_motion_window`로 클립의 **최대-모션** 구간을 보여주는데 Writer는 그걸 몰라 kinetic 클립(측정 peak
+  11.9~31.6)을 '멈췄다'로 썼다. Fix=rolling의 그라운딩 전량을 shared 경로에 포팅(모든 grammar가 grounding으로 copy
+  재생성 + `_grounding_violation` 가드 + concept 첨부) + **신규 clip-level 모션 신호**(`clip_motion_peak`→calm/moderate/
+  high, `_ground_cast_clips`가 계산→Writer `candidate_clips[].motion`) + `edit_grammar_copy.md`(모션정직: motion=
+  high/moderate를 '멈췄다'로 금지·둘을 한 상태로 뭉치지 마라 / one-setting: loc가 실제로 다를 때만 장소전환 서술[침대
+  날조 금지] / 북엔드: kind=payoff는 cold_open의 role·클립을 재사용하니 '결국 여기로 돌아왔다'식 회귀 캡션 / surface:
+  loc의 소파에서 자면 '소파', 관성적 '침대' 금지) + surface 백스톱(`_grounding_violation`에 침대/침실 vs loc 체크) +
+  `_build_story_from_beats` body 폰트 균일(beat별 fs + drawtext `_fit_fs` 차등축소가 #4의 직접 원인). 9/30+ grammar
+  RF 8편 재렌더·예약 교체(미공개 예약이라 가역). ★mini-rollback: 프롬프트 "the payoff beat" 문구가 Writer에 payoff를
+  **role로 오용**시켜(payoff는 kind) story가 uncast-role 검증에서 표준 RF로 폴백 → "kind: payoff인 beat, role은
+  cold_open과 동일"로 명확화(프로덕션 story 폴백률도 감소). ★교훈 2겹: ①**A를 B로 완전 교체하면 B가 A의 계약을
+  자동 상속하지 않는다 — dry-run 통과·슬롯 채움은 계약 보존을 증명하지 않으니, 두 경로의 출력을 diff해 사라진 계약을
+  열거하라**([[D_grammarlive]]의 "우회 경로는 계약 상속"의 상위·더 조용한 케이스 — 우회가 아니라 교체라 옛 경로가
+  통째로 안 돌아 흔적조차 없다). ②**문법/모델을 기본으로 승격하는 블래스트는 그 기본이 지나는 모든 스테이지까지
+  뻗는다** — 여기선 캡션 그라운딩. cf [[grounding_pd_notes_gpt4omini]]·[[C_grammarquality]]·[[view_data_concrete_hook_title]].
 
 ### 4.5 인프라 / 파이프라인
 - **D_lanemix. 라이브 채널 변경은 되돌림을 런타임 플래그로 출하하라 — git-revert만으론 부족하다(9/9)** —
