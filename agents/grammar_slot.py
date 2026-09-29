@@ -319,10 +319,19 @@ def produce_grammar_episodes_shared(grammars: list, target: dt.date, hhmm_by_gra
     _sp(f":art: RF grammar A/B — 클립 {len(pool)}개서 공유 캐스팅(1회) 중")
     base = propose_grammar_copy("story", pool, slot_hhmm=hhmm_by_grammar.get("story"))
     shared_clips = base["clips"]
-    base_copy = base["copy"]
     for aid in dict.fromkeys(shared_clips.values()):
         _ensure_local(aid)
+    # Ground the shared cast (subjects + location + motion) so every grammar's copy is written
+    # against the footage truth. The grammar render path does NOT run the standard RF caption
+    # grounders, so without this the copy is pure story-first — v2's shared path skipped grounding
+    # entirely (only the rolling path had it), which is how '둘이 멈췄다' over a moving Leo / an
+    # invented 침대→쇼파 shipped. Mirror the rolling path: ground once, re-derive every grammar's
+    # copy with it, guard, and attach to the concept for Giri.
+    grounding = _ground_cast_clips(shared_clips)
+    union = _grounding_union(grounding)
     peaks = _cast_motion_peaks(shared_clips)          # footage-fit: does the shared cast carry each form?
+    _sp(f":mag: 캐스트 그라운딩 — subjects={union['subjects']} outdoor={union['any_outdoor']} "
+        f"peak_motion={union.get('max_motion', 0)}")
     ts = target.strftime("%Y%m%d")
 
     def _one(grammar: str):
@@ -330,9 +339,12 @@ def produce_grammar_episodes_shared(grammars: list, target: dt.date, hhmm_by_gra
         fit = _footage_fit(grammar, peaks)            # skip a grammar the footage can't carry → standard RF
         if fit:
             raise RuntimeError(f"footage-fit: {fit}")
-        copy = (base_copy if grammar == "story"
-                else propose_grammar_copy(grammar, pool, slot_hhmm=hh,
-                                          fixed_clips=shared_clips)["copy"])
+        # Every grammar (incl. story) re-derives copy WITH grounding — no ungrounded base reuse.
+        copy = propose_grammar_copy(grammar, pool, slot_hhmm=hh,
+                                    fixed_clips=shared_clips, grounding=grounding)["copy"]
+        viol = _grounding_violation(copy, grammar, union)
+        if viol:                                      # erases a pet / mislabels place → standard RF
+            raise RuntimeError(f"grounding: {viol}")
         # PD 2026-09-27 (v2): 3 senior-director sources each render the same grammar, so the
         # slot-based name collides across sources (episode_rf_velocity_<ts>_.mp4 ×3 → overwrite).
         # A per-source `tag` disambiguates the filename; falls back to the slot for the live path.
@@ -343,6 +355,14 @@ def produce_grammar_episodes_shared(grammars: list, target: dt.date, hhmm_by_gra
         if not out.exists():
             raise RuntimeError("grammar render produced no file")
         concept = _concept_for(grammar, shared_clips, copy)
+        concept["_grounding_union"] = union
+        for c in concept.get("cuts", []):
+            g = grounding.get(c.get("asset_id"))
+            if g:
+                c["grounding"] = {"subjects": g.get("subjects"),
+                                  "location_type": g.get("location_type"),
+                                  "indoor_outdoor": g.get("indoor_outdoor"),
+                                  "motion": g.get("motion")}
         # Register a card + link the mp4 so the launch scheduler can find and schedule it
         # (otherwise [ORPHAN-SKIP] → slot never fills). Non-fatal: a card failure shouldn't
         # discard a good render — the slot would just need a manual schedule.
@@ -429,11 +449,14 @@ def _ground_cast_clips(clips: dict) -> dict:
 def _grounding_union(grounding: dict) -> dict:
     subj: set = set()
     any_outdoor = False
+    max_motion = 0.0
     for g in grounding.values():
         subj.update(g.get("subjects") or [])
         if g.get("indoor_outdoor") == "outdoor" or g.get("location_type") in ("outdoor", "cafe"):
             any_outdoor = True
-    return {"subjects": sorted(subj), "any_outdoor": any_outdoor}
+        max_motion = max(max_motion, float(g.get("motion_peak") or 0))
+    return {"subjects": sorted(subj), "any_outdoor": any_outdoor,
+            "max_motion": round(max_motion, 1)}
 
 
 def _copy_text(copy: dict, grammar: str) -> str:
