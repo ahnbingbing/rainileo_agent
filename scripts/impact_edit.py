@@ -639,6 +639,11 @@ def assemble(seq: list[dict], caps: list[tuple], music_id: str, out: Path, *,
     if bumpers:
         _wrap_bumpers(body, out, tmp)     # intro/outro channel bumpers (D_grammarlive fix)
     print(f"→ {out}  ({total:.1f}s)")
+    # Clean the ~80-250MB scratch dir — it was never removed, so every grammar render leaked one
+    # and the VM disk filled (100% → renders fail 'No space left' → empty slots, the resource-
+    # exhaustion-as-content-failure masquerade). `out` is at the caller's path (outside tmp), so
+    # this only drops scratch. Best-effort; a stray leak (render exception) is caught by prune cron.
+    _shutil.rmtree(tmp, ignore_errors=True)
     return out
 
 
