@@ -450,13 +450,17 @@ def _grounding_union(grounding: dict) -> dict:
     subj: set = set()
     any_outdoor = False
     max_motion = 0.0
+    locs: list = []
     for g in grounding.values():
         subj.update(g.get("subjects") or [])
         if g.get("indoor_outdoor") == "outdoor" or g.get("location_type") in ("outdoor", "cafe"):
             any_outdoor = True
         max_motion = max(max_motion, float(g.get("motion_peak") or 0))
+        for _l in (g.get("location_specific"), g.get("location_type")):
+            if _l:
+                locs.append(str(_l).lower())
     return {"subjects": sorted(subj), "any_outdoor": any_outdoor,
-            "max_motion": round(max_motion, 1)}
+            "max_motion": round(max_motion, 1), "locs": locs}
 
 
 def _copy_text(copy: dict, grammar: str) -> str:
@@ -487,6 +491,13 @@ def _grounding_violation(copy: dict, grammar: str, union: dict) -> str | None:
                                            "outdoor", "outside", "cafe", "park"))
         if says_home and not says_out:
             return "location: 실외 나들이인데 캡션이 '집/실내'"
+    # surface fabrication: a bed the footage never shows (all clips are sofa/couch/living room).
+    # bed-specific words only (not generic 방) to stay low-false-positive. Catches the 10/1
+    # "침대에서 쇼파로" over an all-sofa cast that slipped past the source-grounded copy.
+    locs = " ".join(union.get("locs") or [])
+    if any(w in text for w in ("침대", "침실", "bed", "bedroom")) and \
+       not any(w in locs for w in ("침대", "침실", "bed", "bedroom")):
+        return "surface: 소파/거실인데 캡션이 '침대/침실'(footage에 없는 장소)"
     return None
 
 

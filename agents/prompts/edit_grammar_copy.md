@@ -61,9 +61,12 @@ clip. `verified` comes from the owner's own note plus a multi-frame check, so tr
 over what one thumbnail seems to show. Two consequences: (a) if BOTH pets are present,
 the copy must not name only one and silently drop the other — that erases a pet who is
 right there (a two-pet cafe outing titled "레오가 나무를 짚었다" erased Ryani); name both,
-or voice it about the pair. (b) the location is what `verified`/`loc` says — never call an
-outdoor outing (a cafe terrace, a park, a walk) "집"/"실내", nor an indoor scene "밖". A
-cafe terrace is OUTDOOR even if a frame looks enclosed.
+or voice it about the pair. (b) the location — AND the surface — is what `verified`/`loc`
+says. Never call an outdoor outing (a cafe terrace, a park, a walk) "집"/"실내", nor an
+indoor scene "밖" (a cafe terrace is OUTDOOR even if a frame looks enclosed). And name the
+actual surface from `loc`, don't default to a stock one: a nap on a `loc: 소파/couch/living
+room` is "소파에서", NEVER "침대에서/방에서" — inventing a bed the footage never shows is the
+same lie as a location swap, just smaller (the 10/1 "침대에서 쇼파로" over an all-sofa clip set).
 
 **Motion must match the screen — and don't collapse two pets into one state.** Read the
 clip's `motion` and each pet's action in `sc`; the caption's energy must match. Why: the
