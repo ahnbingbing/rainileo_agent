@@ -371,11 +371,24 @@ def produce_grammar_episodes_shared(grammars: list, target: dt.date, hhmm_by_gra
 
 
 # ── Rolling window (PD 2026-09-20) ──────────────────────────────────────────
+def _motion_label(peak: float) -> str:
+    """Bucket a clip_motion_peak scalar into a word the copy Writer can reason about.
+    Calibrated on impact_edit.clip_motion_peak (calm nap ~6, sniff/walk ~8-14, run/swim/play
+    ~23-30): the Writer needs to know a clip is KINETIC so it never captions it as 'stopped'
+    when the engine will show its most-motion window (the 10/1 '둘이 멈췄다' over a moving Leo)."""
+    if peak >= 18:
+        return "high"          # 활발·역동 (뛰기·수영·공놀이) — 절대 '멈췄다/가만히'로 쓰지 말 것
+    if peak >= 10:
+        return "moderate"      # 은은한 움직임 (코킁·걷기·꼬물) — 완전 정지 아님
+    return "calm"              # 차분·거의 정지 (낮잠·멍) — 정적 캡션 OK
+
+
 def _ground_cast_clips(clips: dict) -> dict:
-    """Authoritative subject-union + location grounding for the cast clips
-    (pd_notes + gpt-4o-mini multi-frame). Returns asset_id → grounding dict. Fed to the copy
-    Writer so grammar copy stops erasing a present pet / mislabelling an outdoor outing, and
-    attached to the pinned concept so Giri caps against the same truth."""
+    """Authoritative subject-union + location + MOTION grounding for the cast clips
+    (pd_notes + gpt-4o-mini multi-frame; motion from impact_edit.clip_motion_peak). Returns
+    asset_id → grounding dict. Fed to the copy Writer so grammar copy stops erasing a present
+    pet / mislabelling an outdoor outing / captioning a moving clip as still, and attached to
+    the pinned concept so Giri caps against the same truth."""
     try:
         from agents import openai_vision
     except Exception:
@@ -397,6 +410,16 @@ def _ground_cast_clips(clips: dict) -> dict:
                 log.warning("grammar grounding %s: %s", aid, str(e)[:100])
                 g = None
             if g and g.get("subjects"):
+                # attach clip-level motion so the Writer casts + captions honestly (no
+                # 'stopped' caption on a kinetic clip). Only for videos; failures are silent.
+                if (kind or "video") == "video":
+                    try:
+                        from scripts.impact_edit import clip_motion_peak, _resolve_clip
+                        peak = clip_motion_peak(str(_resolve_clip(aid)))
+                        g["motion_peak"] = round(float(peak), 1)
+                        g["motion"] = _motion_label(peak)
+                    except Exception as e:
+                        log.warning("grammar motion %s: %s", aid, str(e)[:100])
                 out[aid] = g
     finally:
         con.close()
