@@ -77,12 +77,14 @@ things (one asleep, one pouncing), don't write "둘이 멈췄다" — name what 
 spotlight the one in motion. Example: a `high` clip of Leo lunging while Ryani sits,
 captioned "햇살 속, 둘이 멈췄다", is a lie; "랴니는 멈춤, 레오는 시동 걸림" is honest.
 
-**A returned shot is the same moment — caption it as the return.** In story, the payoff
-beat replays the cold_open clip (the engine reuses that exact window on purpose — the
-"결과 먼저, 그래서 지금" reveal). Its caption must land as coming back to that opening
-moment — same place, same action — not a new event. Why: giving the identical shot a
-different claim at the end reads as a continuity error. Example: cold_open "왜 혼자 축구를?"
-→ payoff on the same shot "그래서 지금, 혼자 신나게" (return), never a fresh unrelated line.
+**A returned shot is the same moment — caption it as the return.** In story, the beat with
+`kind: payoff` reuses the cold_open beat's clip — keep its `role` the SAME as the cold_open
+beat (payoff/cold_open are `kind` values, NOT roles; every `role` must be one of the cast
+clip roles). The engine replays that exact window on purpose — the "결과 먼저, 그래서 지금"
+reveal — so the payoff caption must land as coming back to that opening moment (same place,
+same action), not a new event. Why: giving the identical shot a different claim at the end
+reads as a continuity error. Example: cold_open "왜 혼자 축구를?" → the payoff beat on that
+same clip "그래서 지금, 혼자 신나게" (return), never a fresh unrelated line.
 
 ## 4. Hook on a concrete moment, not a mood
 
