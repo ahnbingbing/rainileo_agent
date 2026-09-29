@@ -859,6 +859,24 @@ def _prerender_and_size(seq: list[dict], narr_by_idx: dict) -> dict:
     return pre
 
 
+def _uniform_body_fs(texts: list[str], base: int = 74, floor: int = 46) -> int:
+    """One consistent caption size for the whole episode. drawtext doesn't wrap, so per-beat
+    sizes + assemble's per-line _fit_fs shrink LONG lines more than short ones → captions jump
+    size mid-episode (PD 10/1 '중간에 캡션이 작아지고'). Shrink one base size until the LONGEST
+    body line fits ~88% width, then every body caption shares it — steady, no surprise shrink."""
+    maxw = W * 0.88
+
+    def _wpx(s: str, f: int) -> float:
+        return sum((0.98 if ord(c) > 0x2000 else 0.56) * f for c in s)
+
+    fs = base
+    for t in texts:
+        longest = max((t or "").split("\n"), key=len) if t else ""
+        while fs > floor and _wpx(longest, fs) > maxw:
+            fs -= 2
+    return fs
+
+
 def _build_story_from_beats(c: dict, beats: list[dict], music_id: str, out: Path) -> Path:
     """B4 beat-driven story: the Writer supplies ordered beats — each a role (soccer/play1/
     swim/play2/belly, cast by the Writer), an optional kind (cold_open|payoff|calm), KO caption
@@ -890,16 +908,19 @@ def _build_story_from_beats(c: dict, beats: list[dict], music_id: str, out: Path
     ts = _times(seq)
     total = sum(sg["target"] for sg in seq)
     F, Y = FONT_XBOLD, H * 0.15
+    # ONE uniform body size across the episode (fits the longest line) so captions don't jump
+    # size mid-episode. Per-beat fs is ignored for body lines — consistency reads as intentional.
+    body_fs = _uniform_body_fs([t for b in beats for t in (b.get("ko"), b.get("ko2")) if t])
     caps, voices = [], []
     for i, b in enumerate(beats):
         seg_end = ts[i + 1] if i + 1 < len(seq) else total
         ko, ko2, box = b.get("ko"), b.get("ko2"), b.get("box", False)
         if ko and ko2:
             mid = ts[i] + min(2.0, (seg_end - ts[i]) * 0.45)
-            caps.append((ts[i] + 0.10, mid - 0.05, ko, b.get("fs", 74), Y, F, box))
-            caps.append((mid, seg_end - 0.1, ko2, b.get("fs2", b.get("fs", 74)), Y, F, box))
+            caps.append((ts[i] + 0.10, mid - 0.05, ko, body_fs, Y, F, box))
+            caps.append((mid, seg_end - 0.1, ko2, body_fs, Y, F, box))
         elif ko:
-            caps.append((ts[i] + 0.10, seg_end - 0.1, ko, b.get("fs", 74), Y, F, box))
+            caps.append((ts[i] + 0.10, seg_end - 0.1, ko, body_fs, Y, F, box))
         if b.get("narration"):
             voices.append((ts[i] + 0.15, b["narration"], 1.45, str(pre[i][0])))
     caps.append((total - 2.0, total, "@ryani_n_leo", 58, H * 0.82, F, False))

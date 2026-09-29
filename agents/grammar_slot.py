@@ -319,10 +319,19 @@ def produce_grammar_episodes_shared(grammars: list, target: dt.date, hhmm_by_gra
     _sp(f":art: RF grammar A/B — 클립 {len(pool)}개서 공유 캐스팅(1회) 중")
     base = propose_grammar_copy("story", pool, slot_hhmm=hhmm_by_grammar.get("story"))
     shared_clips = base["clips"]
-    base_copy = base["copy"]
     for aid in dict.fromkeys(shared_clips.values()):
         _ensure_local(aid)
+    # Ground the shared cast (subjects + location + motion) so every grammar's copy is written
+    # against the footage truth. The grammar render path does NOT run the standard RF caption
+    # grounders, so without this the copy is pure story-first — v2's shared path skipped grounding
+    # entirely (only the rolling path had it), which is how '둘이 멈췄다' over a moving Leo / an
+    # invented 침대→쇼파 shipped. Mirror the rolling path: ground once, re-derive every grammar's
+    # copy with it, guard, and attach to the concept for Giri.
+    grounding = _ground_cast_clips(shared_clips)
+    union = _grounding_union(grounding)
     peaks = _cast_motion_peaks(shared_clips)          # footage-fit: does the shared cast carry each form?
+    _sp(f":mag: 캐스트 그라운딩 — subjects={union['subjects']} outdoor={union['any_outdoor']} "
+        f"peak_motion={union.get('max_motion', 0)}")
     ts = target.strftime("%Y%m%d")
 
     def _one(grammar: str):
@@ -330,9 +339,12 @@ def produce_grammar_episodes_shared(grammars: list, target: dt.date, hhmm_by_gra
         fit = _footage_fit(grammar, peaks)            # skip a grammar the footage can't carry → standard RF
         if fit:
             raise RuntimeError(f"footage-fit: {fit}")
-        copy = (base_copy if grammar == "story"
-                else propose_grammar_copy(grammar, pool, slot_hhmm=hh,
-                                          fixed_clips=shared_clips)["copy"])
+        # Every grammar (incl. story) re-derives copy WITH grounding — no ungrounded base reuse.
+        copy = propose_grammar_copy(grammar, pool, slot_hhmm=hh,
+                                    fixed_clips=shared_clips, grounding=grounding)["copy"]
+        viol = _grounding_violation(copy, grammar, union)
+        if viol:                                      # erases a pet / mislabels place → standard RF
+            raise RuntimeError(f"grounding: {viol}")
         # PD 2026-09-27 (v2): 3 senior-director sources each render the same grammar, so the
         # slot-based name collides across sources (episode_rf_velocity_<ts>_.mp4 ×3 → overwrite).
         # A per-source `tag` disambiguates the filename; falls back to the slot for the live path.
@@ -343,6 +355,14 @@ def produce_grammar_episodes_shared(grammars: list, target: dt.date, hhmm_by_gra
         if not out.exists():
             raise RuntimeError("grammar render produced no file")
         concept = _concept_for(grammar, shared_clips, copy)
+        concept["_grounding_union"] = union
+        for c in concept.get("cuts", []):
+            g = grounding.get(c.get("asset_id"))
+            if g:
+                c["grounding"] = {"subjects": g.get("subjects"),
+                                  "location_type": g.get("location_type"),
+                                  "indoor_outdoor": g.get("indoor_outdoor"),
+                                  "motion": g.get("motion")}
         # Register a card + link the mp4 so the launch scheduler can find and schedule it
         # (otherwise [ORPHAN-SKIP] → slot never fills). Non-fatal: a card failure shouldn't
         # discard a good render — the slot would just need a manual schedule.
@@ -371,11 +391,24 @@ def produce_grammar_episodes_shared(grammars: list, target: dt.date, hhmm_by_gra
 
 
 # ── Rolling window (PD 2026-09-20) ──────────────────────────────────────────
+def _motion_label(peak: float) -> str:
+    """Bucket a clip_motion_peak scalar into a word the copy Writer can reason about.
+    Calibrated on impact_edit.clip_motion_peak (calm nap ~6, sniff/walk ~8-14, run/swim/play
+    ~23-30): the Writer needs to know a clip is KINETIC so it never captions it as 'stopped'
+    when the engine will show its most-motion window (the 10/1 '둘이 멈췄다' over a moving Leo)."""
+    if peak >= 18:
+        return "high"          # 활발·역동 (뛰기·수영·공놀이) — 절대 '멈췄다/가만히'로 쓰지 말 것
+    if peak >= 10:
+        return "moderate"      # 은은한 움직임 (코킁·걷기·꼬물) — 완전 정지 아님
+    return "calm"              # 차분·거의 정지 (낮잠·멍) — 정적 캡션 OK
+
+
 def _ground_cast_clips(clips: dict) -> dict:
-    """Authoritative subject-union + location grounding for the cast clips
-    (pd_notes + gpt-4o-mini multi-frame). Returns asset_id → grounding dict. Fed to the copy
-    Writer so grammar copy stops erasing a present pet / mislabelling an outdoor outing, and
-    attached to the pinned concept so Giri caps against the same truth."""
+    """Authoritative subject-union + location + MOTION grounding for the cast clips
+    (pd_notes + gpt-4o-mini multi-frame; motion from impact_edit.clip_motion_peak). Returns
+    asset_id → grounding dict. Fed to the copy Writer so grammar copy stops erasing a present
+    pet / mislabelling an outdoor outing / captioning a moving clip as still, and attached to
+    the pinned concept so Giri caps against the same truth."""
     try:
         from agents import openai_vision
     except Exception:
@@ -397,6 +430,16 @@ def _ground_cast_clips(clips: dict) -> dict:
                 log.warning("grammar grounding %s: %s", aid, str(e)[:100])
                 g = None
             if g and g.get("subjects"):
+                # attach clip-level motion so the Writer casts + captions honestly (no
+                # 'stopped' caption on a kinetic clip). Only for videos; failures are silent.
+                if (kind or "video") == "video":
+                    try:
+                        from scripts.impact_edit import clip_motion_peak, _resolve_clip
+                        peak = clip_motion_peak(str(_resolve_clip(aid)))
+                        g["motion_peak"] = round(float(peak), 1)
+                        g["motion"] = _motion_label(peak)
+                    except Exception as e:
+                        log.warning("grammar motion %s: %s", aid, str(e)[:100])
                 out[aid] = g
     finally:
         con.close()
@@ -406,11 +449,18 @@ def _ground_cast_clips(clips: dict) -> dict:
 def _grounding_union(grounding: dict) -> dict:
     subj: set = set()
     any_outdoor = False
+    max_motion = 0.0
+    locs: list = []
     for g in grounding.values():
         subj.update(g.get("subjects") or [])
         if g.get("indoor_outdoor") == "outdoor" or g.get("location_type") in ("outdoor", "cafe"):
             any_outdoor = True
-    return {"subjects": sorted(subj), "any_outdoor": any_outdoor}
+        max_motion = max(max_motion, float(g.get("motion_peak") or 0))
+        for _l in (g.get("location_specific"), g.get("location_type")):
+            if _l:
+                locs.append(str(_l).lower())
+    return {"subjects": sorted(subj), "any_outdoor": any_outdoor,
+            "max_motion": round(max_motion, 1), "locs": locs}
 
 
 def _copy_text(copy: dict, grammar: str) -> str:
@@ -441,6 +491,13 @@ def _grounding_violation(copy: dict, grammar: str, union: dict) -> str | None:
                                            "outdoor", "outside", "cafe", "park"))
         if says_home and not says_out:
             return "location: 실외 나들이인데 캡션이 '집/실내'"
+    # surface fabrication: a bed the footage never shows (all clips are sofa/couch/living room).
+    # bed-specific words only (not generic 방) to stay low-false-positive. Catches the 10/1
+    # "침대에서 쇼파로" over an all-sofa cast that slipped past the source-grounded copy.
+    locs = " ".join(union.get("locs") or [])
+    if any(w in text for w in ("침대", "침실", "bed", "bedroom")) and \
+       not any(w in locs for w in ("침대", "침실", "bed", "bedroom")):
+        return "surface: 소파/거실인데 캡션이 '침대/침실'(footage에 없는 장소)"
     return None
 
 

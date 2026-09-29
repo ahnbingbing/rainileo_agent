@@ -129,12 +129,16 @@ def _pool_for_prompt(pool: list[dict], grounding: dict | None = None) -> list[di
             "dur": round(float(a.get("duration_sec") or a.get("dur") or 0), 1),
             "loc": (g.get("location_specific") or g.get("location_type")
                     or a.get("location_type") or a.get("loc")),
+            # clip-level energy (calm|moderate|high) from clip_motion_peak — the engine shows a
+            # kinetic clip's MOST-motion window, so the Writer must not caption it as 'stopped'.
+            "motion": g.get("motion") or a.get("motion"),
         }
         if g:
             rec["verified"] = {
-                "subjects": subs, "indoor_outdoor": io,
-                "note": "★검증된 사실(pd_notes+다중프레임): 이 subjects/장소가 진실이다. "
-                        "둘 다면 한 마리만 말하지 말고, 실외를 실내로 쓰지 마라.",
+                "subjects": subs, "indoor_outdoor": io, "motion": g.get("motion"),
+                "note": "★검증된 사실(pd_notes+다중프레임+모션): 이 subjects/장소/에너지가 진실이다. "
+                        "둘 다면 한 마리만 말하지 말고, 실외를 실내로 쓰지 말고, motion=high/moderate "
+                        "클립을 '멈췄다/가만히'로 쓰지 마라.",
             }
         out.append(rec)
     return out
