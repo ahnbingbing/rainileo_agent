@@ -305,12 +305,11 @@ def render_segment(clip: str, src_start: float, src_dur: float, target: float,
             c.append(f"eq=contrast=1.20:brightness=0.006:saturation={sat:.3f}")
             c.append("curves=preset=lighter,eq=brightness=0.10" if flash
                      else "curves=preset=increase_contrast")
-        elif grade == "cinematic":
-            c.append(f"eq=contrast=1.06:brightness=-0.004:saturation={sat:.3f}")
-            c.append("curves=r='0/0.02 1/0.98':b='0/0.03 1/0.95'")   # gentle teal-warm filmic
-            c.append("vignette=PI/4.5")
-        else:  # natural (meme) — punchy but true color
-            c.append(f"eq=contrast=1.10:brightness=0.008:saturation={sat:.3f}")
+        # else (story=cinematic, meme=natural, velocity's alternation cuts): use the footage's
+        # TRUE color — NO brightness/darkness/hue/saturation/vignette. Grading already-shot real
+        # footage crushed it (the teal-warm curves + vignette darkened, the eq lift washed it out).
+        # Only velocity's club-cast cuts intentionally recolor; everything else stays as filmed.
+        # Geometry/motion FX (scale/crop/zoom/hflip/rotate) above are unaffected.
         c.append("format=yuv420p")
         return ",".join(c)
 
