@@ -7396,11 +7396,19 @@ def _gate_and_heal(out_mp4, prompt, who, emph, regen, progress_cb, dry_run,
     `expected_facts` enable the intent-match check. `strict_blaze` (PD 2026-06-09) =
     use the stricter blaze comparison — set for the LAST cut where chain-drift peaks
     and PD consistently catches a widened blaze."""
+    # PD 2026-10-01 COST: a character/marking failure (esp. Ryani's blaze) almost never resolves
+    # on a Seedance re-render — the ref-mode re-widens the blaze the SAME way, the check fails again,
+    # and the code keeps best-effort anyway. So the per-cut character heal was PURE Seedance spend
+    # (2× every Ryani cut, every episode — the doubling PD saw on the BytePlus bill). Make markings
+    # ADVISORY by default: flag for PD veto, spend NO heal. Heal only the FIXABLE dimensions
+    # (scene/action/feeding actually improve on a targeted regen). AV_HEAL_MARKINGS=1 restores the
+    # old always-heal-markings behavior.
+    _heal_markings = os.getenv("AV_HEAL_MARKINGS", "0") == "1"
+
     def _ok():
-        # Focused calls (character + scene + action) — bundling dilutes attention.
-        # Returns None if OK, else the failing dimension so the heal can target it.
-        if not _cut_character_ok(out_mp4, who, strict_blaze=strict_blaze):
-            return "character"
+        # Focused calls (scene + action + feeding + character) — bundling dilutes attention.
+        # Returns None if OK, else the failing dimension so the heal can target it. Fixable
+        # dimensions first; character last so a marking flaw doesn't mask a fixable motion drop.
         if not _cut_scene_ok(out_mp4, scene_ref_path=scene_ref_path,
                              expected_facts=expected_facts):
             return "scene"
@@ -7411,11 +7419,20 @@ def _gate_and_heal(out_mp4, prompt, who, emph, regen, progress_cb, dry_run,
         # PD 2026-06-12: a held-treat feeding cut must NOT degrade to floor-eating.
         if not _cut_feeding_ok(out_mp4, prompt):
             return "feeding"
+        if not _cut_character_ok(out_mp4, who, strict_blaze=strict_blaze):
+            return "character" if _heal_markings else "character_advisory"
         return None
     if not who or dry_run or not out_mp4.exists():
         return True
     reason = _ok()
     if reason is None:
+        return True
+    if reason == "character_advisory":
+        # marking flaw, no fixable dimension failing → keep best-effort, flag for PD, spend no heal.
+        manifests.setdefault("_marking_imperfect_cuts", []).append(tag)
+        if progress_cb:
+            progress_cb(f":warning: {tag} 마킹(블레이즈 등) 이상({who}) — best effort 유지 "
+                        f"(힐 스킵=비용절감; 재렌더로 안 고쳐짐). PD 검수 veto가 net")
         return True
     # PD 2026-06-10 COST: each regen is a full Seedance call. The old ×3 + alt =
     # up to 4 re-renders PER CUT (×6 cuts × episode-retry → the ~$100 runaway).
