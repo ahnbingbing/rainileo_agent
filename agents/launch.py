@@ -16,6 +16,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Callable
 from zoneinfo import ZoneInfo
@@ -512,6 +513,13 @@ def launch_pipeline(target: dt.date, *,
             # side-effect, no double-post) so the caller can capture the full slot log.
             if slot_log_cb:
                 slot_log_cb(m)
+            # PD 2026-10-01: keep the Slack thread readable. The granular pipeline STEP lines
+            # ("[3/6] Seedance …", "[1c/3] Burning …") are ~40/batch of pure play-by-play noise
+            # ("슬랙 메시지 너무 많아 보기 힘들어"). They still print + feed the classifier above;
+            # we just don't POST step lines to Slack. Milestones/warnings/results (no [N/M]
+            # marker) still post. SLACK_VERBOSE=1 restores the full stream.
+            if re.search(r"\[\d+[a-z]?/\d+\]", m) and os.getenv("SLACK_VERBOSE", "0") != "1":
+                return
             if slack_client and slack_channel and slot_ts:
                 try:
                     slack_client.chat_postMessage(channel=slack_channel, text=m,

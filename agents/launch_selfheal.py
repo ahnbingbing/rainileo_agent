@@ -197,7 +197,11 @@ def run_with_selfheal(target: dt.date, *, max_rounds: int = 3,
     def cap(m, buf=None):
         if buf is not None:
             buf.append(m)
-        if slack_client and slack_channel:
+        # PD 2026-10-01: drop granular pipeline STEP lines ("[3/6] Seedance …") from Slack —
+        # they still feed buf (classifier) but don't spam the workroom. Milestones/warnings/
+        # results still post. SLACK_VERBOSE=1 restores all.
+        _noisy = bool(re.search(r"\[\d+[a-z]?/\d+\]", m)) and os.getenv("SLACK_VERBOSE", "0") != "1"
+        if slack_client and slack_channel and not _noisy:
             try:
                 slack_client.chat_postMessage(channel=slack_channel, text=m)
             except Exception:

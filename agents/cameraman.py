@@ -7428,11 +7428,10 @@ def _gate_and_heal(out_mp4, prompt, who, emph, regen, progress_cb, dry_run,
     if reason is None:
         return True
     if reason == "character_advisory":
-        # marking flaw, no fixable dimension failing → keep best-effort, flag for PD, spend no heal.
+        # marking flaw, no fixable dimension failing → keep best-effort, spend no heal. Flag
+        # SILENTLY here; ONE consolidated warning per episode goes to the warnings channel at
+        # the end of the render (avoid per-cut Slack spam — PD: 메시지 너무 많다).
         manifests.setdefault("_marking_imperfect_cuts", []).append(tag)
-        if progress_cb:
-            progress_cb(f":warning: {tag} 마킹(블레이즈 등) 이상({who}) — best effort 유지 "
-                        f"(힐 스킵=비용절감; 재렌더로 안 고쳐짐). PD 검수 veto가 net")
         return True
     # PD 2026-06-10 COST: each regen is a full Seedance call. The old ×3 + alt =
     # up to 4 re-renders PER CUT (×6 cuts × episode-retry → the ~$100 runaway).
@@ -8961,6 +8960,18 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         ":clapper: [6/6] Final assembly",
         progress_cb, dry_run,
     )
+    # PD 2026-10-01: ONE consolidated warning per episode to the dedicated warnings channel for
+    # cuts kept best-effort (markings the heal can't fix — see _gate_and_heal). A quality flag
+    # thus reaches PD without per-cut Slack spam or a wasted Seedance heal. Best-effort.
+    _mk = list(dict.fromkeys(manifests.get("_marking_imperfect_cuts") or []))
+    if _mk and not dry_run:
+        try:
+            from agents import notify as _notify
+            _title = (card.get("title") or card.get("theme") or "AV") if isinstance(card, dict) else "AV"
+            _notify.warn(f"AV `{str(_title)[:40]}` — 마킹(랴니 블레이즈 등) 불완전 컷 {len(_mk)}개 "
+                         f"({', '.join(_mk)}): 재렌더로 안 고쳐져 힐 스킵, best-effort 유지. 별로면 veto.")
+        except Exception as _e:
+            log.warning("marking warn failed: %s", str(_e)[:100])
     return out
 
 
