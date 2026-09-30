@@ -451,8 +451,13 @@ def _grounding_union(grounding: dict) -> dict:
     any_outdoor = False
     max_motion = 0.0
     locs: list = []
+    cuts = {"ryani": 0, "leo": 0}   # how many CUTS each pet appears in (prominence, not just presence)
     for g in grounding.values():
-        subj.update(g.get("subjects") or [])
+        _s = g.get("subjects") or []
+        subj.update(_s)
+        for p in ("ryani", "leo"):
+            if p in _s:
+                cuts[p] += 1
         if g.get("indoor_outdoor") == "outdoor" or g.get("location_type") in ("outdoor", "cafe"):
             any_outdoor = True
         max_motion = max(max_motion, float(g.get("motion_peak") or 0))
@@ -460,7 +465,7 @@ def _grounding_union(grounding: dict) -> dict:
             if _l:
                 locs.append(str(_l).lower())
     return {"subjects": sorted(subj), "any_outdoor": any_outdoor,
-            "max_motion": round(max_motion, 1), "locs": locs}
+            "max_motion": round(max_motion, 1), "locs": locs, "subject_cuts": cuts}
 
 
 def _copy_text(copy: dict, grammar: str) -> str:
@@ -479,15 +484,18 @@ def _grounding_violation(copy: dict, grammar: str, union: dict) -> str | None:
     text = _copy_text(copy, grammar).lower()
     if not text.strip():
         return None
-    subs = set(union.get("subjects") or [])
-    # Velocity is 2 short title-hits (≤10 chars each), not narration — it legitimately spotlights
-    # one pet or the action ("레오, 숲으로"), so the both-present→name-both rule (written for
-    # story/meme narration, the m1AFJiWzGx0 case) is a false positive here. Exempt velocity.
-    if grammar != "velocity" and {"ryani", "leo"} <= subs:
+    # Subject-erasure fires only when BOTH pets are the episode's CO-STARS (each in ≥2 cuts) —
+    # not when one is a bit player in a single cut. Two false positives this avoids: (a) velocity's
+    # 2 title-hits can't name both anyway (exempt); (b) a mostly-Leo meme (Ryani in 1 of 5 cuts)
+    # that honestly stays on Leo is NOT erasing a co-star. The m1AFJiWzGx0 case (a two-pet outing
+    # titled as one pet) still trips it because both pets are prominent across cuts.
+    _c = union.get("subject_cuts") or {}
+    both_costars = _c.get("ryani", 0) >= 2 and _c.get("leo", 0) >= 2
+    if grammar != "velocity" and both_costars:
         has_leo = ("레오" in text) or ("leo" in text)
         has_ry = ("랴니" in text) or ("ryani" in text) or ("라니" in text)
-        if has_leo != has_ry:  # names exactly one pet while both are present
-            return "subject-erasure: 둘 다 나오는데 캡션이 한 마리만 언급"
+        if has_leo != has_ry:  # names exactly one pet while both are co-stars
+            return "subject-erasure: 둘 다 주연(≥2컷)인데 캡션이 한 마리만 언급"
     if union.get("any_outdoor"):
         says_home = any(w in text for w in ("집에서", "우리 집", "우리집", "실내", "방 안", "거실"))
         says_out = any(w in text for w in ("밖", "실외", "야외", "카페", "공원", "산책", "테라스",
