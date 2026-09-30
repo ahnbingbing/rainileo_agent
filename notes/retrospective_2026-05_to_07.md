@@ -1352,6 +1352,16 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   열거하라**([[D_grammarlive]]의 "우회 경로는 계약 상속"의 상위·더 조용한 케이스 — 우회가 아니라 교체라 옛 경로가
   통째로 안 돌아 흔적조차 없다). ②**문법/모델을 기본으로 승격하는 블래스트는 그 기본이 지나는 모든 스테이지까지
   뻗는다** — 여기선 캡션 그라운딩. cf [[grounding_pd_notes_gpt4omini]]·[[C_grammarquality]]·[[view_data_concrete_hook_title]].
+  ★9/30 후속 3건(같은 PD 리뷰): ①**실사에 색보정 걸지 마라 — 클럽(velocity)만 예외.** cinematic 그레이드(teal-warm
+  curves + vignette)가 story를 어둡게, natural eq가 meme을 날려 이미 찍은 footage를 뭉갰다(PD "다 날아가·아주 어둡거나").
+  `render_segment` grade!='club'→색 무보정(밝기/hue/vignette 제거), 지오메트리/모션FX는 유지. 원칙=**실사의 룩은 footage
+  자체다 — 색 효과는 스타일라이즈드(club) 레인 전용.** ②**제목이 프레임에 없는 펫을 명명(title-side 그라운딩 갭).**
+  ungrounded 옛 배치편(src0A velocity)이 subjects를 기본값 ['랴니,레오']로 박아 레오-only 영상을 "강아지와 고양이,
+  랴니와 레오"로 제목화(공개됨). 캡션 그라운딩만으론 부족 — 제목/패키징도 실제 union에 묶여야 한다. ③**VLM subject
+  그라운더의 검은-객체→검은-펫 오탐.** gpt-4o-mini가 사람의 어두운 팔/그림자를 랴니(검은 프렌치불독)로 3/3 클립 오검출
+  → 백스톱=pd_notes 최우선 override(`pd_correct_asset` "레오만, 랴니 없음")가 재그라운딩을 subjects=['leo']로 교정
+  (프레임이 진실·pd_notes가 VLM을 이긴다, cf [[grounding_pd_notes_gpt4omini]]의 "obey하는 신뢰높은 소스"). 공개영상은
+  제목/설명만 YouTube API로 비파괴 교정, 미공개 예약은 재렌더 교체.
 
 ### 4.5 인프라 / 파이프라인
 - **D_lanemix. 라이브 채널 변경은 되돌림을 런타임 플래그로 출하하라 — git-revert만으론 부족하다(9/9)** —
