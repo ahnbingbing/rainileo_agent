@@ -42,10 +42,13 @@
 ## 조회수(view) 현황 — PD "요즘 묘하게 안 나와"
 - **데이터상 하락 없음**: 최근 공개편 대부분 ~1000 조회(내 재렌더 포함 bUaKmjfy2aA=1025·7DBmrrjqJF4=999·
   i7PKxSlSX4s=1024). 48h 주간평균 W36~38 ~730 안정/상승. `6wkc_hRB8uw=20`은 10/1 08:00 방금 공개라 집계 전.
-- **구조 이슈(장기)**: 채널이 Shorts 피드 베이스라인 **~1000에 정체**(93 subs, 브레이크아웃 없음). 역사적
-  약점=12:30-류 슬롯 + AV 도달(retention 높아도 조회 약). 이건 버그 아니라 패키징/훅 전략 문제.
-- ★후속=브레이크아웃 안 되는 원인(썸네일 CTR·훅·타임슬롯) 파고들기. impressions/CTR은 Studio서만—프레임그랩
-  CTR 병목 기존 미해결. bandit 3-level로 슬롯/레인 최적화 지속.
+- **구조 이슈(장기)**: 채널이 Shorts 피드 베이스라인 **~1000에 정체**(93 subs, 브레이크아웃 없음). Shorts는
+  썸네일 편집 불가 → CTR 레버 無 → **트렌드-라이딩+훅+타임슬롯**이 실질 레버.
+- **돌파 3레버 배선(main a768bfb, 전부 built-but-dormant 되살림; C_dormant)**: ①**trend_feed가 7월에 죽어 있었다**
+  (crontab 미등록→trends 2~3개월 만료→시의성 AV가 일반 AV 폴백). 데일리 02:30 크론 등록+수동1회로 fresh 트렌드6개.
+  ②**밴딧 미적용**→`launch_v2.day_plan`에 `stabilized("timeslot")` loop-closure(이긴 슬롯에 AV 스왑, sparse면 무동작,
+  V2_BANDIT_SLOT_STEER=0). ③**RF 트렌드 미소비**→`_rf_trends_hint`로 RF도 선택적 라이딩(footage 맞을때만).
+- ★교훈=성장 레버는 빌드가 아니라 가동+측정이 끝 — 크론/배선 없는 기능은 조용히 감가. impressions/CTR은 Studio서만.
 
 ## NEXT
 1. 다음 AV 배치서 **BytePlus 콜 ~2×→1×** + Slack 스텝스팸 사라짐 확인(10/1은 AV 렌더 0이었음).

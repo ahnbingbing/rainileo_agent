@@ -2026,6 +2026,18 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   writer_director가 `recent_popular_concepts_by_views`로 Writer body에 hoist(인기 '결'을 배우되 소재는 신선하게 —
   freshness가 여전히 topic 소유). **교훈: 성과/리뷰어 피드백을 한 레인에만 배선하면 다른 레인은 눈먼 채 생성한다 —
   생성기↔측정기 배선은 양 레인 대칭으로(availability≠usage는 프롬프트뿐 아니라 신호 배선에도).** cf C_fresh(RF 인기신호), pd_notes→captioner(생성기·검수기 lockstep).
+- **C_dormant. 만들어 둔 성장 메커니즘은 "돌지 않으면" 조용히 죽는다 — 설계 ≠ 가동(10/1)** — PD "요즘 묘하게
+  view수 안 나와." 데이터상 조회수 하락은 없었다(편당 ~1000 Shorts 베이스라인 안정). 진짜는 **채널이 베이스라인에
+  정체**하고, 그 돌파용으로 **만들어 둔 세 메커니즘이 전부 잠들어 있었다**: ①**트렌드 피드가 7월에 죽음** —
+  `trend_feed.discover_live`(Gemini google_search로 현재 바이럴 펫 트렌드)는 멀쩡하고, `_active_trends_block(require=
+  True)`로 하루 AV 하나는 반드시 핫훅을 타도록 설계됐으나 **crontab에 등록이 없어** trends 테이블이 2~3개월 만료 →
+  시의성 AV가 일반 AV로 폴백. ②**밴딧이 계산만 하고 미적용** — `choose_*`/`stabilized`는 학습·보고하나 스케줄엔
+  배선 안 됨(v2 슬롯 고정). ③**RF는 트렌드를 아예 안 탐**(AV 전용). Fix=①trend_feed 데일리 02:30 크론(3am 배치 前)
+  +수동1회로 즉시 신선화 ②`launch_v2.day_plan`에 `stabilized("timeslot")` loop-closure(이긴 슬롯에 AV 스왑, sparse면
+  무동작) ③`producer._rf_trends_hint`로 RF도 트렌드 **선택적** 라이딩(footage 맞을때만·억지금지). ★교훈=**성장 레버는
+  "빌드"가 아니라 "가동+측정"이 끝이다 — 크론/배선 없는 기능은 투자해 둔 자본이 조용히 0으로 감가**한다(스냅샷으로
+  cron·테이블 신선도·적용여부를 주기 점검). Shorts는 썸네일 편집 불가라 CTR 레버 無 → 트렌드-라이딩+훅+타임슬롯이
+  실질 레버. cf [[view_data_concrete_hook_title]].
 
 ---
 
