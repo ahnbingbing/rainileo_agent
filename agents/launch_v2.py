@@ -94,6 +94,23 @@ def day_plan(target: dt.date) -> dict:
                 plan[hh] = {"lane": "ai_vtuber", "role": "av_timely"}
             else:
                 plan[hh] = {"lane": "real_footage", "role": "rf_carry"}
+    # PD 2026-10-01: bandit loop-closure. Once a timeslot has CLEARLY won (stabilized =
+    # P(best)≥THETA_STABLE AND enough observations), put the premium AV in it so the schedule
+    # finally acts on what the bandit learned (until now choose_* was computed but never applied).
+    # DORMANT until a slot stabilizes — with sparse v2 data stabilized() returns None → the fixed
+    # plan stands (safe). Only swaps into a slot that EXISTS in the v2 grid. V2_BANDIT_SLOT_STEER=0 off.
+    if os.getenv("V2_BANDIT_SLOT_STEER", "1") == "1":
+        try:
+            from agents import bandit
+            win = bandit.stabilized("timeslot")
+            if win in plan and plan[win]["lane"] != "ai_vtuber":
+                av_hhs = [hh for hh, s in plan.items() if s["lane"] == "ai_vtuber"]
+                if av_hhs:                       # move one AV into the proven slot (swap lanes)
+                    donor = av_hhs[-1]
+                    plan[win], plan[donor] = plan[donor], plan[win]
+                    log.info("v2 bandit slot-steer: AV → proven timeslot %s (was %s)", win, donor)
+        except Exception as e:  # noqa: BLE001
+            log.warning("v2 bandit slot-steer skipped (fixed plan stands): %s", e)
     return {"target": target.isoformat(), "produce_day": produce, "slots": plan}
 
 

@@ -2774,6 +2774,25 @@ def _rf_winning_signal() -> str:
         return ""
 
 
+def _rf_trends_hint(target: dt.date) -> str:
+    """Optional current-trend framing for RF (PD 2026-10-01). RF rides a trend ONLY when the
+    footage already fits it — so this is a HINT, never a mandate. Empty when no live trends
+    (the trend_feed cron keeps the table fresh; a stale/empty table → no hint, unchanged RF)."""
+    try:
+        from agents.writer import active_trends
+        rows = active_trends(_db(), target)
+    except Exception:
+        rows = []
+    items = "; ".join(str(r.get("title") or "") for r in (rows or [])[:5] if r.get("title"))
+    if not items:
+        return ""
+    return ("\n\n## 오늘의 트렌드 (선택적 프레이밍)\n"
+            f"지금 뜨는 것: {items}.\n"
+            "이 중 하나가 **네가 고른 클립이 이미 보여주는 것과 맞으면** 그 앵글로 훅/제목/첫 캡션을 잡아 "
+            "시의성을 한 끗 더해라. 맞는 게 없으면 무시 — footage에 없는 걸 지어내 트렌드를 억지로 붙이지 "
+            "마라(그건 거짓이 된다). 트렌드는 선택이지 의무가 아니다.")
+
+
 def _propose_realfootage_singlepass(target: dt.date, context: dict,
                                      progress_cb: ProgressCb = None,
                                      prior_feedback: str = "") -> list[dict]:
@@ -2834,6 +2853,12 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
             msg += " — 기리 피드백 반영 재작성"
         progress_cb(msg)
     system = _pl.load(REALFOOTAGE_SINGLEPASS_PROMPT) + _editing_direction_block()
+    # PD 2026-10-01: let RF ride a CURRENT trend too (not just AV) — but ONLY when the real
+    # footage already fits it; never force a trend the clips don't show. Optional framing hint.
+    try:
+        system += _rf_trends_hint(target)
+    except Exception as _te:
+        log.debug("rf trends hint skipped: %s", _te)
     # Feed both videos (Tier 1) and photos (Tier 2). PD 2026-06-06: photos are
     # NOT dropped anymore — every photo cut is animated via Seedance photo_i2v
     # so the writer can use a photo for the payoff/closer and still get motion.
