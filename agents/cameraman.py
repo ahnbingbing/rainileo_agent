@@ -7433,11 +7433,14 @@ def _gate_and_heal(out_mp4, prompt, who, emph, regen, progress_cb, dry_run,
         # the end of the render (avoid per-cut Slack spam — PD: 메시지 너무 많다).
         manifests.setdefault("_marking_imperfect_cuts", []).append(tag)
         return True
-    # PD 2026-06-10 COST: each regen is a full Seedance call. The old ×3 + alt =
-    # up to 4 re-renders PER CUT (×6 cuts × episode-retry → the ~$100 runaway).
-    # Default to ONE heal attempt; the alt-prompt extra render is opt-in. If still
-    # not on-model, KEEP best-effort (advisory) — PD veto is the final net.
-    _heal_tries = max(0, int(os.getenv("AV_GATE_HEAL_TRIES", "1")))
+    # PD 2026-10-03 COST: the per-cut heal almost NEVER resolves — the api_ledger shows 942/973
+    # (~97%) heals ended "best effort 유지" (re-rendered, still failed, kept anyway). So a heal was
+    # a full Seedance call (every cut → 2×, the doubling PD saw on the BytePlus bill) that bought
+    # almost nothing: the scene/action defect is reproducible (same refs/prompt → same defect), so
+    # re-rendering repeats it. DEFAULT OFF — flag the cut for PD (board warn) and keep best-effort,
+    # don't burn a retry that can't fix it (PD's principle: 품질 안 고쳐지면 알리고 재시도 마라).
+    # AV_GATE_HEAL_TRIES=1 restores healing (e.g. to chase a specific surf/swim action render).
+    _heal_tries = max(0, int(os.getenv("AV_GATE_HEAL_TRIES", "0")))
     resolved = False
     for r in range(_heal_tries):
         if progress_cb:
@@ -8960,18 +8963,25 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         ":clapper: [6/6] Final assembly",
         progress_cb, dry_run,
     )
-    # PD 2026-10-01: ONE consolidated warning per episode to the dedicated warnings channel for
-    # cuts kept best-effort (markings the heal can't fix — see _gate_and_heal). A quality flag
-    # thus reaches PD without per-cut Slack spam or a wasted Seedance heal. Best-effort.
+    # PD 2026-10-01/03: ONE consolidated warning per episode to the board channel for cuts kept
+    # best-effort (markings/scene/action the heal can't fix — see _gate_and_heal; the heal is now
+    # off by default since it resolves ~3%). A quality flag reaches PD without per-cut Slack spam
+    # or a wasted Seedance heal. Best-effort.
     _mk = list(dict.fromkeys(manifests.get("_marking_imperfect_cuts") or []))
-    if _mk and not dry_run:
+    _ac = list(dict.fromkeys(manifests.get("_action_imperfect_cuts") or []))
+    if (_mk or _ac) and not dry_run:
         try:
             from agents import notify as _notify
             _title = (card.get("title") or card.get("theme") or "AV") if isinstance(card, dict) else "AV"
-            _notify.warn(f"AV `{str(_title)[:40]}` — 마킹(랴니 블레이즈 등) 불완전 컷 {len(_mk)}개 "
-                         f"({', '.join(_mk)}): 재렌더로 안 고쳐져 힐 스킵, best-effort 유지. 별로면 veto.")
+            _bits = []
+            if _mk:
+                _bits.append(f"마킹/장면 {len(_mk)}개({', '.join(_mk)})")
+            if _ac:
+                _bits.append(f"액션(서핑/수영 등) {len(_ac)}개({', '.join(_ac)})")
+            _notify.warn(f"AV `{str(_title)[:40]}` — 불완전 컷: {' · '.join(_bits)}. "
+                         f"재렌더로 안 고쳐져 best-effort 유지(힐 off). 별로면 veto.")
         except Exception as _e:
-            log.warning("marking warn failed: %s", str(_e)[:100])
+            log.warning("imperfect-cut warn failed: %s", str(_e)[:100])
     return out
 
 
