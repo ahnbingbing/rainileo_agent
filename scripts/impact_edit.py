@@ -265,10 +265,12 @@ def render_segment(clip: str, src_start: float, src_dur: float, target: float,
                    hue_speed: float = 460.0, phase: float = 0.0,
                    sat: float = 1.35, flash: bool = False, zoom_crop: float = 1.0,
                    hflip: bool = False, zoom_ramp: str | None = None,
-                   rotate_amp: float = 0.0, club_cast: tuple | None = None) -> Path:
+                   rotate_amp: float = 0.0, club_cast: tuple | None = None,
+                   smooth: bool = False) -> Path:
     """Motion FX (PD 2026-09-10, velocity punch-up): hflip (좌우반전), zoom_ramp
     ('in'=wide→tight / 'out'=tight→wide, a live push over the cut), rotate_amp (radians —
-    a rhythmic dutch wobble). Applied on top of the club color cycle."""
+    a rhythmic dutch wobble). smooth (PD 2026-10-04): motion-interpolated buttery slow-mo for a
+    premium drop/beauty beat (only when this cut is actually slowed). Applied on top of the grade."""
     out = tmp / f"seg_{idx:02d}.mp4"
     speed = src_dur / target                    # >1 speeds up, <1 slow-mo
 
@@ -285,6 +287,10 @@ def render_segment(clip: str, src_start: float, src_dur: float, target: float,
         if fx and _zc and abs(_zc - 1.0) > 1e-3:
             c.append(f"crop=iw/{_zc:.4f}:ih/{_zc:.4f},scale={W}:{H}")
         c.append(f"setpts=PTS/{speed:.4f}")
+        # Buttery slow-mo for a premium drop/beauty beat: motion-interpolate the slowed frames
+        # (only when genuinely slowing — speed<1 — and asked; expensive, so one or two beats).
+        if fx and smooth and speed < 0.95:
+            c.append(f"minterpolate=fps={FPS*2}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir,fps={FPS}")
         if fx and rotate_amp > 1e-3:
             # prescale so the rotated frame still fills 9:16 (no black corners), rhythmic dutch
             # wobble, crop back to CONSTANT WxH so the frame size never changes.
@@ -305,11 +311,18 @@ def render_segment(clip: str, src_start: float, src_dur: float, target: float,
             c.append(f"eq=contrast=1.20:brightness=0.006:saturation={sat:.3f}")
             c.append("curves=preset=lighter,eq=brightness=0.10" if flash
                      else "curves=preset=increase_contrast")
-        # else (story=cinematic, meme=natural, velocity's alternation cuts): use the footage's
-        # TRUE color — NO brightness/darkness/hue/saturation/vignette. Grading already-shot real
-        # footage crushed it (the teal-warm curves + vignette darkened, the eq lift washed it out).
-        # Only velocity's club-cast cuts intentionally recolor; everything else stays as filmed.
-        # Geometry/motion FX (scale/crop/zoom/hflip/rotate) above are unaffected.
+        elif grade == "hype":
+            # PD 2026-10-04: modern velocity look. The old club = per-cut NEON colorbalance cast +
+            # dutch wobble on every cut — a 2018 EDM-visualizer strobe that reads cheap (research:
+            # heavy casts date a video; constant noise < one restrained accent). 'hype' keeps the
+            # color NATURAL + a gentle restrained pop; the ENERGY comes from the EDIT (beat-locked
+            # cuts, zoom punch, smooth slow-mo, a single flash/freeze accent), not the grade.
+            c.append(f"eq=contrast=1.06:saturation={sat:.3f}")
+            c.append("curves=preset=increase_contrast")          # subtle S-curve, true color
+            if flash:                                            # one accent pop (hook / drop / payoff)
+                c.append("eq=contrast=1.12:brightness=0.04")
+        # else (story=cinematic, meme=natural): use the footage's TRUE color — NO brightness/
+        # darkness/hue/saturation/vignette. Grading already-shot real footage crushed it.
         c.append("format=yuv420p")
         return ",".join(c)
 
@@ -510,7 +523,8 @@ def assemble(seq: list[dict], caps: list[tuple], music_id: str, out: Path, *,
                               phase=sg.get("phase", 0.0), sat=sg.get("sat", 1.35),
                               flash=sg.get("flash", False), zoom_crop=sg.get("zoom_crop", 1.0),
                               hflip=sg.get("hflip", False), zoom_ramp=sg.get("zoom_ramp"),
-                              rotate_amp=sg.get("rotate_amp", 0.0), club_cast=sg.get("club_cast"))
+                              rotate_amp=sg.get("rotate_amp", 0.0), club_cast=sg.get("club_cast"),
+                              smooth=sg.get("smooth", False))
         seg_files.append(f)
         t += sg["target"]
     total = t
@@ -720,39 +734,28 @@ def build_velocity(music_id: str, out: Path, clips: dict | None = None, copy: di
         add(pick(ei), 2); ei += 1
     add(runs[0] if runs else pick(0), 2, flash=True)                      # PAYOFF/LOOP
 
-    # Color + MOTION FX (PD 9/9 색 / 9/10 모션). Color: mix ORIGINAL-color scenes with club
-    # strobe (DROP = full ~900°/s, BUILD alternates natural↔club, slow beauty stays true color).
-    # Motion (PD "줌인/줌아웃·회전·좌우반전 막"): every cut gets an alternating zoom push (in↔out);
-    # a dutch wobble (subtle on build, hard on the drop burst); a left-right flip every 3rd cut
-    # for variety. The HOOK/PAYOFF flash hits stay a clean zoom-in punch (no wobble/flip) so the
-    # bookends read strong; the slow beauty anchor stays still.
-    # Color casts cycle through CLUB[] so consecutive club cuts land on DIFFERENT neon hues
-    # (the strobe now comes from bold per-cut CHANGE, not a within-cut hue spin). The drop
-    # burst strides across the wheel (×3) so its faster cuts jump further per cut = harder
-    # strobe; build/bookends step by 1.
+    # Modern 'hype' look (PD 2026-10-04 upgrade — the old per-cut NEON cast + dutch wobble read
+    # 2018-cheap). Research: energy comes from the EDIT, not the grade. So: ONE restrained natural
+    # grade (no neon, no wobble, no constant strobe), beat-locked cuts (above) + an alternating
+    # zoom punch carry the pace, the pre-drop beauty gets buttery slow-mo, and a single flash
+    # accent lands at each section boundary — the hook, the drop HIT, and the payoff bookend.
     ci = 0
+    _drop_hit = False
     for sg in seq:
         role = sg.get("role")
-        if role == "slow":
-            sg["grade"] = "natural"; sg["sat"] = 1.10
+        sg["grade"] = "hype"
+        if role == "slow":                                 # pre-drop beauty — premium slow-mo
+            sg["sat"] = 1.06; sg["smooth"] = True; sg["zoom_ramp"] = "in"
+            ci += 1
             continue
-        if ci % 2 == 1:                                    # alternate tight(punch)↔wide → in/out push
-            sg["zoom_ramp"] = "in"
-        if sg.get("flash"):                                # hook / payoff — clean strong punch
-            sg["grade"] = "club"; sg["club_cast"] = CLUB[ci % len(CLUB)]; sg["sat"] = 1.4
-            sg["zoom_ramp"] = "in"
-        elif role == "drop":                               # DROP burst — bold cast jumps + hard spin-wobble + flips
-            sg["grade"] = "club"; sg["club_cast"] = CLUB[(ci * 3) % len(CLUB)]; sg["sat"] = 1.4
-            sg["rotate_amp"] = 0.11
-            sg["hflip"] = (ci % 2 == 0)
-        elif ci % 2 == 0:                                  # BUILD — original color + gentle wobble
-            sg["grade"] = "natural"; sg["sat"] = 1.08
-            sg["rotate_amp"] = 0.05
-            if ci % 3 == 0:
-                sg["hflip"] = True
-        else:                                              # BUILD — club color + gentle wobble
-            sg["grade"] = "club"; sg["club_cast"] = CLUB[ci % len(CLUB)]; sg["sat"] = 1.4
-            sg["rotate_amp"] = 0.05
+        sg["sat"] = 1.10
+        sg["zoom_ramp"] = "in" if ci % 2 == 1 else None    # alternate tight↔wide push (on-beat)
+        if role == "drop":                                 # DROP burst — tightest punch
+            sg["zoom_ramp"] = "in"; sg["sat"] = 1.14
+            if not _drop_hit:                              # ONE accent on the drop HIT, not every cut
+                sg["flash"] = True; _drop_hit = True
+        elif sg.get("flash"):                              # hook / payoff bookend — clean punch
+            sg["zoom_ramp"] = "in"; sg["sat"] = 1.12
         ci += 1
 
     ts = _times(seq)
