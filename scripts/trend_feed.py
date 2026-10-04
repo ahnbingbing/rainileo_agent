@@ -254,7 +254,11 @@ def discover_live(con: sqlite3.Connection, today: dt.date) -> int:
         "한다(추상 트렌드 X). 최대 6개. "
         "JSON 배열만: [{\"title\":\"소재명(음원이면 곡명 포함)\",\"category\":\"meme|challenge|event|audio\","
         "\"why\":\"펫채널이 어떻게 재현할지 한 줄(audio면 어떤 비트·동작에 맞추는지)\",\"fit\":0.0~1.0,"
-        "\"expires_in_days\":정수}]"
+        "\"expires_in_days\":정수,"
+        "\"music_style\":\"(audio 항목만) 그 곡과 비슷한 느낌을 우리가 Lyria로 '유사 생성'할 영어 "
+        "프롬프트 — 장르·템포(BPM)·무드·악기·에너지로만 묘사하고 ★아티스트명/곡명은 절대 쓰지 마라 "
+        "(저작권). 예: 'glossy maximalist K-pop dance-pop, punchy 128 BPM four-on-the-floor, bold "
+        "brass stabs, confident strut energy, instrumental'\"}]"
     )
     items = []
     for _attempt in range(3):  # grounding occasionally returns empty/non-JSON — retry
@@ -286,9 +290,11 @@ def discover_live(con: sqlite3.Connection, today: dt.date) -> int:
         days = int(it.get("expires_in_days", 14) or 14)
         expiry = (today + dt.timedelta(days=max(3, min(days, 45)))).isoformat()
         tid = "disc_" + hashlib.sha1(title.encode("utf-8")).hexdigest()[:10]
+        _notes = {"why": it.get("why", ""), "discovered": today.isoformat()}
+        if it.get("music_style"):            # audio trends carry a Lyria sound-alike recipe
+            _notes["music_style"] = str(it.get("music_style"))[:300]
         _upsert(con, tid, "discovery", it.get("category", "meme"), title,
-                float(it.get("fit", 0.6) or 0.6), expiry,
-                {"why": it.get("why", ""), "discovered": today.isoformat()})
+                float(it.get("fit", 0.6) or 0.6), expiry, _notes)
         n += 1
     con.commit()
     return n
