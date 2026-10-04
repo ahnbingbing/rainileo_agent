@@ -289,6 +289,43 @@ def _concept_for(grammar: str, clips: dict, copy: dict) -> dict:
     }
 
 
+def _trend_dance_music(target: dt.date) -> str | None:
+    """PD 2026-10-04: ride a trending SONG without using it — generate a copyright-safe
+    sound-alike. If a current AUDIO/dance trend is active, Lyria-generate a track in that
+    trend's STYLE (genre/BPM/mood from its music_style; artist/song name never used) and return
+    its BGM-relative filename so the velocity (beat-synced) edit dances to the trend's sound.
+    Cached per trend_id (one generation per trend, reused). None when no audio trend / gen fails.
+    V2_TREND_MUSIC=0 disables."""
+    if os.getenv("V2_TREND_MUSIC", "1") == "0":
+        return None
+    try:
+        con = sqlite3.connect(str(Path("data/agent.db"))); con.row_factory = sqlite3.Row
+        r = con.execute("SELECT trend_id, title, notes FROM trends WHERE category='audio' "
+                        "AND date(expiry_date) >= date(?) ORDER BY fit_score DESC LIMIT 1",
+                        (target.isoformat(),)).fetchone()
+        con.close()
+        if not r:
+            return None
+        gen_dir = Path("assets/bgm/generated"); gen_dir.mkdir(parents=True, exist_ok=True)
+        rel = f"generated/trend_{r['trend_id']}.mp3"   # relative to assets/bgm (render_grammar's BGM root)
+        out_mp3 = gen_dir / f"trend_{r['trend_id']}.mp3"
+        if out_mp3.exists():
+            return rel
+        notes = json.loads(r["notes"] or "{}")
+        style = notes.get("music_style") or (
+            "glossy maximalist dance-pop instrumental, punchy 124 BPM four-on-the-floor kick, "
+            "bold synth stabs, confident hype energy, clean mix for a pet dance short")
+        from scripts.gen_music import generate_wav, to_mp3
+        wav = gen_dir / f"trend_{r['trend_id']}.wav"
+        generate_wav(style, wav, negative="vocals, lyrics, slow, ambient, sad, calm, lo-fi")
+        to_mp3(wav, out_mp3)
+        log.info("trend-dance music generated for '%s' → %s", r["title"][:40], rel)
+        return rel if out_mp3.exists() else None
+    except Exception as e:  # noqa: BLE001
+        log.warning("trend-dance music skipped: %s", str(e)[:120])
+        return None
+
+
 def produce_grammar_episodes_shared(grammars: list, target: dt.date, hhmm_by_grammar: dict,
                                     progress_cb=None, exclude_asset_ids=None,
                                     pool=None, tag: str | None = None) -> dict:
@@ -351,7 +388,10 @@ def produce_grammar_episodes_shared(grammars: list, target: dt.date, hhmm_by_gra
         _fn = tag if tag else hh.replace(':', '')
         out = Path(f"data/output/episodes/episode_rf_{grammar}_{ts}_{_fn}.mp4")
         out.parent.mkdir(parents=True, exist_ok=True)
-        render_grammar(grammar, out, clips=shared_clips, copy=copy)
+        # PD 2026-10-04: velocity rides a current audio/dance trend via a copyright-safe Lyria
+        # sound-alike (beat-synced edit = the pet "dances" to the trending sound). None → default.
+        _music = _trend_dance_music(target) if grammar == "velocity" else None
+        render_grammar(grammar, out, clips=shared_clips, copy=copy, music=_music)
         if not out.exists():
             raise RuntimeError("grammar render produced no file")
         concept = _concept_for(grammar, shared_clips, copy)
