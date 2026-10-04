@@ -247,10 +247,14 @@ def discover_live(con: sqlite3.Connection, today: dt.date) -> int:
     prompt = (
         f"오늘은 {today.isoformat()}. 한국의 반려동물(강아지+고양이) 유튜브 숏츠 채널이 "
         "지금 '따라 할 수 있는' 시의성 소재만 골라줘: (1) 요즘 유행하는 펫/릴스 밈·챌린지, "
-        "(2) 진행 중이거나 임박한 큰 시즌 이벤트(스포츠/축제/기념일). 각 항목은 채널이 영상으로 "
-        "재현 가능한 구체 소재여야 한다(추상 트렌드 X). 최대 6개. "
-        "JSON 배열만: [{\"title\":\"소재명\",\"category\":\"meme|challenge|event\","
-        "\"why\":\"펫채널이 어떻게 재현할지 한 줄\",\"fit\":0.0~1.0,\"expires_in_days\":정수}]"
+        "(2) 진행 중이거나 임박한 큰 시즌 이벤트(스포츠/축제/기념일), "
+        "(3) ★지금 숏츠/릴스에서 뜨는 '음원·사운드·댄스' 트렌드 — 특정 인기곡에 맞춘 펫 댄스/립싱크/"
+        "비트 편집 등(예: 특정 가수·곡에 맞춰 춤추는 강아지·고양이). 반드시 **구체 곡명/사운드명**을 title에 "
+        "명시하고, 그 사운드가 지금 뜨는지 확인해라. 각 항목은 채널이 영상으로 재현 가능한 구체 소재여야 "
+        "한다(추상 트렌드 X). 최대 6개. "
+        "JSON 배열만: [{\"title\":\"소재명(음원이면 곡명 포함)\",\"category\":\"meme|challenge|event|audio\","
+        "\"why\":\"펫채널이 어떻게 재현할지 한 줄(audio면 어떤 비트·동작에 맞추는지)\",\"fit\":0.0~1.0,"
+        "\"expires_in_days\":정수}]"
     )
     items = []
     for _attempt in range(3):  # grounding occasionally returns empty/non-JSON — retry
