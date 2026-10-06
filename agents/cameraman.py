@@ -2909,7 +2909,14 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
             dur = 0.0
         if dur <= 2.0:                      # too short to segment — leave writer's caption
             continue
-        n_frames = max(3, min(6, round(dur / 3.5)))
+        # PD 2026-10-06: CAPTIONING needs FINE frames — grounding just asks "who / where" (coarse is
+        # fine, ~2s), but a caption describes MOMENT-TO-MOMENT action and a pet's move (paw raise,
+        # head turn, lick) takes ~0.3-1s — even 1.5s samples BETWEEN the beat and mis-attributes it.
+        # RF cuts are short (~2-6s), so sampling the WHOLE cut at ~2 fps (0.5s) is a small frame
+        # count — NO upper cap, so a longer cut just gets proportionally more frames (don't let a
+        # cap silently coarsen it). RF_CAPTION_SEC_PER_FRAME tunes the rate (0.3 finer / larger coarser).
+        _spf = max(0.2, float(os.getenv("RF_CAPTION_SEC_PER_FRAME", "0.5")))
+        n_frames = max(6, round(dur / _spf))
         times = [round(0.3 + (dur - 0.6) * i / (n_frames - 1), 2) for i in range(n_frames)]
         parts, jpgs = [], []
         for t in times:

@@ -83,14 +83,22 @@ def frames_from_video(video_path: Path, n: int | None = None,
     """Extract N frames evenly across the clip's span. Returns the JPG paths that
     were successfully written (may be fewer than requested on a very short clip)."""
     video_path = Path(video_path)
-    fracs = _fracs()
-    if n and n != len(fracs):
-        # resample n evenly spaced fractions in (0.05, 0.95)
-        if n <= 1:
-            fracs = [0.5]
-        else:
-            fracs = [0.05 + (0.90 * i / (n - 1)) for i in range(n)]
     dur = _duration_sec(video_path)
+    if n is None:
+        # PD 2026-10-06: duration-aware frame FREQUENCY. A fixed 5-frame even sample is too sparse
+        # on a long clip and misses a BRIEF pet appearance — the occluded orange cat that is only
+        # in frame for ~2s falls BETWEEN the sampled frames, so no model (however big) can see him.
+        # Sample ~1 frame per SEC_PER_FRAME so longer clips get DENSER temporal coverage; clamp to
+        # [MIN, MAX]. (Resolution + model size help a frame we HAVE; frequency decides which frames
+        # we have at all.)
+        spf = max(0.5, float(os.getenv("VLM_GROUNDING_SEC_PER_FRAME", "2.0")))
+        _min = int(os.getenv("VLM_GROUNDING_MIN_FRAMES", "6"))
+        _max = int(os.getenv("VLM_GROUNDING_MAX_FRAMES", "10"))
+        n = max(_min, min(_max, round((dur or 10.0) / spf)))
+    if n <= 1:
+        fracs = [0.5]
+    else:
+        fracs = [0.05 + (0.90 * i / (n - 1)) for i in range(n)]
     tmp = Path(os.getenv("TMPDIR", "/tmp"))
     stem = re.sub(r"[^A-Za-z0-9_]", "", video_path.stem)[-16:] or "clip"
     out: list[Path] = []
@@ -230,7 +238,7 @@ def ground_frames(frames: list[Path], pd_notes: str | None = None,
     prompt = _BASE_PROMPT + _pd_notes_clause(pd_notes) + _temporal_clause(captured_iso)
     content: list[dict] = [{"type": "text", "text": prompt}]
     # Cap frames sent to keep cost bounded (union rarely needs >6).
-    max_imgs = int(os.getenv("VLM_GROUNDING_MAX_FRAMES", "6"))
+    max_imgs = int(os.getenv("VLM_GROUNDING_MAX_FRAMES", "10"))  # match the duration-aware sample ceiling
     # PD 2026-10-06: 'high' detail tiles each frame so gpt-4o can resolve a SMALL / occluded
     # subject (Leo the orange cat behind the black dog) instead of averaging it away at low-res.
     _detail = os.getenv("VLM_GROUNDING_IMG_DETAIL", "high")
