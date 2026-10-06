@@ -97,9 +97,10 @@ def frames_from_video(video_path: Path, n: int | None = None,
     for i, fr in enumerate(fracs):
         p = tmp / f"{tmp_prefix}_{stem}_{i}.jpg"
         try:
-            subprocess.run(
+            _fw = os.getenv("VLM_GROUNDING_FRAME_WIDTH", "1024")  # PD 2026-10-06: bigger frames so
+            subprocess.run(                                       # the small/occluded orange cat is resolvable
                 ["ffmpeg", "-y", "-ss", str(round(dur * fr, 2)), "-i", str(video_path),
-                 "-frames:v", "1", "-vf", "scale=768:-1", str(p)],
+                 "-frames:v", "1", "-vf", f"scale={_fw}:-1", str(p)],
                 capture_output=True, timeout=30)
             if p.exists() and p.stat().st_size > 0:
                 out.append(p)
@@ -230,10 +231,13 @@ def ground_frames(frames: list[Path], pd_notes: str | None = None,
     content: list[dict] = [{"type": "text", "text": prompt}]
     # Cap frames sent to keep cost bounded (union rarely needs >6).
     max_imgs = int(os.getenv("VLM_GROUNDING_MAX_FRAMES", "6"))
+    # PD 2026-10-06: 'high' detail tiles each frame so gpt-4o can resolve a SMALL / occluded
+    # subject (Leo the orange cat behind the black dog) instead of averaging it away at low-res.
+    _detail = os.getenv("VLM_GROUNDING_IMG_DETAIL", "high")
     for f in frames[:max_imgs]:
         b64 = base64.b64encode(f.read_bytes()).decode()
         content.append({"type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+                        "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": _detail}})
 
     cl = OpenAI(timeout=int(os.getenv("VLM_GROUNDING_TIMEOUT", "90")), max_retries=2)
     try:

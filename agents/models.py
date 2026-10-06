@@ -36,10 +36,13 @@ VLM = _m("VLM_MODEL", "gemini-2.5-flash")
 # descriptions) as ground truth and reads subject presence / location across a
 # multi-frame span. gemini-2.5-flash is the throughput tagger but IGNORES the
 # pd_notes override (bake-off: it kept mislabelling a two-pet cafe-terrace outing
-# as one pet / indoor even with the human note in the prompt). gpt-4o-mini obeys
-# it and reads the union correctly at a fraction of gemini-pro's cost. Used by the
-# pd_notes re-tag path and the render-time per-cut grounding gate.
-VLM_GROUNDING = _m("VLM_GROUNDING_MODEL", "gpt-4o-mini")
+# as one pet / indoor even with the human note in the prompt). gpt-4o-mini obeyed it
+# but (PD 2026-10-06) still UNDER-DETECTS the small occluded orange cat (Leo behind the
+# black dog) → 레오↔랴니 caption mislabels. Upgraded to gpt-4o — a materially stronger
+# vision model for small/occluded subjects — paired with high-detail tiling + larger
+# frames in openai_vision. Grounding runs only on the few cast clips per episode, so the
+# accuracy is worth the cost. Swap back with VLM_GROUNDING_MODEL=gpt-4o-mini if needed.
+VLM_GROUNDING = _m("VLM_GROUNDING_MODEL", "gpt-4o")
 
 # ── Image generation ───────────────────────────────────────────────────────
 IMAGE_GEN = _m("IMAGE_GEN_MODEL", "gemini-2.5-flash-image")  # regen / scene stills
