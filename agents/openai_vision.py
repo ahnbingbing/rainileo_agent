@@ -140,8 +140,21 @@ You are shown MULTIPLE frames sampled across the SAME clip's timeline (start→e
 Reason about the WHOLE clip, not any single frame:
 - A pet counts as PRESENT if it appears in ANY frame (union across frames). A small
   or dark pet may only be visible in one frame — still count it.
+- ★BOTH PETS ARE USUALLY TOGETHER, especially on an outing. Actively hunt for BOTH in
+  EVERY frame before deciding one is absent. Leo (orange cat) is SMALL and very often
+  sits BEHIND, BESIDE, under, or partly hidden by Ryani (the bigger black dog) — a patch
+  of orange tabby fur, a cat ear, or a striped tail is enough to count him PRESENT. The
+  single most common error here is reporting "Ryani only" when the orange cat is right
+  there but small/occluded. Only say one pet is absent if you are confident it is in NONE
+  of the frames. When you DO see both, make sure ryani_present AND leo_present are true.
+- Attribute nothing — you only report WHO is present and WHERE, not who did what.
 - Judge location from ALL frames together. A cafe TERRACE or a patio is OUTDOOR even
   if one frame looks enclosed — look for open sky, street, trees, railings, exterior.
+- ★HOME vs CAFE: a wooden deck / terrace / yard / garden with the OWNER'S OWN potted
+  plants, household items, and the pets on a HARNESS or leash is the owner's HOME
+  (its terrace/yard) — location_type "home", NOT "cafe". Use "cafe" ONLY with clear
+  COMMERCIAL signals: other customers, a menu/counter, cafe signage, rows of service
+  tables. When unsure between home and cafe, choose "home". Do not default to "cafe".
 - Do NOT invent. If the frames genuinely don't show something, say so.
 
 Return ONLY valid JSON (no markdown fences):
