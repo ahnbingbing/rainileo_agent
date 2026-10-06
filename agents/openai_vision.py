@@ -146,15 +146,19 @@ Reason about the WHOLE clip, not any single frame:
   of orange tabby fur, a cat ear, or a striped tail is enough to count him PRESENT. The
   single most common error here is reporting "Ryani only" when the orange cat is right
   there but small/occluded. Only say one pet is absent if you are confident it is in NONE
-  of the frames. When you DO see both, make sure ryani_present AND leo_present are true.
+  of the frames. (But count a pet ONLY on REAL evidence of THAT animal — orange-tabby fur
+  for Leo, a black bat-eared dog for Ryani; never invent a pet from a shadow, a dark bag,
+  or the owner's hand/arm.) When you DO see both, set ryani_present AND leo_present true.
 - Attribute nothing — you only report WHO is present and WHERE, not who did what.
 - Judge location from ALL frames together. A cafe TERRACE or a patio is OUTDOOR even
   if one frame looks enclosed — look for open sky, street, trees, railings, exterior.
-- ★HOME vs CAFE: a wooden deck / terrace / yard / garden with the OWNER'S OWN potted
-  plants, household items, and the pets on a HARNESS or leash is the owner's HOME
-  (its terrace/yard) — location_type "home", NOT "cafe". Use "cafe" ONLY with clear
-  COMMERCIAL signals: other customers, a menu/counter, cafe signage, rows of service
-  tables. When unsure between home and cafe, choose "home". Do not default to "cafe".
+- HOME vs CAFE — judge by the ACTUAL signals, don't default either way. COMMERCIAL cafe:
+  other customers, a menu/counter, cafe signage, rows of matching service tables/chairs on
+  a wooden deck/terrace. The owner's HOME: home furnishings, an indoor room, or especially
+  a HOME FLOOR MAT/RUG — e.g. a sky-blue diamond-pattern mat is their home floor. These
+  owners genuinely go to cafes often, so a deck/terrace with scattered cafe tables IS
+  usually "cafe terrace" (correct) — call it "home" ONLY when a home signal (that mat, a
+  room, home furniture) is actually visible.
 - Do NOT invent. If the frames genuinely don't show something, say so.
 
 Return ONLY valid JSON (no markdown fences):
