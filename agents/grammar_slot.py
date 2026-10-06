@@ -480,6 +480,16 @@ def _ground_cast_clips(clips: dict) -> dict:
                         g["motion"] = _motion_label(peak)
                     except Exception as e:
                         log.warning("grammar motion %s: %s", aid, str(e)[:100])
+                    # PD 2026-10-06: a DENSE action read (who does what, time-ordered) so the copy
+                    # Writer attributes actions to the RIGHT pet instead of guessing (레오↔랴니 bug).
+                    # Grammar has no frame-grounded captioner — this is its CAPTION-stage dense read.
+                    if os.getenv("GRAMMAR_ACTION_READ", "1") == "1":
+                        try:
+                            act = openai_vision.read_action(fp, kind=kind or "video", pd_notes=pdn)
+                            if act:
+                                g["action_ko"] = act
+                        except Exception as e:
+                            log.warning("grammar action-read %s: %s", aid, str(e)[:100])
                 out[aid] = g
     finally:
         con.close()

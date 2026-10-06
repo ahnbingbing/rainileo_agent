@@ -124,7 +124,10 @@ def _pool_for_prompt(pool: list[dict], grounding: dict | None = None) -> list[di
         rec = {
             "asset_id": aid,
             "sc": (a.get("scene_description") or a.get("sc") or "")[:220],
-            "activity": a.get("activity"),
+            # PD 2026-10-06: a dense frame-read 'who does what, time-ordered' (openai_vision.
+            # read_action) OVERRIDES the thin DB activity tag — so the Writer attributes each
+            # beat's action to the RIGHT pet instead of guessing (the 레오↔랴니 caption bug).
+            "activity": (g.get("action_ko") or a.get("activity")),
             "subjects": (",".join(subs) if subs else (a.get("subjects_csv") or a.get("subjects"))),
             "dur": round(float(a.get("duration_sec") or a.get("dur") or 0), 1),
             "loc": (g.get("location_specific") or g.get("location_type")

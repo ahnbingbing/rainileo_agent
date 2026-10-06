@@ -329,6 +329,66 @@ def ground_asset(file_path: str, kind: str = "video", pd_notes: str | None = Non
     return _ground_ensemble(frames, pd_notes, captured_iso)
 
 
+_ACTION_PROMPT = """\
+You see frames IN TIME ORDER from ONE short pet clip. Report the KEY ACTIONS in time order and
+WHICH pet does each — captioning needs this: a caption that says the wrong pet did the move
+(e.g. "Leo turned around" when it was the black dog) is the error to prevent.
+Pets: Ryani (랴니, BLACK French Bulldog, no tail) · Leo (레오, ORANGE tabby cat).
+Rules: describe ONLY what the frames show, in time order; attribute each action to the RIGHT pet
+by its look (orange cat = Leo, black dog = Ryani); if only one pet acts, describe only that one;
+do not invent an action or a pet.
+Return ONLY JSON: {"action_ko": "1-2 Korean sentences, time-ordered who-does-what"}"""
+
+
+def read_action(file_path: str, kind: str = "video", pd_notes: str | None = None) -> str | None:
+    """PD 2026-10-06: a DENSE per-clip action read for CAPTIONING (grammar has no frame-grounded
+    captioner, so its Writer guessed who did what → 레오↔랴니 attribution bugs). Sample the clip
+    finely (~1 fps) and return a short time-ordered 'who does what' line to feed the copy Writer.
+    Photos / failures → None. GRAMMAR_ACTION_READ=0 (checked by the caller) disables."""
+    if kind == "photo":
+        return None
+    try:
+        from pathlib import Path as _P
+        src = file_path                                   # resolve local path (download if needed)
+        try:
+            from icloud import gcs
+            src = gcs.local_path(file_path)
+            if not _P(src).exists():
+                src = gcs.download_to(file_path) or file_path
+        except Exception:
+            src = file_path
+        dur = _duration_sec(_P(src))
+        n = max(6, min(int(os.getenv("GRAMMAR_ACTION_MAX_FRAMES", "16")),
+                       round((dur or 8.0) / max(0.3, float(os.getenv("GRAMMAR_ACTION_SEC_PER_FRAME", "1.0"))))))
+        frames = frames_from_video(_P(src), n=n)
+        if not frames:
+            return None
+    except Exception as e:  # noqa: BLE001
+        log.warning("action-read frame extract failed: %s", str(e)[:100])
+        return None
+    try:
+        from openai import OpenAI
+    except Exception:
+        return None
+    prompt = _ACTION_PROMPT + _pd_notes_clause(pd_notes)
+    content: list[dict] = [{"type": "text", "text": prompt}]
+    _detail = os.getenv("VLM_GROUNDING_IMG_DETAIL", "high")
+    for f in frames:
+        b64 = base64.b64encode(f.read_bytes()).decode()
+        content.append({"type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": _detail}})
+    try:
+        cl = OpenAI(timeout=int(os.getenv("VLM_GROUNDING_TIMEOUT", "90")), max_retries=2)
+        r = cl.chat.completions.create(model=_GROUNDING_MODEL, max_tokens=300,
+                                       messages=[{"role": "user", "content": content}])
+        txt = (r.choices[0].message.content or "").strip()
+        txt = re.sub(r"^```(?:json)?\s*", "", txt); txt = re.sub(r"\s*```$", "", txt)
+        return (json.loads(txt).get("action_ko") or "").strip() or None
+    except Exception as e:  # noqa: BLE001
+        log.warning("action-read VLM failed: %s", str(e)[:120])
+        return None
+
+
 def _normalize(d: dict) -> dict:
     """Coerce the raw model dict into a stable shape + derive convenience fields."""
     def _b(k):
