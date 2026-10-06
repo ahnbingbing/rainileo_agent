@@ -215,8 +215,8 @@ def _temporal_clause(captured_iso: str | None) -> str:
 
 # ── The call ────────────────────────────────────────────────────────────────
 def ground_frames(frames: list[Path], pd_notes: str | None = None,
-                  captured_iso: str | None = None) -> dict | None:
-    """Send all frames in one gpt-4o-mini call with pd_notes as ground truth.
+                  captured_iso: str | None = None, model: str | None = None) -> dict | None:
+    """Send all frames in one vision call with pd_notes as ground truth.
     Returns the parsed dict (see _BASE_PROMPT schema) or None on failure."""
     frames = [Path(f) for f in frames if Path(f).exists()]
     if not frames:
@@ -242,7 +242,7 @@ def ground_frames(frames: list[Path], pd_notes: str | None = None,
     cl = OpenAI(timeout=int(os.getenv("VLM_GROUNDING_TIMEOUT", "90")), max_retries=2)
     try:
         r = cl.chat.completions.create(
-            model=_GROUNDING_MODEL, max_tokens=500,
+            model=model or _GROUNDING_MODEL, max_tokens=500,
             messages=[{"role": "user", "content": content}])
     except Exception as e:  # noqa: BLE001
         log.warning("grounding VLM call failed: %s", str(e)[:200])
@@ -258,18 +258,67 @@ def ground_frames(frames: list[Path], pd_notes: str | None = None,
     return _normalize(out)
 
 
+def _merge_grounding(g1: dict | None, g2: dict | None) -> dict | None:
+    """Ensemble merge of two grounding passes (PD 2026-10-06). The dominant error is pet
+    UNDER-detection — a bigger model isn't a reliable fix (gpt-4o and gpt-4o-mini each miss the
+    small occluded orange cat on DIFFERENT clips). So UNION the pets: if EITHER pass sees a pet,
+    trust it (over-detection is guarded in the prompt). Location is taken from the MORE CONFIDENT
+    / more specific pass (location rarely under-detects, so union would add noise there)."""
+    if not g1:
+        return g2
+    if not g2:
+        return g1
+    ry = bool(g1.get("ryani_present") or g2.get("ryani_present"))
+    le = bool(g1.get("leo_present") or g2.get("leo_present"))
+    subjects = [s for s, on in (("ryani", ry), ("leo", le)) if on]
+
+    def _loc_score(g: dict) -> float:
+        s = float(g.get("confidence") or 0.5)
+        if g.get("location_type") not in ("other", None, ""):
+            s += 0.3
+        if g.get("indoor_outdoor") in ("indoor", "outdoor"):
+            s += 0.1
+        return s
+
+    base = g1 if _loc_score(g1) >= _loc_score(g2) else g2
+    out = dict(base)
+    out.update(ryani_present=ry, leo_present=le, subjects=subjects,
+               subjects_csv=(",".join(subjects) or None),
+               focus_subject=("both" if len(subjects) == 2
+                              else (subjects[0] if subjects else "neither")))
+    return out
+
+
+def _ground_ensemble(frames: list[Path], pd_notes: str | None,
+                     captured_iso: str | None) -> dict | None:
+    """Ground with the primary model, then (unless disabled) a SECOND model and union the pets —
+    the robust fix for occluded-pet under-detection (VLM_GROUNDING_ENSEMBLE=0 → single pass)."""
+    g1 = ground_frames(frames, pd_notes=pd_notes, captured_iso=captured_iso, model=_GROUNDING_MODEL)
+    if os.getenv("VLM_GROUNDING_ENSEMBLE", "1") != "1":
+        return g1
+    m2 = os.getenv("VLM_GROUNDING_MODEL_2", "gpt-4o-mini")
+    if not m2 or m2 == _GROUNDING_MODEL:
+        return g1
+    try:
+        g2 = ground_frames(frames, pd_notes=pd_notes, captured_iso=captured_iso, model=m2)
+    except Exception as e:  # noqa: BLE001
+        log.warning("ensemble 2nd pass failed (%s) — using primary only", str(e)[:100])
+        return g1
+    return _merge_grounding(g1, g2)
+
+
 def ground_video(video_path: Path, pd_notes: str | None = None,
                  captured_iso: str | None = None, n: int | None = None) -> dict | None:
-    """Convenience: extract frames from a clip on disk, then ground them."""
+    """Convenience: extract frames from a clip on disk, then ground them (ensemble)."""
     frames = frames_from_video(Path(video_path), n=n)
-    return ground_frames(frames, pd_notes=pd_notes, captured_iso=captured_iso)
+    return _ground_ensemble(frames, pd_notes, captured_iso)
 
 
 def ground_asset(file_path: str, kind: str = "video", pd_notes: str | None = None,
                  captured_iso: str | None = None, n: int | None = None) -> dict | None:
-    """Convenience for a DB asset row: resolve GCS path, extract, ground."""
+    """Convenience for a DB asset row: resolve GCS path, extract, ground (ensemble)."""
     frames = _resolve_asset_frames(file_path, kind=kind, n=n)
-    return ground_frames(frames, pd_notes=pd_notes, captured_iso=captured_iso)
+    return _ground_ensemble(frames, pd_notes, captured_iso)
 
 
 def _normalize(d: dict) -> dict:
