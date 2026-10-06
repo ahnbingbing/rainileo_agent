@@ -2891,7 +2891,7 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
         from google.genai import types as _gt
         client = _g.Client(api_key=api_key, http_options=_gt.HttpOptions(
             timeout=int(os.getenv("VLM_TIMEOUT_MS", "90000"))))
-        model = os.getenv("VLM_MODEL", "gemini-2.5-flash")
+        model = os.getenv("VLM_CAPTION_MODEL", "gemini-2.5-pro")   # strong model for caption accuracy
     except Exception as e:
         log.warning("action-caption: VLM init failed: %s", e)
         return
@@ -3080,7 +3080,7 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
         from google.genai import types as _gt
         client = _g.Client(api_key=api_key, http_options=_gt.HttpOptions(
             timeout=int(os.getenv("VLM_TIMEOUT_MS", "90000"))))
-        model = os.getenv("VLM_MODEL", "gemini-2.5-flash")
+        model = os.getenv("VLM_CAPTION_MODEL", "gemini-2.5-pro")   # strong model for caption-vs-frame accuracy
     except Exception as e:
         log.warning("grounding gate: VLM init failed: %s", e)
         return

@@ -31,7 +31,12 @@ ANTHROPIC_LIGHT = _m("ANTHROPIC_LIGHT_MODEL", "claude-sonnet-4-6")  # caption ag
 CAPTION_JUDGE = _m("CAPTION_JUDGE_MODEL", OPENAI_TEXT)
 
 # ── Vision (VLM tagging / review / scene+character gates) ───────────────────
-VLM = _m("VLM_MODEL", "gemini-2.5-flash")
+VLM = _m("VLM_MODEL", "gemini-2.5-flash")   # throughput tagger + cheap per-cut gates (volume)
+# Captioning VLM (PD 2026-10-06): the frame-read that GENERATES captions must be accurate — flash
+# under-detects the small occluded pet and mis-reads the action (레오↔랴니). Use a strong model for
+# caption generation (RF action-captioner + caption grounding gate), distinct from the cheap flash
+# used for bulk tagging. gemini-2.5-pro = same google.genai transport, materially stronger reading.
+VLM_CAPTION = _m("VLM_CAPTION_MODEL", "gemini-2.5-pro")
 # Grounding VLM (PD 2026-09-20): a model that OBEYS pd_notes (grandma's clip
 # descriptions) as ground truth and reads subject presence / location across a
 # multi-frame span. gemini-2.5-flash is the throughput tagger but IGNORES the
