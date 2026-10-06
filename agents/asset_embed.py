@@ -56,29 +56,47 @@ def embed_texts(texts: list[str]) -> "list[list[float]]":
     is exactly how the 2026-09-20 pd_notes-reground RAG rebuild died at ~74%. Never let one blip
     kill a 25k-call job."""
     client = _client()
-    out = []
     max_retries = int(os.getenv("EMBED_MAX_RETRIES", "6"))
-    # The SDK embeds one content per call reliably; batch in a loop (cheap).
-    for t in texts:
-        last_err = None
+    # PD 2026-10-07: BATCH embeddings — pass a LIST of contents per call (~100/call) instead of one
+    # per call, so a 26k rebuild is ~260 requests not ~26k (≈100× fewer round-trips). A batch that
+    # fails (model batch-limit / non-transient) falls back to one-per-call for THAT chunk only, so
+    # we keep the robustness that stopped the 2026-09-20 single-blip abort. EMBED_BATCH tunes it.
+    bs = max(1, int(os.getenv("EMBED_BATCH", "100")))
+
+    def _transient(e) -> bool:
+        m = str(e)
+        return any(s in m for s in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "500",
+                                    "INTERNAL", "deadline", "timeout", "Timeout", "temporarily"))
+
+    def _embed(contents):
+        """One call for a str OR a list[str]; returns a list of vectors."""
         for attempt in range(max_retries):
             try:
-                r = client.models.embed_content(model=EMBED_MODEL, contents=(t or " ")[:8000])
-                vec = r.embeddings[0].values if getattr(r, "embeddings", None) else r.embedding.values
-                out.append(list(vec))
-                break
+                r = client.models.embed_content(model=EMBED_MODEL, contents=contents)
+                embs = getattr(r, "embeddings", None)
+                if embs:
+                    return [list(e.values) for e in embs]
+                return [list(r.embedding.values)]          # single-content SDK shape
             except Exception as e:  # noqa: BLE001
-                last_err = e
-                msg = str(e)
-                transient = any(s in msg for s in (
-                    "503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "500", "INTERNAL",
-                    "deadline", "timeout", "Timeout", "temporarily"))
-                if transient and attempt < max_retries - 1:
+                if _transient(e) and attempt < max_retries - 1:
                     time.sleep(min(2 ** attempt + 0.5, 30))
                     continue
                 raise
-        else:  # pragma: no cover — loop exhausted without break
-            raise last_err
+
+    out: list = []
+    i = 0
+    while i < len(texts):
+        chunk = [(t or " ")[:8000] for t in texts[i:i + bs]]
+        try:
+            got = _embed(chunk)
+            if len(got) != len(chunk):
+                raise RuntimeError(f"batch count {len(got)}!={len(chunk)}")
+        except Exception as e:  # noqa: BLE001 — batch unsupported/too-big → per-item fallback
+            log.warning("batch embed failed (%s) — per-item fallback for chunk of %d",
+                        str(e)[:80], len(chunk))
+            got = [_embed(t)[0] for t in chunk]
+        out.extend(got)
+        i += bs
     return out
 
 
