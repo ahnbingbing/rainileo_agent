@@ -1408,15 +1408,22 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   떨어졌다 — **대략 고정인 채널 도달을 더 많은 영상이 나눠 가져** per-video가 나빠 보인 것(채널 총량은 그대로). 즉 per-video
   지표가 **채널 레벨 보존**을 가렸다. ★유력했던 "재렌더 교체본이 늦게 재업로드돼 시딩을 놓쳤다" 가설은 **대조로 반증**: 묻힌
   영상 전부 예약 슬롯 = 실제 공개 시각이 초 단위로 일치했다(그럴듯한 가설도 ground truth로 죽인다 — 자원·churn이 컨텐츠
-  실패로 위장하는 D_disk/C_nulldur 계열의 변주). Fix=약슬롯을 **데이터로 다운웨이트**: `bandit.laggard()`(=`stabilized()`의
-  거울 — P(best)≤THETA_LAG·≥N_LAG 관측·평균이 grid 중앙값보다 margin 아래일 때만 "명확한 패자" 반환, 희소하면 None→전체
-  그리드 유지)로 v2 RF 슬롯의 laggard를 뽑아 `day_plan`에서 **드롭**(RF만·`V2_MIN_SLOTS` 바닥·매일 재평가해 회복한 슬롯은
-  복귀). 현 데이터→09:00 드롭(mu+0.408, p_best 0.002; 13:00은 중간이라 생존). ★blast radius 포인트: 슬롯을 **SSOT인
-  `effective_assignments`가 읽는 `day_plan`에서** 빼야 self-heal/topup이 그 슬롯을 "빈 gap"으로 보고 phantom-fill(유료 AV)
-  하지 않는다 — raw `SLOTS_V2`만 보는 지점(occupancy 과포함·써머리 분모)은 무해/표시용임을 열거해 확인. 가역성은 D_lanemix와
-  동일 규율: `V2_SLOT_DOWNWEIGHT=0`이면 6슬롯 전체 복원(재배포·인플라이트 영향 0). ★교훈=**per-video 최적화 ≠ 채널 최적화**;
-  도달이 보존되면 슬롯 증설은 자기잠식이다. 6편 vs 더-적은-편이 채널 총 도달을 실제로 늘리는지는 별도 A/B로 측정해야 하고
-  (미착수), 바닥의 진짜 레버는 여전히 패키징/훅(~1,000 Shorts 시드를 넘기는 첫 1~2초).
+  실패로 위장하는 D_disk/C_nulldur 계열의 변주). 메커니즘=`bandit.laggard()`(=`stabilized()`의 거울 — P(best)≤THETA_LAG·
+  ≥N_LAG 관측·평균이 grid 중앙값보다 margin 아래일 때만 "명확한 패자" 반환, 희소하면 None→전체 그리드 유지)로 v2 RF 슬롯의
+  laggard를 뽑아 `day_plan`에서 드롭(RF만·`V2_MIN_SLOTS` 바닥·매일 재평가). 현 데이터→09:00(mu+0.408, p_best 0.002; 13:00은
+  중간이라 생존). ★blast radius: 슬롯을 **SSOT인 `effective_assignments`가 읽는 `day_plan`에서** 빼야 self-heal/topup이 "빈
+  gap"으로 보고 phantom-fill(유료 AV)하지 않는다 — raw `SLOTS_V2`만 보는 지점(occupancy 과포함·써머리 분모)은 무해/표시용임을
+  열거해 확인.
+  ★그러나 드롭을 **블라인드 영구 컷으로 출하하지 않았다**: PD가 "슬롯 하나 줄면 컨셉 하나 준다"를 지적 — 작은 채널은 평균이
+  아니라 **변량(브레이크아웃 한 방)**으로 이기고, 컨셉 하나는 알고리즘 복권 한 장이며, 약슬롯도 죽은 게 아니라 **live 티켓**
+  (09:00은 900+ winner와 <20 flop이 공존). "편 수를 줄이면 채널 총 도달이 느는가 vs 희석만 하나"는 추측이 아니라 **측정할
+  문제**다. 그래서 `V2_SLOT_MODE=ab`(기본)로 **2일 블록 교대 A/B**(arm0=6슬롯 / arm1=5슬롯, produce/carry 주기와 위상 정렬 →
+  두 arm이 생산일·이월일을 균형 있게 겪어 교란 제거), `scripts/slot_ab_report`가 **채널 일일 총 도달**(per-video 아님 — 편 수를
+  줄이면 per-video는 자명하게 오름)을 arm별로 비교 + 일별 발행 수로 arm 오염 노출. `=downweight`는 항상 드롭, `=off`는 6슬롯
+  고정. 결정은 ~2주 균형 데이터 후. ★교훈 둘: **(a) per-video 최적화 ≠ 채널 최적화** — 도달이 보존되면 슬롯 증설은 자기잠식이나,
+  보존되는지 자체가 미확정이라 **평균을 올리는 변경이 브레이크아웃(변량) 목표엔 역행할 수 있다**. **(b) 라이브 채널의 전략적
+  분기는 블라인드로 출하하지 말고 측정 장치로 출하하라** — 가역 플래그(D_lanemix)에서 한 걸음 더: 되돌릴 수 있게가 아니라
+  *판정할 수 있게*. 바닥의 진짜 레버는 여전히 패키징/훅(~1,000 Shorts 시드를 넘기는 첫 1~2초)이고 A/B는 그 위의 배분 질문일 뿐.
 - **D_nonjsonparse. 만성 non-JSON은 truncation도 모델거부도 아닌 파서 버그였다 — 한국어 대괄호가 greedy 정규식을 속였다(9/7)** —
   Writer draft의 ~1/3이 "Expecting value: line 1 column 2 (char 1)"로 실패해 legacy 폴백→빈 슬롯(한 배치 61회). 모두가
   truncation이나 모델 변덕으로 추정했으나, `log.error`가 이미 찍던 raw draft를 끝까지 읽으니 진실이 나왔다: 모델이 JSON
