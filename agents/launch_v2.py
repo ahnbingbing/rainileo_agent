@@ -111,6 +111,24 @@ def day_plan(target: dt.date) -> dict:
                     log.info("v2 bandit slot-steer: AV → proven timeslot %s (was %s)", win, donor)
         except Exception as e:  # noqa: BLE001
             log.warning("v2 bandit slot-steer skipped (fixed plan stands): %s", e)
+    # PD 2026-10-07: weak-slot DOWN-weight (reach-dilution fix). The 4→6-slot expansion split a
+    # roughly fixed channel reach (~98% of inflow is the Shorts feed) across more videos, so a
+    # measurably-weak slot doesn't ADD reach — it cannibalizes the strong slots and drags per-video
+    # views down. When the bandit names a v2 RF slot the clear laggard, DROP it so reach concentrates
+    # on the slots that earn it. Bounded: RF slots only (never the AV lane we test separately), never
+    # below V2_MIN_SLOTS, and it RE-EVALUATES each day — a slot that recovers comes back. Dropping
+    # here (the single source of truth effective_assignments reads) means self-heal/topup never see
+    # the slot as an empty gap to phantom-fill. V2_SLOT_DOWNWEIGHT=0 restores the full 6-slot grid.
+    if os.getenv("V2_SLOT_DOWNWEIGHT", "1") == "1" and len(plan) > int(os.getenv("V2_MIN_SLOTS", "5")):
+        try:
+            from agents import bandit
+            rf_grid = [hh for hh, s in plan.items() if s["lane"] == "real_footage"]
+            lag = bandit.laggard("timeslot", grid=rf_grid)
+            if lag in plan and plan[lag]["lane"] == "real_footage":
+                plan.pop(lag)
+                log.info("v2 slot down-weight: dropped laggard RF slot %s (bandit, reach-dilution)", lag)
+        except Exception as e:  # noqa: BLE001
+            log.warning("v2 slot down-weight skipped (full grid stands): %s", e)
     return {"target": target.isoformat(), "produce_day": produce, "slots": plan}
 
 
@@ -532,7 +550,9 @@ def run_v2_batch(target: dt.date, *, do_upload: bool = True, dry_run: bool = Fal
 
     # ── summary ─────────────────────────────────────────────────────────────
     n_live = len(done)
-    n_slots = len([hh for hh in SLOTS_V2 if hh not in occupied])
+    # denominator = slots actually in force today (after any bandit down-weight), not the raw grid —
+    # else a down-weighted day reads "4/6" when it only ever had 5 slots to fill.
+    n_slots = len([hh for hh in plan["slots"] if hh not in occupied])
     lines = [f":checkered_flag: *배치 v2 써머리* {target.isoformat()} — 예약 {n_live}/{n_slots}"
              + (f" · 이월 핀 {len(pinned)}편(내일)" if pinned else "")]
     if failed:

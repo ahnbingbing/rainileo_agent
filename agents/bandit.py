@@ -33,6 +33,13 @@ from pathlib import Path
 # P(best)≥THETA_STABLE and has ≥N_STABLE observations. Tunable via env.
 THETA_STABLE = float(os.getenv("BANDIT_STABLE_THETA", "0.9"))
 N_STABLE = int(os.getenv("BANDIT_STABLE_MIN_N", "8"))
+# laggard() thresholds — the mirror of stable: an arm is a clear LOSER when its P(best) ≤ THETA_LAG,
+# it has ≥ N_LAG observations, AND its mean reward sits ≥ LAG_MARGIN below the median of the competing
+# arms. N_LAG is lower than N_STABLE because the v2 timeslots are young (~a week) yet already clearly
+# separated; the margin+p_best guards keep a thin-but-noisy arm from being dropped on luck.
+THETA_LAG = float(os.getenv("BANDIT_LAG_THETA", "0.05"))
+N_LAG = int(os.getenv("BANDIT_LAG_MIN_N", "6"))
+LAG_MARGIN = float(os.getenv("BANDIT_LAG_MARGIN", "0.08"))
 
 log = logging.getLogger("agents.bandit")
 ROOT = Path(__file__).resolve().parent.parent
@@ -459,6 +466,33 @@ def stabilized(level: str, con: sqlite3.Connection | None = None) -> str | None:
     best = max(lvl.items(), key=lambda kv: kv[1].get("p_best", 0.0))
     key, v = best
     if v.get("p_best", 0.0) >= THETA_STABLE and v.get("n", 0) >= N_STABLE:
+        return key
+    return None
+
+
+def laggard(level: str, con: sqlite3.Connection | None = None, *,
+            grid: "list[str] | None" = None, min_n: int | None = None) -> str | None:
+    """The clearly-LOSING arm of `level` — the mirror of stabilized(). Returns an arm key only when
+    it is unambiguously the worst (P(best) ≤ THETA_LAG, ≥ N_LAG observations, AND its mean reward
+    sits ≥ LAG_MARGIN below the MEDIAN of the competing arms), else None.
+
+    `grid` restricts the competition to a set of arm keys (e.g. only the live v2 timeslots) so we
+    never nominate an arm that isn't even scheduled — the reach-dilution fix drops a slot we DO run,
+    not a historical 4-slot-era bucket. Sparse data → None → nothing dropped, same safe-by-default
+    discipline as stabilized(): with too few observations or too close a race, the full plan stands."""
+    import statistics as _st
+    a = analyze(con)
+    lvl = {k: v for k, v in a["levels"].get(level, {}).items() if k not in ("?", None)}
+    if grid is not None:
+        gs = set(grid)
+        lvl = {k: v for k, v in lvl.items() if k in gs}
+    if len(lvl) < 3:           # need ≥3 arms so dropping the worst still leaves a real schedule
+        return None
+    n_lag = N_LAG if min_n is None else min_n
+    key, v = min(lvl.items(), key=lambda kv: kv[1].get("mu", 0.0))
+    med = _st.median([x.get("mu", 0.0) for x in lvl.values()])
+    if (v.get("n", 0) >= n_lag and v.get("p_best", 1.0) <= THETA_LAG
+            and (med - v.get("mu", 0.0)) >= LAG_MARGIN):
         return key
     return None
 
