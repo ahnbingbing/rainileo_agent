@@ -1401,6 +1401,22 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   심리적 문턱이 낮아 "일단 질러보고 아니면 끈다"가 가능해진다. 그리고 **배분/스케줄 변경은 blast radius가 배치-시점으로
   유계** — 렌더 계약 무변경만 확인하면 빠르게 출하해도 안전하다. 한 달 고정 후 다음 A/B 축은 레인이 아니라
   **edit_grammar**(velocity/meme/story를 RF 슬롯에, 손-프루프 3종 PD 승인 9/9) — `impact_edit_plan.md` Phase 1.
+- **D_slotdownweight. 슬롯을 더 늘리는 게 도달을 더하는 게 아니다 — 채널 도달은 대략 보존되고, 약슬롯은 강슬롯을 잠식한다(10/7)** —
+  PD "요즘 view수가 안 좋아"의 실체를 채널 레벨 ground truth로 파보니 세 가지가 드러났다. ①**유입의 ~98%가 Shorts 피드**
+  (검색·구독·외부는 미미) → 채널은 전적으로 Shorts 알고리즘 도달에 산다. ②**일일 채널 조회는 ~3,200으로 평탄**(지속 하락
+  아님; 9/29~30 스파이크 뒤 10/01 하루 절벽 678 후 복귀). ③그런데 v2가 9/30부터 **4→6슬롯**으로 늘자 *영상당* 48h 조회가
+  떨어졌다 — **대략 고정인 채널 도달을 더 많은 영상이 나눠 가져** per-video가 나빠 보인 것(채널 총량은 그대로). 즉 per-video
+  지표가 **채널 레벨 보존**을 가렸다. ★유력했던 "재렌더 교체본이 늦게 재업로드돼 시딩을 놓쳤다" 가설은 **대조로 반증**: 묻힌
+  영상 전부 예약 슬롯 = 실제 공개 시각이 초 단위로 일치했다(그럴듯한 가설도 ground truth로 죽인다 — 자원·churn이 컨텐츠
+  실패로 위장하는 D_disk/C_nulldur 계열의 변주). Fix=약슬롯을 **데이터로 다운웨이트**: `bandit.laggard()`(=`stabilized()`의
+  거울 — P(best)≤THETA_LAG·≥N_LAG 관측·평균이 grid 중앙값보다 margin 아래일 때만 "명확한 패자" 반환, 희소하면 None→전체
+  그리드 유지)로 v2 RF 슬롯의 laggard를 뽑아 `day_plan`에서 **드롭**(RF만·`V2_MIN_SLOTS` 바닥·매일 재평가해 회복한 슬롯은
+  복귀). 현 데이터→09:00 드롭(mu+0.408, p_best 0.002; 13:00은 중간이라 생존). ★blast radius 포인트: 슬롯을 **SSOT인
+  `effective_assignments`가 읽는 `day_plan`에서** 빼야 self-heal/topup이 그 슬롯을 "빈 gap"으로 보고 phantom-fill(유료 AV)
+  하지 않는다 — raw `SLOTS_V2`만 보는 지점(occupancy 과포함·써머리 분모)은 무해/표시용임을 열거해 확인. 가역성은 D_lanemix와
+  동일 규율: `V2_SLOT_DOWNWEIGHT=0`이면 6슬롯 전체 복원(재배포·인플라이트 영향 0). ★교훈=**per-video 최적화 ≠ 채널 최적화**;
+  도달이 보존되면 슬롯 증설은 자기잠식이다. 6편 vs 더-적은-편이 채널 총 도달을 실제로 늘리는지는 별도 A/B로 측정해야 하고
+  (미착수), 바닥의 진짜 레버는 여전히 패키징/훅(~1,000 Shorts 시드를 넘기는 첫 1~2초).
 - **D_nonjsonparse. 만성 non-JSON은 truncation도 모델거부도 아닌 파서 버그였다 — 한국어 대괄호가 greedy 정규식을 속였다(9/7)** —
   Writer draft의 ~1/3이 "Expecting value: line 1 column 2 (char 1)"로 실패해 legacy 폴백→빈 슬롯(한 배치 61회). 모두가
   truncation이나 모델 변덕으로 추정했으나, `log.error`가 이미 찍던 raw draft를 끝까지 읽으니 진실이 나왔다: 모델이 JSON
