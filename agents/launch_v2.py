@@ -111,22 +111,29 @@ def day_plan(target: dt.date) -> dict:
                     log.info("v2 bandit slot-steer: AV → proven timeslot %s (was %s)", win, donor)
         except Exception as e:  # noqa: BLE001
             log.warning("v2 bandit slot-steer skipped (fixed plan stands): %s", e)
-    # PD 2026-10-07: weak-slot DOWN-weight (reach-dilution fix). The 4→6-slot expansion split a
-    # roughly fixed channel reach (~98% of inflow is the Shorts feed) across more videos, so a
-    # measurably-weak slot doesn't ADD reach — it cannibalizes the strong slots and drags per-video
-    # views down. When the bandit names a v2 RF slot the clear laggard, DROP it so reach concentrates
-    # on the slots that earn it. Bounded: RF slots only (never the AV lane we test separately), never
-    # below V2_MIN_SLOTS, and it RE-EVALUATES each day — a slot that recovers comes back. Dropping
-    # here (the single source of truth effective_assignments reads) means self-heal/topup never see
-    # the slot as an empty gap to phantom-fill. V2_SLOT_DOWNWEIGHT=0 restores the full 6-slot grid.
-    if os.getenv("V2_SLOT_DOWNWEIGHT", "1") == "1" and len(plan) > int(os.getenv("V2_MIN_SLOTS", "5")):
+    # PD 2026-10-07: weak-slot DOWN-weight — but as a MEASURED A/B, not a blind permanent cut.
+    # The open question is whether fewer videos/day ADDS channel reach (the Shorts feed, ~98% of
+    # inflow, looks throttled to ~3 videos/day → extra slots may just cannibalize) or merely drops a
+    # breakout lottery ticket (a small channel wins on variance, not average; a weak slot is still a
+    # live ticket — 09:00 has produced both 900+ winners and <20 flops). Two weeks of thin, bimodal
+    # data can't settle it, so we MEASURE: alternate 6-slot vs 5-slot by 2-day BLOCK, phase-aligned to
+    # the produce/carry cycle so each block holds one produce + one carry day → neither arm is confounded
+    # with the cycle. slot_ab_report compares CHANNEL daily total reach (not per-video) between arms.
+    #   V2_SLOT_MODE=ab (default) → A/B; =downweight → always drop; =off → never drop (full 6).
+    mode = os.getenv("V2_SLOT_MODE", "ab").lower()
+    drop_today = (mode == "downweight")
+    if mode == "ab":
+        anchor = int(os.getenv("V2_CYCLE_ANCHOR_ORDINAL", str(dt.date(2026, 1, 1).toordinal())))
+        drop_today = (((target.toordinal() - anchor) // 2) % 2 == 1)   # arm1 = 5 slots; arm0 = full 6
+    if drop_today and len(plan) > int(os.getenv("V2_MIN_SLOTS", "5")):
         try:
             from agents import bandit
             rf_grid = [hh for hh, s in plan.items() if s["lane"] == "real_footage"]
             lag = bandit.laggard("timeslot", grid=rf_grid)
             if lag in plan and plan[lag]["lane"] == "real_footage":
-                plan.pop(lag)
-                log.info("v2 slot down-weight: dropped laggard RF slot %s (bandit, reach-dilution)", lag)
+                plan.pop(lag)   # dropped in day_plan = the SSOT effective_assignments reads, so
+                # self-heal/topup never see it as an empty gap to phantom-fill (paid AV).
+                log.info("v2 slot A/B: arm1 (5-slot) — dropped laggard RF slot %s (bandit)", lag)
         except Exception as e:  # noqa: BLE001
             log.warning("v2 slot down-weight skipped (full grid stands): %s", e)
     return {"target": target.isoformat(), "produce_day": produce, "slots": plan}
