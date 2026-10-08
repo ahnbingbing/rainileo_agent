@@ -160,6 +160,33 @@ def _diversity_sample(rows: list, k: int, *, loc_col: str, act_col: str,
 # ──────────────────────────────────────────────────────────────────────
 # Context gathering (reuse patterns from writer.py)
 # ──────────────────────────────────────────────────────────────────────
+def _clip_reuse_counts(con: sqlite3.Connection) -> dict:
+    """asset_id → how many RF cards (published OR scheduled) already cast that clip.
+
+    PD 2026-10-08 ("제외 안 해도 다양하게 선택해야지"): the candidate pool was recency-sorted and
+    deterministic, so every batch surfaced — and the caster picked — the same newest clips. A hard
+    exclude is a band-aid; the real fix is to make selection PREFER footage we've aired least, so the
+    cast diversifies by construction. This counts reuse across every card carrying asset_ids so the
+    pool can be ordered least-used-first."""
+    import collections
+    counts: "collections.Counter" = collections.Counter()
+    try:
+        for (pj,) in con.execute("SELECT payload_json FROM cards WHERE payload_json IS NOT NULL "
+                                 "AND render_style='real_footage'"):
+            try:
+                p = json.loads(pj or "{}")
+            except Exception:
+                continue
+            seen = set()
+            for c in (p.get("cuts") or []):
+                a = c.get("asset_id") if isinstance(c, dict) else None
+                if a and a not in seen:
+                    seen.add(a); counts[a] += 1
+    except Exception as e:  # noqa: BLE001
+        log.warning("_clip_reuse_counts failed: %s", e)
+    return counts
+
+
 def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
     # Recent tone history
     tones = [dict(r) for r in con.execute(
@@ -306,6 +333,26 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
           captured_iso DESC
         """,
     ).fetchall()
+    # PD 2026-10-08: diversify selection BY CONSTRUCTION, not just by excluding repeats. The rows
+    # arrive recency+quality DESC, so a deterministic sample kept surfacing the same newest clips and
+    # the caster kept picking them (the overuse PD saw). Two cheap changes make the cast vary:
+    #   (a) least-USED first — stable-sort by how many episodes already aired each clip, so unaired
+    #       footage leads (the healthy ~1,558-clip unused pool finally surfaces); ties keep the SQL
+    #       preference order (both-pets, framing, quality, recency).
+    #   (b) date-seeded rotation of the never-used head — so two batches drawing the same unused
+    #       clips don't pick the identical first ones; the order rotates deterministically per date.
+    try:
+        _reuse = _clip_reuse_counts(con)
+        _rows = list(_video_rows)
+        _rows.sort(key=lambda r: min(_reuse.get(r["asset_id"], 0), 5))   # stable: unused first
+        import random as _rnd
+        _rng = _rnd.Random(target.toordinal())
+        _unused = [r for r in _rows if _reuse.get(r["asset_id"], 0) == 0]
+        _rest = [r for r in _rows if _reuse.get(r["asset_id"], 0) != 0]
+        _rng.shuffle(_unused)
+        _video_rows = _unused + _rest
+    except Exception as _e:  # noqa: BLE001
+        log.warning("reuse-aware reorder skipped: %s", _e)
     # PD 2026-09-19: available_videos is the FRESH pool — sample by location × activity
     # only (year_col=None). Year-stratifying here starved recent clips (556 usable → ~26
     # in the sample) and emptied RF slots; archive_videos below carries the year-spread

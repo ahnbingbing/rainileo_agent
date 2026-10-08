@@ -96,7 +96,11 @@ def _candidate_clips(con, target: dt.date) -> list[dict]:
     try:
         from agents import producer
         ctx = producer._gather_context(con, target)
-        return (ctx.get("best_videos") or [])
+        # The pool lives under "available_videos"; "best_videos" was never a key, so this
+        # silently returned [] → the senior director saw an EMPTY cast pool and fell back to the
+        # tiny recency-DESC A/B feeders (grandma-notes 12 + behaviors 15), which is why every
+        # batch cast from the same newest 9/30-10/1 clips (PD 2026-10-08 overuse). Read the real key.
+        return (ctx.get("available_videos") or ctx.get("best_videos") or [])
     except Exception as e:  # noqa: BLE001
         log.warning("senior_director: candidate pool failed: %s", e)
         return []
