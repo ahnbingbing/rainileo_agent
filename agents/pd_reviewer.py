@@ -34,8 +34,12 @@ ROOT = Path(__file__).resolve().parent.parent
 log = logging.getLogger("pd_reviewer")
 PROMPT = (ROOT / "agents" / "prompts" / "pd_review.md").read_text(encoding="utf-8")
 
-# KST slot ↔ the publish_at (UTC) hour:minute it schedules at
-_SLOT_UTC = {"08:00": "23:00", "12:30": "03:30", "18:00": "09:00", "21:00": "12:00"}
+# KST slot ↔ the publish_at (UTC) hour:minute it schedules at. Includes the v2 6-slot grid
+# (09:00/13:00/20:00) — without them _scheduled_for silently skipped every v2-slot episode, so the
+# daily reviewer never saw the whole post-9/30 schedule. (Rescheduling itself goes through
+# launch.publish_at_for, the SSOT, so only this discovery membership check needed the v2 slots.)
+_SLOT_UTC = {"08:00": "23:00", "09:00": "00:00", "12:30": "03:30", "13:00": "04:00",
+             "18:00": "09:00", "20:00": "11:00", "21:00": "12:00"}
 
 
 # ─────────────────────────── batch discovery ───────────────────────────
@@ -325,7 +329,8 @@ def _do_rerender(con, ctx: dict, issue: dict, date: dt.date) -> str:
 
 # ─────────────────────────── orchestration ───────────────────────────
 
-def review_batch(target: dt.date | None = None, apply: bool = False, slack: bool = True) -> list[dict]:
+def review_batch(target: dt.date | None = None, apply: bool = False, slack: bool = True,
+                 lanes: "set[str] | None" = None) -> list[dict]:
     from agents.producer import _db
     if target is None:
         # default to the batch the 03:00 cron just built (LAUNCH_LEAD_DAYS ahead) so issues are
@@ -347,6 +352,9 @@ def review_batch(target: dt.date | None = None, apply: bool = False, slack: bool
         ctx = _episode_context(con, ep)
         if not ctx:
             report_lines.append(f"• {ep['slot']} {ep['video_id']}: 카드 없음 — 스킵")
+            continue
+        if lanes and (ctx.get("render_style") not in lanes):
+            report_lines.append(f"• {ep['slot']} {ep['video_id']}: {ctx.get('render_style')} 레인 제외 — 스킵")
             continue
         verdict = _llm_review(ctx)
         results.append({"slot": ep["slot"], "verdict": verdict})
@@ -424,9 +432,12 @@ def main() -> int:
                          "2-pass agreement. Or set PD_REVIEW_APPLY=1.")
     ap.add_argument("--dry-run", action="store_true", help="(default) review only — kept for clarity")
     ap.add_argument("--no-slack", action="store_true")
+    ap.add_argument("--lanes", default=None,
+                    help="comma-list of render_style lanes to review (e.g. real_footage). Default=all.")
     args = ap.parse_args()
     target = dt.date.fromisoformat(args.date) if args.date else None
-    review_batch(target, apply=args.apply, slack=not args.no_slack)
+    lanes = {s.strip() for s in args.lanes.split(",")} if args.lanes else None
+    review_batch(target, apply=args.apply, slack=not args.no_slack, lanes=lanes)
     return 0
 
 

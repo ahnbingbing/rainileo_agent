@@ -87,8 +87,19 @@ def _fresh_pool(exclude: set | None = None, limit: int = 12) -> list[dict]:
     db = sqlite3.connect(str(Path("data/agent.db")))
     db.row_factory = sqlite3.Row
     used = set(exclude)
-    for r in db.execute("SELECT payload_json FROM cards WHERE render_style='real_footage' AND uploaded=1"):
-        import json as _j
+    import json as _j
+    # Clip cooldown must cover the whole PENDING schedule, not just published episodes. The old query
+    # excluded only uploaded=1, so clips sitting in scheduled-but-not-yet-public cards (a day-or-two-
+    # ahead v2 batch) stayed re-pickable → every produce run grabbed the same newest clips
+    # (captured_iso DESC + thin fresh inflow) and recycled ~5 clips across ~8 scheduled episodes
+    # (PD 2026-10-08 "이 영상 너무 많이 썼잖아"). This is the caption-grounding-bypass pattern again: the v2
+    # casting path lost the cross-batch dedup contract. Exclude any RF card that is published OR
+    # scheduled (has a video_id) OR dated within the cooldown window.
+    _cd_days = int(os.getenv("GRAMMAR_CLIP_COOLDOWN_DAYS", "21"))
+    for r in db.execute(
+            "SELECT payload_json FROM cards WHERE render_style='real_footage' "
+            "AND (uploaded=1 OR youtube_video_id IS NOT NULL "
+            "     OR youtube_publish_at >= date('now', ?))", (f"-{_cd_days} days",)):
         try:
             for c in (_j.loads(r[0] or "{}").get("cuts") or []):
                 if c.get("asset_id"):
