@@ -341,16 +341,24 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
     #       preference order (both-pets, framing, quality, recency).
     #   (b) date-seeded rotation of the never-used head — so two batches drawing the same unused
     #       clips don't pick the identical first ones; the order rotates deterministically per date.
+    # Stay within a FRESH window (old footage is memory-lane, served by archive_videos — year-
+    # flattening the fresh pool is exactly what starved recent clips in 2026-09). Within that window,
+    # tier the rows: (A) fresh & never-aired, (B) other fresh, (C) old — preserving the SQL within-
+    # tier order — then date-seed-rotate tier A so the never-aired fresh footage leads AND varies by
+    # day. Result: the cast prefers clips we haven't aired, stays recent, and stops collapsing onto
+    # the same newest few (PD 2026-10-08).
     try:
         _reuse = _clip_reuse_counts(con)
-        _rows = list(_video_rows)
-        _rows.sort(key=lambda r: min(_reuse.get(r["asset_id"], 0), 5))   # stable: unused first
+        _recent_days = int(os.getenv("RF_DIVERSE_RECENT_DAYS", "150"))
+        _cut = (target - dt.timedelta(days=_recent_days)).isoformat()
+        def _fresh(r):
+            return (r["captured_iso"] or "")[:10] >= _cut
+        _A = [r for r in _video_rows if _fresh(r) and _reuse.get(r["asset_id"], 0) == 0]
+        _B = [r for r in _video_rows if _fresh(r) and _reuse.get(r["asset_id"], 0) != 0]
+        _C = [r for r in _video_rows if not _fresh(r)]
         import random as _rnd
-        _rng = _rnd.Random(target.toordinal())
-        _unused = [r for r in _rows if _reuse.get(r["asset_id"], 0) == 0]
-        _rest = [r for r in _rows if _reuse.get(r["asset_id"], 0) != 0]
-        _rng.shuffle(_unused)
-        _video_rows = _unused + _rest
+        _rnd.Random(target.toordinal()).shuffle(_A)       # rotate the fresh-unused head per date
+        _video_rows = _A + _B + _C
     except Exception as _e:  # noqa: BLE001
         log.warning("reuse-aware reorder skipped: %s", _e)
     # PD 2026-09-19: available_videos is the FRESH pool — sample by location × activity
