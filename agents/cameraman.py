@@ -4477,7 +4477,8 @@ def _run(cmd: list[str], step: str, progress_cb: ProgressCb = None,
                           card_id=os.getenv("CURRENT_CARD_ID") or None)
     except Exception:
         pass
-    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=600)
+    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT,
+                          timeout=int(os.getenv("RENDER_STEP_TIMEOUT", "600")))
     if proc.returncode != 0:
         err = proc.stderr[-2000:] if proc.stderr else proc.stdout[-2000:]
         raise RuntimeError(f"Step '{step}' failed (rc={proc.returncode}):\n{err}")
