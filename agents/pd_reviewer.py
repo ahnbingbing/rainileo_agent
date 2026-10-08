@@ -320,11 +320,18 @@ def _do_rerender(con, ctx: dict, issue: dict, date: dt.date) -> str:
         out = row[0] if row and row[0] else None
     if not out:
         return "rerender: no output"
+    # Free the slot BEFORE scheduling the replacement. _auto_upload_episode's SLOT-COLLISION guard
+    # rejects a second video at an already-occupied publish_at, so scheduling-then-vetoing left the
+    # slot with the OLD vetoed AND the NEW unscheduled — an empty slot (10/10 08:00/13:00). Veto the
+    # incumbent first so the publish_at frees, then schedule the replacement into it.
+    from youtube.upload import veto_video
+    if ctx.get("video_id"):
+        try:
+            veto_video(ctx["video_id"], delete=False)
+        except Exception as e:  # noqa: BLE001
+            log.warning("pre-veto of incumbent %s failed: %s", ctx.get("video_id"), e)
     vid = _auto_upload_episode(con, Path(out).resolve(), date, publish_at_iso=_pub_iso(date, ctx["slot"]))
-    if vid and vid != ctx["video_id"]:
-        from youtube.upload import veto_video
-        veto_video(ctx["video_id"], delete=False)
-    return f"rerender → {vid} (old {ctx['video_id']} vetoed)"
+    return f"rerender → {vid} (old {ctx['video_id']} vetoed first)"
 
 
 # ─────────────────────────── orchestration ───────────────────────────
