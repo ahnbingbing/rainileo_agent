@@ -79,6 +79,15 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+# Self-sufficient import path: this script runs as a bare-path subprocess
+# (`python scripts/burn_captions.py …`) from cameraman/producer, where Python puts
+# scripts/ — not the repo root — on sys.path[0]. Without this insert, the canon
+# fact-corrector import (`from agents.canon import correct_canon_age_text`) dies with
+# ModuleNotFoundError whenever the caller didn't export PYTHONPATH (Mac launchd batch,
+# manual re-renders), failing the caption burn and emptying the slot in BOTH lanes.
+# Anchoring on repo root here removes that env dependency for every caller.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 ANIM_DIR = ROOT / "data" / "output" / "animated"
 OUT_DIR_DEFAULT = ROOT / "data" / "output" / "animated_captioned"
 TMP_DIR = ROOT / "data" / "tmp" / "captions"
