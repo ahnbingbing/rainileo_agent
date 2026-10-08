@@ -2987,7 +2987,11 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
                 model=model, contents=parts,
                 config=_gt.GenerateContentConfig(
                     system_instruction=_sys_grnd, response_mime_type="application/json",
-                    thinking_config=_gt.ThinkingConfig(thinking_budget=0)))
+                    # budget=0 is the flash anti-truncation setting (gotcha #4), but gemini-2.5-pro
+                    # REJECTS 0 ("only works in thinking mode") → the whole action-caption step failed
+                    # and captions fell back to single-pass. pro gets -1 (dynamic thinking); flash 0.
+                    thinking_config=_gt.ThinkingConfig(
+                        thinking_budget=(0 if "flash" in (model or "") else -1))))
             d = json.loads((resp.text or "{}").strip())
             beats = d.get("beats") if isinstance(d, dict) else None
         except Exception as e:
@@ -3178,13 +3182,14 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
                     model=model, contents=parts,
                     config=_gt.GenerateContentConfig(
                         system_instruction=_sys, response_mime_type="application/json",
-                        thinking_config=_gt.ThinkingConfig(thinking_budget=0)))
+                        thinking_config=_gt.ThinkingConfig(
+                            thinking_budget=(0 if "flash" in (model or "") else -1))))
                 d = json.loads((resp.text or "{}").strip())
                 if isinstance(d, list):
                     d = next((x for x in d if isinstance(x, dict)), None)
                 return d if isinstance(d, dict) else None
             except Exception as e:
-                log.warning("grounding gate VLM %s@%.1f: %s", mp4.stem, mid, e)
+                log.warning("grounding gate VLM %s@%.1f: %s", mp4.stem, ta, e)
         return None
 
     # 1. verify each SCENE against ITS OWN frame. Scene-level (not cut-level) is required
