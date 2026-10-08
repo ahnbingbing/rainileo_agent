@@ -386,7 +386,16 @@ def review_batch(target: dt.date | None = None, apply: bool = False, slack: bool
             report_lines.append(f"   └[{issue.get('class')}·{act}] {ev}")
             if not apply or act == "none":
                 continue
-            if (issue.get("class"), act) not in confirm_keys:
+            # era_reuse is a HARD DB fact (source clips carry already_used from the reuse count),
+            # not an LLM judgment — requiring a second subjective pass to confirm it let
+            # non-deterministic sampling block a real overuse fix (10/10: every reselect blocked).
+            # Deterministic classes apply on a single flag; subjective classes (caption/title/thin)
+            # still need 2-pass agreement so a spurious pass can't churn a good episode. era_reuse
+            # can't false-positive a clean episode (a never-reused clip is never flagged), so this
+            # doesn't reopen the churn hole the 2-pass gate closed.
+            _DETERMINISTIC = {"era_reuse"}
+            if (issue.get("class") not in _DETERMINISTIC
+                    and (issue.get("class"), act) not in confirm_keys):
                 report_lines.append(f"      → 미적용(2-pass 불일치 — 단일패스 플래그, 보고만)")
                 continue
             try:
