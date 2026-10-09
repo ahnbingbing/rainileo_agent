@@ -333,31 +333,78 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
           captured_iso DESC
         """,
     ).fetchall()
-    # PD 2026-10-08: diversify selection BY CONSTRUCTION, not just by excluding repeats. The rows
-    # arrive recency+quality DESC, so a deterministic sample kept surfacing the same newest clips and
-    # the caster kept picking them (the overuse PD saw). Two cheap changes make the cast vary:
-    #   (a) least-USED first — stable-sort by how many episodes already aired each clip, so unaired
-    #       footage leads (the healthy ~1,558-clip unused pool finally surfaces); ties keep the SQL
-    #       preference order (both-pets, framing, quality, recency).
-    #   (b) date-seeded rotation of the never-used head — so two batches drawing the same unused
-    #       clips don't pick the identical first ones; the order rotates deterministically per date.
-    # Stay within a FRESH window (old footage is memory-lane, served by archive_videos — year-
-    # flattening the fresh pool is exactly what starved recent clips in 2026-09). Within that window,
-    # tier the rows: (A) fresh & never-aired, (B) other fresh, (C) old — preserving the SQL within-
-    # tier order — then date-seed-rotate tier A so the never-aired fresh footage leads AND varies by
-    # day. Result: the cast prefers clips we haven't aired, stays recent, and stops collapsing onto
-    # the same newest few (PD 2026-10-08).
+    # PD 2026-10-08 → 2026-10-10: diversify selection BY CONSTRUCTION, and make that diversity
+    # QUALITY-WEIGHTED. The rows arrive recency+quality DESC, so a deterministic sample kept surfacing
+    # the same newest clips and the caster kept picking them (the overuse PD saw). Tiering by reuse so
+    # unaired footage leads fixes the overuse — but a PURE shuffle within a tier made a calm nap and a
+    # kinetic run equally likely to lead, so once overuse was fixed the cast fell onto whatever unused
+    # clip happened to shuffle first, often a low-hook one (PD 2026-10-10 "교체본 훅이 약하다"). The
+    # overused clips were never "the most vivid the director chose" — they were just the NEWEST the
+    # buggy feeder surfaced; the real lever is to order each tier by how much HOOK the clip carries.
+    # So: reuse_penalty (tier A unused → B used → C old) × quality_bonus (within a tier, order by a
+    # cheap DB hook proxy), with a small date-seeded jitter so near-ties rotate day-to-day and two
+    # batches don't re-collapse onto an identical head. The proxy leads with what actually makes a
+    # channel winner — a SPECIFIC EVENT, not motion (view_data_concrete_hook_title: "로봇청소기 피난"
+    # beats a kinetic-but-generic zoomies). A 10-day selection sim (PD 2026-10-10) proved a motion-
+    # first score over-concentrated on one high-motion outing (4 swim clips) and surfaced note-less
+    # generic play; so narrative-hook signals (an owner-described moment in pd_notes, a striking
+    # observed micro-behavior) DOMINATE and kinetic motion is only a minor footage-fit tiebreak (pure
+    # naps get a small penalty). Stay within a FRESH window (old footage is memory-lane, served by
+    # archive_videos — year-flattening the fresh pool is what starved recent clips in 2026-09).
+    # Result: the cast prefers unused, recent footage AND leads with the most HOOK-bearing of it
+    # (every selected clip carried a described moment in the sim, vs 14/60 before), instead of the
+    # first random one. The proxy is deliberately cheap (no clip decode — clip_motion_peak is too
+    # expensive for a 100+ pool). Kill switch RF_HOOK_WEIGHTED=0 restores the old hook-blind shuffle.
     try:
         _reuse = _clip_reuse_counts(con)
         _recent_days = int(os.getenv("RF_DIVERSE_RECENT_DAYS", "150"))
         _cut = (target - dt.timedelta(days=_recent_days)).isoformat()
         def _fresh(r):
             return (r["captured_iso"] or "")[:10] >= _cut
+        _HI_MOTION = ("run", "swim", "play", "jump", "chas", "zoomie", "dig",
+                      "splash", "fetch", "pounce", "wrestl", "climb", "pull")
+        def _hook_score(r):
+            """Cheap DB-only proxy for how much HOOK a clip carries (no decode). The channel's
+            winners are SPECIFIC EVENTS, not raw motion, so narrative-hook signals LEAD: an owner-
+            described moment (pd_notes, weighted by specificity) and a striking observed behavior.
+            Two-pet interaction + intimate framing add; kinetic motion is only a minor footage-fit
+            tiebreak and a pure nap gets a small penalty (validated by a 10-day selection sim)."""
+            s = 0.0
+            _pdn = (r["pd_notes"] or "").strip()
+            if len(_pdn) >= 12:
+                s += 2.0                                   # a described specific moment — strongest
+            elif _pdn:
+                s += 1.0                                   # short note still = "owner found it notable"
+            try:
+                _n = json.loads(r["notes"] or "{}")
+                if _n.get("micro_behaviors") or _n.get("pet_intent"):
+                    s += 1.0                               # a striking observed behavior is a hook
+            except Exception:
+                pass
+            if _is_both(r["subjects_csv"]):
+                s += 0.6                                   # two-pet interaction = more engaging
+            if (r["composition"] or "").lower() not in ("overhead", "wide", "far"):
+                s += 0.3                                   # intimate framing (pet large/clear)
+            act = (r["activity"] or "").lower()
+            if any(k in act for k in _HI_MOTION):
+                s += 0.5                                   # kinetic = minor footage-fit nudge
+            elif act in _LOW_MOTION_ACTS:
+                s -= 0.3                                   # pure nap = slight penalty
+            return s
+        import random as _rnd
         _A = [r for r in _video_rows if _fresh(r) and _reuse.get(r["asset_id"], 0) == 0]
         _B = [r for r in _video_rows if _fresh(r) and _reuse.get(r["asset_id"], 0) != 0]
         _C = [r for r in _video_rows if not _fresh(r)]
-        import random as _rnd
-        _rnd.Random(target.toordinal()).shuffle(_A)       # rotate the fresh-unused head per date
+        if os.getenv("RF_HOOK_WEIGHTED", "1") != "0":
+            _jit = float(os.getenv("RF_HOOK_JITTER", "0.5"))
+            _rng = _rnd.Random(target.toordinal())
+            # hook-first within each fresh tier; date-seeded jitter rotates near-ties per day so the
+            # cast varies without letting a calm clip outrank a clearly kinetic one.
+            _key = lambda r: _hook_score(r) + _rng.uniform(-_jit, _jit)
+            _A.sort(key=_key, reverse=True)
+            _B.sort(key=_key, reverse=True)
+        else:
+            _rnd.Random(target.toordinal()).shuffle(_A)    # legacy: reuse-tier, hook-blind shuffle
         _video_rows = _A + _B + _C
     except Exception as _e:  # noqa: BLE001
         log.warning("reuse-aware reorder skipped: %s", _e)
