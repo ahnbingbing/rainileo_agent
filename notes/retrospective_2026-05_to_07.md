@@ -1386,6 +1386,21 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   → 백스톱=pd_notes 최우선 override(`pd_correct_asset` "레오만, 랴니 없음")가 재그라운딩을 subjects=['leo']로 교정
   (프레임이 진실·pd_notes가 VLM을 이긴다, cf [[grounding_pd_notes_gpt4omini]]의 "obey하는 신뢰높은 소스"). 공개영상은
   제목/설명만 YouTube API로 비파괴 교정, 미공개 예약은 재렌더 교체.
+- **C_hookdiversity. 품질-blind 휴리스틱을 품질-blind로 고치면 증상만 옮긴다 — 선택은 reuse_penalty × hook_bonus여야 한다(10/10)** —
+  PD "이 영상 너무 많이 썼잖아"의 과사용은 **vividness 판정이 아니었다**: `_candidate_clips` 키버그(빈 풀→최신 feeder 폴백)
+  + recency-DESC 결정론이 **newest만 담긴 메뉴**를 senior director에 떠먹인 것(PD 확인=newest였지 vivid 아님). "감독이 가장
+  생생한 걸 반복 선택했다"는 **사후 서사**였고 코드엔 그런 품질판정 단계가 없었다 — ★교훈: "A가 B라서 그랬다"는 서사를
+  코드로 검증하라. 더 함정은 **과사용 수정 자체**: tier A(미사용)를 **랜덤 셔플**해서 여전히 hook-blind(낮잠·달리기 동률)
+  → 과사용은 멎었지만 "미사용이면 아무거나" 캐스팅해 훅이 약해졌다. 즉 **"다양성↔훅 trade-off"는 법칙이 아니라 selector가
+  품질-blind였던 artifact**(recency-blind를 unused-random으로 바꾼 것뿐). Fix(`a51b979`)=`_gather_context` reuse 재정렬의
+  tier 내부를 **hook-score 정렬 + 날짜 jitter**(reuse_penalty[tier A→B→C] × quality_bonus[within-tier], 회전 보존·킬스위치
+  `RF_HOOK_WEIGHTED=0`). ★2차 교훈=**hook ≠ motion**: 1차엔 모션을 주신호로 뒀다가 **한 고모션 세션(수영 4개)에 쏠리고
+  note-less generic play**를 올렸다(바로 [[view_data_concrete_hook_title]]의 "구체적 사건이 vivid를 이긴다"를 거스름). 재보정=
+  **사건주도**(owner가 설명한 순간 pd_notes[구체성 길이 가중]·관찰된 micro_behavior가 주신호, both-pets·framing 보조, 모션은
+  velocity footage-fit용 미세 tiebreak·순수 낮잠 −). ★3차 교훈=**선택 기준은 배포 전에 값싸게 검증된다**: 10일 라이브-DB
+  선택 시뮬(LLM/렌더 없이 reuse 피드백만 모델링)이 모션주도 실패를 잡았고 재보정을 증명했다 — 0겹침(dedup 버그는 이미
+  수정, 정렬이 재발 안 시킴)·구체사건노트 **14/60→60/60**·같은세션쏠림 4→2. RF 전용, AV 무관. cf [[C_freshbias]](리뷰어
+  자기강화로 신선-우선이 무력화)·[[C_freshpool]](funnel 실측)·[[view_data_concrete_hook_title]](구체 훅=승자).
 
 ### 4.5 인프라 / 파이프라인
 - **D_lanemix. 라이브 채널 변경은 되돌림을 런타임 플래그로 출하하라 — git-revert만으론 부족하다(9/9)** —
