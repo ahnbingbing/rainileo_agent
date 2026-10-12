@@ -86,16 +86,23 @@ def ensure_table(con: sqlite3.Connection) -> None:
             source        TEXT,
             fetched_at    TEXT,
             packaging_arm TEXT,
-            bumper_arm    TEXT
+            bumper_arm    TEXT,
+            likes         INTEGER,
+            comments      INTEGER,
+            shares        INTEGER,
+            subs_gained   INTEGER,
+            avg_view_dur  REAL
         )
         """
     )
-    # migrate older tables that predate the packaging-arm / bumper-arm experiment dimensions
+    # migrate older tables that predate the experiment / engagement columns
     cols = [r[1] for r in con.execute("PRAGMA table_info(video_performance)")]
-    if "packaging_arm" not in cols:
-        con.execute("ALTER TABLE video_performance ADD COLUMN packaging_arm TEXT")
-    if "bumper_arm" not in cols:
-        con.execute("ALTER TABLE video_performance ADD COLUMN bumper_arm TEXT")
+    for _col, _type in (("packaging_arm", "TEXT"), ("bumper_arm", "TEXT"),
+                        ("likes", "INTEGER"), ("comments", "INTEGER"),
+                        ("shares", "INTEGER"), ("subs_gained", "INTEGER"),
+                        ("avg_view_dur", "REAL")):
+        if _col not in cols:
+            con.execute(f"ALTER TABLE video_performance ADD COLUMN {_col} {_type}")
     con.commit()
 
 
@@ -188,8 +195,9 @@ def collect(con: sqlite3.Connection | None = None) -> list[dict]:
             """
             INSERT INTO video_performance
               (video_id, card_id, lane, timeslot, publish_at, views_48h,
-               retention_pct, est_minutes, source, fetched_at, packaging_arm, bumper_arm)
-            VALUES (?,?,?,?,?,?,?,?,?,datetime('now'),?,?)
+               retention_pct, est_minutes, source, fetched_at, packaging_arm, bumper_arm,
+               likes, comments, shares, subs_gained, avg_view_dur)
+            VALUES (?,?,?,?,?,?,?,?,?,datetime('now'),?,?,?,?,?,?,?)
             ON CONFLICT(video_id) DO UPDATE SET
               views_48h=excluded.views_48h,
               retention_pct=excluded.retention_pct,
@@ -197,10 +205,17 @@ def collect(con: sqlite3.Connection | None = None) -> list[dict]:
               source=excluded.source,
               fetched_at=excluded.fetched_at,
               packaging_arm=excluded.packaging_arm,
-              bumper_arm=excluded.bumper_arm
+              bumper_arm=excluded.bumper_arm,
+              likes=excluded.likes,
+              comments=excluded.comments,
+              shares=excluded.shares,
+              subs_gained=excluded.subs_gained,
+              avg_view_dur=excluded.avg_view_dur
             """,
             (vid, r["card_id"], lane, slot, pub, m["views"],
-             m["retention_pct"], m["est_minutes"], m["source"], parm, barm),
+             m["retention_pct"], m["est_minutes"], m["source"], parm, barm,
+             m.get("likes", 0), m.get("comments", 0), m.get("shares", 0),
+             m.get("subs_gained", 0), m.get("avg_view_dur", 0.0)),
         )
         collected.append({"video_id": vid, "lane": lane, "timeslot": slot,
                           **m})

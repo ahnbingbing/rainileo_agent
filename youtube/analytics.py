@@ -25,47 +25,72 @@ def _data_api():
     return get_youtube()
 
 
+# Engagement metrics are the best available packaging/breakout proxy: YouTube does NOT expose
+# impressions or impressionClickThroughRate via the Analytics API ("Unknown identifier" — they are
+# Studio-dashboard-only), so we can't measure feed-push or hook-stop CTR directly. What IS queryable —
+# engagement (likes/comments/shares) per view, subscriber conversion, and absolute avg_view_duration —
+# captures "of the people reached, how strongly did it land", which is what drives the Shorts breakout
+# push. These feed the packaging/bumper-arm dashboard (scripts/packaging_report.py). PD 2026-10-12.
+_METRICS = ("views,likes,comments,shares,subscribersGained,"
+            "averageViewDuration,averageViewPercentage,estimatedMinutesWatched")
+
+
+def _zero_metrics(source: str) -> dict:
+    return {"views": 0, "likes": 0, "comments": 0, "shares": 0, "subs_gained": 0,
+            "avg_view_dur": 0.0, "retention_pct": 0.0, "est_minutes": 0.0, "source": source}
+
+
 def video_metrics(video_id: str, start_date: str, end_date: str) -> dict:
-    """Query Analytics for one video over [start_date, end_date] (YYYY-MM-DD,
-    inclusive). Returns {views, retention_pct, est_minutes, source}. Never
-    raises — on failure returns zeros with source='error'."""
+    """Query Analytics for one video over [start_date, end_date] (YYYY-MM-DD, inclusive). Returns
+    {views, likes, comments, shares, subs_gained, avg_view_dur, retention_pct, est_minutes, source}.
+    Never raises — on failure returns zeros with source='error'. (impressions/CTR are not API-queryable
+    — engagement + retention are the available breakout proxies.)"""
     try:
         ya = _analytics()
         resp = ya.reports().query(
             ids="channel==MINE",
             startDate=start_date,
             endDate=end_date,
-            metrics="views,estimatedMinutesWatched,averageViewPercentage",
+            metrics=_METRICS,
             dimensions="video",
             filters=f"video=={video_id}",
         ).execute()
         rows = resp.get("rows") or []
         if rows:
-            # columns in the order of `metrics` after the `video` dimension
+            # columns after the `video` dimension, in _METRICS order:
+            # [video, views, likes, comments, shares, subscribersGained,
+            #  averageViewDuration, averageViewPercentage, estimatedMinutesWatched]
             r = rows[0]
-            # r = [videoId, views, estimatedMinutesWatched, averageViewPercentage]
             return {
                 "views": int(r[1] or 0),
-                "est_minutes": float(r[2] or 0.0),
-                "retention_pct": float(r[3] or 0.0),
+                "likes": int(r[2] or 0),
+                "comments": int(r[3] or 0),
+                "shares": int(r[4] or 0),
+                "subs_gained": int(r[5] or 0),
+                "avg_view_dur": float(r[6] or 0.0),
+                "retention_pct": float(r[7] or 0.0),
+                "est_minutes": float(r[8] or 0.0),
                 "source": "analytics",
             }
     except Exception as e:
         log.warning("analytics query failed for %s: %s", video_id, e)
 
-    # Fallback: lifetime viewCount via Data API (no retention available)
+    # Fallback: lifetime viewCount via Data API (no retention/engagement available)
     try:
         yt = _data_api()
         resp = yt.videos().list(part="statistics", id=video_id).execute()
         items = resp.get("items") or []
         if items:
-            views = int(items[0]["statistics"].get("viewCount", 0))
-            return {"views": views, "est_minutes": 0.0,
-                    "retention_pct": 0.0, "source": "data_api"}
+            st = items[0]["statistics"]
+            out = _zero_metrics("data_api")
+            out["views"] = int(st.get("viewCount", 0) or 0)
+            out["likes"] = int(st.get("likeCount", 0) or 0)
+            out["comments"] = int(st.get("commentCount", 0) or 0)
+            return out
     except Exception as e:
         log.warning("data-api fallback failed for %s: %s", video_id, e)
 
-    return {"views": 0, "est_minutes": 0.0, "retention_pct": 0.0, "source": "error"}
+    return _zero_metrics("error")
 
 
 def window_48h(publish_iso_utc: str) -> tuple[str, str]:
