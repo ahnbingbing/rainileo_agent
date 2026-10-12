@@ -557,6 +557,14 @@ def main() -> int:
     rep = None
     if args.report or args.slack or not did:
         rep = report()
+        # Append the packaging/bumper experiment dashboard (PD 2026-10-12) so the weekly
+        # Monday report carries the growth gauge — reach/retention/engagement per arm — next
+        # to the lane/timeslot posteriors, in one Slack message.
+        try:
+            from scripts.packaging_report import report as _pkg_report
+            rep = rep + "\n\n" + _pkg_report()
+        except Exception as e:  # noqa: BLE001
+            log.warning("packaging dashboard append failed: %s", e)
         print(rep)
         did = True
     if args.choose:
