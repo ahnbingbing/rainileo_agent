@@ -338,6 +338,7 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
 | twist 포맷 25s | 6/2 | 6/14 | short에 미스터리 불가 → 이후 캡 자체도 supersede |
 | **edit_grammar 기본 ON (a8f2bcd)** | 9/11 | 9/11 되돌림→복원 | 런어웨이 트리아지 때 grammar를 의심해 revert(4f7f670)했으나 진짜 근본은 RF 쿨다운(C_cooldownrelax) → grammar 검증 후 기본 ON 복원(dac41bc). 킬스위치 EDIT_GRAMMAR_MODE=0 유지 |
 | **공개 편 재렌더 = producer 재실행 (9/13)** | 9/13 | 즉시 폐기 | 재실행이 비결정 재캐스트→다른 에피(원본 클립이 쿨다운 배제). 대신 원본 캐스트 강제-재렌더 (C_grammarquality) |
+| **v2 프로덕션 모델 (6슬롯·소스3×문법3=9RF)** | 9/30 | 10/12 | 라이브 직후 RF 48h 중앙값 **994→50→8**·리텐 71%→21% 붕괴. 볼륨희석(4→6)+같은footage 3연발(중복편 사망)+문법<순수RF(std445>story**57**). PD 전면 롤백=`LAUNCH_MODEL=`(빈값→4슬롯 craft)+`EDIT_GRAMMAR_MODE=0`. 품질픽스는 유지 (C_v2rollback) |
 
 ### 4.2 AV 렌더 / Seedance
 - **A★. 랴니 마킹 잡기 — 프로젝트 최대 난제(상시, 부분해결)** — 가장 오래·가장 자주 싸운 단일 문제.
@@ -1401,6 +1402,20 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   선택 시뮬(LLM/렌더 없이 reuse 피드백만 모델링)이 모션주도 실패를 잡았고 재보정을 증명했다 — 0겹침(dedup 버그는 이미
   수정, 정렬이 재발 안 시킴)·구체사건노트 **14/60→60/60**·같은세션쏠림 4→2. RF 전용, AV 무관. cf [[C_freshbias]](리뷰어
   자기강화로 신선-우선이 무력화)·[[C_freshpool]](funnel 실측)·[[view_data_concrete_hook_title]](구체 훅=승자).
+- **C_v2rollback. 볼륨×반복은 품질과 바꾼 것이고 채널을 죽인다 — v2 프로덕션 모델 전면 롤백(10/12)** — v2(6슬롯·
+  소스3×문법3=9RF 배치·2일 사이클)를 9/30 라이브한 직후 조회수가 붕괴했다: RF 48h **중앙값 994(pre-v2)→68→50→8**,
+  리텐션 71%→21%. 10/7엔 "채널 총도달 ~3,200 평탄 = 슬롯 희석일 뿐"으로 봤으나 그건 **per-video 중앙값 붕괴를 가린
+  집계**였다 — PD가 "퀄리티가 떨어졌다(자막/내용), 같은 소스로 여러 개가 문제"로 먼저 바로잡았고 데이터가 셋 다 확증:
+  ①**볼륨 희석**(4→6슬롯) ②**소스3×문법3 = 같은 footage 3연발** → 중복편 대부분 사망(10/1 357/9/12, 10/4 4/98/268;
+  PD "동일 동영상 빼는 게 포인트"[[B7]]의 재발을 생산 구조가 제도화) ③**편집 문법이 순수 RF보다 못함**(9/30+ 48h:
+  std 445 > meme 245 ≈ velocity 243 > story **57**). ★핵심 일반화=저engagement 영상 홍수는 per-video만 죽이는 게
+  아니라 **채널 전체를 알고리즘적으로 끌어내린다**([[slot_count_ab_2026-10]]의 "per-video≠채널 최적화"의 역방향 —
+  더 많이 내는 게 채널엔 손해). 롤백=deploy.env `LAUNCH_MODEL=`(빈값→4슬롯 pre-v2 craft)+`EDIT_GRAMMAR_MODE=0`
+  (둘 다 킬스위치, 재배포 불요·run_job.sh가 매 실행 재-source), 영상당 distinct 소스, 신규 품질픽스(사건주도
+  hook-score [[C_hookdiversity]]·캡션 그라운딩 [[C_grounding]])는 유지. 예약 큐 문법편 6개(story/velocity/meme,
+  같은-소스 2쌍)는 `_do_veto`로 veto+craft 재생산. ★교훈=**fewer/better/distinct가 레버지 볼륨이 아니다**; 야심찬
+  배치-곱하기(한 소스를 3문법으로)는 다양성을 *연출*하려다 반복을 *제도화*했다. 문법 자체는 측정된 실험으로만
+  재도입(기본값 금지). cf [[view_data_concrete_hook_title]]·[[grammar_rf_caption_grounding_gap]]·[[slot_count_ab_2026-10]].
 
 ### 4.5 인프라 / 파이프라인
 - **D_lanemix. 라이브 채널 변경은 되돌림을 런타임 플래그로 출하하라 — git-revert만으론 부족하다(9/9)** —
