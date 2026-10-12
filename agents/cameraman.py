@@ -160,6 +160,29 @@ DEFAULT_BGM = ROOT / os.getenv(
 INTRO_BUMPER = ROOT / "assets" / "branding" / "intro_bumper.mp4"
 OUTRO_BUMPER = ROOT / "assets" / "branding" / "outro_bumper.mp4"
 
+
+def _bumper_arm(card_id: str | None) -> str:
+    """A/B the 1.5s intro bumper (PD 2026-10-12 growth). On Shorts a branded intro BEFORE the
+    hook costs the scroll-stop and breaks the loop (replays = the breakout signal). 'outro_only'
+    drops the intro (keeps the outro CTA); 'intro_outro' is the control. Deterministic per card
+    so the render and the perf attribution agree without threading, ~50/50. Kill switch
+    BUMPER_AB=0 → always intro_outro (control). No card_id → control (safe default)."""
+    if os.getenv("BUMPER_AB", "1") == "0" or not card_id:
+        return "intro_outro"
+    import hashlib
+    h = int(hashlib.sha1(str(card_id).encode("utf-8")).hexdigest()[:8], 16)
+    return "outro_only" if (h % 2 == 0) else "intro_outro"
+
+
+def _bumper_cli_args(card_id: str | None) -> list[str]:
+    """assemble_episode bumper args for this card's A/B arm — omit --intro-bumper for 'outro_only'
+    (the outro CTA is always kept). Used at every assemble call site so both lanes A/B identically."""
+    args: list[str] = []
+    if _bumper_arm(card_id) != "outro_only":
+        args += ["--intro-bumper", str(INTRO_BUMPER)]
+    args += ["--outro-bumper", str(OUTRO_BUMPER)]
+    return args
+
 # Real BytePlus model IDs (the legacy "seedance-2.0" string was not a valid ID).
 # 2026-05-31: default → fast model (2x faster, ~$0.30 cheaper per cut).
 # PD accepted that detailed prompts compensate for fast model quality.
@@ -6456,8 +6479,7 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
         [sys.executable, "scripts/assemble_episode.py",
          "--captions", manifests["captions"],
          "--in-dir", str(captioned_dir),
-         "--intro-bumper", str(INTRO_BUMPER),
-         "--outro-bumper", str(OUTRO_BUMPER),
+         *_bumper_cli_args(manifests.get("card_id")),
          "--music", manifests.get("bgm", str(DEFAULT_BGM)),
          "--out", str(out)],
         ":clapper: [3/3] Final assembly",
@@ -6664,8 +6686,7 @@ def run_cartoon_sticker_pipeline(manifests: dict, card: dict, work_dir: Path,
         [sys.executable, "scripts/assemble_episode.py",
          "--captions", manifests["captions"],
          "--in-dir", str(captioned_dir),
-         "--intro-bumper", str(INTRO_BUMPER),
-         "--outro-bumper", str(OUTRO_BUMPER),
+         *_bumper_cli_args(manifests.get("card_id")),
          "--music", manifests.get("bgm", str(DEFAULT_BGM)),
          "--out", str(out)],
         ":clapper: [6/6] Final assembly",
@@ -6941,8 +6962,7 @@ def _run_t2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         [sys.executable, "scripts/assemble_episode.py",
          "--captions", manifests["captions"],
          "--in-dir", str(captioned_dir),
-         "--intro-bumper", str(INTRO_BUMPER),
-         "--outro-bumper", str(OUTRO_BUMPER),
+         *_bumper_cli_args(manifests.get("card_id")),
          "--music", manifests.get("bgm", str(DEFAULT_BGM)),
          "--out", str(out)],
         f":clapper: [{step_asm}/{total_steps}] Final assembly",
@@ -8953,8 +8973,7 @@ def _run_i2v_pipeline(manifests: dict, card: dict, work_dir: Path,
         sys.executable, "scripts/assemble_episode.py",
         "--captions", manifests["captions"],
         "--in-dir", str(captioned_dir),
-        "--intro-bumper", str(INTRO_BUMPER),
-        "--outro-bumper", str(OUTRO_BUMPER),
+        *_bumper_cli_args(manifests.get("card_id")),
         "--music", manifests.get("bgm", str(DEFAULT_BGM)),
         "--out", str(out),
     ]
@@ -9352,6 +9371,11 @@ def render_card(card_id_prefix: str, *,
                 manifests = generate_manifests(card, assets, style, work_dir, concept=concept)
         else:
             manifests = generate_manifests(card, assets, style, work_dir, concept=concept)
+
+        # PD 2026-10-12: stamp card_id into manifests so every assemble call site can derive the
+        # deterministic bumper A/B arm (_bumper_cli_args) — render and perf attribution agree.
+        if isinstance(manifests, dict) and card.get("card_id"):
+            manifests["card_id"] = card.get("card_id")
 
         # Re-check style against actual resolved assets (skip for text-to-video)
         if manifests.get("generation_mode") != "text_to_video":

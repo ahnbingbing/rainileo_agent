@@ -85,14 +85,17 @@ def ensure_table(con: sqlite3.Connection) -> None:
             est_minutes   REAL,
             source        TEXT,
             fetched_at    TEXT,
-            packaging_arm TEXT
+            packaging_arm TEXT,
+            bumper_arm    TEXT
         )
         """
     )
-    # migrate older tables that predate the packaging-arm experiment dimension
+    # migrate older tables that predate the packaging-arm / bumper-arm experiment dimensions
     cols = [r[1] for r in con.execute("PRAGMA table_info(video_performance)")]
     if "packaging_arm" not in cols:
         con.execute("ALTER TABLE video_performance ADD COLUMN packaging_arm TEXT")
+    if "bumper_arm" not in cols:
+        con.execute("ALTER TABLE video_performance ADD COLUMN bumper_arm TEXT")
     con.commit()
 
 
@@ -173,29 +176,31 @@ def collect(con: sqlite3.Connection | None = None) -> list[dict]:
         m = video_metrics(vid, s, e)
         lane = (r["render_style"] or "").lower()
         slot = _timeslot_of(pub)
-        # packaging arm (Channel Manager experiment) for per-arm reward attribution
-        parm = None
+        # packaging + bumper arms (Channel Manager / growth experiments) for per-arm attribution
+        parm = barm = None
         try:
-            parm = (json.loads(r["payload_json"] or "{}")
-                    .get("draft", {}).get("packaging_arm"))
+            _draft = json.loads(r["payload_json"] or "{}").get("draft", {})
+            parm = _draft.get("packaging_arm")
+            barm = _draft.get("bumper_arm")
         except Exception:
-            parm = None
+            parm = barm = None
         con.execute(
             """
             INSERT INTO video_performance
               (video_id, card_id, lane, timeslot, publish_at, views_48h,
-               retention_pct, est_minutes, source, fetched_at, packaging_arm)
-            VALUES (?,?,?,?,?,?,?,?,?,datetime('now'),?)
+               retention_pct, est_minutes, source, fetched_at, packaging_arm, bumper_arm)
+            VALUES (?,?,?,?,?,?,?,?,?,datetime('now'),?,?)
             ON CONFLICT(video_id) DO UPDATE SET
               views_48h=excluded.views_48h,
               retention_pct=excluded.retention_pct,
               est_minutes=excluded.est_minutes,
               source=excluded.source,
               fetched_at=excluded.fetched_at,
-              packaging_arm=excluded.packaging_arm
+              packaging_arm=excluded.packaging_arm,
+              bumper_arm=excluded.bumper_arm
             """,
             (vid, r["card_id"], lane, slot, pub, m["views"],
-             m["retention_pct"], m["est_minutes"], m["source"], parm),
+             m["retention_pct"], m["est_minutes"], m["source"], parm, barm),
         )
         collected.append({"video_id": vid, "lane": lane, "timeslot": slot,
                           **m})

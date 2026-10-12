@@ -4994,6 +4994,11 @@ def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.dat
             log.warning("title-caption guard failed: %s", e)
         tags = [str(t).lstrip("#") for t in pkg["hashtags"]]
         draft["packaging_arm"] = pkg["arm"]          # record arm for perf attribution
+        try:                                          # PD 2026-10-12: intro-bumper A/B arm (same
+            from agents.cameraman import _bumper_arm   # deterministic card_id hash the render used)
+            draft["bumper_arm"] = _bumper_arm(card_id)
+        except Exception as _e:  # noqa: BLE001
+            log.warning("bumper_arm record failed: %s", _e)
         payload["draft"] = draft
         # PD 2026-08-17: persist the grounded title back to cards.theme so the card follows the
         # ACTUALLY-uploaded video. A re-caption changes the burned captions but used to leave

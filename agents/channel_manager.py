@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import sqlite3
 from pathlib import Path
@@ -50,10 +51,42 @@ def _ensure_packaging_log(con: sqlite3.Connection) -> None:
     con.commit()
 
 
+def _reach_leader(min_n: int = 20, margin: float = 1.08) -> str | None:
+    """The packaging arm with the best mean 48h views (= REACH, the growth objective),
+    once it leads the field by `margin` with ≥`min_n` observations. Reach is what grows a
+    small channel (the algorithm pushes a video to new viewers on reach signals); the
+    composite bandit reward (0.6 views + 0.4 retention) let a high-retention arm tie the
+    high-reach one so nothing stabilized — PD 2026-10-12 "도달 우선". Direct, self-contained
+    (doesn't disturb the global reward or the lane/timeslot bandits)."""
+    try:
+        con = _db()
+        rows = con.execute(
+            "SELECT packaging_arm arm, avg(views_48h) m, count(*) n FROM video_performance "
+            "WHERE packaging_arm IN (?,?,?) AND views_48h IS NOT NULL GROUP BY packaging_arm",
+            PACKAGING_ARMS).fetchall()
+        ranked = sorted(((r["m"] or 0.0, r["n"] or 0, r["arm"]) for r in rows
+                         if (r["n"] or 0) >= min_n), reverse=True)
+        if not ranked:
+            return None
+        if len(ranked) == 1 or ranked[0][0] >= ranked[1][0] * margin:
+            return ranked[0][2] if ranked[0][2] in PACKAGING_ARMS else None
+    except Exception as e:  # noqa: BLE001
+        log.warning("reach_leader failed: %s", e)
+    return None
+
+
 def stabilized_arm() -> str | None:
-    """Once a packaging arm clearly wins (bandit P(best)≥θ & enough n), return it so
-    rotation stops and we pin the winner. Until then None → keep round-robin testing
-    all 3 arms (forced even A/B beats Thompson here — guarantees every arm is tried)."""
+    """Pin a winning packaging arm so rotation stops. PACKAGING_OBJECTIVE (PD 2026-10-12):
+    'reach' (default — grow the channel) pins the best-48h-views arm; 'explore' keeps the
+    composite-reward Thompson stabilization (reach+retention, pins only on a clear P(best));
+    anything else also falls back to Thompson. Until a winner emerges → None → round-robin
+    keeps testing all 3 arms."""
+    obj = os.getenv("PACKAGING_OBJECTIVE", "reach").strip().lower()
+    if obj == "reach":
+        leader = _reach_leader()
+        if leader:
+            return leader
+        # no clear reach leader yet → fall through to composite stabilization
     try:
         from agents import bandit
         arm = bandit.stabilized("packaging")
