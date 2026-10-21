@@ -1415,7 +1415,14 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   hook-score [[C_hookdiversity]]·캡션 그라운딩 [[C_grounding]])는 유지. 예약 큐 문법편 6개(story/velocity/meme,
   같은-소스 2쌍)는 `_do_veto`로 veto+craft 재생산. ★교훈=**fewer/better/distinct가 레버지 볼륨이 아니다**; 야심찬
   배치-곱하기(한 소스를 3문법으로)는 다양성을 *연출*하려다 반복을 *제도화*했다. 문법 자체는 측정된 실험으로만
-  재도입(기본값 금지). cf [[view_data_concrete_hook_title]]·[[grammar_rf_caption_grounding_gap]]·[[slot_count_ab_2026-10]].
+  재도입(기본값 금지). **★후속(10/21): 같은 레버를 한 단계 더 — 인입률이 롤백 후에도 부진하자 케이던스를
+  4→2슬롯으로 감축**(약슬롯 12:30·08:00 드롭, 18:00+21:00만, 매일 RF1+AV1; `LAUNCH_TIMESLOTS` 기본값, env
+  가역). **하루 1개 전성기 퀄로 '채널 평균을 올려 노출을 푼다'는 AI 조언은 절반 미신**(쇼츠는 영상별 독립
+  테스트 — 옛 영상 숨김이 새 영상 노출을 풀지 않음)**이나 fewer/better/distinct 부분은 우리 데이터와 정확히
+  일치**. 병행해 낙제점 107편(<50v·14일+, 중앙값 204의 1/4 미만)을 `veto_video`로 비공개 전환(공개 555→448)
+  — 이건 노출-unlock 마법이 아니라 **채널페이지 전환·구독자 번아웃 방지의 housekeeping**(가치는 실재하나
+  제한적). 진짜 성장 레버는 줄어든 2편/day의 **패키징·훅**([[view_data_concrete_hook_title]])이지 숨김·감축
+  자체가 아니다. cf [[view_data_concrete_hook_title]]·[[grammar_rf_caption_grounding_gap]]·[[slot_count_ab_2026-10]].
 
 ### 4.5 인프라 / 파이프라인
 - **D_lanemix. 라이브 채널 변경은 되돌림을 런타임 플래그로 출하하라 — git-revert만으론 부족하다(9/9)** —
