@@ -34,9 +34,13 @@ KST = ZoneInfo("Asia/Seoul")
 # one batch process, share the single build. Keyed by date so different days don't collide.
 _GRAMMAR_AB_CACHE: dict = {}
 
-# 4 daily timeslots (KST). PD-confirmed 2026-06-07.
+# Daily timeslots (KST). PD 2026-10-21: cut 4→2 (fewer/better/distinct — same lesson
+# as the v2 rollback; volume×repetition drags the channel, so concentrate the day's
+# output into the two strongest evening slots). 12:30 is the weakest slot and 08:00 the
+# morning laggard (bandit), so both are dropped; 18:00+21:00 stay. rf_heavy rotation over
+# 2 slots yields 1 RF + 1 AV/day. Tune or restore 4 via env LAUNCH_TIMESLOTS (last-wins).
 TIMESLOTS: list[str] = os.getenv(
-    "LAUNCH_TIMESLOTS", "08:00,12:30,18:00,21:00"
+    "LAUNCH_TIMESLOTS", "18:00,21:00"
 ).split(",")
 
 # The two lanes under A/B test.
