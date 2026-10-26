@@ -46,6 +46,29 @@ TIMESLOTS: list[str] = os.getenv(
 # The two lanes under A/B test.
 LANES = ("ai_vtuber", "real_footage")
 
+# Culturally/seasonally special days (MM-DD) that still warrant an AV concept episode even
+# while AV is paused as a daily lane. PD 2026-10-26: during the algorithmic-suppression
+# recovery (channel intake collapsed ~95% after the v2 flood; see notes), AV's daily reach
+# had fallen to single/low-double-digit views — RF out-reaches it ~10-50× — so every routine
+# AV upload was a channel-level NEGATIVE signal. AV therefore earns a slot ONLY on a special
+# day, where a themed concept piece adds identity (Halloween, Christmas, New Year, Children's
+# Day…). Lunar holidays (Seollal/Chuseok/Buddha's birthday) move yearly → add their actual
+# dates via env LAUNCH_AV_DATES (comma-sep YYYY-MM-DD) with no code change.
+_SPECIAL_AV_DAYS: frozenset[str] = frozenset({
+    "10-31",            # Halloween
+    "12-24", "12-25",   # Christmas (eve + day)
+    "12-31", "01-01",   # New Year
+    "05-05",            # Children's Day (KR)
+})
+
+
+def _is_special_av_day(target: dt.date) -> bool:
+    """True when `target` is a special day that should carry one AV concept episode."""
+    if target.strftime("%m-%d") in _SPECIAL_AV_DAYS:
+        return True
+    extra = {d.strip() for d in os.getenv("LAUNCH_AV_DATES", "").split(",") if d.strip()}
+    return target.isoformat() in extra
+
 
 # ── Per-video Slack thread ↔ video mapping (PD 2026-06-09) ────────────────
 # Each launch video gets its OWN Slack thread. `/veto` inside a thread → veto
@@ -170,6 +193,19 @@ def _assign_rf_heavy(slots: list[str], target: dt.date) -> list[tuple[str, str]]
             for idx, hhmm in enumerate(slots)]
 
 
+def _assign_rfonly(slots: list[str], target: dt.date) -> list[tuple[str, str]]:
+    """RECOVERY posture (PD 2026-10-26, DEFAULT): every slot real_footage —
+    breakout-concentration RF-only — EXCEPT a culturally special day, where the FIRST
+    (18:00) slot carries an AV concept episode and the strongest (21:00) slot stays RF
+    (our reach engine). AV's routine daily reach had collapsed to single/low-double-digit
+    views during algorithmic-suppression recovery, dragging the channel average, so the
+    daily AV is paused. Restore a daily AV instantly via LAUNCH_LANE_MIX=3rf1av."""
+    lanes = ["real_footage"] * len(slots)
+    if slots and _is_special_av_day(target):
+        lanes[0] = "ai_vtuber"   # 18:00 gets the themed AV; 21:00 keeps the RF reach-driver
+    return [(lanes[idx], hhmm) for idx, hhmm in enumerate(slots)]
+
+
 def _assign_latin_2av2rf(slots: list[str], target: dt.date) -> list[tuple[str, str]]:
     """LEGACY 2 av + 2 rf Latin square (+ bandit lane-steer). Kept intact as the
     ROLLBACK path — set LAUNCH_LANE_MIX=2av2rf to restore instantly (no redeploy).
@@ -208,13 +244,21 @@ def _assign_latin_2av2rf(slots: list[str], target: dt.date) -> list[tuple[str, s
 def day_assignments(target: dt.date) -> list[tuple[str, str]]:
     """Return [(lane, "HH:MM"), ...] for the daily slots.
 
-    Mix chosen by **LAUNCH_LANE_MIX** (default '3rf1av' — 3 RF + 1 AV, PD 2026-09-09).
-    ★ ROLLBACK: set LAUNCH_LANE_MIX=2av2rf to restore the legacy balanced Latin square
-    INSTANTLY on the next batch — no code change, no redeploy, no in-flight impact.
+    Mix chosen by **LAUNCH_LANE_MIX**:
+      - 'rfonly'  (DEFAULT, PD 2026-10-26) — RF every slot; AV only on a special day
+                  (breakout-concentration recovery; AV's routine reach had collapsed).
+      - '3rf1av'  — restore one daily AV (3 RF + 1 AV rotation; pre-recovery default).
+      - '2av2rf'  — legacy balanced Latin square (oldest rollback path).
+    ★ ROLLBACK (instant, next batch, no redeploy): set LAUNCH_LANE_MIX=3rf1av or 2av2rf.
     """
     slots = [s.strip() for s in TIMESLOTS if s.strip()]
-    mix = os.getenv("LAUNCH_LANE_MIX", "3rf1av").strip().lower()
-    out = _assign_latin_2av2rf(slots, target) if mix == "2av2rf" else _assign_rf_heavy(slots, target)
+    mix = os.getenv("LAUNCH_LANE_MIX", "rfonly").strip().lower()
+    if mix == "2av2rf":
+        out = _assign_latin_2av2rf(slots, target)
+    elif mix == "3rf1av":
+        out = _assign_rf_heavy(slots, target)
+    else:   # 'rfonly' — recovery default
+        out = _assign_rfonly(slots, target)
     # Pause a lane's auto-fill WITHOUT unloading the whole batch: LAUNCH_PAUSE_LANES is a
     # comma-sep list of lanes to SKIP. Paused slots are left empty: no junk, no spend.
     paused = {s.strip() for s in os.getenv("LAUNCH_PAUSE_LANES", "").split(",") if s.strip()}

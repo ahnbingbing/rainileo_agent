@@ -88,13 +88,18 @@ check("_safe_tag unique across sources", len(set(tags)) == 3, detail=str(tags))
 check("_safe_tag alnum-safe", all(t.replace("src", "").isalnum() for t in tags))
 check("_safe_tag handles empty source_id", bool(launch_v2._safe_tag("", 7)))
 
-# effective_assignments: flag OFF = live 4-slot; flag ON = v2 6-slot (both days)
+# effective_assignments: flag OFF = live 2-slot RF-only recovery grid (PD 2026-10-21 cut
+# 4→2 slots; PD 2026-10-26 rfonly default); flag ON = v2 6-slot (both days).
 from agents import launch as _launch
 _prev = os.environ.pop("LAUNCH_MODEL", None)
+_prev_mix = os.environ.pop("LAUNCH_LANE_MIX", None)   # exercise the code default (rfonly)
 try:
-    off = _launch.effective_assignments(d0)
-    check("flag OFF → 4-slot live grid", len(off) == 4, detail=f"{len(off)} slots")
-    check("flag OFF → 12:30 present (legacy)", any(hh == "12:30" for _, hh in off))
+    off = _launch.effective_assignments(d0)   # d0 = a routine (non-special) day
+    check("flag OFF → 2-slot live grid", len(off) == 2, detail=f"{len(off)} slots")
+    check("flag OFF → evening slots only (18:00/21:00, no 12:30)",
+          sorted(hh for _, hh in off) == ["18:00", "21:00"], detail=str(off))
+    check("flag OFF → RF-only on a routine day (AV paused)",
+          all(l == "real_footage" for l, _ in off), detail=str(off))
     os.environ["LAUNCH_MODEL"] = "v2"
     os.environ["V2_START_DATE"] = "2020-01-01"   # test the STRUCTURE regardless of the flip date
     on_p = _launch.effective_assignments(d0)
@@ -111,6 +116,8 @@ finally:
     os.environ.pop("V2_START_DATE", None)
     if _prev is not None:
         os.environ["LAUNCH_MODEL"] = _prev
+    if _prev_mix is not None:
+        os.environ["LAUNCH_LANE_MIX"] = _prev_mix
 
 # enabled() reflects the flag
 check("enabled() False without flag", launch_v2.enabled() is False)
@@ -125,9 +132,10 @@ try:
     check("active_for(on start) True", launch_v2.active_for(dt.date(2026, 9, 30)) is True)
     check("active_for(after start) True", launch_v2.active_for(dt.date(2026, 10, 1)) is True)
     from agents import launch as _l2
-    pre = _l2.effective_assignments(dt.date(2026, 9, 29))   # pre-flip day → 4-slot, NOT 6
+    pre = _l2.effective_assignments(dt.date(2026, 9, 29))   # pre-flip day → live grid, NOT v2 6
     post = _l2.effective_assignments(dt.date(2026, 9, 30))  # v2 day → 6-slot
-    check("pre-start day stays 4-slot (no phantom v2 slots)", len(pre) == 4, detail=f"{len(pre)}")
+    check("pre-start day stays on the live grid (no phantom v2 slots)",
+          len(pre) == len(_l2.TIMESLOTS), detail=f"{len(pre)} vs live {len(_l2.TIMESLOTS)}")
     check("start day is v2 6-slot", len(post) == 6, detail=f"{len(post)}")
     os.environ.pop("V2_START_DATE", None)  # unset → falls back to the built-in default (flip date)
     check("default start gates pre-flip dates", launch_v2.active_for(dt.date(2026, 9, 1)) is False)
