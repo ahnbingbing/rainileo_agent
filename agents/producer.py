@@ -1199,6 +1199,77 @@ def _ground_subjects(subjects_csv: "str | None", captured_iso: "str | None") -> 
     return ",".join(kept)
 
 
+# Pet-name tokens for title/desc scanning + correction (PD 2026-10-29). KO + EN surface
+# forms; the first entry of each is the canonical replacement form.
+_PET_NAME_FORMS = {
+    "leo":   {"ko": ["레오"],         "en": ["Leo"]},
+    "ryani": {"ko": ["랴니", "라니"],  "en": ["Ryani", "Rani"]},
+}
+
+
+def _cast_pets_for_cuts(con: sqlite3.Connection, cuts: list) -> set[str]:
+    """The pets ACTUALLY present in the cast clips, grounded by each clip's capture date and
+    unioned over the cuts. Returns a subset of {'ryani','leo'}; EMPTY when no cut has a known
+    subject (then the caller must not correct — it can't ground)."""
+    pets: set[str] = set()
+    for c in (cuts or []):
+        aid = str((c or {}).get("asset_id") or "").strip()
+        if not aid:
+            continue
+        try:
+            row = con.execute(
+                "SELECT subjects_csv, captured_iso FROM assets WHERE asset_id=?", (aid,)).fetchone()
+        except Exception:
+            row = None
+        if not row:
+            continue
+        for tok in (x.strip().lower() for x in _ground_subjects(row[0], row[1]).split(",")):
+            if tok in ("ryani", "leo"):
+                pets.add(tok)
+    return pets
+
+
+def _title_named_pets(txt: str) -> set[str]:
+    """Which pets a title/desc names, by KO token or whole-word EN name."""
+    out: set[str] = set()
+    for pet, nm in _PET_NAME_FORMS.items():
+        # EN names use ASCII-letter boundaries (NOT \b) so a Korean particle right after the
+        # name still counts (\b fails on "Leo와" — 와 is a Unicode word char) without matching
+        # a longer word like "Leonardo".
+        if (any(k in txt for k in nm["ko"])
+                or any(re.search(rf"(?<![A-Za-z]){e}(?![A-Za-z])", txt) for e in nm["en"])):
+            out.add(pet)
+    return out
+
+
+def _title_cast_subject_gate(title: str, desc: "str | None", cast: set[str]):
+    """Correct a title/desc that NAMES a pet the footage never shows. The concept can imagine
+    a premise about one pet (박쥐 '레오') while the clips actually cast are the OTHER pet (Ryani
+    in the bat costume) — and TITLE_CAPTION_GUARD can't catch it because the captions inherited
+    the same wrong name. Ground on the real CAST: if the title names exactly ONE pet and it
+    isn't in the footage (cast is a single known pet), swap it to the pet that IS there. Names-
+    both / cast-unknown stay as-is and are only FLAGGED (a restructure is riskier than a flag).
+    Returns (title, desc, action) — action is 'leo→ryani' on a swap, 'flag:…' on an ambiguous
+    mismatch, or None when nothing to do."""
+    if not title or not cast or cast == {"ryani", "leo"}:
+        return title, desc, None
+    named = _title_named_pets(title)
+    wrong = named - cast
+    if not wrong:
+        return title, desc, None
+    if len(named) == 1 and len(cast) == 1:
+        bad, good = next(iter(wrong)), next(iter(cast))
+        good_ko, good_en = _PET_NAME_FORMS[good]["ko"][0], _PET_NAME_FORMS[good]["en"][0]
+        nt, nd = title, (desc or "")
+        for kb in _PET_NAME_FORMS[bad]["ko"]:
+            nt, nd = nt.replace(kb, good_ko), nd.replace(kb, good_ko)
+        for eb in _PET_NAME_FORMS[bad]["en"]:
+            nt = re.sub(rf"(?<![A-Za-z]){eb}(?![A-Za-z])", good_en, nt)
+            nd = re.sub(rf"(?<![A-Za-z]){eb}(?![A-Za-z])", good_en, nd)
+        return nt, (nd or desc), f"{bad}→{good}"
+    return title, desc, f"flag:named={sorted(named)} cast={sorted(cast)}"
+
+
 def _recently_used_rf_assets(con: sqlite3.Connection,
                              n: int = RF_CLIP_COOLDOWN_EPISODES) -> set[str]:
     """asset_ids used in the last `n` UPLOADED real_footage episodes (from each
@@ -5029,6 +5100,25 @@ def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.dat
                             title = _alt.split("\n")[0][:100]
         except Exception as e:
             log.warning("title-caption guard failed: %s", e)
+        # PD 2026-10-29: title↔CAST subject gate. The guard above compares title vs CAPTIONS,
+        # but when the concept imagines the wrong pet (박쥐 '레오' over Ryani-only costume clips)
+        # the captions inherit the same wrong name, so it passes. Ground on the clips ACTUALLY
+        # cast: if the title names a pet the footage never shows, correct it. TITLE_CAST_GUARD=0 reverts.
+        try:
+            if title and os.getenv("TITLE_CAST_GUARD", "1") == "1":
+                _cast = _cast_pets_for_cuts(con, concept.get("cuts") or [])
+                _nt, _nd, _act = _title_cast_subject_gate(title, desc, _cast)
+                if _act and ("→" in _act):
+                    log.warning("title-cast guard: title named a pet NOT in the cast (%s) — "
+                                "corrected '%s' → '%s'", _act, title, _nt)
+                    if progress_cb:
+                        progress_cb(f":label: 제목이 실제 등장 펫과 다름({_act}) — 교정: {_nt}")
+                    title, desc = _nt, _nd
+                elif _act and _act.startswith("flag:"):
+                    log.warning("title-cast guard: ambiguous name↔cast mismatch (%s) in '%s' "
+                                "— left as-is", _act, title)
+        except Exception as e:
+            log.warning("title-cast guard failed: %s", e)
         tags = [str(t).lstrip("#") for t in pkg["hashtags"]]
         draft["packaging_arm"] = pkg["arm"]          # record arm for perf attribution
         try:                                          # PD 2026-10-12: intro-bumper A/B arm (same
