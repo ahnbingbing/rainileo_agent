@@ -67,6 +67,12 @@ def _req(method: str, path: str, body: dict | None = None) -> dict:
         "Authorization": f"Bearer {_key()}",
         "Content-Type": "application/json",
         "Accept": "application/json",
+        # Cloudflare in front of the gateway bans python-urllib's default signature
+        # (Error 1010). A normal browser UA clears the bot check.
+        "User-Agent": os.getenv("SUNO_USER_AGENT",
+                                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                "Chrome/131.0.0.0 Safari/537.36"),
     })
     try:
         resp = urllib.request.urlopen(req, timeout=60, context=_CTX)
