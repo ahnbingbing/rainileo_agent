@@ -1437,6 +1437,27 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   끌어내리는 음 신호 → `day_assignments` 기본 레인 믹스 `3rf1av`→**`rfonly`**(전 슬롯 RF, AV는 특별일
   18:00 한 슬롯만; `_SPECIAL_AV_DAYS` 캘린더+`LAUNCH_AV_DATES` env, 6089577). 가역=`LAUNCH_LANE_MIX=3rf1av`.
   cf [[view_data_concrete_hook_title]]·[[grammar_rf_caption_grounding_gap]]·[[slot_count_ab_2026-10]].
+- **C_rfquality1029. 회복이 시작되자마자 퀄리티가 그걸 까먹고 있었다 — RF 리뷰 4-fix(10/29)** — 인입
+  회복 신호(RF 일부 ~1000)가 뜨자 PD가 실제 영상을 보고 "saturation·화질·내용퀄·AV 똑같은 얘기" 지적.
+  프레임 7장+렌더파라미터 ground-truth로 넷을 분리: ①**길이 크리프**=themed_compilation이 클립을 총
+  길이 제한 없이 과다 스티칭 → RF 32-44초(=20초 포맷의 ~2배)로 늘어져 리텐션을 깎음. 모든 RF가 지나는
+  `_render_realfootage_direct` 한 chokepoint에서 total body cap(RF_BODY_MAX_SEC=18 → ~20-22초 에피)으로
+  해결 — 단, cap을 너무 낮추면 compilation이 ~12초 body → <16초 에피 → RF_MIN_SECONDS 스텁가드가 거부
+  →빈 슬롯이 되므로 **범퍼(1.5+2.5초)+스텁 floor와 함께 계산**해 cap을 정했다(한 레버를 만지면 그 레버가
+  먹이는 다른 게이트까지 같이 봐라). ②**"saturation 넣지 말라니까"**=라이브 RF 경로엔 채도 필터가 없었다
+  (채도 코드=grammar 엔진, OFF). 진짜 범인=de-haze의 `eq=contrast=1.09:gamma=0.98`가 따뜻한 실내(할로윈
+  카페) 소프트 클립의 텅스텐 캐스트를 **증폭**해 과채도처럼 보인 것 — 대비 부스트는 따뜻한 소스에선
+  과채도와 같다. de-haze를 **디테일 전용(unsharp)**으로(색/톤 0). ★교훈=PD가 "채도"라 해도 코드에 채도
+  필터가 없을 수 있다; 프레임으로 재현하고 실제 필터 체인을 추적해 근인을 찾아라(성급히 "채도 제거"로
+  엉뚱한 걸 고치지 말 것). ③**캡션 가독성**=outline+shadow만으론 밝은/복잡한 배경서 씻김(AV가 햇빛 바닥
+  위 캡션 거의 안 보임) → burn_captions에 반투명 box(black@0.40+pad) 추가, 공유 `_burn_captions_cmd`라
+  RF+AV 둘 다 적용. ④**"항상 똑같은 이야기"**=RF는 CLIP-level dedup만 있고 CONCEPT/프레이밍 dedup이
+  없어 다른 클립·같은 프레임("랴니 나간 사이 레오가~" 10/30 2편)이 통과. 분기 다이버전스 블록
+  (`_exclude_block`+`_overused_format_block`, 80카드 시드라 날/배치 넘어 적용)이 AV에만 배선돼 있던 걸 RF
+  singlepass 프롬프트에도 주입. ★미결(의도적 보류)=**캡션 내용 정확도/서브젝트 명명**(박쥐 "레오"인데
+  실제는 랴니 — 의상 occlusion으로 그라운딩 오귀속). 기존 다층 그라운딩(_rf_grounded_truth·title-grounding·
+  VLM 앙상블)+Giri 날조게이트가 있으나 VLM 정확도 천장 케이스라, known-bad regression을 세워 title↔cast
+  서브젝트 일치 게이트로 별도 세션에서 정면. 반쪽 수정 금지. 커밋 ebdbace·8098e18. cf [[view_data_concrete_hook_title]].
 
 ### 4.5 인프라 / 파이프라인
 - **D_lanemix. 라이브 채널 변경은 되돌림을 런타임 플래그로 출하하라 — git-revert만으론 부족하다(9/9)** —
