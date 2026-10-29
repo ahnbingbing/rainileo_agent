@@ -13,8 +13,7 @@ FONT = Path.home() / "Library/Fonts/Pretendard-Bold.otf"
 BUMPER = ROOT / "assets/branding/outro_bumper.mp4"
 W, H = 1080, 1920
 SONG = MV / "song_ours.mp3"
-TOTAL = 34.6          # end just after "행복하자" resolves — no dead instrumental freeze tail
-SAT = 0.90           # gentle global desaturation to tame hot/uneven phone-source clips (NOT add)
+TOTAL = 32.3          # end right after "행복하자" (31.4) — no dead instrumental tail at all
 
 CUTS = [   # (name, source, seconds, freeze_tail)
     ("r1", R/"seg1.mp4", 5.5, False),
@@ -24,7 +23,7 @@ CUTS = [   # (name, source, seconds, freeze_tail)
     ("r5", R/"seg5.mp4", 3.5, False),
     ("r6", R/"seg6.mp4", 3.2, False),
     ("r7", R/"seg7.mp4", 4.0, False),
-    ("r8", R/"seg8.mp4", 7.3, False),   # '둘이 포근 쉬기' finale — gently slowed (no freeze), then fade
+    ("r8", R/"seg8.mp4", 5.0, False),   # '둘이 포근 쉬기' finale — real motion + slow push-in, then fade
 ]
 CAPTIONS = [
     ("까만 털에 꼬리 없는 랴니",      2.20,  5.50),
@@ -47,22 +46,15 @@ def run(cmd):
 def main():
     work = MV/"asm3"; work.mkdir(exist_ok=True)
     segs, pols, starts = [], [], []; t = 0.0
-    # ★fps=30 forces CFR: phone source clips are VFR, and concatenating VFR segments breaks
-    # the PTS timeline → karaoke captions (between(t,…)) drift in the later part and seeking
-    # lands on frozen frames. Resampling every segment to constant 30fps fixes both.
-    base = (f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps=30,"
-            f"eq=saturation={SAT}")
+    # ONLY geometry: 9:16 scale/crop (format) + CFR fps=30 (concat needs it; VFR breaks caption
+    # sync). ★NO color/saturation/grade of any kind — PD wants the ORIGINAL clip look untouched.
+    GEOM = f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps=30"
     for name, src, dur, freeze in CUTS:
         src = src if src.exists() else R/"seg1.mp4"
         seg = work/f"{name}.mp4"
-        if freeze:
-            run(["ffmpeg","-y","-ss","0.1","-t","4.9","-i",str(src),
-                 "-vf",f"{base},tpad=stop_mode=clone:stop_duration={dur-4.9:.2f}","-t",f"{dur}",
-                 "-an","-c:v","libx264","-preset","fast","-crf","19","-pix_fmt","yuv420p",str(seg)])
-        else:
-            d = min(dur, 4.9)
-            run(["ffmpeg","-y","-ss","0.1","-t",f"{d}","-i",str(src),"-vf",base,
-                 "-an","-c:v","libx264","-preset","fast","-crf","19","-pix_fmt","yuv420p",str(seg)])
+        d = min(dur, 4.9)
+        run(["ffmpeg","-y","-ss","0.1","-t",f"{d}","-i",str(src),"-vf",GEOM,
+             "-an","-c:v","libx264","-preset","fast","-crf","18","-pix_fmt","yuv420p",str(seg)])
         segs.append(seg)
         if len(pols) < 7:
             pol = work/f"{name}_pol.png"; rot = 6 if len(pols) % 2 == 0 else -6
@@ -110,7 +102,7 @@ def main():
         bmp = work/"bumper_norm.mp4"
         run(["ffmpeg","-y","-i",str(BUMPER),
              "-f","lavfi","-t","3","-i","anullsrc=channel_layout=stereo:sample_rate=44100",
-             "-vf",f"{base},fps=30","-map","0:v:0","-map","1:a:0","-shortest",
+             "-vf",GEOM,"-map","0:v:0","-map","1:a:0","-shortest",   # GEOM = geometry only, NO color on the bumper
              "-c:v","libx264","-preset","fast","-crf","18","-pix_fmt","yuv420p","-c:a","aac","-b:a","192k",str(bmp)])
         cl2 = work/"concat2.txt"; cl2.write_text(f"file '{mv}'\nfile '{bmp}'\n", encoding="utf-8")
         run(["ffmpeg","-y","-f","concat","-safe","0","-i",str(cl2),
