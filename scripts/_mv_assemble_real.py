@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path("/Users/ahnbingbing/code/rianileo-agent")
-MV = ROOT / "data/tmp/mv"; R = MV/"real"
+MV = ROOT / "data/tmp/mv"; R = MV/"real2"
 FONT = Path.home() / "Library/Fonts/Pretendard-Bold.otf"
 BUMPER = ROOT / "assets/branding/outro_bumper.mp4"
 W, H = 1080, 1920
@@ -23,7 +23,7 @@ CUTS = [   # (name, source, seconds, freeze_tail)
     ("r5", R/"seg5.mp4", 3.5, False),
     ("r6", R/"seg6.mp4", 3.2, False),
     ("r7", R/"seg7.mp4", 4.0, False),
-    ("r8", R/"seg6.mp4", 12.3, True),   # nap-together finale, held through the instrumental outro
+    ("r8", R/"seg8.mp4", 12.3, True),   # distinct '둘이 포근 쉬기' finale, held through the outro
 ]
 CAPTIONS = [
     ("까만 털에 꼬리 없는 랴니",      2.20,  5.50),
@@ -46,7 +46,10 @@ def run(cmd):
 def main():
     work = MV/"asm3"; work.mkdir(exist_ok=True)
     segs, pols, starts = [], [], []; t = 0.0
-    base = f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1"
+    # ★fps=30 forces CFR: phone source clips are VFR, and concatenating VFR segments breaks
+    # the PTS timeline → karaoke captions (between(t,…)) drift in the later part and seeking
+    # lands on frozen frames. Resampling every segment to constant 30fps fixes both.
+    base = f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps=30"
     for name, src, dur, freeze in CUTS:
         src = src if src.exists() else R/"seg1.mp4"
         seg = work/f"{name}.mp4"
@@ -82,7 +85,7 @@ def main():
         fc.append(f"{last}[p{i}]overlay=x={x}:y={y}:enable='gte(t,{appear:.2f})'[v{i}]"); last=f"[v{i}]"
     withpol = work/"withpol.mp4"
     run(["ffmpeg","-y",*inputs,"-filter_complex",";".join(fc),"-map",last,
-         "-c:v","libx264","-preset","fast","-crf","19","-pix_fmt","yuv420p","-t",f"{TOTAL}",str(withpol)])
+         "-c:v","libx264","-preset","fast","-crf","19","-pix_fmt","yuv420p","-r","30","-fps_mode","cfr","-t",f"{TOTAL}",str(withpol)])
 
     draws = []
     for j,(txt,s,e) in enumerate(CAPTIONS):
@@ -96,7 +99,7 @@ def main():
     run(["ffmpeg","-y","-i",str(withpol),"-i",str(SONG),
          "-filter_complex",f"[0:v]{','.join(draws)}[v]","-map","[v]","-map","1:a:0",
          "-af",f"afade=t=in:st=0:d=0.3,afade=t=out:st={TOTAL-2.5:.2f}:d=2.5",
-         "-c:v","libx264","-preset","medium","-crf","18","-pix_fmt","yuv420p",
+         "-c:v","libx264","-preset","medium","-crf","18","-pix_fmt","yuv420p","-r","30","-fps_mode","cfr",
          "-c:a","aac","-b:a","192k","-t",f"{TOTAL}","-movflags","+faststart",str(mv)])
 
     # append channel outro bumper (normalize to 1080x1920 + ensure an audio track)
