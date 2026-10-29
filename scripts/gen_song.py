@@ -125,7 +125,7 @@ def _poll(task_id: str) -> list[dict]:
             if clips:
                 return clips
             raise SystemExit(f"Suno SUCCESS but no clips: {json.dumps(out)[:400]}")
-        if status in ("FAILED", "ERROR", "CREATE_TASK_FAILED", "GENERATE_AUDIO_FAILED"):
+        if ("ERROR" in status) or ("FAIL" in status) or (status in ("FAILED","SENSITIVE_WORD_ERROR")):
             raise SystemExit(f"Suno task {task_id} {status}: {data.get('errorMessage') or out.get('msg')}")
         time.sleep(POLL_EVERY)
         waited += POLL_EVERY
