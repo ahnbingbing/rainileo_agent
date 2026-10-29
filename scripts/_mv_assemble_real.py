@@ -15,6 +15,31 @@ W, H = 1080, 1920
 SONG = MV / "song_ours.mp3"
 TOTAL = 32.3          # end right after "행복하자" (31.4) — no dead instrumental tail at all
 
+# ★ROOT CAUSE of the orange cast (ffprobe-confirmed): the source phone clips are MIXED — some
+# are HLG HDR (bt2020nc / arib-std-b67), some SDR (bt709/bt601). Converting HDR to 8-bit without
+# tone-mapping, then tagging the concat bt2020, made players render EVERYTHING (incl. the SDR
+# bumper) orange. Fix: tone-map only the HDR clips HLG→SDR, normalize SDR clips to bt709, and
+# tag the whole output bt709 SDR so every player renders the original colours.
+HLG_TONEMAP = ("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=hable,"
+               "zscale=t=bt709:m=bt709:r=tv,format=yuv420p")
+# SDR clips were NOT the orange problem (only the HLG ones were). zscale-converting them fails
+# when their transfer tag is 'unknown' (seg5) — and is unneeded — so just ensure 8-bit and let
+# the bt709 OUTPUT tags apply. (A bt601 SD clip tagged bt709 shifts only negligibly.)
+SDR_NORM = "format=yuv420p"
+BT709 = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"]
+
+
+def _transfer(path) -> str:
+    import subprocess as _sp
+    return _sp.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                    "-show_entries", "stream=color_transfer", "-of", "csv=p=0", str(path)],
+                   capture_output=True, text=True).stdout.strip()
+
+
+def _color_vf(path) -> str:
+    """HLG/PQ clip → tone-map to SDR; any SDR clip → normalize to bt709. Either way → bt709."""
+    return HLG_TONEMAP if _transfer(path) in ("arib-std-b67", "smpte2084") else SDR_NORM
+
 CUTS = [   # (name, source, seconds, freeze_tail)
     ("r1", R/"seg1.mp4", 5.5, False),
     ("r2", R/"seg2.mp4", 3.2, False),
@@ -53,8 +78,9 @@ def main():
         src = src if src.exists() else R/"seg1.mp4"
         seg = work/f"{name}.mp4"
         d = min(dur, 4.9)
-        run(["ffmpeg","-y","-ss","0.1","-t",f"{d}","-i",str(src),"-vf",GEOM,
-             "-an","-c:v","libx264","-preset","fast","-crf","18","-pix_fmt","yuv420p",str(seg)])
+        vf = f"{_color_vf(src)},{GEOM}"   # HDR→SDR tone-map or SDR→bt709, THEN geometry
+        run(["ffmpeg","-y","-ss","0.1","-t",f"{d}","-i",str(src),"-vf",vf,
+             "-an","-c:v","libx264","-preset","fast","-crf","18","-pix_fmt","yuv420p",*BT709,str(seg)])
         segs.append(seg)
         if len(pols) < 7:
             pol = work/f"{name}_pol.png"; rot = 6 if len(pols) % 2 == 0 else -6
@@ -68,7 +94,7 @@ def main():
     cl = work/"concat.txt"; cl.write_text("".join(f"file '{s}'\n" for s in segs), encoding="utf-8")
     body = work/"body.mp4"
     run(["ffmpeg","-y","-f","concat","-safe","0","-i",str(cl),
-         "-c:v","libx264","-preset","fast","-crf","19","-pix_fmt","yuv420p",str(body)])
+         "-c:v","libx264","-preset","fast","-crf","19","-pix_fmt","yuv420p",*BT709,str(body)])
 
     inputs = ["-i", str(body)]
     for p in pols: inputs += ["-loop","1","-i",str(p)]
@@ -79,7 +105,7 @@ def main():
         fc.append(f"{last}[p{i}]overlay=x={x}:y={y}:enable='gte(t,{appear:.2f})'[v{i}]"); last=f"[v{i}]"
     withpol = work/"withpol.mp4"
     run(["ffmpeg","-y",*inputs,"-filter_complex",";".join(fc),"-map",last,
-         "-c:v","libx264","-preset","fast","-crf","19","-pix_fmt","yuv420p","-r","30","-fps_mode","cfr","-t",f"{TOTAL}",str(withpol)])
+         "-c:v","libx264","-preset","fast","-crf","19","-pix_fmt","yuv420p","-r","30","-fps_mode","cfr",*BT709,"-t",f"{TOTAL}",str(withpol)])
 
     draws = []
     for j,(txt,s,e) in enumerate(CAPTIONS):
@@ -93,7 +119,7 @@ def main():
     run(["ffmpeg","-y","-i",str(withpol),"-i",str(SONG),
          "-filter_complex",f"[0:v]{','.join(draws)},fade=t=out:st={TOTAL-1.2:.2f}:d=1.2[v]","-map","[v]","-map","1:a:0",
          "-af",f"afade=t=in:st=0:d=0.3,afade=t=out:st={TOTAL-2.2:.2f}:d=2.2",
-         "-c:v","libx264","-preset","medium","-crf","18","-pix_fmt","yuv420p","-r","30","-fps_mode","cfr",
+         "-c:v","libx264","-preset","medium","-crf","18","-pix_fmt","yuv420p","-r","30","-fps_mode","cfr",*BT709,
          "-c:a","aac","-b:a","192k","-t",f"{TOTAL}","-movflags","+faststart",str(mv)])
 
     # append channel outro bumper (normalize to 1080x1920 + ensure an audio track)
@@ -102,11 +128,11 @@ def main():
         bmp = work/"bumper_norm.mp4"
         run(["ffmpeg","-y","-i",str(BUMPER),
              "-f","lavfi","-t","3","-i","anullsrc=channel_layout=stereo:sample_rate=44100",
-             "-vf",GEOM,"-map","0:v:0","-map","1:a:0","-shortest",   # GEOM = geometry only, NO color on the bumper
-             "-c:v","libx264","-preset","fast","-crf","18","-pix_fmt","yuv420p","-c:a","aac","-b:a","192k",str(bmp)])
+             "-vf",f"{SDR_NORM},{GEOM}","-map","0:v:0","-map","1:a:0","-shortest",   # bumper is SDR → normalize to bt709 (NO tone-map)
+             "-c:v","libx264","-preset","fast","-crf","18","-pix_fmt","yuv420p",*BT709,"-c:a","aac","-b:a","192k",str(bmp)])
         cl2 = work/"concat2.txt"; cl2.write_text(f"file '{mv}'\nfile '{bmp}'\n", encoding="utf-8")
         run(["ffmpeg","-y","-f","concat","-safe","0","-i",str(cl2),
-             "-c:v","libx264","-preset","medium","-crf","18","-pix_fmt","yuv420p",
+             "-c:v","libx264","-preset","medium","-crf","18","-pix_fmt","yuv420p",*BT709,
              "-c:a","aac","-b:a","192k","-movflags","+faststart",str(final)])
     else:
         final.write_bytes(mv.read_bytes())
