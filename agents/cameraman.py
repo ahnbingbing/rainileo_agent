@@ -5380,14 +5380,14 @@ def _rf_dehaze_vf(src_path: Path, trim_start: float, trim_dur: float) -> str:
         med = sorted(vals)[len(vals) // 2]
         if med >= thresh or med < floor:
             return ""
-        # De-haze recovers DETAIL (sharpness), not color: a soft/dirty-lens clip has
-        # veiled fine detail, not weak saturation. An added saturation boost just makes
-        # the recovered clip read as over-processed (PD 2026-07-17: RF0800 opened on a
-        # soft past clip whose saturation had been pushed too high — unnecessary), so the
-        # default no longer touches saturation. Sharpness + a touch of contrast only.
-        vf = os.getenv(
-            "RF_DEHAZE_VF",
-            "unsharp=5:5:0.9:5:5:0.0,eq=contrast=1.09:gamma=0.98")
+        # De-haze recovers DETAIL (sharpness) and NOTHING ELSE — no color, no contrast,
+        # no gamma. A soft/dirty-lens clip has veiled fine detail, not weak color; any
+        # tonal push just makes the clip read as over-processed. PD 2026-10-29: a warm
+        # indoor clip (할로윈 카페) looked oversaturated because the old `eq=contrast=1.09:
+        # gamma=0.98` AMPLIFIED the tungsten cast — "saturation 넣지 말라니까 넣었다". A
+        # contrast bump IS an apparent-saturation bump on a warm source, so the default
+        # drops eq entirely: unsharp only. (RF_DEHAZE_VF overrides if a clip ever needs it.)
+        vf = os.getenv("RF_DEHAZE_VF", "unsharp=5:5:0.9:5:5:0.0")
         log.info("rf de-haze: soft clip %s (lapVar=%.0f < %.0f) → %s",
                  src_path.name, med, thresh, vf)
         return vf

@@ -262,6 +262,16 @@ COLOR_FG = "white"
 COLOR_BORDER = "black"
 COLOR_SHADOW = "black@0.5"   # 50% alpha black
 
+# PD 2026-10-29: legibility on BOTH lanes. Outline+shadow alone washed out over bright /
+# busy backgrounds — an AV cut over a sunlit floor rendered the caption nearly invisible,
+# and RF over a bright sink/sunlight was marginal. Add a SUBTLE semi-transparent box behind
+# the text (padded via boxborderw) so the line is always readable regardless of what's
+# under it. Kept low-alpha so it reads as a soft scrim, not a hard black bar. Fades with the
+# text (the drawtext alpha covers the box too). Revert via CAPTION_BOX=0.
+CAPTION_BOX = os.getenv("CAPTION_BOX", "1") == "1"
+COLOR_BOX = os.getenv("CAPTION_BOX_COLOR", "black@0.40")
+BOX_PAD = int(os.getenv("CAPTION_BOX_PAD", "16"))   # px padding around the text
+
 
 def _rel(p: Path) -> str:
     """Best-effort: show p as a repo-relative path, else absolute."""
@@ -398,6 +408,8 @@ def build_drawtext(font: Path, textfile: Path, fontsize: int, borderw: int,
         f"shadowcolor={COLOR_SHADOW}",
         f"shadowx={SHADOW_X}",
         f"shadowy={SHADOW_Y}",
+        *( [f"box=1", f"boxcolor={COLOR_BOX}", f"boxborderw={BOX_PAD}"]
+           if CAPTION_BOX else [] ),
         f"text_align=T+L",
         f"x=(w-text_w)/2",
         f"y={y_expr}",

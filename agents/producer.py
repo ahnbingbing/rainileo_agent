@@ -1984,7 +1984,7 @@ def _rf_long_candidates(context: dict) -> list[dict]:
     reused another day with a DIFFERENT segment ("같은 동영상이더라도 사용하지 않은 구간은
     향후 사용해도 되잖아"); the one-take picks a varied trim_start so re-use differs."""
     _min = float(os.getenv("RF_ONETAKE_MIN_SEC", "12"))
-    _win = float(os.getenv("RF_ONETAKE_MAX_SEC", "24"))
+    _win = float(os.getenv("RF_ONETAKE_MAX_SEC", "16"))
     _excl = set(context.get("exclude_asset_ids") or [])  # same-batch dedup = whole clip
     # PD 2026-06-13 (#2 fix): NO back-to-back same clip. A continuous single-action clip's
     # "other window" looks IDENTICAL ("어제 영상에 자막만 바꾼 것"), so the recent cooldown
@@ -2161,7 +2161,7 @@ def _propose_realfootage_onetake(target: dt.date, context: dict,
     from agents.llm_cascade import call_text_cascade
     cid = long_clip.get("id")
     clip_dur = float(long_clip.get("dur") or 0)
-    win = min(clip_dur, float(os.getenv("RF_ONETAKE_MAX_SEC", "24")))
+    win = min(clip_dur, float(os.getenv("RF_ONETAKE_MAX_SEC", "16")))
     sc = long_clip.get("sc") or ""
     when = long_clip.get("date") or ""
     # PD 2026-06-12: a long clip has lots of footage — DON'T always use the same
@@ -3966,6 +3966,31 @@ def _render_realfootage_direct(concept: dict, target: dt.date,
         if progress_cb:
             progress_cb(":x: 단일-패스 컨셉에 cuts 없음")
         return None, None, None
+
+    # PD 2026-10-29: HARD body-length cap. RF had crept to 32-44s (themed_compilation
+    # over-stitching many clips with no total bound) — ~2× the ~20s Shorts format, so the
+    # episodes dragged and killed retention ("내용 퀄 낮음"). Every RF technique funnels
+    # through here, so cap ONCE at the chokepoint: keep cuts in order until the running
+    # body total would exceed RF_BODY_MAX_SEC, drop the rest. A tight montage beats a long
+    # one; onetake/intraclip are already short so this bites only the long compilations.
+    # Captions are per-cut and self-contained, so dropping trailing cuts can't orphan a
+    # mid-cut caption. Cap = 18s body → ~20-22s episode after the 1.5+2.5s bumpers: tight
+    # enough for Shorts, yet safely above the 16s RF_MIN_SECONDS stub floor (a lower cap
+    # could drop a compilation to ~12s body → <16s episode → refused → empty slot).
+    # Tunable/▲revertible via RF_BODY_MAX_SEC.
+    _body_cap = float(os.getenv("RF_BODY_MAX_SEC", "18"))
+    _kept, _tot = [], 0.0
+    for _c in cuts:
+        _d = float(_c.get("duration_seconds") or _c.get("trim_dur") or 4)
+        if _kept and _tot + _d > _body_cap:
+            break
+        _kept.append(_c); _tot += _d
+    if len(_kept) < len(cuts):
+        if progress_cb:
+            progress_cb(f":scissors: 길이 컷: {len(cuts)}→{len(_kept)}컷 "
+                        f"({_tot:.0f}s ≤ {_body_cap:.0f}s cap)")
+        cuts = _kept
+        concept = {**concept, "cuts": cuts}   # render_card(use_brain=False) reads concept['cuts']
 
     tone = concept.get("tone")
     if isinstance(tone, str):
