@@ -2961,6 +2961,18 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         system += _rf_trends_hint(target)
     except Exception as _te:
         log.debug("rf trends hint skipped: %s", _te)
+    # PD 2026-10-29: RF was repeating its FRAMING across days/batches ("랴니 나간 사이
+    # 레오가 ~" shipped twice on 10/30, Leo-centric every slot = "항상 똑같은 이야기"). RF
+    # had only CLIP-level dedup — two episodes with different clips but the same story/frame
+    # passed. AV already diverges via these two blocks; RF never got them. Inject BOTH so the
+    # RF proposer must pick a distinct premise/frame from recent concepts AND rotate a format
+    # that's been overused (e.g. "펫A 없는 사이 펫B가 ~"). Advisory steering at the generator;
+    # exclude_concepts is seeded from the last 80 cards (launch.py), so this spans days/batches.
+    try:
+        from agents import concept_brainstorm as _cb
+        system += _cb._exclude_block(context) + _cb._overused_format_block()
+    except Exception as _xe:
+        log.debug("rf concept-dedup/format block skipped: %s", _xe)
     # Feed both videos (Tier 1) and photos (Tier 2). PD 2026-06-06: photos are
     # NOT dropped anymore — every photo cut is animated via Seedance photo_i2v
     # so the writer can use a photo for the payoff/closer and still get motion.
