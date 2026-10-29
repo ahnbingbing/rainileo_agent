@@ -120,16 +120,15 @@ def main():
          "-filter_complex",f"[0:v]{','.join(draws)},fade=t=out:st={TOTAL-1.2:.2f}:d=1.2[v]","-map","[v]","-map","1:a:0",
          "-af",f"afade=t=in:st=0:d=0.3,afade=t=out:st={TOTAL-2.2:.2f}:d=2.2",
          "-c:v","libx264","-preset","medium","-crf","18","-pix_fmt","yuv420p","-r","30","-fps_mode","cfr",*BT709,
-         "-c:a","aac","-b:a","192k","-t",f"{TOTAL}","-movflags","+faststart",str(mv)])
+         "-c:a","aac","-b:a","192k","-ar","48000","-ac","2","-t",f"{TOTAL}","-movflags","+faststart",str(mv)])
 
     # append channel outro bumper (normalize to 1080x1920 + ensure an audio track)
     final = MV/"ryani_leo_mv_real.mp4"
     if BUMPER.exists():
         bmp = work/"bumper_norm.mp4"
         run(["ffmpeg","-y","-i",str(BUMPER),
-             "-f","lavfi","-t","3","-i","anullsrc=channel_layout=stereo:sample_rate=44100",
-             "-vf",f"{SDR_NORM},{GEOM}","-map","0:v:0","-map","1:a:0","-shortest",   # bumper is SDR → normalize to bt709 (NO tone-map)
-             "-c:v","libx264","-preset","fast","-crf","18","-pix_fmt","yuv420p",*BT709,"-c:a","aac","-b:a","192k",str(bmp)])
+             "-vf",f"{SDR_NORM},{GEOM}","-map","0:v:0","-map","0:a:0",   # keep the bumper's OWN channel-theme audio; SDR→bt709
+             "-c:v","libx264","-preset","fast","-crf","18","-pix_fmt","yuv420p",*BT709,"-c:a","aac","-b:a","192k","-ar","48000","-ac","2",str(bmp)])
         cl2 = work/"concat2.txt"; cl2.write_text(f"file '{mv}'\nfile '{bmp}'\n", encoding="utf-8")
         run(["ffmpeg","-y","-f","concat","-safe","0","-i",str(cl2),
              "-c:v","libx264","-preset","medium","-crf","18","-pix_fmt","yuv420p",*BT709,
