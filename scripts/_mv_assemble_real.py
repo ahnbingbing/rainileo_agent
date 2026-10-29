@@ -13,7 +13,8 @@ FONT = Path.home() / "Library/Fonts/Pretendard-Bold.otf"
 BUMPER = ROOT / "assets/branding/outro_bumper.mp4"
 W, H = 1080, 1920
 SONG = MV / "song_ours.mp3"
-TOTAL = 39.6
+TOTAL = 34.6          # end just after "행복하자" resolves — no dead instrumental freeze tail
+SAT = 0.90           # gentle global desaturation to tame hot/uneven phone-source clips (NOT add)
 
 CUTS = [   # (name, source, seconds, freeze_tail)
     ("r1", R/"seg1.mp4", 5.5, False),
@@ -23,7 +24,7 @@ CUTS = [   # (name, source, seconds, freeze_tail)
     ("r5", R/"seg5.mp4", 3.5, False),
     ("r6", R/"seg6.mp4", 3.2, False),
     ("r7", R/"seg7.mp4", 4.0, False),
-    ("r8", R/"seg8.mp4", 12.3, True),   # distinct '둘이 포근 쉬기' finale, held through the outro
+    ("r8", R/"seg8.mp4", 7.3, False),   # '둘이 포근 쉬기' finale — gently slowed (no freeze), then fade
 ]
 CAPTIONS = [
     ("까만 털에 꼬리 없는 랴니",      2.20,  5.50),
@@ -49,7 +50,8 @@ def main():
     # ★fps=30 forces CFR: phone source clips are VFR, and concatenating VFR segments breaks
     # the PTS timeline → karaoke captions (between(t,…)) drift in the later part and seeking
     # lands on frozen frames. Resampling every segment to constant 30fps fixes both.
-    base = f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps=30"
+    base = (f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps=30,"
+            f"eq=saturation={SAT}")
     for name, src, dur, freeze in CUTS:
         src = src if src.exists() else R/"seg1.mp4"
         seg = work/f"{name}.mp4"
@@ -97,8 +99,8 @@ def main():
                      f"enable='between(t,{s},{e})':alpha='{a}'")
     mv = work/"mv_nobumper.mp4"
     run(["ffmpeg","-y","-i",str(withpol),"-i",str(SONG),
-         "-filter_complex",f"[0:v]{','.join(draws)}[v]","-map","[v]","-map","1:a:0",
-         "-af",f"afade=t=in:st=0:d=0.3,afade=t=out:st={TOTAL-2.5:.2f}:d=2.5",
+         "-filter_complex",f"[0:v]{','.join(draws)},fade=t=out:st={TOTAL-1.2:.2f}:d=1.2[v]","-map","[v]","-map","1:a:0",
+         "-af",f"afade=t=in:st=0:d=0.3,afade=t=out:st={TOTAL-2.2:.2f}:d=2.2",
          "-c:v","libx264","-preset","medium","-crf","18","-pix_fmt","yuv420p","-r","30","-fps_mode","cfr",
          "-c:a","aac","-b:a","192k","-t",f"{TOTAL}","-movflags","+faststart",str(mv)])
 
