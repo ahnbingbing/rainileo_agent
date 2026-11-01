@@ -122,6 +122,30 @@ finally:
 # enabled() reflects the flag
 check("enabled() False without flag", launch_v2.enabled() is False)
 
+# ── special-day AV gating (PD 2026-11-01: AV off-batch as MV lane; special days RF-only
+#    by default, opt back in with LAUNCH_SPECIAL_AV=1) ──
+_sp = os.environ.pop("LAUNCH_SPECIAL_AV", None)
+_spm = os.environ.pop("LAUNCH_LANE_MIX", None)   # exercise rfonly default
+try:
+    xmas = dt.date(2026, 12, 25)   # a known _SPECIAL_AV_DAYS entry
+    check("_is_special_av_day knows Christmas", _launch._is_special_av_day(xmas) is True)
+    default_sp = _launch.day_assignments(xmas)
+    check("special day RF-only by default (no AV in daily batch)",
+          all(l == "real_footage" for l, _ in default_sp), detail=str(default_sp))
+    os.environ["LAUNCH_SPECIAL_AV"] = "1"
+    optin_sp = _launch.day_assignments(xmas)
+    check("LAUNCH_SPECIAL_AV=1 restores one themed AV on a special day",
+          sum(1 for l, _ in optin_sp if l == "ai_vtuber") == 1, detail=str(optin_sp))
+    os.environ["LAUNCH_SPECIAL_AV"] = "1"   # flag on, but a routine day stays RF-only
+    check("routine day stays RF-only even with LAUNCH_SPECIAL_AV=1",
+          all(l == "real_footage" for l, _ in _launch.day_assignments(d0)))
+finally:
+    os.environ.pop("LAUNCH_SPECIAL_AV", None)
+    if _sp is not None:
+        os.environ["LAUNCH_SPECIAL_AV"] = _sp
+    if _spm is not None:
+        os.environ["LAUNCH_LANE_MIX"] = _spm
+
 # ── date-gating: v2 governs only dates >= V2_START_DATE (no transition phantom gaps) ──
 _pm = os.environ.pop("LAUNCH_MODEL", None)
 _ps = os.environ.pop("V2_START_DATE", None)

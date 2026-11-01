@@ -46,14 +46,14 @@ TIMESLOTS: list[str] = os.getenv(
 # The two lanes under A/B test.
 LANES = ("ai_vtuber", "real_footage")
 
-# Culturally/seasonally special days (MM-DD) that still warrant an AV concept episode even
-# while AV is paused as a daily lane. PD 2026-10-26: during the algorithmic-suppression
-# recovery (channel intake collapsed ~95% after the v2 flood; see notes), AV's daily reach
-# had fallen to single/low-double-digit views — RF out-reaches it ~10-50× — so every routine
-# AV upload was a channel-level NEGATIVE signal. AV therefore earns a slot ONLY on a special
-# day, where a themed concept piece adds identity (Halloween, Christmas, New Year, Children's
-# Day…). Lunar holidays (Seollal/Chuseok/Buddha's birthday) move yearly → add their actual
-# dates via env LAUNCH_AV_DATES (comma-sep YYYY-MM-DD) with no code change.
+# Culturally/seasonally special days (MM-DD). These no longer carry an AV in the daily batch
+# by default (PD 2026-11-01: AV moved to the separate original-MV lane — our own songs +
+# Ryani&Leo-story lyrics — so a themed MV, scheduled off-batch, now plays the identity role a
+# special-day AV short used to). The list is retained as the opt-in trigger: set
+# LAUNCH_SPECIAL_AV=1 and these days (plus LAUNCH_AV_DATES, comma-sep YYYY-MM-DD) restore a
+# themed 18:00 AV concept piece. (Prior posture, PD 2026-10-26: special-day-only AV during the
+# ~95% algorithmic-suppression recovery, where routine AV reach had collapsed to single/low-
+# double digits vs RF's ~10-50×.)
 _SPECIAL_AV_DAYS: frozenset[str] = frozenset({
     "10-31",            # Halloween
     "12-24", "12-25",   # Christmas (eve + day)
@@ -194,14 +194,21 @@ def _assign_rf_heavy(slots: list[str], target: dt.date) -> list[tuple[str, str]]
 
 
 def _assign_rfonly(slots: list[str], target: dt.date) -> list[tuple[str, str]]:
-    """RECOVERY posture (PD 2026-10-26, DEFAULT): every slot real_footage —
-    breakout-concentration RF-only — EXCEPT a culturally special day, where the FIRST
-    (18:00) slot carries an AV concept episode and the strongest (21:00) slot stays RF
-    (our reach engine). AV's routine daily reach had collapsed to single/low-double-digit
-    views during algorithmic-suppression recovery, dragging the channel average, so the
-    daily AV is paused. Restore a daily AV instantly via LAUNCH_LANE_MIX=3rf1av."""
+    """RF-ONLY posture (DEFAULT): every slot real_footage. The daily launch batch no
+    longer produces AV at all.
+
+    PD 2026-11-01: AV is now the ORIGINAL-MV lane (our own songs + Ryani&Leo-story lyrics,
+    scheduled separately off-batch), so the daily batch is pure RF — even on culturally
+    special days, whose identity role the themed MV now serves (e.g. a Halloween MV in
+    place of a Halloween AV short). This supersedes the 2026-10-26 posture where special
+    days still carried one 18:00 AV concept piece.
+
+    Reversible without redeploy: set LAUNCH_SPECIAL_AV=1 to restore the themed 18:00 AV on
+    special days (_SPECIAL_AV_DAYS / LAUNCH_AV_DATES), or LAUNCH_LANE_MIX=3rf1av for a
+    daily AV."""
     lanes = ["real_footage"] * len(slots)
-    if slots and _is_special_av_day(target):
+    if (slots and os.getenv("LAUNCH_SPECIAL_AV", "0") == "1"
+            and _is_special_av_day(target)):
         lanes[0] = "ai_vtuber"   # 18:00 gets the themed AV; 21:00 keeps the RF reach-driver
     return [(lanes[idx], hhmm) for idx, hhmm in enumerate(slots)]
 
@@ -245,11 +252,12 @@ def day_assignments(target: dt.date) -> list[tuple[str, str]]:
     """Return [(lane, "HH:MM"), ...] for the daily slots.
 
     Mix chosen by **LAUNCH_LANE_MIX**:
-      - 'rfonly'  (DEFAULT, PD 2026-10-26) — RF every slot; AV only on a special day
-                  (breakout-concentration recovery; AV's routine reach had collapsed).
+      - 'rfonly'  (DEFAULT, PD 2026-11-01) — RF every slot, no AV at all (AV is now the
+                  separate original-MV lane). Special-day AV only if LAUNCH_SPECIAL_AV=1.
       - '3rf1av'  — restore one daily AV (3 RF + 1 AV rotation; pre-recovery default).
       - '2av2rf'  — legacy balanced Latin square (oldest rollback path).
-    ★ ROLLBACK (instant, next batch, no redeploy): set LAUNCH_LANE_MIX=3rf1av or 2av2rf.
+    ★ ROLLBACK (instant, next batch, no redeploy): set LAUNCH_LANE_MIX=3rf1av or 2av2rf;
+      or keep rfonly and set LAUNCH_SPECIAL_AV=1 to bring back the themed special-day AV.
     """
     slots = [s.strip() for s in TIMESLOTS if s.strip()]
     mix = os.getenv("LAUNCH_LANE_MIX", "rfonly").strip().lower()
