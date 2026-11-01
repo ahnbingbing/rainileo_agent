@@ -1434,8 +1434,14 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   멈출 뿐)**지 가속 페달이 아니다** — 구멍에서 나오려면 *일관된 진짜 퀄 + 평판을 리셋할 브레이크아웃 1편*이
   필요하고 **몇 주짜리 과정**이다. 그래서 PD 결정(10/26)=**브레이크아웃 집중 + RF-only**: 데이터상 AV는
   반복적으로 **5~16 조회**(RF의 1/10~1/50, 리텐션은 높아도 도달 전멸)라 매 routine AV 업로드가 채널 평균을
-  끌어내리는 음 신호 → `day_assignments` 기본 레인 믹스 `3rf1av`→**`rfonly`**(전 슬롯 RF, AV는 특별일
-  18:00 한 슬롯만; `_SPECIAL_AV_DAYS` 캘린더+`LAUNCH_AV_DATES` env, 6089577). 가역=`LAUNCH_LANE_MIX=3rf1av`.
+  끌어내리는 음 신호 → `day_assignments` 기본 레인 믹스 `3rf1av`→**`rfonly`**(전 슬롯 RF, 6089577).
+  ★**11/1 진화 — AV를 죽인 게 아니라 용도를 재배치했다**: 매일 배치의 특별일 AV(10/26엔 18:00 한 슬롯
+  남겨뒀던)까지 완전히 off(`_assign_rfonly`에서 `LAUNCH_SPECIAL_AV`, 기본 off, 64a2848). 왜냐면 AV는 이제
+  **오리지널 MV 레인**(우리 곡 + 랴니레오 스토리 가사, 배치 밖 예약)이 됐고, 특별일(할로윈·크리스마스)의
+  *정체성·시즌감* 역할은 테마 MV가 더 잘 담당하기 때문 — 데이터가 음 신호라던 "routine AV 쇼츠"를 없애되
+  AV의 생성력은 MV라는 더 맞는 그릇으로 옮긴 것. 일반화=**죽은 레버도 폐기가 답이 아니라 맞는 용도를 찾는
+  것일 수 있다**(도달 전멸한 AV 쇼츠 ≠ 쓸모없는 AV; 포맷을 바꾸니 자산이 됐다). 가역은 플래그로
+  (`LAUNCH_SPECIAL_AV=1`=특별일 AV 복귀, `LAUNCH_LANE_MIX=3rf1av`=일 AV; [[D_lanemix]] 그대로).
   cf [[view_data_concrete_hook_title]]·[[grammar_rf_caption_grounding_gap]]·[[slot_count_ab_2026-10]].
 - **C_rfquality1029. 회복이 시작되자마자 퀄리티가 그걸 까먹고 있었다 — RF 리뷰 4-fix(10/29)** — 인입
   회복 신호(RF 일부 ~1000)가 뜨자 PD가 실제 영상을 보고 "saturation·화질·내용퀄·AV 똑같은 얘기" 지적.
