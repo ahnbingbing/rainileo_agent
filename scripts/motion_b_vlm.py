@@ -318,7 +318,7 @@ def main() -> int:
     p.add_argument("--model",
                    default=os.environ.get("VLM_MODEL", "gemini-2.5-flash"),
                    help="Gemini vision model id (default: gemini-2.5-flash). "
-                        "Try gemini-2.5-pro for harder cases.")
+                        "Try gemini-3.1-pro-preview for harder cases.")
     args = p.parse_args()
 
     api_key = os.environ.get("GOOGLE_API_KEY")

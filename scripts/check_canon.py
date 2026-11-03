@@ -40,6 +40,7 @@ OK_MARKERS = re.compile(
 # Forbidden affirmative values: (regex, human description).
 FORBIDDEN = [
     (r"\bgpt-5\b", "gpt-5 as a model (reasoning model → empty/timeout; use models.OPENAI_TEXT)"),
+    (r"gemini-2\.5-pro", "gemini-2.5-pro (redirects to Flash 2026-12-01 → silent downgrade; use models.GEMINI_PRO)"),
     (r"gold[- ]?amber",            "Leo eyes 'gold-amber' (wrong — chartreuse/yellow-green)"),
     (r"amber[- ]?gold",            "Leo eyes 'amber-gold' (wrong — chartreuse/yellow-green)"),
     (r"\bamber eyes\b",            "Leo eyes 'amber' (wrong — chartreuse/yellow-green)"),

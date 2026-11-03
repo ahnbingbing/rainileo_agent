@@ -189,8 +189,9 @@ def call_gemini(floor_plan: Path, photos: list[Path],
     if not api_key:
         raise RuntimeError("GOOGLE_API_KEY not set")
     genai.configure(api_key=api_key)
+    from agents import models as _models
     model = genai.GenerativeModel(
-        "gemini-2.5-pro",
+        _models.GEMINI_PRO,
         system_instruction=SYSTEM_PROMPT,
         generation_config={
             "temperature": 0.3,

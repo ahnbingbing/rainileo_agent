@@ -23,9 +23,18 @@ def _m(env: str, default: str) -> str:
     return os.getenv(env, default) or default
 
 
+# ── Gemini Pro tier ────────────────────────────────────────────────────────
+# gemini-2.5-pro is retired on AI Studio 2026-12-01 and REDIRECTS to a Flash model —
+# a silent quality downgrade (no error), exactly the swap that would undo the
+# caption-accuracy fix below. Pin an explicit Pro id rather than the
+# gemini-pro-latest alias, so the next upstream re-point can't change models under
+# us without a code change. Pro models only run in thinking mode: thinking_budget=0
+# is a 400 ("only works in thinking mode"); -1 (dynamic) is accepted by every tier.
+GEMINI_PRO = _m("GEMINI_PRO_MODEL", "gemini-3.1-pro-preview")
+
 # ── Text completion — the OpenAI → Gemini → Anthropic cascade ──────────────
 OPENAI_TEXT = _m("OPENAI_FALLBACK_MODEL", "gpt-4.1")      # NOT gpt-5 (reasoning → empty/timeout)
-GEMINI_TEXT = _m("GEMINI_FALLBACK_MODEL", "gemini-2.5-pro")
+GEMINI_TEXT = _m("GEMINI_FALLBACK_MODEL", GEMINI_PRO)
 ANTHROPIC_TEXT = _m("ANTHROPIC_TEXT_MODEL", "claude-opus-4-7")
 ANTHROPIC_LIGHT = _m("ANTHROPIC_LIGHT_MODEL", "claude-sonnet-4-6")  # caption agent / lighter passes
 CAPTION_JUDGE = _m("CAPTION_JUDGE_MODEL", OPENAI_TEXT)
@@ -35,8 +44,8 @@ VLM = _m("VLM_MODEL", "gemini-2.5-flash")   # throughput tagger + cheap per-cut 
 # Captioning VLM (PD 2026-10-06): the frame-read that GENERATES captions must be accurate — flash
 # under-detects the small occluded pet and mis-reads the action (레오↔랴니). Use a strong model for
 # caption generation (RF action-captioner + caption grounding gate), distinct from the cheap flash
-# used for bulk tagging. gemini-2.5-pro = same google.genai transport, materially stronger reading.
-VLM_CAPTION = _m("VLM_CAPTION_MODEL", "gemini-2.5-pro")
+# used for bulk tagging. Gemini Pro = same google.genai transport, materially stronger reading.
+VLM_CAPTION = _m("VLM_CAPTION_MODEL", GEMINI_PRO)
 # Grounding VLM (PD 2026-09-20): a model that OBEYS pd_notes (grandma's clip
 # descriptions) as ground truth and reads subject presence / location across a
 # multi-frame span. gemini-2.5-flash is the throughput tagger but IGNORES the

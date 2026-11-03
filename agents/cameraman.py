@@ -2914,7 +2914,8 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
         from google.genai import types as _gt
         client = _g.Client(api_key=api_key, http_options=_gt.HttpOptions(
             timeout=int(os.getenv("VLM_TIMEOUT_MS", "90000"))))
-        model = os.getenv("VLM_CAPTION_MODEL", "gemini-2.5-pro")   # strong model for caption accuracy
+        from agents import models as _models
+        model = _models.VLM_CAPTION   # strong model for caption accuracy
     except Exception as e:
         log.warning("action-caption: VLM init failed: %s", e)
         return
@@ -3010,7 +3011,7 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
                 model=model, contents=parts,
                 config=_gt.GenerateContentConfig(
                     system_instruction=_sys_grnd, response_mime_type="application/json",
-                    # budget=0 is the flash anti-truncation setting (gotcha #4), but gemini-2.5-pro
+                    # budget=0 is the flash anti-truncation setting (gotcha #4), but Gemini Pro
                     # REJECTS 0 ("only works in thinking mode") → the whole action-caption step failed
                     # and captions fell back to single-pass. pro gets -1 (dynamic thinking); flash 0.
                     thinking_config=_gt.ThinkingConfig(
@@ -3107,7 +3108,8 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
         from google.genai import types as _gt
         client = _g.Client(api_key=api_key, http_options=_gt.HttpOptions(
             timeout=int(os.getenv("VLM_TIMEOUT_MS", "90000"))))
-        model = os.getenv("VLM_CAPTION_MODEL", "gemini-2.5-pro")   # strong model for caption-vs-frame accuracy
+        from agents import models as _models
+        model = _models.VLM_CAPTION   # strong model for caption-vs-frame accuracy
     except Exception as e:
         log.warning("grounding gate: VLM init failed: %s", e)
         return

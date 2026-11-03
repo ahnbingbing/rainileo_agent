@@ -224,7 +224,7 @@ def _board_llm(system: str, user: str, *, max_tokens: int = 2500) -> str:
         return out
     except Exception as e:  # noqa: BLE001
         log.warning("board Claude failed (%s) — falling back to Gemini", e)
-    # 2. Gemini 2.5 Pro (fallback)
+    # 2. Gemini Pro (fallback)
     try:
         from google import genai as _genai
         from google.genai import types as _gt
@@ -233,8 +233,9 @@ def _board_llm(system: str, user: str, *, max_tokens: int = 2500) -> str:
             raise RuntimeError("no GOOGLE_API_KEY")
         client = _genai.Client(api_key=key, http_options=_gt.HttpOptions(
             timeout=int(os.getenv("LLM_TIMEOUT_S", "90")) * 1000))
+        from agents import models as _models
         resp = client.models.generate_content(
-            model="gemini-2.5-pro", contents=user,
+            model=_models.GEMINI_PRO, contents=user,
             config=_gt.GenerateContentConfig(system_instruction=system or None,
                                              max_output_tokens=max_tokens))
         out = (resp.text or "").strip()
