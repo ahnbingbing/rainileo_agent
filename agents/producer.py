@@ -3467,9 +3467,10 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
             "\n위 문제를 해결한 새 컨셉을 작성하라. 필요하면 컷 구성/자산/캡션을 바꿔라."
         )
     user += ("\n\nWrite ONE real_footage concept as a JSON array of length 1. "
-             "Follow the 5-step order. Every caption must be grounded in the "
-             "clip's actual sc. Flowing narrative, not dry list. Output ONLY "
-             "the JSON array.")
+             "Work through the STEPs silently — they are how to think, not what to "
+             "write. Every caption must be grounded in the clip's actual sc. Flowing "
+             "narrative, not dry list. Output ONLY the final JSON array, once, "
+             "starting with '['.")
     if _outings:
         user += ("\n\n⭐ 나들이 우선(candidate_outings): 각 항목은 같은 날·같은 장소의 클립 묶음 "
                  "= 하나의 실제 사건이고, 모두 최근에 *이벤트로 쓰지 않은* 것이다(쿨다운 통과). "

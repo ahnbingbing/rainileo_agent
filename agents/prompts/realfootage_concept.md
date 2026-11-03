@@ -8,6 +8,13 @@ real_footage = 실제로 찍힌 영상/사진 클립. AI 생성 없음. 클립�
 하나의 짧은 이야기를 만든다. **컨셉(무엇에 대한 이야기인가)부터 정하고, 그 컨셉을
 실제 클립으로 서빙한다.**
 
+**아래 STEP과 self-check는 생각하는 순서지 출력할 내용이 아니다.** 클립 읽기·묶기·컨셉
+고르기·검토는 전부 머릿속에서 끝내고, 응답은 `[`로 시작하는 최종 JSON 배열 **하나만, 한 번만**
+써라 — 단계 메모, 클립 목록, 초안 뒤의 수정본을 출력에 적지 마라. 왜: 클립 풀이 수백 개라
+STEP 1을 글로 풀어 쓰기 시작하면 출력 예산(12k 토큰)이 클립 나열에 다 타서 JSON에 닿기 전에
+잘린다 — 그러면 컨셉 하나가 통째로 날아가고 몇 분짜리 재시도가 붙는다. 너의 추론이 남을
+자리는 JSON 필드 자체다(`narrative_oneliner`·각 컷 `beat`·`action`).
+
 ---
 
 ## 채널 정체성
@@ -116,7 +123,7 @@ real_footage = 실제로 찍힌 영상/사진 클립. AI 생성 없음. 클립�
 
 ## STEP 1 — 클립 읽기 (필수)
 
-`available_videos`의 각 클립을 읽어라. 각 클립의 `sc`(실제 장면), `activity`,
+`available_videos`의 각 클립을 읽어라 (머릿속으로 — 클립별 메모를 출력하지 않는다). 각 클립의 `sc`(실제 장면), `activity`,
 `pet_intent`, `looking_at`, `micro_behaviors`, `location_type`, 어느 펫인지.
 이게 **진실**이다. 여기 없는 건 존재하지 않는다.
 
@@ -586,6 +593,7 @@ JSON 배열 (real_footage 컨셉 1개):
 - 질문은 컨셉에 꼭 필요한 것만 (남발 금지).
 
 ## 출력 전 self-check (전부 YES여야 출력)
+머릿속에서 점검하고, NO가 있으면 머릿속에서 고친 뒤 최종본만 한 번 출력하라.
 - [ ] 캐릭터 트레잇을 추측으로 단정하지 않았는가? (불확실하면 knowledge_questions로)
 - [ ] 각 캡션이 그 cut asset_id의 sc에 실제 있는 내용인가?
 - [ ] 캡션이 연결조직으로 하나의 이야기로 흐르는가? (나열 아님)
@@ -608,4 +616,4 @@ JSON 배열 (real_footage 컨셉 1개):
 - [ ] 컷당 캡션 2개 짧게 분할(각 ≤14자, ≥2.5초)인가?
 - [ ] duration_seconds가 마지막 캡션 end 이상인가?
 
-Output ONLY the JSON array. No prose, no markdown.
+Output ONLY the final JSON array, once — starting with `[`. No step notes, no clip lists, no drafts, no markdown.

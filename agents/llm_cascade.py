@@ -176,6 +176,25 @@ def _log_cached(model: str, u) -> None:
         pass
 
 
+def _dump_truncated(model: str, max_tokens: int, msg) -> None:
+    """Save an output that hit max_tokens. Escalating the ceiling only re-rolls the
+    sample; the cut-off text is the only evidence of WHY it ran long (e.g. the model
+    narrating every pool clip before the JSON), so keep it for diagnosis."""
+    try:
+        import datetime as _dt
+        from pathlib import Path as _P
+        d = _P(__file__).resolve().parent.parent / "data" / "output" / "artifacts"
+        d.mkdir(parents=True, exist_ok=True)
+        text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+        f = d / f"truncated_{_dt.datetime.now():%Y%m%d_%H%M%S}_{max_tokens}.txt"
+        f.write_text(f"# model={model} max_tokens={max_tokens} "
+                     f"stage={os.getenv('CURRENT_STAGE') or _caller_label()}\n{text}",
+                     encoding="utf-8")
+        log.warning("truncated output saved: %s (%d chars, head=%r)", f, len(text), text[:160])
+    except Exception as e:  # noqa: BLE001 — diagnosis must never break the call
+        log.warning("truncated-output dump failed: %s", e)
+
+
 def call_text_cached(system: str, user: str, *, max_tokens: int = 12000,
                      model: str | None = None) -> str:
     """Anthropic-PRIMARY variant of call_text_cascade for HEAVY, REPEATED prompts.
@@ -213,6 +232,8 @@ def call_text_cached(system: str, user: str, *, max_tokens: int = 12000,
                 # call so we keep the ~90% cache-read discount instead of losing it to the
                 # cascade (PD 2026-09-07: RF cached calls were truncating at 12k → falling back to
                 # the expensive un-cached cascade every re-proposal).
+                if getattr(msg, "stop_reason", "") == "max_tokens":
+                    _dump_truncated(model, _mt, msg)
                 if getattr(msg, "stop_reason", "") == "max_tokens" and _mt < _cap:
                     _mt = min(_cap, _mt * 2)
                     log.warning("cached Anthropic truncated — retrying at max_tokens=%d", _mt)
