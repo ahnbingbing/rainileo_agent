@@ -2601,6 +2601,59 @@ def _cap_overused_locations(rows: list, overused_loc, cap_frac: float = 0.34,
     return kept
 
 
+def _rf_body_budget() -> float:
+    """RF body-length budget (sum of cut durations, bumpers excluded). One source for the
+    Writer prompt, the pre-render structure gate and the render-time cap, so the Writer is
+    told the same number the cap enforces."""
+    return float(os.getenv("RF_BODY_MAX_SEC", "18"))
+
+
+def _rf_structure_issues(c: dict) -> list[str]:
+    """Structural defects the render would otherwise 'fix' destructively: a clip reused in
+    NON-adjacent cuts (the collapse would drag the later cut's captions — often the closer —
+    into the earlier slot) and a body over budget (the cap would drop the trailing kick/
+    closer). Returned as Writer-facing feedback lines; empty = structurally sound."""
+    cuts = c.get("cuts") or []
+    issues: list[str] = []
+    seen: dict = {}
+    for i, cut in enumerate(cuts):
+        aid = cut.get("asset_id")
+        if not aid:
+            continue
+        if aid in seen and seen[aid] != i - 1:
+            issues.append(f"cut{i + 1}({cut.get('beat') or '-'})이 cut{seen[aid] + 1}과 같은 클립 "
+                          f"{aid}를 다시 쓴다 → 다른 클립을 골라라")
+        seen[aid] = i
+    total = sum(float(x.get("duration_seconds") or x.get("trim_dur") or 4) for x in cuts)
+    budget = _rf_body_budget()
+    if total > budget:
+        issues.append(f"본문 합계 {total:.0f}s > 예산 {budget:.0f}s → 컷을 줄이거나 짧게 해서 "
+                      "킥·마지막 컷까지 예산 안에 넣어라")
+    return issues
+
+
+def _rf_cap_cuts(cuts: list, cap: float) -> tuple[list, float]:
+    """Trim cuts to the body-length cap. The final cut is the ending (여운/payoff) and is
+    never the one dropped: reserve it, then fill from the front, so an over-budget concept
+    loses middle beats rather than its close. If even the opening + ending overflow, keep
+    the opening alone (plus the ending only if it still fits)."""
+    dur = lambda c: float(c.get("duration_seconds") or c.get("trim_dur") or 4)  # noqa: E731
+    tail = cuts[-1] if len(cuts) > 1 else None
+    reserve = dur(tail) if tail is not None else 0.0
+    kept, tot = [], 0.0
+    for c in (cuts[:-1] if tail is not None else cuts):
+        if tot + dur(c) + reserve > cap:
+            break
+        kept.append(c); tot += dur(c)
+    if not kept and cuts:
+        kept, tot = [cuts[0]], dur(cuts[0])
+        if tail is not None and tot + reserve <= cap:
+            kept.append(tail); tot += reserve
+    elif tail is not None:
+        kept.append(tail); tot += reserve
+    return kept, tot
+
+
 def _collapse_rf_same_clip_segments(c: dict, progress_cb: ProgressCb = None) -> int:
     """PD 2026-06-12: real_footage cuts must each be a DISTINCT clip. If the writer
     reused the SAME asset_id across cuts (slicing one clip into segments) those
@@ -2611,48 +2664,51 @@ def _collapse_rf_same_clip_segments(c: dict, progress_cb: ProgressCb = None) -> 
     cuts = c.get("cuts") or []
     if len(cuts) < 2:
         return 0
-    by_aid: dict = {}
-    order: list = []
+    # Group consecutive cuts on one clip into runs. Only an ADJACENT run is merged (one
+    # play-through, no re-trim restarts). A clip reused in NON-adjacent runs is a Writer
+    # defect the structure gate re-proposes; if it survives, keep ONE run — the final run
+    # when it holds the last cut (the ending is what the story can't lose), else the first —
+    # and drop the others. Merging across the gap would drag the later cut's captions (often
+    # the closer) into the earlier slot and scramble the arc.
+    runs: list = []
     for cut in cuts:
         aid = cut.get("asset_id")
-        if not aid:
-            order.append(("_x", cut)); continue
-        if aid not in by_aid:
-            by_aid[aid] = []
-            order.append((aid, None))
-        by_aid[aid].append(cut)
-    if all(len(v) <= 1 for v in by_aid.values()):
-        return 0  # already all-distinct
+        if runs and aid and runs[-1][0].get("asset_id") == aid:
+            runs[-1].append(cut)
+        else:
+            runs.append([cut])
+    keep_run: dict = {}
+    for ri, run in enumerate(runs):
+        aid = run[0].get("asset_id")
+        if aid and (aid not in keep_run or ri == len(runs) - 1):
+            keep_run[aid] = ri
     new_cuts: list = []
     collapsed = 0
-    done: set = set()
-    for aid, lone in order:
-        if aid == "_x":
-            new_cuts.append(lone); continue
-        if aid in done:
+    for ri, run in enumerate(runs):
+        aid = run[0].get("asset_id")
+        if aid and keep_run[aid] != ri:
+            collapsed += len(run)
             continue
-        done.add(aid)
-        grp = by_aid[aid]
-        if len(grp) == 1:
-            new_cuts.append(grp[0]); continue
-        collapsed += len(grp) - 1
-        base = dict(grp[0])
-        starts = [float(g.get("trim_start") or 0) for g in grp]
-        total = round(sum(float(g.get("duration_seconds") or g.get("trim_dur") or 5)
-                          for g in grp), 1)
-        base["trim_start"] = min(starts)
-        base["duration_seconds"] = total
-        base.pop("trim_dur", None)
-        caps: list = []
-        for g in grp:
-            caps.extend(g.get("captions") or [])
-        if caps:
-            seg = total / len(caps)
-            for i, cap in enumerate(caps):
-                cap["start"] = round(i * seg + 0.2, 1)
-                cap["end"] = round((i + 1) * seg - 0.1, 1)
+        caps = [cap for g in run for cap in (g.get("captions") or [])
+                if isinstance(cap, dict) and ((cap.get("ko") or "").strip() or (cap.get("en") or "").strip())]
+        base = dict(run[0])
+        if len(run) > 1:
+            collapsed += len(run) - 1
+            total = round(sum(float(g.get("duration_seconds") or g.get("trim_dur") or 5)
+                              for g in run), 1)
+            base["trim_start"] = min(float(g.get("trim_start") or 0) for g in run)
+            base["duration_seconds"] = total
+            base.pop("trim_dur", None)
+            if caps:
+                seg = total / len(caps)
+                for i, cap in enumerate(caps):
+                    cap["start"] = round(i * seg + 0.2, 1)
+                    cap["end"] = round((i + 1) * seg - 0.1, 1)
         base["captions"] = caps
         new_cuts.append(base)
+    if len(new_cuts) == len(cuts) and all(len(r) == 1 for r in runs):
+        c["cuts"] = new_cuts   # only empty-caption cleanup happened
+        return 0
     if collapsed:
         c["cuts"] = new_cuts
         log.info("RF distinct-clip: collapsed %d same-clip segment cut(s) → %d cut(s)",
@@ -3470,7 +3526,9 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
              "Work through the STEPs silently — they are how to think, not what to "
              "write. Every caption must be grounded in the clip's actual sc. Flowing "
              "narrative, not dry list. Output ONLY the final JSON array, once, "
-             "starting with '['.")
+             "starting with '['."
+             f"\n\n본문 길이 예산: 모든 컷 duration_seconds 합 ≤ {_rf_body_budget():.0f}초 "
+             "(모든 컷은 서로 다른 asset_id).")
     if _outings:
         user += ("\n\n⭐ 나들이 우선(candidate_outings): 각 항목은 같은 날·같은 장소의 클립 묶음 "
                  "= 하나의 실제 사건이고, 모두 최근에 *이벤트로 쓰지 않은* 것이다(쿨다운 통과). "
@@ -3510,6 +3568,20 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     if isinstance(concepts, dict):
         concepts = [concepts]
     concepts = [c for c in (concepts or []) if isinstance(c, dict)]
+    # Structure gate: a clip reused across non-adjacent cuts, or a body over the length
+    # budget, is "fixed" downstream only destructively (collapse scrambles the arc, cap drops
+    # the ending). Re-propose ONCE with the exact defects so the Writer chooses what to cut;
+    # if it persists, the collapse/cap below still keep the ending. RF_STRUCTURE_GATE=0 reverts.
+    if os.getenv("RF_STRUCTURE_GATE", "1") == "1" and concepts:
+        _issues = _rf_structure_issues(concepts[0])
+        if _issues and prior_feedback.count("[구조검증]") < int(os.getenv("RF_STRUCTURE_MAX_TRIES", "1")):
+            if progress_cb:
+                progress_cb(f":triangular_ruler: 구조검증 — {len(_issues)}건 (클립 재사용/길이 예산) → 재작성")
+            log.info("RF structure gate: %s", _issues)
+            _fb = ("[구조검증] 아래 구조 문제를 고쳐서 다시 써라 (이야기·캡션 품질은 유지):\n- "
+                   + "\n- ".join(_issues)
+                   + (("\n\n[이전 피드백]\n" + prior_feedback) if prior_feedback else ""))
+            return _propose_realfootage_singlepass(target, context, progress_cb, prior_feedback=_fb)
     # PD 2026-06-05: NO cut cap — script decides length.
     # PD 2026-06-06: stamp the single-pass author so the render pipeline can
     # SKIP the VLM post-render caption rewrite. The single-pass captions are
@@ -4062,13 +4134,8 @@ def _render_realfootage_direct(concept: dict, target: dt.date,
     # enough for Shorts, yet safely above the 16s RF_MIN_SECONDS stub floor (a lower cap
     # could drop a compilation to ~12s body → <16s episode → refused → empty slot).
     # Tunable/▲revertible via RF_BODY_MAX_SEC.
-    _body_cap = float(os.getenv("RF_BODY_MAX_SEC", "18"))
-    _kept, _tot = [], 0.0
-    for _c in cuts:
-        _d = float(_c.get("duration_seconds") or _c.get("trim_dur") or 4)
-        if _kept and _tot + _d > _body_cap:
-            break
-        _kept.append(_c); _tot += _d
+    _body_cap = _rf_body_budget()
+    _kept, _tot = _rf_cap_cuts(cuts, _body_cap)
     if len(_kept) < len(cuts):
         if progress_cb:
             progress_cb(f":scissors: 길이 컷: {len(cuts)}→{len(_kept)}컷 "
