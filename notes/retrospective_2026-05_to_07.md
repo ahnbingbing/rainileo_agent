@@ -1578,6 +1578,20 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   ③**"한 번 검증했다"는 프로덕션에서 유지되지 않는다** — [[D_rfcache]]의 9/5 라이브 검증은 작은 프롬프트였고, SDK 업그레이드
   (0.103→0.116)가 클라이언트 가드를 조용히 조였으며 max_tokens/프롬프트가 프로덕션에서 임계를 넘자 무너졌다. 라이브
   경로는 실제 스케일·실제 SDK로 재검증하라. cf. [[D_rfcache]]·[[D_writertrunc]]·D18(진단 실패).
+- **D_modelredirect. 업스트림 모델 리다이렉트는 에러 없는 다운그레이드다 — 모델 id를 명시 핀으로, 한 곳에(11/3)** —
+  AI Studio가 `gemini-2.5-pro`를 2026-12-01부터 Flash로 **리다이렉트**한다. 호출은 계속 성공하므로 어떤 로그·게이트도 안
+  울리는데, 캡션 VLM은 바로 그 Flash 약점(가려진 작은 레오 미검출·레오↔랴니 오독) 때문에 Pro로 올려둔 자리였다 — 리다이렉트가
+  그 수정을 조용히 되돌렸을 것이다. 위험을 키운 건 흩어짐: `models.py` 두 기본값 외에 cameraman·board_agent·room_extractor가
+  id를 하드코딩해, 한 곳만 바꾸면 나머지가 옛 모델에 남는 구조였다. Fix(2c296bc)=`models.GEMINI_PRO`(env `GEMINI_PRO_MODEL`,
+  기본 `gemini-3.1-pro-preview`) 신설 → `VLM_CAPTION`·`GEMINI_TEXT`·하드코딩 사이트 전부가 이를 읽고, `check_canon.py`가
+  `gemini-2.5-pro` 재등장을 실패로 막는다(gpt-5 금지와 같은 장치). `gemini-pro-latest` 별칭 대신 **명시 id**를 고른 이유=별칭
+  재지정도 같은 조용한 교체라서. 검증은 라이브 API로: Pro 계열은 `thinking_budget=0`을 400으로 거부·`-1`은 전 티어 수용 →
+  기존 "flash면 0, 아니면 -1" 분기가 유효함을 확인, 두-펫 산책 클립 RF 액션캡션 호출이 3.1 Pro에서 양 펫 정확 명명(2.5 Pro와
+  동급, 11s vs 20s). ★교훈: ①**성공하는 호출이 품질을 보장하지 않는다** — 리다이렉트·별칭·deprecation은 [[D_streamguard]]처럼
+  하드 실패 없이 열화를 숨긴다; 공지가 오면 "깨지나"가 아니라 "그 모델을 왜 골랐나"(그 자리의 품질 이유)로 영향을 판단하라
+  ②**모델 id는 한 곳(models.py)에만** — 하드코딩 사이트가 곧 다음 마이그레이션의 누락 지점이다 ③VM `deploy.env`의
+  `VLM_CAPTION_MODEL`/`GEMINI_FALLBACK_MODEL` 오버라이드는 코드 기본값을 이긴다 — 마이그레이션은 env 레이어까지 확인해야
+  끝난다. cf. [[D_streamguard]]·models.py gpt-5 교훈.
 - **D_b4copy. edit_grammar 프로덕션화 = 엔진은 타이밍, Writer는 카피 — 그리고 JSON 파서는 또 물렸다(9/10)** —
   impact_edit 3-arm은 클립만 주입 가능하고 캡션/내레이션은 프루프(랴니 축구) 텍스트가 하드코딩이라, 신선 클립에 옛 축구
   자막이 그대로 떠 못 썼다(PD "지난번 테스트 내용이 고대로 나오면 어떡해"). B4의 크럭스는 **관심사 분리**: 엔진
