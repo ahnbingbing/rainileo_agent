@@ -310,7 +310,42 @@ gcloud services enable aiplatform.googleapis.com
 # .env file (repo root)
 GOOGLE_API_KEY=<from https://aistudio.google.com/apikey>
 GCP_PROJECT=<your billable project>
+FAL_KEY=<from https://fal.ai/dashboard/keys — video-to-video season filters, pip install fal-client>
 ```
+
+## Real-footage season/theme FILTER = video-to-video (Fal.ai), NOT ffmpeg overlay
+
+To make a REAL (RF) clip look halloween/seasonal, do **not** composite flat elements on top
+(bats/cobwebs/glitter PNGs read as cheap clipart templates — the entire 11/3 overlay saga).
+The quality answer is **video-to-video restyle**: `scripts/_fal_v2v.py` runs Fal.ai
+**Kling O3** (`fal-ai/kling-video/o3/pro/video-to-video/edit`) to restyle the actual footage —
+**motion preserved**, theme blended into the background/grade. Kling has no strength knob, so the
+prompt must force subject preservation ("keep the real photographic pets 100% unchanged, no
+stylize/cartoonify/redraw, change only the background/lighting") or it re-renders the pets as CG.
+Element SOURCES (if needed, e.g. greenscreen) come from **nano-banana** (`gemini-3-pro-image-preview`,
+`scripts/_gen_overlay_gemini.py`); motion from **Seedance i2v**. AV cuts already read seasonal —
+don't filter them. No uniform across-cut overlay (tacky), no gold glitter (reads Christmassy).
+Paid renders → confirm with PD first. Full spec: `notes/mv_agent_feedback_log.md`; why:
+retrospective §4.5 C_overlayvsv2v.
+
+> **☐ FUTURE TODO (NOT wired yet, PD 2026-11-04):** the above is the established method for **MVs**.
+> Applying this v2v season-filter to the **daily RF production pipeline** (auto season/holiday filter
+> on real cuts) is **not built** — it's a future design task. Decide: which clips get filtered, cost
+> budget per day, where it slots (post clip-select, pre burn/assemble), subject-preservation prompt as
+> a template, and a kill-switch. Do NOT turn it on in production without that design + PD sign-off.
+
+### Colour gotchas learned with MVs (apply to all renders)
+- **HLG HDR tag leak = the "요즘 색이 빨개/orange cast" root.** Recent iPhone clips are HLG
+  (bt2020/arib-std-b67). Tone-mapping fixes PIXELS but the HDR **tags can leak to the output** →
+  players re-tonemap → whole video orange. Stamp SDR on the final: `-colorspace bt709
+  -color_primaries bt709 -color_trc bt709 -color_range tv` (works even with `-c:v copy`). Verify
+  with `ffprobe … color_primaries,color_transfer` == bt709.
+- **Finished assets (bumper): geometry only, never a range conversion.** A range "fix"
+  (`in_range=full:out_range=tv`) visibly shifted the bumper; geometry-only + `-c copy` keeps it
+  byte-identical. Removing music from a bumper needs an explicit silent track with `-map 0:v:0
+  -map 1:a:0` (anullsrc) — without `-map` the source audio stays.
+- **Song over bumper**: the MV song ends on the body; the appended bumper is silent / its own —
+  measure with `volumedetect` (bumper region should be ~ -91 dB if silent).
 
 ## How to make a new episode
 

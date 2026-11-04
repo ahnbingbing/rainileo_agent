@@ -39,12 +39,42 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 FONT = Path.home() / "Library/Fonts/Pretendard-Bold.otf"
+FONT_BLACK = Path.home() / "Library/Fonts/Pretendard-Black.otf"      # punchy / pop / spooky
+FONT_PEN = Path.home() / "Library/Fonts/NanumPenScript-Regular.ttf"  # soft handwritten / ballad
+
+# Title-card themes — the M/V title is tuned to the SONG's mood, not one fixed pink card
+# (PD 2026-11-01: "타이틀을 노래마다 음악 감성에 맞춰"). Pick by genre/feel; `pink` = legacy default.
+# A theme sets: kicker label text/colour, title colour, the accent underline colour, title font.
+TITLE_THEMES = {
+    "pink":      dict(kicker="♪ 랴니레오 오리지널 M/V", kicker_color="0xFF6B9D",
+                      title_color="white",     accent="0xFF6B9D", title_font=str(FONT)),
+    "warm":      dict(kicker="♪ 랴니레오 오리지널 M/V", kicker_color="0xF2B65C",
+                      title_color="0xFFF3DF",  accent="0xF2B65C", title_font=str(FONT_PEN)),
+    "halloween": dict(kicker="♪ 랴니레오 할로윈 M/V",   kicker_color="0x9B4DFF",
+                      title_color="0xFF7A18",  accent="0x9B4DFF", title_font=str(FONT_BLACK)),
+    "pop":       dict(kicker="♪ 랴니레오 오리지널 M/V", kicker_color="0x00D4FF",
+                      title_color="0xFFE14D",  accent="0xFF4FA3", title_font=str(FONT_BLACK)),
+}
+
+
+def _resolve_title_style(title_style):
+    """title_style: None (legacy pink) | preset name (str) | dict of overrides → full theme dict."""
+    theme = dict(TITLE_THEMES["pink"])
+    if isinstance(title_style, str):
+        theme.update(TITLE_THEMES.get(title_style, {}))
+    elif isinstance(title_style, dict):
+        theme.update(title_style)
+    return theme
 W, H = 1080, 1920
 BUMPER_DEFAULT = ROOT / "assets/branding/outro_bumper.mp4"
 
 GEOM = f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps=30"
 HLG_TONEMAP = ("zscale=t=linear:npl=203,format=gbrpf32le,zscale=p=bt709,tonemap=mobius:param=0.3,"
-               "zscale=t=bt709:m=bt709:r=tv,format=yuv420p")   # natural HLG→SDR (not blown)
+               "zscale=t=bt709:m=bt709:r=tv,eq=saturation=0.50:brightness=-0.28:contrast=1.3:gamma=0.82,format=yuv420p")
+# ^ strong moody darkening — bright daytime phone clips kept reading "too bright"; this pulls them
+#   down to match the dim live-bar performance mood (PD repeatedly: "실사 다 밝아").
+# ^ HLG→SDR, then pull saturation/brightness back toward the phone's natural look — mobius alone
+#   over-saturated real clips (PD: "실사에 채도 넣지 마"). AV cuts are SDR so never hit this path.
 SDR_NORM = "format=yuv420p"                                     # SDR clips: just 8-bit, tag bt709
 BT709 = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"]
 
@@ -60,6 +90,12 @@ def _probe(path, entry):
     return subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
                            "-show_entries", f"stream={entry}", "-of", "csv=p=0", str(path)],
                           capture_output=True, text=True).stdout.strip()
+
+
+def _dur(path):
+    r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                        "-of", "csv=p=0", str(path)], capture_output=True, text=True)
+    return round(float(r.stdout.strip()), 3)
 
 
 def _color_vf(src) -> str:
@@ -120,13 +156,16 @@ def karaoke_lines(suno_task: str, music_index: int = 0) -> list[dict]:
 
 # ── the pipeline ──────────────────────────────────────────────────────
 def make_mv(song, clips, lines, out, *, bumper=BUMPER_DEFAULT, work=None,
-            caption_box=True, fontsize=60) -> Path:
+            caption_box=True, fontsize=60, title=None, credit="작곡 라레수 · 작사 함미하비",
+            title_style=None, outro_hold=0.0) -> Path:
     """Build a music video.
       song   : path to the song mp3 (its first `total` seconds are used)
       clips  : [{"src": path, "dur": seconds}, ...] in order (real or AV cuts)
       lines  : [{"text","start","end"}, ...] karaoke caption lines (song-relative seconds)
       out    : output mp4 path
       bumper : channel outro bumper (its own audio kept) or None
+      title  : song title shown as a title card over the intro (None = no title)
+      credit : songwriting credit under the title (our songs are original → default 랴니레오)
     Returns the output path. total = sum of clip durs; the final clip is slowed to fill its slot
     so there is no end-freeze."""
     song, out = Path(song), Path(out)
@@ -138,28 +177,70 @@ def make_mv(song, clips, lines, out, *, bumper=BUMPER_DEFAULT, work=None,
     segs = []
     for i, c in enumerate(clips):
         src, dur = Path(c["src"]), float(c["dur"])
+        ss = float(c.get("ss", 0.1))   # per-clip start offset — land on the action on long source clips
         seg = work / f"seg{i:02d}.mp4"
-        last = (i == len(clips) - 1)
+        # `fill`: slow a SHORT fixed-length source (e.g. a 5s Seedance cut) to exactly `dur` so it
+        # fills its slot — same path as the finale. Long real clips omit it and get trimmed instead.
+        last = (i == len(clips) - 1) or bool(c.get("fill"))
+        grade = ("," + c["grade"]) if c.get("grade") else ""   # per-clip cinematic grade (real cuts)
         if last:   # slow the (≤4.9s) clip to EXACTLY `dur` so body == total → no end-freeze
-            vf = f"{_color_vf(src)},setpts=({dur}/4.9)*PTS,{GEOM}"
-            _run(["ffmpeg", "-y", "-ss", "0.1", "-t", "4.9", "-i", src, "-vf", vf, "-an",
+            vf = f"{_color_vf(src)},setpts=({dur}/4.9)*PTS,{GEOM}{grade}"
+            _run(["ffmpeg", "-y", "-ss", ss, "-t", "4.9", "-i", src, "-vf", vf, "-an",
                   "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p",
                   *BT709, "-t", dur, seg])
         else:
-            vf = f"{_color_vf(src)},{GEOM}"
-            _run(["ffmpeg", "-y", "-ss", "0.1", "-t", min(dur, 4.9), "-i", src, "-vf", vf, "-an",
+            vf = f"{_color_vf(src)},{GEOM}{grade}"
+            # non-fill = a long REAL clip → trim to the full requested `dur` (NOT capped at 4.9s,
+            # which is only the Seedance-cut length; capping real clips shortened the video and
+            # broke the song/outro timing). Short Seedance cuts use fill=True instead.
+            _run(["ffmpeg", "-y", "-ss", ss, "-t", dur, "-i", src, "-vf", vf, "-an",
                   "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", *BT709, seg])
         segs.append(seg)
 
     # 2) concat body
     cl = work / "concat.txt"
-    cl.write_text("".join(f"file '{s}'\n" for s in segs), encoding="utf-8")
+    # absolute paths: ffmpeg concat resolves `file` entries relative to the LIST's dir, so a
+    # relative seg path (caller passed relative out/work) would double the prefix.
+    cl.write_text("".join(f"file '{s.resolve()}'\n" for s in segs), encoding="utf-8")
     body = work / "body.mp4"
     _run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", cl,
           "-c:v", "libx264", "-preset", "fast", "-crf", "19", "-pix_fmt", "yuv420p", *BT709, body])
 
     # 3) karaoke captions (song-synced) + end video fade, 4) song audio + fades → mv
+    # Merge CONSECUTIVE identical-text lines: Suno's word alignment sometimes splits one sung
+    # line into two back-to-back groups, which would flash the SAME caption twice in a row.
+    # (Distant repeats — a chorus sung again later — are NOT merged; only adjacent duplicates.)
+    merged = []
+    for ln in lines:
+        if merged and str(merged[-1]["text"]).strip() == str(ln["text"]).strip():
+            merged[-1]["end"] = ln["end"]
+        else:
+            merged.append(dict(ln))
+    lines = merged
     draws = []
+    # Music-video TITLE CARD over the intro (fades in/out, upper area so it never clashes with the
+    # bottom karaoke captions). Designed like a real M/V title: an accent KICKER label + big title +
+    # accent underline + songwriting credit — typography-led (not a subtitle box). Colours/font come
+    # from the per-song THEME (title_style) so the card matches the music's mood, not one fixed pink.
+    if title:
+        ta = "if(lt(t,0.7),(t-0.3)/0.4,if(gt(t,4.4),max(0,(5.0-t)/0.6),1))"
+        th = _resolve_title_style(title_style)
+        accent, tcolor, kcolor, tfont = th["accent"], th["title_color"], th["kicker_color"], th["title_font"]
+        kf = work / "kicker.txt"; kf.write_text(th["kicker"], encoding="utf-8")
+        draws.append(f"drawtext=fontfile='{FONT}':textfile='{kf}':fontsize=46:fontcolor={kcolor}:"
+                     f"borderw=4:bordercolor=black:shadowcolor=black@0.6:shadowx=3:shadowy=3:"
+                     f"x=(w-text_w)/2:y=h*0.135:enable='between(t,0.3,5.0)':alpha='{ta}'")
+        tf = work / "title.txt"; tf.write_text(str(title), encoding="utf-8")
+        draws.append(f"drawtext=fontfile='{tfont}':textfile='{tf}':fontsize=156:fontcolor={tcolor}:"
+                     f"borderw=10:bordercolor=black:shadowcolor=black@0.65:shadowx=7:shadowy=7:"
+                     f"x=(w-text_w)/2:y=h*0.135+62:enable='between(t,0.3,5.0)':alpha='{ta}'")
+        draws.append(f"drawbox=x=(iw-300)/2:y=ih*0.135+252:w=300:h=8:color={accent}:t=fill:"
+                     f"enable='between(t,0.65,4.6)'")
+        if credit:
+            cf2 = work / "credit.txt"; cf2.write_text(str(credit), encoding="utf-8")
+            draws.append(f"drawtext=fontfile='{FONT}':textfile='{cf2}':fontsize=52:fontcolor=white:"
+                         f"borderw=5:bordercolor=black:shadowcolor=black@0.65:shadowx=4:shadowy=4:"
+                         f"x=(w-text_w)/2:y=h*0.135+284:enable='between(t,0.3,5.0)':alpha='{ta}'")
     for j, ln in enumerate(lines):
         s, e = float(ln["start"]), float(ln["end"])
         if s >= total:
@@ -172,28 +253,69 @@ def make_mv(song, clips, lines, out, *, bumper=BUMPER_DEFAULT, work=None,
                      f"borderw=6:bordercolor=black:shadowcolor=black@0.5:shadowx=4:shadowy=4:"
                      + (f"box=1:boxcolor=black@0.42:boxborderw=18:" if caption_box else "")
                      + f"x=(w-text_w)/2:y=h-text_h-205:enable='between(t,{s},{e})':alpha='{a}'")
-    mv = work / "mv_nobumper.mp4"
-    vchain = (",".join(draws) + "," if draws else "") + f"fade=t=out:st={total-1.2:.2f}:d=1.2"
-    _run(["ffmpeg", "-y", "-i", body, "-ss", "0", "-t", total, "-i", song,
-          "-filter_complex", f"[0:v]{vchain}[v]", "-map", "[v]", "-map", "1:a:0",
-          "-af", f"afade=t=in:st=0:d=0.3,afade=t=out:st={total-2.2:.2f}:d=2.2",
+    # mv VIDEO only (captions + title), no audio yet, no end fade-to-black — the song carries
+    # continuity straight into the bumper so there is no abrupt cut.
+    mv = work / "mv_v.mp4"
+    vchain = ",".join(draws) if draws else "null"
+    _run(["ffmpeg", "-y", "-i", body, "-filter_complex", f"[0:v]{vchain}[v]", "-map", "[v]", "-an",
           "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-r", "30",
-          "-fps_mode", "cfr", *BT709, "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
-          "-t", total, "-movflags", "+faststart", mv])
+          "-fps_mode", "cfr", *BT709, "-t", total, "-movflags", "+faststart", mv])
 
-    # 5) append channel bumper (bt709 colour-normalize, keep its OWN audio @48k so concat keeps it)
+    # 5) Let the song finish naturally WITHOUT a long BLACK tail or an EARLY bumper (PD): the music
+    # cuts play through the instrumental outro — holding the last CUT frame (colourful, not the
+    # black bumper) if the song runs longer — and the channel bumper comes ONLY at the very END,
+    # video-only (its own theme audio dropped so the song keeps playing over it).
+    dur_s = _dur(song)
+    bmp, bumper_dur = None, 0.0
     if bumper and Path(bumper).exists():
-        bmp = work / "bumper.mp4"
-        _run(["ffmpeg", "-y", "-i", bumper, "-vf", f"{SDR_NORM},{GEOM}", "-map", "0:v:0", "-map", "0:a:0",
-              "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", *BT709,
-              "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2", bmp])
+        bmp = work / "bumper_v.mp4"
+        # The channel bumper is a FINISHED asset — do NOT touch its colour. Measured: geometry-only
+        # with NO range conversion and NO forced colour tags reproduces the source EXACTLY (patch
+        # meanRGB identical); a range conversion (in=full:out=tv) visibly shifted/warmed it. So we
+        # scale/pad ONLY and leave colour untagged — the pixels pass through unchanged.
+        bumper_geom = (f"scale={W}:{H}:force_original_aspect_ratio=increase,"
+                       f"crop={W}:{H},setsar=1,fps=30,format=yuv420p")
+        _run(["ffmpeg", "-y", "-i", bumper, "-vf", bumper_geom, "-map", "0:v:0", "-an",
+              "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", "-r", "30",
+              "-fps_mode", "cfr", bmp])
+        bumper_dur = _dur(bmp)
+    # music section lasts until the song is done minus the short bumper tail at the very end.
+    # Base the extension on the ACTUAL cuts-video length (not the requested `total`, which can
+    # differ if a clip was shorter than asked) so the song always plays out fully.
+    mv_actual = _dur(mv)
+    music_target = max(mv_actual + outro_hold, dur_s - bumper_dur)
+    mv_music = mv
+    if music_target > mv_actual + 0.3:
+        ext = work / "mv_ext.mp4"
+        _run(["ffmpeg", "-y", "-i", mv, "-vf", f"tpad=stop_mode=clone:stop_duration={music_target-mv_actual:.2f}",
+              "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-r", "30",
+              "-fps_mode", "cfr", *BT709, "-an", ext])
+        mv_music = ext
+    if bmp is not None:
         cl2 = work / "concat2.txt"
-        cl2.write_text(f"file '{mv}'\nfile '{bmp}'\n", encoding="utf-8")
-        _run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", cl2,
-              "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", *BT709,
-              "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2", "-movflags", "+faststart", out])
+        cl2.write_text(f"file '{Path(mv_music).resolve()}'\nfile '{Path(bmp).resolve()}'\n", encoding="utf-8")
+        full = work / "full_v.mp4"
+        _run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", cl2, "-an",
+              "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-r", "30",
+              "-fps_mode", "cfr", *BT709, full])
     else:
-        out.write_bytes(mv.read_bytes())
+        full = mv_music
+    dur = _dur(full)
+    # Suno songs tend to have a LONG intro but a SHORT/abrupt outro (PD). Build a proper graceful
+    # outro: fade the post-vocal instrumental tail from where the LAST lyric ends down to silence
+    # (capped to ≤8s) so the song tapers out instead of hard-stopping — never fades over vocals.
+    last_vocal = max((float(l["end"]) for l in lines), default=0.0)
+    fstart = min(max(last_vocal, dur - 8.0), dur - 1.5)
+    # ★Force SDR bt709 colour TAGS on the final output (even with -c:v copy this writes the mp4 `colr`
+    # atom). Recent iPhone source clips are HLG HDR (bt2020 / arib-std-b67); even after HLG_TONEMAP
+    # converts the PIXELS to SDR, the HDR colour *tags* can leak through to the output, so players
+    # re-tonemap it → the whole video (and the bumper) shows an orange/red cast. Stamping bt709 here
+    # makes players read it as plain SDR = correct colour. (CLAUDE.md "orange cast" gotcha, tag form.)
+    _run(["ffmpeg", "-y", "-i", full, "-stream_loop", "-1", "-i", song,
+          "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", *BT709,
+          "-af", f"afade=t=in:st=0:d=0.3,afade=t=out:st={fstart:.2f}:d={dur-fstart:.2f}",
+          "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2", "-t", f"{dur}",
+          "-movflags", "+faststart", out])
     print(f"DONE → {out} ({total}s + bumper, {len(clips)} cuts, {len(lines)} caption lines)")
     return out
 
