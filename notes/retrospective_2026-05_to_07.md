@@ -1262,8 +1262,10 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   iCloud로 GCS에 넘친다")이 열쇠였다. Fix 4겹: (a) 인입 시 ffprobe(`icloud/sync.py`, 라이브포토 짝 포함), (b) 기존 NULL
   백로그 일괄 backfill(`scripts/backfill_durations.py`, GCS download→probe→delete, recent-first; post-Leo 0 NULL,
   **VM 풀 post-Leo dur>=12 ~98→654**), (c) 후보 단계 per-run net(`producer._backfill_pool_durations`, dur>=12 필터 앞),
-  (d) `ingest_register` import COALESCE — Mac이 NULL을 export해도 VM이 probe한 값을 덮지 못하게(이건 `_probe_clip_seconds`가
-  VM에서 채운 값을 매 import가 조용히 지우던 **잠복 버그**의 정면 수정). ★교훈: "풀이 작다/빈 슬롯"의 원인은 컨텐츠 선택이 아니라
+  (d) `ingest_register` import이 Mac의 NULL export로 VM이 probe한 값을 덮지 못하게(이건 `_probe_clip_seconds`가
+  VM에서 채운 값을 매 import가 조용히 지우던 **잠복 버그**의 정면 수정) — 처음엔 duration 한 컬럼만 prev-보존 가드로
+  막았으나, 이 버그는 `INSERT OR REPLACE`가 **미기재 컬럼 전부**를 미는 메커니즘이라 다른 VM-계산 컬럼에서 재발했다
+  (C_ingestclobber, 11/5): 지금은 `ON CONFLICT DO UPDATE` 업서트로 **일반화**되어 duration 가드는 그 특수 사례. ★교훈: "풀이 작다/빈 슬롯"의 원인은 컨텐츠 선택이 아니라
   **자원·메타데이터 상태가 컨텐츠 실패로 위장**한 것일 수 있다(D_disk와 동류 — 디스크 100%가 render_error로 위장했듯, NULL
   duration이 "소재 없음"으로 위장). 유사도/쿨다운을 튜닝하기 전에 **전제를 ground truth(프레임·파일·GCS 카운트)로 검증하라.**
   cf D_disk(자원고갈의 위장), C16(availability≠usability), C21(footage NULL duration이 6.3s를 43s로 통과시킨 프로브 도입 —
@@ -1489,8 +1491,32 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   모델은 생각을 출력한다** — 단계형 프롬프트는 단계가 머릿속인지 명시하고, 추론이 남을 자리는 스키마 필드로 줘라
   ④**에스컬레이션 재시도는 증상 은폐** — 잘렸을 때 길이를 올리기 전에 왜 길었는지를 남겨라([[D_streamguard]]와
   같은 스파인: 작동하는 재시도가 고장난 주력을 가린다). cf. 위 10/29 길이캡 항목·[[D_modelredirect]].
+- **C_actionlayer. 결정해 놓고 배선 안 한 개선은 수정이 아니다 — 소비 스테이지에 꽂히기 전까지 갭은 그대로다(11/4)** —
+  프레임샘플 VLM 태깅(`scene_description`/`activity`, openai_vision·tag_assets_vlm)은 6~10장만 떠서 **프레임 사이
+  1~2초 동작에 구조적으로 눈이 멀다**("레오가 문으로 나간다", "레오가 랴니 등에 올라탄다"가 태그에 아예 없음). 그래서
+  ①클립 **선택**이 "실제로 무슨 일이 일어나는가"로 못 찾고(PD가 '나가는 클립 찾아봐'→텍스트 검색 0건, 근데 Gemini로
+  영상을 보니 10/21 테라스 클립들에 전부 있었음), ②**캡션**이 정적 프레임에서 동작·주체·타이밍을 틀리게 추측하고 Giri가
+  뒤늦게 반려한다. 근본 처방=`scripts/video_actions.py`(Gemini가 영상을 통째로 봐 `[{start,end,actor,action,desc}]`
+  반환). ★핵심 교훈: 이 액션레이어는 **몇 달 전부터 "쓰기로 결정"돼 있었는데도 프로덕션 선택/그라운딩에 배선된 적이
+  없어**(일회성 MV 용도로만, mv_agent_spec "★별도 필수"·FUTURE TODO로만 존재) 갭이 그대로 남았다 — **결정은 소비처에
+  꽂히기 전까지 아무것도 고치지 않는다.** SHIPPED(c0c7f82, RF 레인): `agents/clip_actions.py`(ensure_column/store/
+  extract/format_actions, 킬스위치 `USE_CLIP_ACTIONS` 기본 ON·전부 fail-silent) → **캡션**=`cameraman._rf_action_
+  grounded_captions`에 그 컷의 네이티브 액션 타임라인을 AUTHORITATIVE로 주입(렌더타임이라 백필 불요, 즉시 라이브) →
+  **선택**=`asset_embed._asset_doc`에 액션 텍스트 합류(클립 검색이 동작으로 매칭; 기존 자산은 백필+임베딩 재빌드 후
+  점등) → `scripts/backfill_actions.py`(idempotent)·`assets.action_moments` 컬럼. AV 레인은 Caption Agent/regen이라
+  무관(의도적 RF-스코프). 검증: '랴니 뒤따라' 컷이 `both: Leo and Ryani walk...`로 그라운딩(프레임-VLM은 한 마리 누락).
+  ★2차(배포): 로컬 백필은 로컬 DB만 채운다 — 프로덕션 선택 점등은 **VM에서** 백필+`asset_embed` 재빌드가 돌아야 한다
+  (운영 진실=VM DB). VM 실행에서 두 함정이 연달아 터졌다: ①DB가 `rianileo` 0600 소유라 ssh 유저로 못 열어 `sudo -u
+  rianileo`로 실행해야 했고(권한) ②더 큰 것 — **`clip_actions`가 의존하는 엔진 `scripts/video_actions.py`가 git
+  untracked(`??`)라 커밋된 적이 없어** VM엔 아예 없었다 → 전 클립 "No module named 'video_actions'", 캡션 경로도
+  fail-silent라 **프로덕션에선 아무것도 안 하고 있었다**(로컬에선 파일이 있어 '작동'처럼 보였다). ★교훈=**의존성을
+  배선하는 건 그 의존성 자체가 레포에 있기 전까지 끝난 게 아니다 — "로컬에서 됨"은 커밋 상태를 증명하지 않는다;
+  git-tracked인지 확인하고, 가능하면 배포 타깃(VM)에서 import까지 검증하라**(D_grammarlive "우회 경로는 계약 상속"의
+  배포 버전; 여기선 우회가 아니라 미커밋 의존성). fix=f8640f0로 video_actions.py 커밋. cf [[grounding_pd_notes_gpt4omini]]·[[grammar_rf_caption_grounding_gap]]·[[mv-pipeline-and-action-layer]]·C_grammarquality(모션 신호 갭).
 
 ### 4.5 인프라 / 파이프라인
+- **C_ingestclobber. 소비처 배선이 끝나도 쓰기 경로가 안 지켜주면 무의미하다 — ingest의 INSERT OR REPLACE가 VM-계산 컬럼을 매 import마다 NULL로 지웠다(11/5)** —
+  Gemini 액션레이어(`action_moments`)를 RF 선택+캡션에 배선(C_actionlayer)하고 VM 백필을 돌렸더니 로그는 `done=262`인데 DB엔 **70개만** 남았다. 근본=`ingest_register.import_`의 `INSERT OR REPLACE INTO assets`가 **행 전체를 재삽입** → Mac export가 싣지 않는 **VM-계산 컬럼(`action_moments`·`duration_sec`·`vis_phash`·`has_human`)을 매번 통째로 NULL**로 만든다. 3.9h 백필 동안 운영 봇의 ingest가 계속 덮어써, 마지막 ingest 이후에 쓴 70개만 살아남았다. 이건 C_nulldur에서 duration을 **일회성 prev-보존 가드**로만 막았던 바로 그 패턴이 새 컬럼에서 재발한 것 — 증상(duration)만 막고 메커니즘(REPLACE가 미기재 컬럼을 민다)을 안 고쳤기 때문. Fix(ad08281)=`ON CONFLICT(asset_id) DO UPDATE` 업서트(미기재 컬럼은 건드리지 않아 보존)+빈 VM-owned 키 드롭(NULL export가 실값을 못 덮게) → `_VM_OWNED` 집합으로 **일반화**(일회성 가드 supersede). ★교훈 2겹: ①**결정→소비처 배선→내구성이 한 세트다** — 선택/캡션을 꽂아도 그 데이터가 동시-쓰기(24/7 운영 봇)에서 살아남지 못하면 갭은 그대로이고, **재런으로 메우는 건 무의미**(다음 ingest가 또 wipe한다). 운영 DB의 모든 쓰기는 멱등+보존(upsert)이어야 한다. ②**일회성 가드는 다음 컬럼에서 재발한다** — 한 증상을 패치하지 말고 메커니즘을 일반화하라. cf C_nulldur(같은 ingest 경로의 duration 일회성 가드 — 이번에 일반 upsert로 흡수), C_actionlayer(이 백필이 점등하려던 소비처 배선), D_streamguard(작동하는 폴백이 죽은 주력을 가리듯, 작동하는 백필이 지워지는 쓰기를 가렸다).
 - **D_lanemix. 라이브 채널 변경은 되돌림을 런타임 플래그로 출하하라 — git-revert만으론 부족하다(9/9)** —
   일일 슬롯 믹스를 2av+2rf 라틴스퀘어 → **3rf+1av**(RF가 도달에서 AV를 이김: RF 514v > AV 341v)로 바꿨다. 문제는
   *무엇을 바꾸냐*가 아니라 *어떻게 안전하게 바꾸냐*였다 — 라이브 채널이라 잘못되면 즉시 되돌려야 한다. Fix=옛 경로
@@ -2205,7 +2231,8 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   최종 출력에 bt709 SDR 태그 강제(`-c:v copy *BT709`로 재인코딩0 각인). (b) **완성 에셋(범퍼)은 손대면 틀어진다** —
   내 range '수정'(full→tv)이 되레 채도 시프트(패치 meanRGB로 수치검증); 지오메트리만·색 무변환, 음악 제거는 무음
   오디오를 **`-map`으로 명시**(안 하면 자기 테마 잔존). (c) **전 컷에 똑같은 오버레이(거미줄·글리터) 떡칠 = 촌스러움**;
-  요소는 컷마다 v2v가 통합 생성하게. ★메타=돈 드는 생성 렌더는 **PD 컨펌 먼저**, 미감은 추측 말고 **PD 레퍼런스
+  요소는 컷마다 v2v가 통합 생성하게 — 단 금지 대상은 **"촌스러운" 떡칠/싸구려 글리터**지 반짝임 자체가 아님(PD 교정),
+  장면에 녹아든 고퀄 반짝임은 허용. ★메타=돈 드는 생성 렌더는 **PD 컨펌 먼저**, 미감은 추측 말고 **PD 레퍼런스
   (share.google→google redirect→소스 URL)를 받아 캘리브레이션**. 상세 작업사양 전체: `notes/mv_agent_feedback_log.md`.
 
 ---
