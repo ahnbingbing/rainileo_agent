@@ -103,6 +103,19 @@ def embed_texts(texts: list[str]) -> "list[list[float]]":
 def _asset_doc(row: dict) -> str:
     parts = [row.get("scene_description") or "", row.get("activity") or "",
              row.get("subjects_csv") or ""]
+    # PD 2026-11-04: fold the per-clip native-video ACTION timeline into the search doc so clip
+    # SELECTION can find a clip by what actually HAPPENS ("Leo climbs on Ryani's back", "walks out
+    # the door") — the frame-sampled scene_description is blind to 1-2s actions. Harmless when the
+    # column is empty (pre-backfill); becomes a live signal once populated.
+    _am = row.get("action_moments")
+    if _am:
+        try:
+            from agents.clip_actions import format_actions
+            _atxt = format_actions(_am)
+            if _atxt:
+                parts.append(_atxt)
+        except Exception:
+            pass
     return " | ".join(p for p in parts if p)
 
 
@@ -113,7 +126,8 @@ def build_index(rebuild: bool = False) -> int:
     con.row_factory = sqlite3.Row
     cols = {r[1] for r in con.execute("PRAGMA table_info(assets)")}
     sel = ["asset_id", "kind", "scene_description"]
-    for c in ("activity", "subjects_csv", "captured_iso", "duration_sec", "file_path"):
+    for c in ("activity", "subjects_csv", "captured_iso", "duration_sec", "file_path",
+              "action_moments"):
         if c in cols:
             sel.append(c)
     rows = [dict(r) for r in con.execute(f"SELECT {','.join(sel)} FROM assets")]

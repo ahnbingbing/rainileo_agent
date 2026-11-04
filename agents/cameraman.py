@@ -2998,6 +2998,23 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
         _gline = _grounding_constraint_line((manifests.get("_grounding") or {}).get(tag))
         if _gline:
             parts.append(_gline)
+        # PD 2026-11-04: NATIVE-video action timeline (Gemini watches the whole cut). Frame sampling
+        # (above) misses a 1-2s move BETWEEN samples → the caption guesses the wrong action/subject/
+        # timing. video_actions reads the cut natively and returns when each action really happens;
+        # fed here as AUTHORITATIVE so the caption matches the real motion instead of a between-frame
+        # guess. Gated by USE_CLIP_ACTIONS; fail-silent (a Gemini hiccup never breaks the render).
+        try:
+            from agents import clip_actions as _ca
+            if _ca.enabled():
+                _atl = _ca.format_actions(_ca.extract(str(mp4)))
+                if _atl:
+                    parts.append(
+                        "[네이티브 영상 액션 타임라인 — 전체 영상을 본 분석, AUTHORITATIVE]: 아래는 이 컷에서 "
+                        "실제로 일어난 동작을 시간순으로 분석한 것이다(프레임 사이 1~2초 동작까지 포함). 캡션의 "
+                        "동작·주체·타이밍은 이 타임라인과 일치해야 한다 — 프레임만 보고 '멈췄다/다른 동작'으로 "
+                        "지어내지 마라:\n" + _atl)
+        except Exception as _e:
+            log.warning("clip-actions caption inject failed: %s", _e)
         parts.append(f"Clip length ≈ {dur:.1f}s. Caption the action beats.")
         # A caption-fix re-render carries PD's specific caption direction via env — honor it
         # while still grounding to the real on-screen beats (roadmap A2 caption mode).
