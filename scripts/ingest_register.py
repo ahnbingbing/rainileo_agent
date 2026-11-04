@@ -22,6 +22,10 @@ from icloud import gcs
 
 BLOB = "db_sync/assets.jsonl"
 
+# Columns the VM computes and the Mac export does NOT own — never let an empty/absent export
+# value overwrite a real VM-side value (see import_ for why). Add new VM-only columns here.
+_VM_OWNED = {"duration_sec", "action_moments", "vis_phash", "has_human"}
+
 
 def _blob():
     from google.cloud import storage
@@ -60,19 +64,26 @@ def import_() -> None:
         if not aid:
             continue
         keys = [c for c in d if c in local_cols]           # tolerate schema drift
-        # INSERT OR REPLACE overwrites the whole row, so a Mac export carrying NULL
-        # duration_sec (the pre-2026-09-04 ingestion default) would re-blind a duration
-        # the VM already probed at render/pool time (_probe_clip_seconds / _backfill_pool_
-        # durations). Preserve a known duration when the incoming value is empty. Backfill
-        # the Mac side (scripts.backfill_durations) so exports carry real values too.
-        if "duration_sec" in keys and not d.get("duration_sec"):
-            prev = con.execute(
-                "SELECT duration_sec FROM assets WHERE asset_id=?", (aid,)).fetchone()
-            if prev and prev[0]:
-                d["duration_sec"] = prev[0]
-        con.execute(
-            f"INSERT OR REPLACE INTO assets ({', '.join(keys)}) "
-            f"VALUES ({', '.join('?' * len(keys))})", [d[k] for k in keys])
+        # VM-OWNED columns the Mac export doesn't compute (duration probe, Gemini action
+        # layer, perceptual hash, human flag). INSERT OR REPLACE used to re-insert the whole
+        # row, NULLing every column the export didn't carry — so each ingest wiped the VM's
+        # action_moments backfill (only rows written after the last ingest survived) and would
+        # re-blind a probed duration. Fix: (1) the ON CONFLICT upsert below only touches listed
+        # keys, so VM-only columns are preserved; (2) drop any VM-owned key whose incoming
+        # value is empty, so a NULL/absent export never clobbers a real VM value. Backfill the
+        # Mac side (scripts.backfill_*) so exports can carry real values and promote them.
+        keys = [c for c in keys if not (c in _VM_OWNED and not d.get(c))]
+        set_cols = [c for c in keys if c != "asset_id"]
+        if set_cols:
+            con.execute(
+                f"INSERT INTO assets ({', '.join(keys)}) "
+                f"VALUES ({', '.join('?' * len(keys))}) "
+                f"ON CONFLICT(asset_id) DO UPDATE SET "
+                + ", ".join(f"{c}=excluded.{c}" for c in set_cols),
+                [d[k] for k in keys])
+        else:
+            con.execute("INSERT INTO assets (asset_id) VALUES (?) "
+                        "ON CONFLICT(asset_id) DO NOTHING", (aid,))
         n += 1
         if aid not in seen_before:
             up += 1
