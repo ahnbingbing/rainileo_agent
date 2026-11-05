@@ -157,7 +157,8 @@ def karaoke_lines(suno_task: str, music_index: int = 0) -> list[dict]:
 # ── the pipeline ──────────────────────────────────────────────────────
 def make_mv(song, clips, lines, out, *, bumper=BUMPER_DEFAULT, work=None,
             caption_box=True, fontsize=60, title=None, credit="작곡 라레수 · 작사 함미하비",
-            title_style=None, title_image=None, outro_hold=0.0) -> Path:
+            title_style=None, title_image=None, outro_hold=0.0,
+            bumper_overlap_fade=None) -> Path:
     """Build a music video.
       song   : path to the song mp3 (its first `total` seconds are used)
       clips  : [{"src": path, "dur": seconds}, ...] in order (real or AV cuts)
@@ -303,23 +304,38 @@ def make_mv(song, clips, lines, out, *, bumper=BUMPER_DEFAULT, work=None,
     # Base the extension on the ACTUAL cuts-video length (not the requested `total`, which can
     # differ if a clip was shorter than asked) so the song always plays out fully.
     mv_actual = _dur(mv)
-    music_target = max(mv_actual + outro_hold, dur_s - bumper_dur)
-    mv_music = mv
-    if music_target > mv_actual + 0.3:
-        ext = work / "mv_ext.mp4"
-        _run(["ffmpeg", "-y", "-i", mv, "-vf", f"tpad=stop_mode=clone:stop_duration={music_target-mv_actual:.2f}",
-              "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-r", "30",
-              "-fps_mode", "cfr", *BT709, "-an", ext])
-        mv_music = ext
-    if bmp is not None:
-        cl2 = work / "concat2.txt"
-        cl2.write_text(f"file '{Path(mv_music).resolve()}'\nfile '{Path(bmp).resolve()}'\n", encoding="utf-8")
+    if bumper_overlap_fade is not None and bmp is not None:
+        # OVERLAP the bumper over the END of the body (fading in) instead of appending it. The final
+        # cut then plays its FULL motion underneath — appending required trimming the cuts, which
+        # made the finale dance "end too fast" (PD 2026-11-05) — while the video still ENDS with the
+        # bumper at the song's finish. Total = body length, so size the cuts ≈ song (minus nothing).
+        ov_start = max(0.0, mv_actual - bumper_dur)
         full = work / "full_v.mp4"
-        _run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", cl2, "-an",
+        fc = (f"[1:v]format=yuva420p,fade=t=in:st=0:d={bumper_overlap_fade}:alpha=1,"
+              f"setpts=PTS+{ov_start:.3f}/TB[bmp];"
+              f"[0:v][bmp]overlay=0:0:enable='gte(t,{ov_start:.3f})':eof_action=pass[v]")
+        _run(["ffmpeg", "-y", "-i", mv, "-i", bmp, "-filter_complex", fc, "-map", "[v]", "-an",
               "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-r", "30",
               "-fps_mode", "cfr", *BT709, full])
     else:
-        full = mv_music
+        # music section lasts until the song is done minus the short bumper tail at the very end.
+        music_target = max(mv_actual + outro_hold, dur_s - bumper_dur)
+        mv_music = mv
+        if music_target > mv_actual + 0.3:
+            ext = work / "mv_ext.mp4"
+            _run(["ffmpeg", "-y", "-i", mv, "-vf", f"tpad=stop_mode=clone:stop_duration={music_target-mv_actual:.2f}",
+                  "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-r", "30",
+                  "-fps_mode", "cfr", *BT709, "-an", ext])
+            mv_music = ext
+        if bmp is not None:
+            cl2 = work / "concat2.txt"
+            cl2.write_text(f"file '{Path(mv_music).resolve()}'\nfile '{Path(bmp).resolve()}'\n", encoding="utf-8")
+            full = work / "full_v.mp4"
+            _run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", cl2, "-an",
+                  "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-r", "30",
+                  "-fps_mode", "cfr", *BT709, full])
+        else:
+            full = mv_music
     dur = _dur(full)
     # Suno songs tend to have a LONG intro but a SHORT/abrupt outro (PD). Build a proper graceful
     # outro: fade the post-vocal instrumental tail from where the LAST lyric ends down to silence
