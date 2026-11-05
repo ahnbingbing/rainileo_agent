@@ -34,6 +34,14 @@ LAUNCH_LEAD_DAYS=2
 # + recent-first (idempotent — only NULL/<=0). Runs before prune/batch. COALESCE in ingest_register
 # keeps a Mac NULL export from re-blinding it.
 0   1 * * *   $J -m scripts.backfill_durations --limit 400        >> $LOG/cron.backfill_dur.log 2>&1
+# PD 2026-11-05: Gemini native-video ACTION layer (action_moments) for NEW clips — mirrors the
+# duration backfill. Recent-first, bounded, idempotent (only NULL rows). Caption grounding reads it
+# NATIVELY at render time; the incremental embed below folds it into the SELECTION index so the Writer
+# can find a clip by what HAPPENS (frame-sampled VLM misses 1-2s actions). ORDER MATTERS: backfill
+# fills the action BEFORE the embed, so a newly-imported clip is embedded WITH its actions (incremental
+# embed won't re-embed an already-indexed clip). Needs GOOGLE_API_KEY (run_job.sh sources /etc/rianileo/env).
+40  1 * * *   $J -m scripts.backfill_actions --limit 120          >> $LOG/cron.backfill_actions.log 2>&1
+30  4 * * *   $J -m agents.asset_embed --build                    >> $LOG/cron.embed.log 2>&1
 # PD 2026-08-21: prune render scratch BEFORE the 03:00 batch so a full disk never turns
 # renders into render_error (empty slots). Only touches regenerable scratch, never sources/episodes.
 50  2 * * *   bash /home/rianileo/rianileo-agent/scripts/prune_render_scratch.sh >> $LOG/cron.prune.log 2>&1

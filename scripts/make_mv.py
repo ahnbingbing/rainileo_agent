@@ -157,7 +157,7 @@ def karaoke_lines(suno_task: str, music_index: int = 0) -> list[dict]:
 # ── the pipeline ──────────────────────────────────────────────────────
 def make_mv(song, clips, lines, out, *, bumper=BUMPER_DEFAULT, work=None,
             caption_box=True, fontsize=60, title=None, credit="작곡 라레수 · 작사 함미하비",
-            title_style=None, outro_hold=0.0) -> Path:
+            title_style=None, title_image=None, outro_hold=0.0) -> Path:
     """Build a music video.
       song   : path to the song mp3 (its first `total` seconds are used)
       clips  : [{"src": path, "dur": seconds}, ...] in order (real or AV cuts)
@@ -222,7 +222,10 @@ def make_mv(song, clips, lines, out, *, bumper=BUMPER_DEFAULT, work=None,
     # bottom karaoke captions). Designed like a real M/V title: an accent KICKER label + big title +
     # accent underline + songwriting credit — typography-led (not a subtitle box). Colours/font come
     # from the per-song THEME (title_style) so the card matches the music's mood, not one fixed pink.
-    if title:
+    # A pre-rendered PNG title card (full-frame RGBA) wins over drawtext — it lets the caller
+    # compose real typography (script fonts, soft shadows, two-tone lockups) that ffmpeg drawtext
+    # can't. Overlaid with the same fade envelope in the render step below; drawtext title skipped.
+    if title and not title_image:
         ta = "if(lt(t,0.7),(t-0.3)/0.4,if(gt(t,4.4),max(0,(5.0-t)/0.6),1))"
         th = _resolve_title_style(title_style)
         accent, tcolor, kcolor, tfont = th["accent"], th["title_color"], th["kicker_color"], th["title_font"]
@@ -234,8 +237,12 @@ def make_mv(song, clips, lines, out, *, bumper=BUMPER_DEFAULT, work=None,
         draws.append(f"drawtext=fontfile='{tfont}':textfile='{tf}':fontsize=156:fontcolor={tcolor}:"
                      f"borderw=10:bordercolor=black:shadowcolor=black@0.65:shadowx=7:shadowy=7:"
                      f"x=(w-text_w)/2:y=h*0.135+62:enable='between(t,0.3,5.0)':alpha='{ta}'")
-        draws.append(f"drawbox=x=(iw-300)/2:y=ih*0.135+252:w=300:h=8:color={accent}:t=fill:"
-                     f"enable='between(t,0.65,4.6)'")
+        # Accent underline is OPTIONAL: a theme with accent="" / None skips the bar entirely
+        # (a hard rule under the title can read templatey / clash — PD 2026-11-05 on 산책냥's
+        # pink line). Typography alone (kicker + title + credit) is the cleaner default.
+        if accent:
+            draws.append(f"drawbox=x=(iw-300)/2:y=ih*0.135+252:w=300:h=8:color={accent}:t=fill:"
+                         f"enable='between(t,0.65,4.6)'")
         if credit:
             cf2 = work / "credit.txt"; cf2.write_text(str(credit), encoding="utf-8")
             draws.append(f"drawtext=fontfile='{FONT}':textfile='{cf2}':fontsize=52:fontcolor=white:"
@@ -257,9 +264,22 @@ def make_mv(song, clips, lines, out, *, bumper=BUMPER_DEFAULT, work=None,
     # continuity straight into the bumper so there is no abrupt cut.
     mv = work / "mv_v.mp4"
     vchain = ",".join(draws) if draws else "null"
-    _run(["ffmpeg", "-y", "-i", body, "-filter_complex", f"[0:v]{vchain}[v]", "-map", "[v]", "-an",
-          "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-r", "30",
-          "-fps_mode", "cfr", *BT709, "-t", total, "-movflags", "+faststart", mv])
+    if title_image and Path(title_image).exists():
+        # Overlay the PNG title card with a soft fade in/out over the intro (same envelope as the
+        # drawtext title would have had). -loop 1 makes the still a stream so the alpha fade has a
+        # timeline; overlay `enable` + output -t bound it.
+        fc = (f"[0:v]{vchain}[bg];"
+              f"[1:v]format=rgba,fade=t=in:st=0.3:d=0.4:alpha=1,"
+              f"fade=t=out:st=4.4:d=0.6:alpha=1[ttl];"
+              f"[bg][ttl]overlay=0:0:enable='between(t,0.3,5.0)'[v]")
+        _run(["ffmpeg", "-y", "-i", body, "-loop", "1", "-i", str(title_image),
+              "-filter_complex", fc, "-map", "[v]", "-an",
+              "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-r", "30",
+              "-fps_mode", "cfr", *BT709, "-t", total, "-movflags", "+faststart", mv])
+    else:
+        _run(["ffmpeg", "-y", "-i", body, "-filter_complex", f"[0:v]{vchain}[v]", "-map", "[v]", "-an",
+              "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-r", "30",
+              "-fps_mode", "cfr", *BT709, "-t", total, "-movflags", "+faststart", mv])
 
     # 5) Let the song finish naturally WITHOUT a long BLACK tail or an EARLY bumper (PD): the music
     # cuts play through the instrumental outro — holding the last CUT frame (colourful, not the
