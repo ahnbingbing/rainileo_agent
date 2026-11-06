@@ -36,6 +36,12 @@
     <dict>
       <key>TZ</key><string>Asia/Seoul</string>
       <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+      <!-- PD 2026-07-21: mirror the VM's run_job.sh (export PYTHONPATH=$APP_DIR). Bare-path
+           subprocesses the render spawns (e.g. scripts/burn_captions.py) import the `agents`
+           package; without repo root on PYTHONPATH they die with ModuleNotFoundError and every
+           slot empties in BOTH lanes. burn_captions.py is now self-sufficient too, but this
+           keeps the whole batch env consistent with the VM. Takes effect on plist reload. -->
+      <key>PYTHONPATH</key><string>/Users/ahnbingbing/code/rianileo-agent</string>
       <key>LOG_LEVEL</key><string>INFO</string>
       <key>ARC_ENABLED</key><string>1</string>
       <key>YOUTUBE_AUTO_UPLOAD</key><string>1</string>
@@ -58,8 +64,14 @@
       <key>Minute</key><integer>0</integer>
     </dict>
 
-    <key>StandardOutPath</key><string>/Users/ahnbingbing/code/rianileo-agent/data/logs/launch.out.log</string>
-    <key>StandardErrorPath</key><string>/Users/ahnbingbing/code/rianileo-agent/data/logs/launch.err.log</string>
+    <!-- PD 2026-07-21: write to cron.launch.log (both streams), mirroring the VM's
+         run_job.sh `>> cron.launch.log 2>&1`. The Slack board's read_log tool maps the
+         batch-debug names (launch_out/launch_err/cron_launch/batch_problems) to
+         cron.launch.log; while the Mac launchd wrote launch.out/err.log the board reported
+         "로그 없음" and the real failure cause sat in a file it never read. Unified now.
+         Takes effect on plist reload. -->
+    <key>StandardOutPath</key><string>/Users/ahnbingbing/code/rianileo-agent/data/logs/cron.launch.log</string>
+    <key>StandardErrorPath</key><string>/Users/ahnbingbing/code/rianileo-agent/data/logs/cron.launch.log</string>
 
     <key>RunAtLoad</key><false/>
     <key>ProcessType</key><string>Background</string>
