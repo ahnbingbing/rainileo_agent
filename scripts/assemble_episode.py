@@ -127,6 +127,45 @@ MUSIC_FADEOUT_S = 2.0    # tail fade — last 2s of the episode dip to silence
 EPISODE_W = 1080
 EPISODE_H = 1920
 
+# ─── Colour management (HLG/HDR → SDR) ────────────────────────────────────
+# Recent iPhone clips are HLG HDR (bt2020 / arib-std-b67). The concat filter
+# stamps the OUTPUT with the colour metadata of the first tagged input, so a
+# single HLG cut makes the WHOLE episode file tagged HLG — players/YouTube then
+# re-tonemap everything, and the SDR channel bumper (untagged, bt709) gets
+# crushed warm/orange → the "red outro bumper" / orange-cast bug. Fix (mirrors
+# scripts/make_mv.py, CLAUDE.md "orange cast" gotcha): tone-map each HLG/PQ input
+# to SDR *pixels* here, leave SDR inputs (incl. the finished bumper) untouched,
+# and stamp bt709 SDR tags on the final output so no HDR tag can leak.
+# Gentle, exposure-PRESERVING tonemap (PD "원본 그대로"): plain mobius + a mild
+# saturation/contrast touch to counter tonemap flatness. NOT make_mv.py's heavy
+# artistic eq (brightness -0.28 etc.) — that halved documentary-footage luma
+# (measured ~137→63). Production RF must stay naturally exposed.
+HLG_TONEMAP = ("zscale=t=linear:npl=203,format=gbrpf32le,zscale=p=bt709,"
+               "tonemap=mobius,zscale=t=bt709:m=bt709:r=tv,"
+               "eq=saturation=1.05:contrast=1.03,format=yuv420p")
+BT709_TAGS = ["-colorspace", "bt709", "-color_primaries", "bt709",
+              "-color_trc", "bt709", "-color_range", "tv"]
+
+
+def _probe_color_transfer(mp4: Path) -> str:
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=color_transfer", "-of", "csv=p=0", str(mp4)],
+            capture_output=True, text=True, check=True)
+        return r.stdout.strip().strip(",")
+    except Exception:
+        return ""
+
+
+def _color_prefix(mp4: Path) -> str:
+    """Per-input colour normaliser as a filter fragment (ends in ',' or '').
+    HLG/PQ clip → tone-map to SDR bt709; any SDR clip (incl. the bumper) → '' so
+    its pixels pass through untouched (geometry only, never a range conversion)."""
+    if _probe_color_transfer(mp4) in ("arib-std-b67", "smpte2084"):
+        return HLG_TONEMAP + ","
+    return ""
+
 
 def _rel(p: Path) -> str:
     """Repo-relative path for logging; falls back to absolute."""
@@ -254,8 +293,10 @@ def build_cmd(clips: list[Path], cut_durations: list[float],
             delta = max(-0.5, min(0.5, delta))
             if abs(delta) > 0.05:  # only correct large exposure gaps
                 eq_filter = f"eq=brightness={delta:.3f},"
+        # HLG/HDR cuts are tone-mapped to SDR here (SDR cuts & the bumper pass
+        # through) so the concat output can't inherit an HDR tag — see _color_prefix.
         norm_chains.append(
-            f"[{i}:v]{setpts_filter}{eq_filter}"
+            f"[{i}:v]{_color_prefix(clips[i])}{setpts_filter}{eq_filter}"
             f"scale={EPISODE_W}:{EPISODE_H}:force_original_aspect_ratio=decrease,"
             f"pad={EPISODE_W}:{EPISODE_H}:(ow-iw)/2:(oh-ih)/2:color=black,"
             f"setsar=1,fps=30[v{i}]"
@@ -401,6 +442,7 @@ def build_cmd(clips: list[Path], cut_durations: list[float],
         "-map", "[vout]",
         "-map", "[aout]",
         "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+        *BT709_TAGS,
         "-c:a", "aac", "-b:a", "192k",
         "-movflags", "+faststart",
         str(out),
