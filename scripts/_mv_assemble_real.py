@@ -20,8 +20,8 @@ TOTAL = 32.3          # end right after "행복하자" (31.4) — no dead instru
 # tone-mapping, then tagging the concat bt2020, made players render EVERYTHING (incl. the SDR
 # bumper) orange. Fix: tone-map only the HDR clips HLG→SDR, normalize SDR clips to bt709, and
 # tag the whole output bt709 SDR so every player renders the original colours.
-HLG_TONEMAP = ("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=hable,"
-               "zscale=t=bt709:m=bt709:r=tv,format=yuv420p")
+HLG_TONEMAP = ("zscale=t=linear:npl=203,format=gbrpf32le,zscale=p=bt709,tonemap=mobius:param=0.3,"
+               "zscale=t=bt709:m=bt709:r=tv,format=yuv420p")   # npl=100/hable blew highlights; this is natural
 # SDR clips were NOT the orange problem (only the HLG ones were). zscale-converting them fails
 # when their transfer tag is 'unknown' (seg5) — and is unneeded — so just ensure 8-bit and let
 # the bt709 OUTPUT tags apply. (A bt601 SD clip tagged bt709 shifts only negligibly.)
@@ -48,7 +48,7 @@ CUTS = [   # (name, source, seconds, freeze_tail)
     ("r5", R/"seg5.mp4", 3.5, False),
     ("r6", R/"seg6.mp4", 3.2, False),
     ("r7", R/"seg7.mp4", 4.0, False),
-    ("r8", R/"seg8.mp4", 5.0, False),   # '둘이 포근 쉬기' finale — real motion + slow push-in, then fade
+    ("r8", R/"seg8.mp4", 5.6, False),   # '둘이 포근 쉬기' finale — real motion + slow push-in, then fade
 ]
 CAPTIONS = [
     ("까만 털에 꼬리 없는 랴니",      2.20,  5.50),
@@ -77,12 +77,17 @@ def main():
     for name, src, dur, freeze in CUTS:
         src = src if src.exists() else R/"seg1.mp4"
         seg = work/f"{name}.mp4"
-        d = min(dur, 4.9)
         vf = f"{_color_vf(src)},{GEOM}"   # HDR→SDR tone-map or SDR→bt709, THEN geometry
-        run(["ffmpeg","-y","-ss","0.1","-t",f"{d}","-i",str(src),"-vf",vf,
-             "-an","-c:v","libx264","-preset","fast","-crf","18","-pix_fmt","yuv420p",*BT709,str(seg)])
+        if name == CUTS[-1][0]:   # ★finale: slow the clip to EXACTLY fill its slot → body==TOTAL (no end-freeze)
+            vf = f"{_color_vf(src)},setpts=({dur}/4.9)*PTS,{GEOM}"
+            run(["ffmpeg","-y","-ss","0.1","-t","4.9","-i",str(src),"-vf",vf,
+                 "-an","-c:v","libx264","-preset","fast","-crf","18","-pix_fmt","yuv420p",*BT709,"-t",f"{dur}",str(seg)])
+        else:
+            d = min(dur, 4.9)
+            run(["ffmpeg","-y","-ss","0.1","-t",f"{d}","-i",str(src),"-vf",vf,
+                 "-an","-c:v","libx264","-preset","fast","-crf","18","-pix_fmt","yuv420p",*BT709,str(seg)])
         segs.append(seg)
-        if len(pols) < 7:
+        if False:  # ★폴라로이드 제거 — 랴니 얼굴 가림 (PD 2026-10-29)
             pol = work/f"{name}_pol.png"; rot = 6 if len(pols) % 2 == 0 else -6
             run(["ffmpeg","-y","-ss","1.0","-i",str(seg),"-frames:v","1",
                  "-vf",(f"scale=150:-1,pad=iw+14:ih+14:7:7:white,pad=iw+26:ih+46:13:9:white,"
@@ -104,8 +109,12 @@ def main():
         fc.append(f"[{i+1}:v]format=rgba,fade=t=in:st={appear:.2f}:d=0.25:alpha=1[p{i}]")
         fc.append(f"{last}[p{i}]overlay=x={x}:y={y}:enable='gte(t,{appear:.2f})'[v{i}]"); last=f"[v{i}]"
     withpol = work/"withpol.mp4"
-    run(["ffmpeg","-y",*inputs,"-filter_complex",";".join(fc),"-map",last,
-         "-c:v","libx264","-preset","fast","-crf","19","-pix_fmt","yuv420p","-r","30","-fps_mode","cfr",*BT709,"-t",f"{TOTAL}",str(withpol)])
+    if pols:
+        run(["ffmpeg","-y",*inputs,"-filter_complex",";".join(fc),"-map",last,
+             "-c:v","libx264","-preset","fast","-crf","19","-pix_fmt","yuv420p","-r","30","-fps_mode","cfr",*BT709,"-t",f"{TOTAL}",str(withpol)])
+    else:
+        run(["ffmpeg","-y","-i",str(body),
+             "-c:v","libx264","-preset","fast","-crf","19","-pix_fmt","yuv420p","-r","30","-fps_mode","cfr",*BT709,"-t",f"{TOTAL}",str(withpol)])
 
     draws = []
     for j,(txt,s,e) in enumerate(CAPTIONS):

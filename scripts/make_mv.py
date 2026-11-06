@@ -158,7 +158,7 @@ def karaoke_lines(suno_task: str, music_index: int = 0) -> list[dict]:
 def make_mv(song, clips, lines, out, *, bumper=BUMPER_DEFAULT, work=None,
             caption_box=True, fontsize=60, title=None, credit="작곡 라레수 · 작사 함미하비",
             title_style=None, title_image=None, outro_hold=0.0,
-            bumper_overlap_fade=None) -> Path:
+            bumper_overlap_fade=None, caption_style=None) -> Path:
     """Build a music video.
       song   : path to the song mp3 (its first `total` seconds are used)
       clips  : [{"src": path, "dur": seconds}, ...] in order (real or AV cuts)
@@ -249,18 +249,34 @@ def make_mv(song, clips, lines, out, *, bumper=BUMPER_DEFAULT, work=None,
             draws.append(f"drawtext=fontfile='{FONT}':textfile='{cf2}':fontsize=52:fontcolor=white:"
                          f"borderw=5:bordercolor=black:shadowcolor=black@0.65:shadowx=4:shadowy=4:"
                          f"x=(w-text_w)/2:y=h*0.135+284:enable='between(t,0.3,5.0)':alpha='{ta}'")
+    # Caption styles (karaoke lines). Each line may carry an "en" translation for bilingual display:
+    #   None/legacy → single KO line at the bottom.
+    #   "lyric"     → lyric-video treatment: KO hero (big) + EN below, lower-third, prominent.
+    #   "cover"     → cover/subtitle treatment: KO + EN stacked at the very bottom, understated box.
+    def _cap(tf_path, size, color, yexpr, bw, box, a, s, e):
+        return (f"drawtext=fontfile='{FONT}':textfile='{tf_path}':fontsize={size}:fontcolor={color}:"
+                f"borderw={bw}:bordercolor=black:shadowcolor=black@0.5:shadowx=3:shadowy=3:"
+                + (f"box=1:boxcolor=black@0.45:boxborderw=14:" if box else "")
+                + f"x=(w-text_w)/2:y={yexpr}:enable='between(t,{s},{e})':alpha='{a}'")
     for j, ln in enumerate(lines):
         s, e = float(ln["start"]), float(ln["end"])
         if s >= total:
             continue
         e = min(e, total)
-        cf = work / f"cap{j}.txt"
-        cf.write_text(ln["text"], encoding="utf-8")
         a = f"if(lt(t,{s+0.2}),(t-{s})/0.2,if(gt(t,{e-0.25}),max(0,({e}-t)/0.25),1))"
-        draws.append(f"drawtext=fontfile='{FONT}':textfile='{cf}':fontsize={fontsize}:fontcolor=white:"
-                     f"borderw=6:bordercolor=black:shadowcolor=black@0.5:shadowx=4:shadowy=4:"
-                     + (f"box=1:boxcolor=black@0.42:boxborderw=18:" if caption_box else "")
-                     + f"x=(w-text_w)/2:y=h-text_h-205:enable='between(t,{s},{e})':alpha='{a}'")
+        ko = work / f"cap{j}.txt"; ko.write_text(ln["text"], encoding="utf-8")
+        en_txt = (ln.get("en") or "").strip()
+        en = None
+        if en_txt:
+            en = work / f"capen{j}.txt"; en.write_text(en_txt, encoding="utf-8")
+        if caption_style == "lyric" and en:
+            draws.append(_cap(ko, 66, "white",     "h*0.620",     7, False, a, s, e))
+            draws.append(_cap(en, 42, "0xFFF0D8",  "h*0.620+92",  5, False, a, s, e))
+        elif caption_style == "cover" and en:
+            draws.append(_cap(ko, 54, "white",     "h-316",       6, caption_box, a, s, e))
+            draws.append(_cap(en, 36, "0xEAEAEA",  "h-236",       5, caption_box, a, s, e))
+        else:
+            draws.append(_cap(ko, fontsize, "white", "h-text_h-205", 6, caption_box, a, s, e))
     # mv VIDEO only (captions + title), no audio yet, no end fade-to-black — the song carries
     # continuity straight into the bumper so there is no abrupt cut.
     mv = work / "mv_v.mp4"
