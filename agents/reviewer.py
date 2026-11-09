@@ -107,6 +107,7 @@ Before judging anything else, scan each frame against the burned-in caption visi
 - **캡션이 안 바뀜 — 하나가 너무 오래 (real_footage, PD 2026-07-08)**: RF는 캡션이 이야기를 끌어가므로, 캡션은 클립의 동작 순간마다 바뀌어야 한다. 샘플한 프레임 대부분이 **같은 캡션 한 줄**을 그대로 달고 있으면(긴 클립인데 처음부터 끝까지 캡션이 거의 안 바뀜) 그 자체로 결함 — flag "캡션이 안 바뀜 — 하나가 너무 오래" and cap ≤6. (이건 96번의 '너무 빨리 바뀜'과 반대 극. 읽을 시간은 주되, 한 줄로 15초를 버티면 안 된다.)
 - **표면·장소·목적지 그라운딩 (PD 2026-07-08)**: 캡션이 특정 표면이나 장소/목적지를 명시하면 프레임의 실제와 반드시 일치해야 한다. 펫이 어디에 있고 어디로 가는지는 프레임에 분명히 보인다. 두 축 모두 CHECK 0 거짓이다 → caption_vs_clip_mismatches에 기록하고 cap ≤5. (a) **표면은 서로 대체 불가**: 소파 ≠ 침대 ≠ 방석 ≠ 맨바닥(마루/타일/잔디). "침대"라는데 실제로 소파거나, "침대"라는데 맨 바닥이면 거짓 — 같은 '푹신한 면'끼리라도 소파를 침대라 하면 틀린 것이다. (b) **명명된 목적지/장소도 정체가 맞아야 한다**: 창가 ≠ 현관 ≠ 부엌 ≠ 문 앞. 레오가 현관 쪽으로 가는데 캡션이 "창가"라고 하면, 이동은 맞아도 목적지 정체가 거짓이다.
 - **제목↔내용(특히 첫 컷) 일관성 — TITLE COHERENCE (PD 2026-11-09)**: the TITLE declares the episode's subject and story — a specific pet and/or a specific event (e.g. "집에 오자마자 딸 옷에 꽂힌 레오 — 소매가 머리에 쏙" declares the episode is about LEO and the daughter's-clothes sniffing). EVERY cut, and ESPECIALLY the FIRST cut (the hook the viewer actually opened for), must BELONG to that declared subject/story. Judge from frames + the burned caption per cut: does each cut — above all cut 1 — actually depict what the title sells? If a cut shows a DIFFERENT pet alone, or a DIFFERENT place/event the title never promised, that cut BETRAYS the title — the viewer opened for the titled story and the opening frame delivers something unrelated. (Worked example that WRONGLY shipped: title "집에 오자마자 딸 옷에 꽂힌 레오" (about Leo + the clothes), but cut1 was a CAFE scene whose caption was "랴니, 옆 친구랑 시간 멈춘 듯 조용모드" — a Ryani-about, cafe caption with nothing to do with Leo or the clothes; Writer/Director/Giri all missed it.) This is a title-level caption-vs-clip lie → log the offending cut(s) in `caption_vs_clip_mismatches` stating the title-vs-cut contradiction, note "제목-내용 불일치 — 제목이 판 주제를 컷이 배신(특히 첫 컷)" in `개선점`, verdict MUST be "수정 필요", and cap ≤5. The FIRST cut carries the most weight — a hook that doesn't match the title is the worst offender and alone caps ≤5. (False-positive guard: a cut showing the titled pet/story from a different angle, or the OTHER pet present ALONGSIDE the titled one, is FINE — flag only when a cut is clearly OFF the titled subject/event: the wrong pet SOLO, or an unrelated place/scene the title never set up.)
+- **제목이 파는 동작·묘기도 프레임에 실재해야 — TITLE CLAIMS AN ACTION (PD 2026-11-09)**: the title-coherence rule above is about the titled SUBJECT; this is its ACTION twin, the title-level version of the caption claimed-action rule (CHECK 0 above). If the TITLE sells a specific feat/action/event — 회전 묘기/점프/날기/춤/수영/first-ever X — then some cut's FRAMES must actually show that feat. A title promising "차 안에서 회전 묘기!" over footage where the pet only sits and looks around (no spin, no trick anywhere) is a title-level fabrication selling a stunt the video never delivers — the viewer opened for the trick and never sees it. Give the titled feat NO benefit of the doubt (same as a kick caption): if you do not SEE the claimed action across the frames, flag "제목 날조 — 제목이 판 동작/묘기가 영상에 없음" in `개선점`, log it in `caption_vs_clip_mismatches`, verdict 수정 필요, cap ≤5. (False-positive guard: a title naming a MOOD or a static situation — "나란히 낮잠", "창밖 구경" — claims no action, so this never applies; flag only a concretely-promised feat the frames plainly lack.)
 - **A caption-vs-clip mismatch requires FRAME EVIDENCE — do NOT fabricate one (PD 2026-07-23, critical reviewer-accuracy fix, parallel to the sparse-sampling note in CHECK 0).** A `caption_vs_clip_mismatches` entry is ONLY valid when the frames you can SEE UNAMBIGUOUSLY CONTRADICT the caption — a claimed kick/motion/scene-change (94-95) or surface/place (99) that plainly isn't happening. Two false-positive patterns are FORBIDDEN because they wrongly emptied good slots:
   1. **Pet-ABSENCE inferred from sparse frames.** Both pets are often in frame together, and per-scene pet-visibility + caption grounding is ALREADY enforced upstream by the deterministic real_footage grounding gate (2 frames per scene). You review a sparse whole-episode sample — you CANNOT prove a named pet is absent. Do NOT log a mismatch because you don't spot a named pet in your sampled frame (it may be elsewhere in the frame/scene), nor because the caption names a pet that isn't the frame's *main* action while it is still present (a cat sitting on the table captioned as "on the table" is CORRECT even if a person is petting the dog in the same shot). Worked example: a cafe cut captioned "레오, 식탁 위 냥-오브제" was wrongly flagged "레오 없음" and the slot emptied — the orange cat was plainly on the table.
   2. **Deviation from the STORYBOARD.** Judge caption-vs-CLIP truthfulness, NEVER caption-vs-storyboard. The burned caption is deliberately grounded to what the clip ACTUALLY shows (the upstream grounding gate rewrites captions to match reality, overriding the storyboard intent). A caption that differs from the storyboard beat but matches the clip is CORRECT — do NOT flag it or deduct for it.
@@ -135,14 +136,19 @@ looks. These are CAPS (a ceiling), not soft notes:
   clearly a past baby-Leo moment misleads. Flag "잘못된 시점" and cap ≤6 (verdict ≤ 수정 필요).
   (Only when the frame clearly shows the young/baby pet — give an ambiguous adult clip the
   benefit of the doubt.)
-- **era-mix 인과성 없음 (real_footage)**: a time anchor is necessary but NOT sufficient.
-  Even WITH "○년 전"/"지금은" captions, if two different-era clips are just stitched
-  together with no causal/story link — e.g. a recent 먹방 cut followed by an unrelated
-  8-years-ago 친구 만남 — the story breaks ("왜 이게 이어지지?"). A coherent episode is ONE
-  event/flow, or an era-mix bound by an explicit cause→effect / then-now memory-lane arc.
-  If the cuts read as unrelated clips from different times bolted together, flag
-  "인과성 없는 era-mix — 무관 클립 나열" and cap ≤6 (verdict ≤ 수정 필요), even if the
-  timeframe is captioned.
+- **서로 다른 나들이·날·장소를 한 편으로 봉합 — 무관 클립 나열 (real_footage)**: a coherent RF
+  episode is ONE event/flow — a single outing/occasion (or an explicit then-now memory-lane / cause→effect
+  arc that BINDS the pieces). It breaks when cuts are really SEPARATE occasions bolted together with no
+  link. Two shapes of the same defect: (a) **different ERA** — a recent 먹방 cut followed by an unrelated
+  8-years-ago 친구 만남; a time anchor ("○년 전"/"지금은") is necessary but NOT sufficient — bare
+  stitching still reads "왜 이게 이어지지?". (b) **same era, different DAY/PLACE** — even all-recent clips
+  from DIFFERENT outings mashed as one continuous event, e.g. cut1 a car ride, cut2/3 a cafe on another
+  day, framed as a single "주말 나들이". Use BOTH the frames (car vs cafe = plainly different places) and
+  the `sources` capture dates (`captured_iso` differing by days = different occasions) as evidence. If the
+  cuts read as unrelated clips from different occasions nailed together with no binding arc, flag
+  "무관 클립 나열 — 서로 다른 나들이/날 봉합" and cap ≤6 (verdict ≤ 수정 필요), even if the timeframe is
+  captioned. (One real outing shot across a short span — same day, same place — is fine; flag only a
+  genuine different-occasion jumble.)
 - **역할/루틴 스왑 premise (ai_vtuber)**: the concept must NOT be built on "the two pets
   swap each other's roles/routines" (역할 반전·루틴 체인지·상대 흉내내기·입장 바꾸기). This
   premise recurs and reads stale — the humor should come from each pet's REAL personality
@@ -261,7 +267,12 @@ looks. These are CAPS (a ceiling), not soft notes:
   2-second glance. This is a SEPARATE axis from the caption-vs-content checks: 내용과 맞아도
   말이 안 통하면 실패다. Flag "제목/컨셉 조어 — 말이 안 통함", cap ≤6. (Worked example: an
   episode titled "레오의 관조봇 따라하기" — '관조봇'은 없는 말이라 레오가 무엇을 따라하는지
-  안 잡힌다; "명상하는 누나 따라하기"처럼 실재어면 통한다.)
+  안 잡힌다; "명상하는 누나 따라하기"처럼 실재어면 통한다.) The same "readable Korean" bar bans
+  **비-한글 문자 혼입** — a Korean-channel title must be written in 한글(+필요한 영어/숫자/이모지),
+  NOT 한자(漢字)나 kana: "🚗好奇심 폭발" should read "호기심 폭발". A lone hanja word reads as broken
+  orthography in the 2-second glance. (This specific orthography defect is ALSO enforced deterministically
+  in code — a title script gate caps ≤5 — because the LLM tends to under-flag a single real hanja word;
+  still flag "제목 비-한글 문자 혼입" if you see it.)
 - **테마 과장 — 잔잔한 영상을 배틀/축제로 부풀림 (양레인, SOFT 노트)**: if the `title`/`theme`
   frames the footage with far more energy than it actually has — a calm cool-off / nap / 나란히
   쉼 hyped as a 워터밤·전쟁·대결·챌린지 while the frames show a quiet mundane moment — the promised
@@ -865,6 +876,32 @@ _TEMPORAL_TOKENS = (
     "ago", "back then", "back when", "used to", "younger", "as a baby",
     "as a puppy", "as a kitten", "grew up", "years back", "as a pup", "as a kit",
 )
+
+
+def _title_script_gate(concept: "dict | None", report: dict) -> None:
+    """Deterministic title-orthography gate (PD 2026-11-09). A Korean-channel title must be
+    written in 한글 (+ 영어/숫자/이모지/구두점), NOT 한자(漢字) or Japanese kana. The LLM
+    under-flags a lone real hanja word (好奇 for 호기), so the rule lived only in the prompt and
+    slipped through (shipped title "🚗好奇심 폭발 레오와 가을 나들이"). Compute it in code and feed
+    Giri the verdict: any CJK ideograph / hiragana / katakana in the title → cap ≤5, 수정 필요.
+    GIRI_TITLE_SCRIPT_GATE=0 reverts. Emoji/영문/숫자 are NOT flagged (different Unicode ranges)."""
+    import os as _os
+    if _os.getenv("GIRI_TITLE_SCRIPT_GATE", "1") != "1":
+        return
+    title = str((concept or {}).get("title") or "")
+    bad = re.findall(r"[㐀-䶿一-鿿぀-ゟ゠-ヿ]", title)
+    if not bad:
+        return
+    uniq = "".join(dict.fromkeys(bad))
+    report["점수"] = min(int(report.get("점수", 10) or 10), 5)
+    if report.get("판정") in ("업로드", "즉시 업로드", "소폭 수정 후 업로드"):
+        report["판정"] = "수정 필요"
+    report["최종_결정"] = report.get("판정")
+    _note = f"제목 비-한글 문자 혼입({uniq}) — 한글로 교체 필요"
+    _prev = report.get("가장_큰_문제", "") or ""
+    report["가장_큰_문제"] = _note if (not _prev or "없" in _prev[:6]) else f"{_note} / {_prev}"
+    report["_title_script_override"] = _note
+    log.info("title-script gate: foreign chars %r in title → cap≤5, 수정 필요", uniq)
 
 
 def _caption_mismatch_gate(concept: "dict | None", report: dict) -> None:
@@ -2098,6 +2135,13 @@ def review(video: Path, storyboard: list[dict] | None = None,
         _subject_location_grounding_gate(concept, report)
     except Exception as e:
         log.warning("Subject/location grounding gate failed: %s", e)
+
+    # Deterministic title-orthography gate (비-한글 문자 혼입) — before the caption-mismatch gate so its
+    # _override marker is visible to that gate's false-reject relief check.
+    try:
+        _title_script_gate(concept, report)
+    except Exception as e:
+        log.warning("Title-script gate failed: %s", e)
 
     # Deterministic caption-mismatch handling — runs LAST so its false-reject relief can see whether
     # any OTHER deterministic gate already fired (scrub + real-mismatch cap are order-independent).
