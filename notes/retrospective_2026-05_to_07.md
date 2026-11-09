@@ -1540,6 +1540,20 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   배선하는 건 그 의존성 자체가 레포에 있기 전까지 끝난 게 아니다 — "로컬에서 됨"은 커밋 상태를 증명하지 않는다;
   git-tracked인지 확인하고, 가능하면 배포 타깃(VM)에서 import까지 검증하라**(D_grammarlive "우회 경로는 계약 상속"의
   배포 버전; 여기선 우회가 아니라 미커밋 의존성). fix=f8640f0로 video_actions.py 커밋. cf [[grounding_pd_notes_gpt4omini]]·[[grammar_rf_caption_grounding_gap]]·[[mv-pipeline-and-action-layer]]·C_grammarquality(모션 신호 갭).
+- **C_rerolllabel. 파이프라인이 리롤 사유를 거짓 라벨링하면 디버깅을 몇 시간 엉뚱한 데로 보낸다 — "기리 피드백 반영 재작성"이 실은 재료-길이 검증이었다(11/9)** —
+  qPnx94zrrTU 재생산이 propose 단계에서 렌더도 못 가고 "기리 피드백 반영 재작성"을 반복(9회) → Giri 제목-내용 문제로 오진하고
+  디렉티브([[C_rerolllabel]] 참조 아래)·Giri CAP을 의심하며 한 시간을 태웠다. 로그가 진실이었다: 실제 사유는
+  `_propose_realfootage_singlepass`의 **내부 검증자**(`[재료검증]` 실현길이<13s·`[구간중복]`·`[구조검증]`·`[재탕검증]`)가
+  sentinel을 prior_feedback에 넣고 **자기재귀**(바운드됨, 재료 3회 등)한 거였고, 맨 위 progress 라벨(producer.py:3082)이
+  prior_feedback이 비지 않으면 **무조건 "기리 피드백"**이라 찍어 재료 churn을 Giri 문제로 위장했다. fix(9d23699)=라벨이
+  실제 sentinel을 이름으로("재료 부족(실현 길이) 반영 재작성" vs 진짜 Giri일 때만 "기리 피드백"). ★교훈=**파이프라인은
+  자기가 왜 리롤하는지 거짓말하면 안 된다 — 진단-정직성은 기능이다; 집계 라벨은 "로그가 진실"([[D_streamguard]])을
+  무력화한다.** 더 깊은 근본(별도): 그 슬롯이 ≥13s 비중복 재료를 못 짠 건 **형제 슬롯(18:00 bPidPo4wT9Q)이 같은
+  11/08 세션 클립을 먼저 쓰고 이웃/구간 dedup이 나머지를 배제**해 풀을 굶긴 것([[C_neighbordup]]·[[C_freshpool]] 계열) —
+  thin-day에 형제 슬롯이 한 세션을 소진하면 뒷 슬롯이 재료부족 churn한다(풀/완화 튜닝은 다음). ★churn의 또 다른 거짓단서:
+  `pd_concept_directives` id=185(자동생성 remediation "cut1=둘이 함께 강제", 11/7 생성, 소비 후 안 지워짐)가 "코인사"
+  over-promise로 오인하게 했다 → 삭제. 자동생성 디렉티브는 소비 후 정리돼야 다음 재생산을 안 오염시킨다.
+  cf [[C_freshpool]]·[[C_neighbordup]]·[[D_streamguard]](로그가 진실)·[[giri_title_defect_class]].
 
 ### 4.5 인프라 / 파이프라인
 - **C_ingestclobber. 소비처 배선이 끝나도 쓰기 경로가 안 지켜주면 무의미하다 — ingest의 INSERT OR REPLACE가 VM-계산 컬럼을 매 import마다 NULL로 지웠다(11/5)** —
