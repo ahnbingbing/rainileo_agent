@@ -3079,7 +3079,20 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     if progress_cb:
         msg = ":pencil: real_footage 단일-패스 스토리텔러 (grounded flowing)"
         if prior_feedback:
-            msg += " — 기리 피드백 반영 재작성"
+            # Name the REAL reason for the rewrite. prior_feedback carries one of these
+            # internal-validator sentinels (material length / segment-dup / structure /
+            # reuse) OR, from the outer Giri retry loop, raw Giri findings (no sentinel).
+            # Labeling everything "기리 피드백" hid thin-pool material churn as a Giri
+            # problem and sent debugging down the wrong path (2026-11-09). Be truthful.
+            _reasons = {
+                "[재료검증]": "재료 부족(실현 길이)",
+                "[구간중복]": "구간중복(이미 쓴 구간)",
+                "[구조검증]": "구조검증",
+                "[재탕검증]": "재탕(최근 회차와 겹침)",
+            }
+            _hit = [v for k, v in _reasons.items() if k in prior_feedback]
+            _why = " · ".join(_hit) if _hit else "기리 피드백"
+            msg += f" — {_why} 반영 재작성"
         progress_cb(msg)
     system = _pl.load(REALFOOTAGE_SINGLEPASS_PROMPT) + _editing_direction_block()
     # PD 2026-10-01: let RF ride a CURRENT trend too (not just AV) — but ONLY when the real
