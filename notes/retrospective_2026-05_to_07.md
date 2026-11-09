@@ -849,6 +849,16 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   뱉으면 `.strip()` AttributeError로 **RF 제안 배치 전체가 빈다**. 두 사이트(2040·2443) `isinstance(str)`
   가드(비-str→""→기본 effect). cf [[C_dedupblind]] ③(malformed 한 원소가 전체 슬롯을 죽이면 안 된다),
   A24(생성기·검수기 lockstep).
+  ★**lockstep 완성(1ca67be, checker 쪽)**: 같은 날, qPnx94zrrTU가 결함 상태로 **Giri를 통과해 예약**된
+  게 드러났다 — checker가 기준에 뒤처진 B1의 또 다른 얼굴. 놓친 제목 결함 3종을 CAP으로 배선: ①제목이 파는
+  동작/묘기(회전묘기)가 프레임에 없음 = title claimed-action lie(109의 action 축, cap≤5) ②제목 비-한글 혼입
+  (好奇) = ★**결정론 게이트** `_title_script_gate`(CJK/kana 스캔→cap≤5; LLM은 실재 한자어 하나를 못 잡아
+  코드로 verdict를 먹임 — [[B1]]의 "규칙 텍스트만으론 안 고쳐짐, 결정론 게이트로"와 동일) ③era-mix 규칙을
+  "서로 다른 나들이/날/장소 봉합"으로 일반화(같은 era 다른 날도, frames+captured_iso 근거, cap≤6). ★교훈=
+  **LLM이 못 믿는 결함(한자 하나·모션·날짜)은 프롬프트 룰이 아니라 결정론 코드게이트로 계산해 Giri에 verdict를
+  먹여라.** 부가: 이 슬롯이 9회 리롤 churn한 진짜 근본은 stale auto-디렉티브 `pd_concept_directives` id=185
+  (cut1=랴니+레오 함께 강제, 2026-11-07 생성)였고 삭제로 해소 — 자동생성 remediation 디렉티브가 소비 후
+  안 지워지면 다음 재생산을 오염시킨다.
 
 ### 4.4 실사(RF)
 - **C_dedupblind. RF dedup 3중 게이트가 몇 달간 실명이었다 — 카드가 '무슨 클립을 썼는지'를 안 적었다(9/10)** —
