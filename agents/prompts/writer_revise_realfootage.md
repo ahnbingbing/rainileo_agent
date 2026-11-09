@@ -10,10 +10,12 @@ For each critique entry:
 
 2. **Per-cut action duplication**: when ≥2 cuts share identical action text, REWRITE each so they're distinct — each describes only what its specific asset shows for that 5-7s.
 
-3. **Title-asset mismatch**: if title promises content that the assets don't have, REWRITE the title to honestly describe what the assets collectively depict. Default templates:
-   - "<pet>의 <activity> — <space>" (e.g., "레오의 오후 — 주방 테이블")
-   - "<date> — <observation>" (e.g., "5월 22일 — 햇살 가득한 오후")
-   - "<pet>의 <N>가지 <category>" (e.g., "레오의 5가지 표정")
+3. **Title ↔ cut1(hook) mismatch**: the title must be kept FIRST by cut1 — the frame the viewer sees right after clicking the title. Two mismatch shapes, two fixes:
+   - **cut1 is off-theme / wrong-pet-solo** (title says 레오+옷 but cut1 is a 랴니 카페 솔로): prefer to **REORDER** so an on-theme cut — one that depicts the titled subject/event — leads as cut1 (keep the kick at the end if the concept wants it). If no on-theme cut can open, **RETITLE** so the title's subject is what cut1 actually shows.
+   - **No cut delivers the title at all** (title promises content absent from every asset): REWRITE the title to honestly describe what the assets show, anchored to cut1. Default templates:
+     - "<pet>의 <activity> — <space>" (e.g., "레오의 오후 — 주방 테이블")
+     - "<date> — <observation>" (e.g., "5월 22일 — 햇살 가득한 오후")
+     - "<pet>의 <N>가지 <category>" (e.g., "레오의 5가지 표정")
 
 4. **Missing asset_enumeration**: populate it from the assets you've chosen.
 

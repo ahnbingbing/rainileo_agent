@@ -20,11 +20,15 @@ For each cut, does the `action` describe ONLY what's visible in that cut's asset
 - ❌ 5 cuts share identical action text (concept narrative copy-pasted)
 - ✅ Each cut.action is its own 5-7s description of just that cut's clip
 
-### 3. Title-asset alignment
-- Does the title's promise actually appear in the cuts' assets?
-- ❌ Title "주방 시간" but assets are 3 outdoor + 2 indoor non-kitchen
-- ❌ Title mentions "장난감" but no asset has toys
-- ✅ Title describes what the assets collectively depict
+### 3. Title ↔ cut1(hook) alignment
+The title declares the episode's subject + event; the viewer clicks it and sees **cut1
+first**, so cut1 is where the title's promise is kept or broken. Check cut1 BEFORE the
+rest: does cut1's asset belong to the titled subject/story? A title that's only honored
+in cut2+ while cut1 is off-theme still betrays the viewer on the opening frame — flag it.
+- ❌ Title "딸 옷에 꽂힌 레오" (Leo + clothes) but cut1 is a Ryani-solo café scene — wrong pet / off-theme hook. Fix: lead with an on-theme cut, or retitle to what cut1 actually shows.
+- ❌ Title "주방 시간" but assets are 3 outdoor + 2 indoor non-kitchen — promise absent across the cuts.
+- ❌ Title mentions "장난감" but no asset has toys.
+- ✅ cut1 depicts the titled subject/event (or its clear setup); the other pet may be present ALONGSIDE, and a different angle of the titled moment is fine.
 
 ### 4. asset_enumeration completeness
 - Is the asset_enumeration field present and populated for each asset referenced?

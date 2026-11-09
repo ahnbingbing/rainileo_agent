@@ -2037,7 +2037,8 @@ def _enforce_editing_concept_signature(c: dict) -> list[dict]:
     bypassing this check). Also catches action-field duplication across
     cuts as a hard-block via programmatic scan (previously LLM-only).
     """
-    ec = (c.get("editing_concept") or "").strip().lower()
+    _ec_raw = c.get("editing_concept")
+    ec = (_ec_raw if isinstance(_ec_raw, str) else "").strip().lower()
     if not ec:
         ec = os.getenv("FORCE_EDITING_CONCEPT", "").strip().lower()
     cuts = c.get("cuts") or []
@@ -2440,7 +2441,8 @@ def _apply_editing_concept_effects(c: dict) -> None:
     edit_effect), the split makes N cuts but doesn't apply per-mode effects,
     so all 9 modes rendered as identical static cuts → no differentiation.
     This applies the deterministic signature so each mode looks distinct."""
-    ec = (c.get("editing_concept") or "").strip().lower()
+    _ec_raw = c.get("editing_concept")
+    ec = (_ec_raw if isinstance(_ec_raw, str) else "").strip().lower()
     if not ec:
         ec = os.getenv("FORCE_EDITING_CONCEPT", "").strip().lower()
     if not ec:

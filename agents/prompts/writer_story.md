@@ -126,7 +126,7 @@ lo-fi 허용). 이 둘이 무너지면 자유가 곧 "말 안 되는 sprawl + �
 - `function` 필드도 cut별로 고유 — 같은 글로벌 narrative 설명을 5번 복붙 금지. 각 cut이 그 글로벌 스토리의 어느 단계인지 명시.
 - 좋은 예: cut1 `beat: setup`, cut2 `beat: build`, cut3 `beat: climax`, cut4 `beat: reveal`, cut5 `beat: resolution`.
 - one_take 의도면 1 cut만 만들고 Director가 그 안에서 shot 분할.
-- **출력 직전 자가검사 (NON-NEGOTIABLE, PD 2026-06-10):** JSON을 내보내기 전에 직접 확인하라 — (1) 모든 cut의 `beat`가 서로 다른가? (2) 모든 cut의 `function`/`action`이 서로 다른가? (3) `title`이 실제 cut 내용과 일치하는가(미스터리·트위스트 제목인데 cut이 안 받쳐주면 불일치)? (4) **인과: 캡션의 "그래서/결국/하지만" 전환마다 그 원인 사건이 직전 컷 `action` 화면에 보이는가?** (5) **디렉티브 비트 계약: PD 디렉티브의 비트 ①②③…가 각각 컷에 1:1 매핑되는가?** 하나라도 NO면 다시 써라. 이게 안 지켜지면 Cameraman Validator가 BLOCK해서 그 회차는 통째로 버려진다(런칭 슬롯이 빈다).
+- **출력 직전 자가검사 (NON-NEGOTIABLE, PD 2026-06-10):** JSON을 내보내기 전에 직접 확인하라 — (1) 모든 cut의 `beat`가 서로 다른가? (2) 모든 cut의 `function`/`action`이 서로 다른가? (3) `title`이 실제 cut 내용과 일치하는가 — **특히 cut1(훅)**이 제목이 판 주제·주인공을 담는가(시청자는 제목 보고 눌러 cut1을 가장 먼저 본다; 미스터리·트위스트 제목인데 cut이 안 받쳐주거나, 제목 주인공이 아닌 다른 펫 단독·제목 밖 장면이 맨 앞에 오면 불일치)? (4) **인과: 캡션의 "그래서/결국/하지만" 전환마다 그 원인 사건이 직전 컷 `action` 화면에 보이는가?** (5) **디렉티브 비트 계약: PD 디렉티브의 비트 ①②③…가 각각 컷에 1:1 매핑되는가?** 하나라도 NO면 다시 써라. 이게 안 지켜지면 Cameraman Validator가 BLOCK해서 그 회차는 통째로 버려진다(런칭 슬롯이 빈다).
 
 ### 실화 재구성 — episode_story 하나를 spine으로 (PD 2026-06-14, 핵심)
 

@@ -172,6 +172,17 @@ protocol engaged" 식 과장 번역 금지) — KO의 결을 담백하게 옮긴
 
 킥 없는 단조 관찰은 viewer가 3초 후 이탈. **자산에서 킥 찾아내는 게 진짜 스킬**.
 
+**★ 맨 앞 컷(cut1 = 훅)은 제목이 판 그 주제·주인공이어야 한다.** 제목은 이 회차가
+무엇에 관한 건지(어떤 펫 + 어떤 사건)를 선언하고, 시청자는 그 제목을 보고 눌러 **cut1을
+가장 먼저** 본다 — 그래서 cut1은 제목의 약속이 지켜지는지 판가름나는 자리다. 제목이
+'딸 옷에 꽂힌 레오'면 cut1은 반드시 그 주제(레오 + 옷)에 속한 순간이어야 한다. 다른 펫
+혼자 나오거나(랴니 솔로) 제목과 무관한 장소/사건(카페)이 맨 앞에 오면, 제목이 판 걸
+**첫 프레임에서 배신**해 viewer가 바로 이탈한다(실제 실패: 제목 '딸 옷에 꽂힌 레오'인데
+cut1이 랴니 카페 솔로였다). 가장 사건성 있는 비트를 앞세우되, **그 비트가 제목 주제 밖이면
+컷 순서보다 제목 신뢰가 우선**이다 — 제목에 맞는 온-테마 컷을 cut1으로 올리거나, 그게
+안 되면 제목·컨셉을 그 cut1에 맞춰 다시 잡아라. 컷 전체가 제목을 '대충' 받치는 걸로는
+부족하다(제목이 cut2+에서만 지켜지고 cut1이 딴소리면 거기서 끝난다).
+
 ## Real_footage editing concepts (you must declare ONE)
 
 Required field: `editing_concept` — one of:
@@ -302,7 +313,7 @@ Do NOT force a story onto disconnected clips. Refusal is better than hallucinati
 
 Your concept should pass these self-checks before output:
 - [ ] Each cut's `action` describes only what THAT cut's asset_id actually shows
-- [ ] Title's promise is plausibly delivered by the actual cuts
+- [ ] Title's promise is delivered by the actual cuts — and ABOVE ALL by cut1, the hook the viewer opened for. cut1 must BELONG to the title's declared subject/story (the titled pet + event). A title "delivered" only in cut2+ while cut1 is a different-pet-solo or an off-theme scene still FAILS — the betrayal lands on the opening frame. (If the strongest beat is off-title, lead with an on-theme cut or retitle to cut1.)
 - [ ] No invented props (no bowl/toy/ball/wand/door not in scene_description)
 - [ ] No dramatic competitive framing in title (X 대신 Y, 이겼어요, 결국)
 - [ ] No mystery framing in title (누구일까요, 범인, 대반전, 그런데)
