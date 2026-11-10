@@ -3775,10 +3775,10 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
             if _aids:
                 _q = ",".join("?" * len(_aids))
                 for r in _acon.execute(
-                        f"SELECT asset_id, duration_sec, has_human FROM assets WHERE asset_id IN ({_q})",
+                        f"SELECT asset_id, duration_sec, has_human, kind FROM assets WHERE asset_id IN ({_q})",
                         list(_aids)):
                     _adur[r[0]] = (float(r[1]) if r[1] and float(r[1]) > 0 else None,
-                                   bool(r[2]))
+                                   bool(r[2]), (r[3] or "video"))
             for c in concepts:
                 # SAME-CLIP COLLAPSE simulation (PD 2026-09-04): the render MERGES cuts that
                 # reuse one asset_id into a SINGLE cut, and that cut can't exceed the clip's real
@@ -3792,19 +3792,24 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
                     _aid = cut.get("asset_id")
                     _req = float(cut.get("duration_seconds") or cut.get("trim_dur") or 4)
                     _meta = _adur.get(_aid)
-                    _act, _human = _meta if _meta is not None else (None, False)
-                    # NULL duration_sec used to be credited the full request (blind spot that
-                    # passed the 6.3s→43s clip). Probe the real length + backfill (cache for
-                    # same-clip siblings). Probe failure keeps the estimate.
-                    if _act is None:
+                    _act, _human, _kind = _meta if _meta is not None else (None, False, "video")
+                    # A PHOTO is a ken-burns STILL — its achievable length is whatever duration the
+                    # Writer assigns, NOT its file "duration". ffprobe returns ~0.04s for a JPEG
+                    # (one frame), which min()-capped every woven photo beat to ~0s → a photo-
+                    # inclusive memory mix fell under the floor → false "실현 길이 부족" churn that
+                    # forced the episode back to video-only/one-take (the hidden photo-mix killer,
+                    # found 11-10). Credit photos their full requested seconds; only probe VIDEOS.
+                    if _kind != "photo" and _act is None:
                         _act = _probe_clip_seconds(_aid, _acon)
                         if _aid:
-                            _adur[_aid] = (_act, _human)
-                    _e = _per_asset.setdefault(_aid or id(cut), [0.0, _act, _human])
+                            _adur[_aid] = (_act, _human, _kind)
+                    _e = _per_asset.setdefault(_aid or id(cut), [0.0, _act, _human, _kind])
                     _e[0] += _req
                 _got = 0.0
-                for _sum_req, _act, _human in _per_asset.values():
-                    _use = min(_sum_req, _act) if _act is not None else _sum_req
+                for _sum_req, _act, _human, _kind in _per_asset.values():
+                    # photo (still) → full request; video → capped at real clip length
+                    _use = _sum_req if _kind == "photo" else (
+                        min(_sum_req, _act) if _act is not None else _sum_req)
                     if _human:
                         _use *= _human_disc
                     _got += _use
