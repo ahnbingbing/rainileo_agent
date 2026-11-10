@@ -1911,6 +1911,72 @@ def _drop_branding(items: list, branding_ids: set) -> list:
     return out
 
 
+def _rf_concept_photos(con, query: str, k: int = 40) -> list:
+    """RAG: photos whose VLM scene matches THIS episode's story (location/time/subject).
+
+    PD 2026-11-10: the RF photo pool was a concept-BLIND diversity sample — the Writer got
+    the same 70 recent photos whether the episode was "소파 낮잠" or "눈 산책". The embedding
+    index (asset_embed) retrieves the right photos by meaning (verified: "소파에서 함께 낮잠"→
+    0.92 the actual couch-nap photo), so weave story-relevant photos into the pool, placed
+    FIRST, on top of the diversity sample. Returns best_photos-shaped dicts (relevance order).
+    Empty query or no index → []. Kill-switch handled at the call site (RF_PHOTO_RAG).
+    """
+    q = (query or "").strip()
+    if not q:
+        return []
+    try:
+        from agents import asset_embed
+        hits = asset_embed.find_similar(q, k=k, kind="photo")
+    except Exception as e:
+        log.warning("RF concept-photo RAG failed (%s) — falling back to diversity pool", e)
+        return []
+    ids = [h["asset_id"] for h in hits if h.get("asset_id")]
+    if not ids:
+        return []
+    order = {a: i for i, a in enumerate(ids)}
+    ph = ",".join("?" * len(ids))
+    rows = con.execute(
+        f"""SELECT asset_id, activity, subjects_csv, mood, background, scene_description,
+                   pd_notes, notes, captured_iso, location_type
+            FROM assets
+            WHERE asset_id IN ({ph}) AND kind='photo' AND vlm_analyzed_at IS NOT NULL
+                  AND quality_score >= 0.7 AND file_path NOT LIKE '%.heic'
+                  AND (decoration_level IS NULL OR decoration_level = 'none')""",
+        ids,
+    ).fetchall()
+
+    def _sc(r):
+        pd_n = (r["pd_notes"] or "").strip() if "pd_notes" in r.keys() else ""
+        return f"[PD] {pd_n[:280]}" if pd_n else (r["scene_description"] or "")[:280]
+
+    def _extra(r):
+        try:
+            n = json.loads(r["notes"] or "{}")
+        except Exception:
+            n = {}
+        out = {}
+        for kk in ("pet_intent", "looking_at", "micro_behaviors",
+                   "contextual_props", "location_specific", "activity_notes"):
+            if n.get(kk):
+                out[kk] = n[kk]
+        human = (r["pd_notes"] or "").strip() if "pd_notes" in r.keys() else ""
+        if human:
+            out["content_desc"] = human; out["content_desc_source"] = "owner"
+        elif n.get("suggested_caption_ko"):
+            out["content_desc"] = n["suggested_caption_ko"]; out["content_desc_source"] = "vlm"
+        return out
+
+    out = [
+        {"id": r["asset_id"], "act": r["activity"] or "",
+         "sub": _ground_subjects(r["subjects_csv"], r["captured_iso"]),
+         "mood": r["mood"] or "", "bg": r["background"] or "", "sc": _sc(r),
+         "date": (r["captured_iso"] or "")[:10], "rag": True, **_extra(r)}
+        for r in rows
+    ]
+    out.sort(key=lambda p: order.get(p["id"], 1e9))  # preserve relevance order
+    return out
+
+
 # PD 2026-07-23: iOS Live-Photo / burst captures ingest as sub-second "videos" (burst_*
 # ids, 0.07–0.7s) — they are effectively stills, not clips. When one became the sole
 # material for an RF concept (writer sliced a 0.7s clip into 4 "segment" cuts →
@@ -3316,6 +3382,28 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     _pseen = {p.get("id") for p in _photos if p.get("id")}
     _photos += [p for p in _drop_branding(context.get("archive_photos", []), _branding)
                 if p.get("id") and p.get("id") not in _pseen]
+    # PD 2026-11-10: pull STORY-RELEVANT photos (location/time/subject) for THIS episode via the
+    # embedding RAG and place them FIRST — the diversity sample is concept-blind, so without this
+    # the Writer wove the same recent photos regardless of the day's theme. Query = the directive
+    # the Writer is actually writing to (arc/PD concept + recent theme). Kill-switch RF_PHOTO_RAG=0.
+    if os.getenv("RF_PHOTO_RAG", "1") == "1":
+        # arc_directive already folds in the PD /concept (highest-priority directive).
+        _rag_q = "\n".join(s for s in [
+            str(context.get("arc_directive") or ""),
+            " ".join(str(t.get("theme") or "") for t in (context.get("recent_themes_7d") or [])[:2]),
+        ] if s.strip())
+        try:
+            _rag_ph = _rf_concept_photos(_db(), _rag_q, k=int(os.getenv("RF_PHOTO_RAG_K", "40")))
+        except Exception as _e:
+            log.warning("RF concept-photo RAG merge skipped (%s)", _e); _rag_ph = []
+        _rag_ph = _drop_branding(_rag_ph, _branding)
+        _new = [p for p in _rag_ph if p.get("id") and p.get("id") not in _pseen]
+        if _new:
+            # story-matching photos LEAD the pool (Writer anchors on the list head); mark the
+            # existing diversity/archive photos as the tail fallback.
+            _photos = _new + _photos
+            if progress_cb:
+                progress_cb(f":frame_with_picture: 이야기 맞춤 사진 {len(_new)}장 RAG 검색 (장소/시간/주제 매칭)")
     # PD 2026-06-11: the exclude (batch-dedup) MUST also cover the PHOTO pool and
     # the separately-passed archive_videos field — the 6/12 RF 18:00 reused two
     # RF 08:00 clips because they re-entered as photo / raw-archive candidates that
