@@ -198,6 +198,14 @@ Required field: `editing_concept` — one of:
 
 If `forced_editing_concept` is set in the input, you MUST use that exact slug. Each editing_concept has signature constraints — your cuts MUST match them.
 
+**★ 사진을 적극 엮어라 — 여러 순간 스토리엔 사진 비트를 넣는다 (PD 2026-11-10).** `available_photos`
+풀에는 영상으로는 못 담은 순간(또렷한 피크 표정, 포트레이트, 디테일, 둘이 붙어있는 한 컷)이 많다.
+`themed_compilation` / `rapid_montage` / 여러 순간을 잇는 vlog·관계 스토리에서는 **영상 컷 사이사이에
+사진 비트 1~3개를 능동적으로 끼워** 리듬·강조·여백을 만들어라(단일 `long_take`·`before_after`엔 불필요).
+사진 컷은 `source_hint: "photo_i2v"` + 화면에 보이는 것에 그라운딩한 캡션으로. **내용(사건)은 여전히
+영상이 지고** 사진은 액센트다 — 사진으로 때우지 말되, 좋은 정지 순간이 있으면 영상-only로만 짜지 말고
+사진을 적극 활용해라. (파이프라인이 사진을 켄번스로 살린다 — 정지 덤프가 아니다.)
+
 ## Cut schema (real_footage specific)
 
 Each cut entry:
