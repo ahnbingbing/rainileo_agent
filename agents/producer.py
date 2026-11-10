@@ -2733,25 +2733,55 @@ def _rf_structure_issues(c: dict) -> list[str]:
 
 
 def _rf_cap_cuts(cuts: list, cap: float) -> tuple[list, float]:
-    """Trim cuts to the body-length cap. The final cut is the ending (여운/payoff) and is
-    never the one dropped: reserve it, then fill from the front, so an over-budget concept
-    loses middle beats rather than its close. If even the opening + ending overflow, keep
-    the opening alone (plus the ending only if it still fits)."""
+    """Fit the body to the length cap while PRESERVING distinct beats.
+
+    PD 2026-11-10: the old logic DROPPED cuts to fit (reserve the ending, fill from the front),
+    which collapsed a multi-moment memory mix toward 1 cut — e.g. [10,5,9]=24s kept only cut1
+    because cut1(10)+ending(9)=19 already exceeded the 18s cap. A multi-moment story's value IS
+    its beats, so SHRINK durations to fit (keep every cut) and drop a beat only when even the
+    readable floor (~2.5s per caption, producer line 2387) can't fit them all. When a drop IS
+    forced, the opening and ending are kept last. Shrinking never goes below a cut's caption
+    floor, so captions are never truncated."""
     dur = lambda c: float(c.get("duration_seconds") or c.get("trim_dur") or 4)  # noqa: E731
-    tail = cuts[-1] if len(cuts) > 1 else None
-    reserve = dur(tail) if tail is not None else 0.0
-    kept, tot = [], 0.0
-    for c in (cuts[:-1] if tail is not None else cuts):
-        if tot + dur(c) + reserve > cap:
-            break
-        kept.append(c); tot += dur(c)
-    if not kept and cuts:
-        kept, tot = [cuts[0]], dur(cuts[0])
-        if tail is not None and tot + reserve <= cap:
-            kept.append(tail); tot += reserve
-    elif tail is not None:
-        kept.append(tail); tot += reserve
-    return kept, tot
+    if not cuts:
+        return [], 0.0
+    _floor = float(os.getenv("RF_CUT_MIN_SEC", "2.5"))
+
+    def _cmin(c):  # a cut's minimum legible length = one readable beat per caption
+        caps = c.get("captions") or c.get("scenes") or []
+        n = len(caps) if isinstance(caps, list) else 1
+        return max(_floor, (n or 1) * _floor)
+
+    total = sum(dur(c) for c in cuts)
+    if total <= cap:
+        return list(cuts), total
+
+    # Choose which beats survive: admit by priority (opening, then ending, then middles in order)
+    # while the cumulative legibility floor stays within the cap — keeps the MOST beats that can
+    # still be read, instead of collapsing to one.
+    prio = [0]
+    if len(cuts) > 1:
+        prio.append(len(cuts) - 1)
+    prio += [i for i in range(len(cuts)) if i not in prio]
+    keep_idx, acc = set(), 0.0
+    for i in prio:
+        fm = _cmin(cuts[i])
+        if acc + fm <= cap:
+            keep_idx.add(i); acc += fm
+    if not keep_idx:
+        keep_idx = {0}
+    kept = [dict(cuts[i]) for i in sorted(keep_idx)]
+
+    # Shrink the survivors proportionally (by each cut's slack above its floor) to hit the cap.
+    ktot = sum(dur(c) for c in kept)
+    if ktot > cap:
+        floors = [_cmin(c) for c in kept]
+        shrinkable = sum(dur(c) - f for c, f in zip(kept, floors))
+        if shrinkable > 0:
+            ratio = min(1.0, (ktot - cap) / shrinkable)
+            for c, f in zip(kept, floors):
+                c["duration_seconds"] = round(dur(c) - (dur(c) - f) * ratio, 2)
+    return kept, sum(dur(c) for c in kept)
 
 
 def _collapse_rf_same_clip_segments(c: dict, progress_cb: ProgressCb = None) -> int:
@@ -4269,14 +4299,12 @@ def _render_realfootage_direct(concept: dict, target: dt.date,
     # PD 2026-10-29: HARD body-length cap. RF had crept to 32-44s (themed_compilation
     # over-stitching many clips with no total bound) — ~2× the ~20s Shorts format, so the
     # episodes dragged and killed retention ("내용 퀄 낮음"). Every RF technique funnels
-    # through here, so cap ONCE at the chokepoint: keep cuts in order until the running
-    # body total would exceed RF_BODY_MAX_SEC, drop the rest. A tight montage beats a long
-    # one; onetake/intraclip are already short so this bites only the long compilations.
-    # Captions are per-cut and self-contained, so dropping trailing cuts can't orphan a
-    # mid-cut caption. Cap = 18s body → ~20-22s episode after the 1.5+2.5s bumpers: tight
-    # enough for Shorts, yet safely above the 16s RF_MIN_SECONDS stub floor (a lower cap
-    # could drop a compilation to ~12s body → <16s episode → refused → empty slot).
-    # Tunable/▲revertible via RF_BODY_MAX_SEC.
+    # through here, so cap ONCE at the chokepoint. PD 2026-11-10: _rf_cap_cuts now SHRINKS
+    # durations to fit (preserving every beat down to the ~2.5s/caption legibility floor) and
+    # drops a beat only when they genuinely can't all fit — the old drop-to-fit collapsed a
+    # multi-moment memory mix toward 1 cut ([10,5,9]=24s kept only cut1). Cap = 18s body →
+    # ~20-22s episode after the 1.5+2.5s bumpers: tight for Shorts, yet above the 16s
+    # RF_MIN_SECONDS stub floor. Tunable via RF_BODY_MAX_SEC / RF_CUT_MIN_SEC.
     _body_cap = _rf_body_budget()
     _kept, _tot = _rf_cap_cuts(cuts, _body_cap)
     if len(_kept) < len(cuts):
