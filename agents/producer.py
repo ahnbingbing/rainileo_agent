@@ -3509,8 +3509,11 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         key=lambda v: -(v.get("dur") or 0))[:12]
     rf_context = {
         "target_date": target.isoformat(),
-        # ⭐ long-original one-take candidates (12s+). If non-empty, DEFAULT to using
-        # ONE of these whole as a 1-2 cut one-take instead of trimming a montage.
+        # PD 2026-11-10: rich long-original clips (12s+) as INFORMATION, not a mandate. If ONE
+        # of these tells the whole story, use it whole (don't fragment it into fake montage cuts);
+        # otherwise the story decides the cut count (1→N, incl. a photo+video memory mix). The
+        # blanket "default to one-take" was an over-correction — the real guard against slicing
+        # one clip into fake cuts is _rf_structure_issues + _collapse_rf_same_clip_segments.
         "long_clip_candidates": _long,
         "available_videos": avail_videos,
         # PD 2026-06-13: photos ARE usable — a real photo as a ken-burns still has NO
