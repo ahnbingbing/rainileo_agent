@@ -6503,13 +6503,25 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
     _persist_render_meta(work_dir, manifests, manifests.get("cuts") or [],
                          (manifests.get("concept") or {}).get("cuts") or [],
                          style="real_footage")
-    _run(
-        [sys.executable, "scripts/assemble_episode.py",
+    asm_cmd = [sys.executable, "scripts/assemble_episode.py",
          "--captions", manifests["captions"],
          "--in-dir", str(captioned_dir),
          *_bumper_cli_args(manifests.get("card_id")),
          "--music", manifests.get("bgm", str(DEFAULT_BGM)),
-         "--out", str(out)],
+         "--out", str(out)]
+    # PD 2026-11-10: Apple "추억/Memories" editing grammar on RF — every cut boundary
+    # cross-dissolves (no hard cut), so woven photo ken-burns beats and video cuts flow
+    # as one highlight reel instead of a choppy slideshow. Default ON for RF; revert with
+    # RF_CHAIN_TRANSITION=hardcut. Dissolve length ~0.4s matches the reference reel.
+    _rf_cuts = manifests.get("cuts") or []
+    if os.getenv("RF_CHAIN_TRANSITION", "crossfade").lower() == "crossfade":
+        _xf_tags = [it.get("tag") for j, it in enumerate(_rf_cuts)
+                    if j > 0 and isinstance(it, dict) and it.get("tag")]
+        if _xf_tags:
+            asm_cmd += ["--xfade-tags", ",".join(_xf_tags),
+                        "--xfade-dur", os.getenv("RF_XFADE_DUR", "0.4")]
+    _run(
+        asm_cmd,
         ":clapper: [3/3] Final assembly",
         progress_cb, dry_run,
     )
