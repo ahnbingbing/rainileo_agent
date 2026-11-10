@@ -2704,8 +2704,14 @@ def _cap_overused_locations(rows: list, overused_loc, cap_frac: float = 0.34,
 def _rf_body_budget() -> float:
     """RF body-length budget (sum of cut durations, bumpers excluded). One source for the
     Writer prompt, the pre-render structure gate and the render-time cap, so the Writer is
-    told the same number the cap enforces."""
-    return float(os.getenv("RF_BODY_MAX_SEC", "18"))
+    told the same number the cap enforces.
+
+    PD 2026-11-10: raised 18→50. The 18s cap (10/29, to stop 32-44s compilations dragging)
+    was ALSO gutting legitimate multi-moment memory mixes — it dropped a 4-6 beat story to
+    1-2 cuts (see _rf_cap_cuts). PD: length is fine as long as the Shorts episode stays under
+    60s. So the budget is now a runaway BOUND (body 50s → ~54s episode after bumpers, safely
+    <60s), not a tight retention cap; _rf_cap_cuts still SHRINKS (not drops) if a story exceeds it."""
+    return float(os.getenv("RF_BODY_MAX_SEC", "50"))
 
 
 def _rf_structure_issues(c: dict) -> list[str]:

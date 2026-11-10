@@ -6366,7 +6366,7 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
     # the ~2.5s/caption legibility floor so captions never truncate. RF_BODY_CAP_AFTER_EDIT=0 off.
     if not dry_run and os.getenv("RF_BODY_CAP_AFTER_EDIT", "1") == "1":
         _cuts = manifests.get("cuts") or []
-        _cap = float(os.getenv("RF_BODY_MAX_SEC", "18"))
+        _cap = float(os.getenv("RF_BODY_MAX_SEC", "50"))
         _floor = float(os.getenv("RF_CUT_MIN_SEC", "2.5"))
         def _d(c):
             return float(c.get("duration_seconds") or c.get("trim_dur") or 4)
