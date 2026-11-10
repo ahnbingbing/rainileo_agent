@@ -1570,6 +1570,23 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   다시 짓지 마라** — 별도 빌더는 Writer/Director의 그라운딩·캐릭터·캡션 계약을 전부 잃는다(프로토타입이 "쪼르르 달려감" 날조 캡션을 낸 이유).
   전부 킬스위치 가역(`RF_CHAIN_TRANSITION`·`RF_PHOTO_FLASH`·`RF_ACTION_TRIM`·`FORCE_EDITING_CONCEPT`). cf [[C_mviter]]·[[rf_fix_production_reproduction]]·[[grammar_rf_caption_grounding_gap]].
 
+- **C_onetakeovercorrect. 과잉교정이 이미 있는 타깃 가드와 중복이면 순손해다 — RF가 "항상 원테이크 한 클립"으로 나온 근본(11/10)** —
+  위 C_rfeditdir로 사진믹스를 배선했는데도 자동 렌더는 계속 **수영 클립 하나 원테이크**로 나왔다. PD: "왜 항상 원테이크 한
+  클립이냐 — 컷 수는 director/writer가 스토리대로 1컷이든 10컷이든 정해야지." 근본=**2026-06-11의 과잉교정**. 당시 진짜 버그는
+  "Writer가 38s/75s 긴 클립 하나를 6~9s 조각으로 잘라 가짜 몽타주"였고, 그걸 막으려 `writer_realfootage`에 "**12s+ 클립이
+  있으면 무조건 원테이크가 DEFAULT**"를 박고 producer가 `long_clip_candidates`를 "하나를 통째로 써라" 명령처럼 주입했다. 그런데
+  그 원래 버그(한 클립 쪼개기)를 막는 **정확한 가드가 이미 둘 존재**한다 — `_rf_structure_issues`(같은 asset_id를 비인접 컷에
+  재사용하면 플래그→재작성)+`_collapse_rf_same_clip_segments`(같은 클립 조각을 한 컷으로 병합). 즉 **blanket 원테이크 기본값은
+  그 타깃 가드와 100% 중복**이면서, 가드가 전혀 문제삼지 않는 **여러 distinct 순간을 엮는 정상 멀티컷(=추억 믹스)까지 같이
+  죽였다**. Fix(55804ac)=기본방침을 "**컷 수는 스토리가 정한다(1~N)** — 한 장면이 통째로 완결하면 원테이크, 여러 순간이면 그
+  순간들을 엮어라"로, `long_clip_candidates`를 명령→정보로, 유일하게 남긴 규칙은 "한 연속 순간(한 클립)을 가짜 컷으로 쪼개지
+  마라"(= 타깃 가드가 집행하는 바로 그것). 일관성 감사: 레거시 `realfootage_concept.md`는 이미 "컷 수 = 서로 다른 좋은 영상
+  수", Giri는 이미 "컷 수는 Writer가 결정", 재료검증 게이트는 사진 켄번스 비트에 요청 초를 인정(probe→None→requested, 0초로
+  안 죽임) — 전부 애초에 정렬돼 있었고 메인 Writer 경로의 blanket 기본값만 이탈이었다. 라이브 검증: 강제 없이 Writer 3회 →
+  themed_compilation 3/6/6컷(원테이크 아님), 한 회는 사진 비트도 엮음. ★교훈=**과잉교정(belt-and-suspenders)이 이미 있는
+  좁은 가드와 겹치면 순손해다** — 추가 안전은 0이고(가드가 이미 잡음) 그 가드가 허용하는 정상 케이스만 억누른다. 버그를
+  막을 땐 **가장 좁은 지점**(여기선 "같은 클립 쪼개기")만 막고, 넓은 기본값으로 뭉개지 마라. `RF_*` 전부 가역. cf [[C_rfeditdir]]·[[rf_editing_direction_memories]].
+
 ### 4.5 인프라 / 파이프라인
 - **C_ingestclobber. 소비처 배선이 끝나도 쓰기 경로가 안 지켜주면 무의미하다 — ingest의 INSERT OR REPLACE가 VM-계산 컬럼을 매 import마다 NULL로 지웠다(11/5)** —
   Gemini 액션레이어(`action_moments`)를 RF 선택+캡션에 배선(C_actionlayer)하고 VM 백필을 돌렸더니 로그는 `done=262`인데 DB엔 **70개만** 남았다. 근본=`ingest_register.import_`의 `INSERT OR REPLACE INTO assets`가 **행 전체를 재삽입** → Mac export가 싣지 않는 **VM-계산 컬럼(`action_moments`·`duration_sec`·`vis_phash`·`has_human`)을 매번 통째로 NULL**로 만든다. 3.9h 백필 동안 운영 봇의 ingest가 계속 덮어써, 마지막 ingest 이후에 쓴 70개만 살아남았다. 이건 C_nulldur에서 duration을 **일회성 prev-보존 가드**로만 막았던 바로 그 패턴이 새 컬럼에서 재발한 것 — 증상(duration)만 막고 메커니즘(REPLACE가 미기재 컬럼을 민다)을 안 고쳤기 때문. Fix(ad08281)=`ON CONFLICT(asset_id) DO UPDATE` 업서트(미기재 컬럼은 건드리지 않아 보존)+빈 VM-owned 키 드롭(NULL export가 실값을 못 덮게) → `_VM_OWNED` 집합으로 **일반화**(일회성 가드 supersede). ★교훈 2겹: ①**결정→소비처 배선→내구성이 한 세트다** — 선택/캡션을 꽂아도 그 데이터가 동시-쓰기(24/7 운영 봇)에서 살아남지 못하면 갭은 그대로이고, **재런으로 메우는 건 무의미**(다음 ingest가 또 wipe한다). 운영 DB의 모든 쓰기는 멱등+보존(upsert)이어야 한다. ②**일회성 가드는 다음 컬럼에서 재발한다** — 한 증상을 패치하지 말고 메커니즘을 일반화하라. cf C_nulldur(같은 ingest 경로의 duration 일회성 가드 — 이번에 일반 upsert로 흡수), C_actionlayer(이 백필이 점등하려던 소비처 배선), D_streamguard(작동하는 폴백이 죽은 주력을 가리듯, 작동하는 백필이 지워지는 쓰기를 가렸다).
