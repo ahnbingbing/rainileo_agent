@@ -182,6 +182,24 @@ cut1이 랴니 카페 솔로였다). 가장 사건성 있는 비트를 앞세우
 
 ## Real_footage editing concepts (you must declare ONE)
 
+**★ 연출을 풋티지에 맞춰 골라라 — `themed_compilation`은 "아무 것도 안 맞을 때의 폴백"이다 (PD 2026-11-10).**
+RF가 매번 밋밋한 순차 컷(themed_compilation)으로만 나와선 안 된다. 컷을 짜기 전에 **먼저 풋티지가 무엇을
+주는지 보고** 거기에 맞는 연출을 집어라. 판단 사다리(위부터 먼저 검토):
+- 둘(또는 한 펫의 두 모습)이 **나란히/동시에** 뭔가 한다 → **`split_screen`** (분할 화면, `secondary_asset_id`)
+- 같은 행동·주제가 **두 장소**를 오간다(집↔밖, 과거↔현재) → **`cross_cutting`** (A-B-A-B)
+- **전→후 변화**가 한 눈에 보인다(씻기기 전후, 간식 전후, 작을 때↔지금) → **`before_after`** (2컷)
+- 마지막에 **의외의 반전** 한 방 → **`twist_ending`**
+- **한 연속 순간**이 통째로 이야기를 완결 → **`long_take`**
+- 위 어느 것도 아니고 **여러 distinct 순간**을 잇는 하루·관계 → `themed_compilation`/`rapid_montage` (이게 폴백)
+풋티지에 특수 연출이 살아있는데 습관적으로 themed로 뭉개지 마라 — 연출 다양성이 "추억" 편집의 핵심이다.
+
+**★ 사진을 반드시 동등 후보로 평가해서 쓰라 (PD 2026-11-10).** 어떤 연출을 고르든, **모든 beat에서
+`available_photos` 풀을 실제로 들여다보고** 그 순간을 사진이 더 잘 담는지 판단하라 — 사진 풀을 통째로
+건너뛰지 마라(그게 지금까지의 실패다). 여러 순간 스토리(themed/montage/관계)가 **사진 0장**으로 나왔다면
+대개 또렷한 정지 순간(피크 표정·포트레이트·둘이 붙은 한 컷·영상 없는 순간)을 **놓친 것**이다. 매체가
+아니라 "그 beat를 가장 잘 보여주는가"가 기준이고, 그 결과 사진이 더 나은 beat엔 사진을 써라(아래 동등-후보
+규칙 참조). 할당량은 아니되, 사진을 *고려조차 안 하는* 디폴트는 틀렸다.
+
 Required field: `editing_concept` — one of:
 - `rapid_montage` — fast cuts (≥3 cuts ≤4s with speed_1.3x/1.5x)
 - `long_take` — slow observation (≤2 cuts, ken_burns)
