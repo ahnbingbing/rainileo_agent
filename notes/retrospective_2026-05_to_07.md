@@ -1590,6 +1590,19 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   좁은 가드와 겹치면 순손해다** — 추가 안전은 0이고(가드가 이미 잡음) 그 가드가 허용하는 정상 케이스만 억누른다. 버그를
   막을 땐 **가장 좁은 지점**(여기선 "같은 클립 쪼개기")만 막고, 넓은 기본값으로 뭉개지 마라. `RF_*` 전부 가역. cf [[C_rfeditdir]]·[[rf_editing_direction_memories]].
 
+- **C_multicutlayers. "1컷으로 나온다"의 범인이 한 둘이 아니라 여러 레이어였다 — 끝까지 돌려야 보였다(11/10)** —
+  C_onetakeovercorrect(prompt)·C_photozerosec(재료검증)를 고쳤는데도 실렌더가 1~2컷으로 나와, PD가 "끝까지 돌려 결과를 보라,
+  오래 걸리면 또 파이프라인 문제다"라 해서 직접 렌더를 추적하니 **같은 증상의 범인이 더 있었다**: ③**producer `_rf_cap_cuts`가
+  예산 초과 시 컷을 드롭**([10,5,9]=24s에서 cut1(10)+끝(9)=19>18이라 cut1만 남김) → shrink-not-drop으로 전환(d0f6c10). ④더 깊게,
+  **진짜 컷·길이 authority는 producer가 아니라 cameraman 에디터 LLM**(`_run_editor`→`_apply_edit_plan`, render 안에서 또 LLM
+  호출)이고, 이게 producer cap을 **덮어쓰고** 18s 예산을 **무시**했다(그래서 producer 레벨만 고치면 무효). ⑤그리고 **18s 본문 cap
+  자체**(10/29 retention용)가 멀티컷을 쪼개던 상위 원인이라 — PD "길이는 60초 안이면 OK" → 18→50s로 완화(0899bdb). ★교훈 2겹:
+  ①**한 증상에 범인이 여러 레이어일 수 있다** — 위에서 하나 고쳐 "됐다" 하지 말고 **실제 산출물을 끝까지 렌더해 확인**하라(컨셉 단계
+  통계가 통과여도 소비처(에디터·cap·sources.json)가 다시 뒤집는다). ②**authority를 추적하라** — 같은 필드(duration)를 Writer→
+  producer cap→에디터 LLM→sources.json이 차례로 덮어쓰면, 맨 아래(실제로 트림이 읽는 곳)를 고쳐야 먹는다. 부가 발견: RF 렌더가
+  느린 건(9분+) render_card 안의 **LLM 3개(에디터·VLM검수·캡션재작성)+컷별 4K 재인코딩**이 본래 비용 — "느리면 파이프라인 문제"
+  (PD)가 가리킨 구조 과제(별도). `RF_*` 전부 가역. cf [[C_onetakeovercorrect]]·[[C_photozerosec]]·[[rf_editing_direction_memories]].
+
 - **C_photozerosec. 재료검증이 사진 켄번스 비트를 0.04초로 세어 추억-믹스를 숨어서 죽였다 — "끝까지 돌려야" 보인 버그(11/10)** —
   C_onetakeovercorrect로 컷수-강제를 풀었는데도 **전체 파이프라인**을 돌리니 11-16 슬롯이 20분간 **5번 재작성(재료검증 3+구조검증 1)**하며
   렌더에 못 갔다. 통계(컨셉 단계 컷수 3/6/4)만 봤으면 못 봤을, 전체 run이 드러낸 버그: `_rf_footage_gate`(재료검증)가 각 컷을 asset의
