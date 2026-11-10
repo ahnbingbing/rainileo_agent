@@ -1565,8 +1565,11 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   배선돼 RF는 매 경계를 하드컷 → 끊김; RF에 `RF_CHAIN_TRANSITION=crossfade` 기본 배선(9b57c90)으로 추억처럼 흐름 ③사진이 0.5s 플래시거나
   반대로 너무 길게 — `RF_PHOTO_FLASH=0`으로 **스토리기반 풀길이 켄번스 비트**(줌인↔줌아웃 교대)+액션겨냥 트림(`RF_ACTION_TRIM`). 인프라는 건드릴
   필요 없었다: `available_photos`가 DB상 `file_path=None`이어도 렌더때 `_ensure_local`이 **GCS서 on-demand fetch**(동기화 잡 불필요, 검증 OK).
-  ★교훈 2겹: ①**허용 ≠ 행동** — 룰을 supersede해 길을 열어도, 모델은 *능동 지시*가 없으면 익숙한 디폴트로 돌아간다. review-learning의 supersede는
-  "금지 제거"에서 끝나면 안 되고 "적극 하라"까지 가야 문다. ②**다른 편집 *느낌*을 원하면 기존 콘텐츠 파이프라인의 편집 *방향*을 바꿔라, 선택 로직을
+  ★교훈 2겹: ①**허용 ≠ 행동, 그러나 해법은 "강제"가 아니라 "동등 후보 제시"다** — 사진 금지를 supersede해 *허용*만 하면 Writer는 영상-only
+  디폴트로 돌아간다(허용≠행동). 하지만 여기서 "그럼 사진 1~3개 능동으로 엮어라"는 **할당량** directive를 넣은 건 틀렸다 — PD 교정: "사진을
+  꼭 엮어야 해? 그 씬 잘 나타내는 게 있으면 영상이든 사진이든 쓰면 되잖아." 올바른 해법=사진·영상을 **beat별 동등 후보**로 제시하고 "그 순간을
+  가장 잘 담는 걸 골라라"고 지시(2aea6ac). 즉 supersede는 "금지 제거→강제"가 아니라 "금지 제거→**편향 제거 + 동등 선택 기준 제시**"까지다
+  (영상-only도 그 스토리엔 정답일 수 있다; 강제는 금지만큼 틀리다). ②**다른 편집 *느낌*을 원하면 기존 콘텐츠 파이프라인의 편집 *방향*을 바꿔라, 선택 로직을
   다시 짓지 마라** — 별도 빌더는 Writer/Director의 그라운딩·캐릭터·캡션 계약을 전부 잃는다(프로토타입이 "쪼르르 달려감" 날조 캡션을 낸 이유).
   전부 킬스위치 가역(`RF_CHAIN_TRANSITION`·`RF_PHOTO_FLASH`·`RF_ACTION_TRIM`·`FORCE_EDITING_CONCEPT`). cf [[C_mviter]]·[[rf_fix_production_reproduction]]·[[grammar_rf_caption_grounding_gap]].
 
