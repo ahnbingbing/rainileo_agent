@@ -190,7 +190,7 @@ Required field: `editing_concept` — one of:
 - `long_take` — slow observation (≤2 cuts, ken_burns)
 - `twist_ending` — last-cut reveal (last cut freeze_last_frame or zoom_in_slow)
 - `themed_compilation` — themed grouping (concept.theme_tag + cut.meaning ≥3 cuts)
-- `photo_i2v` — photos animated. **AVOID** — real_footage is video-first. Only when the story genuinely has NO video (e.g. an old-photo memory-lane from years with photos only). Never reach for this to pad a concept that has video; if video is thin, switch concept instead. Otherwise a photo is at most a ~0.5s caption-less flash accent, not a cut.
+- `photo_i2v` — an all-photo episode (whole concept animated from stills, e.g. an old-photo memory-lane from a photo-only era). Rare; use ONLY when the story genuinely has no video. For the common case — **mixing a few photos INTO a mostly-video episode** — do NOT pick this concept: just add photo cuts (`source_hint: "photo_i2v"`) alongside your video cuts in any concept. Photos are polished ken-burns BEATS (peak expression / portrait / detail / the two-together), not padding — see "사진+영상을 엮어 편집한다" in the concept spec. The content/events still ride on VIDEO cuts at full length; photos accent. Never pad a weak concept with photos.
 - `split_screen` — side-by-side (split_horizontal/vertical + secondary_asset_id)
 - `slow_mo` — slow motion (speed_0.3x/0.5x)
 - `before_after` — exactly 2 cuts (cut1=static, cut2=freeze/zoom_in)

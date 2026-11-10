@@ -1407,14 +1407,18 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
                 # restores Seedance animation; =off bans photos (legacy RF_VIDEO_ONLY).
                 _rf_kb = (style == "real_footage"
                           and os.getenv("RF_PHOTO_MODE", "kenburns").lower() != "i2v")
-                # PD 2026-06-15/17: in a VIDEO-FIRST RF episode a photo is only a ~0.5s flash
-                # accent — clamp its duration and blank its captions below. In a photo-MAJORITY
-                # montage (memory-lane) the photo is a FULL captioned story beat, NOT a flash.
-                _flash = _rf_has_video
+                # PD 2026-11-10: photos are now POLISHED KEN-BURNS BEATS mixed into a
+                # mostly-video episode (peak expression / portrait / detail / the-two-together) —
+                # a photo cut the Writer intentionally placed gets its FULL duration_seconds and
+                # KEEPS its (grounded) caption, NOT a 0.5s flash. The content still rides on video
+                # cuts at full length; photos accent with ken-burns (zoom/pan) + cross-dissolve.
+                # This supersedes the 2026-06-15/17 video-first 0.5s flash clamp — restore that
+                # legacy behavior with RF_PHOTO_FLASH=1 (then any photo in a video episode flashes).
+                _flash = (_rf_has_video and os.getenv("RF_PHOTO_FLASH", "0") == "1")
                 if _flash:
                     _photo_flash_tags.add(tag)
                 _pdur = (PHOTO_FLASH_SEC if _flash
-                         else float(cc.get("duration_seconds") or 5))
+                         else float(cc.get("duration_seconds") or 2.0))
                 # A 0.5s flash needs no Seedance animation — force static ken-burns
                 # (no generation cost, no drift); only a full-length photo cut (all-photo
                 # memory-lane) may use Seedance i2v when RF_PHOTO_MODE=i2v.
@@ -4922,13 +4926,18 @@ def _prerender_photo_kenburns_cuts(manifests: dict, work_dir: Path,
         dur = float(entry.get("trim_dur") or entry.get("seedance_seconds") or 6)
         out_mp4 = work_anim / f"{tag}.mp4"
         frames = max(25, int(dur * 25))
+        # PD 2026-11-10: alternate slow zoom-IN / zoom-OUT per photo beat so a photo+video
+        # mix doesn't read as a monotone static slideshow (all zooming the same way).
+        _inc = 8.0 / frames  # ~8% move over the beat
+        _zexpr = (f"z='min(zoom+{_inc:.5f},1.08)'" if n % 2 == 0
+                  else f"z='if(eq(on,0),1.08,max(zoom-{_inc:.5f},1.0))'")
         try:
             subprocess.run(
                 ["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-loop", "1",
                  "-i", str(photo_path), "-t", f"{dur:.2f}",
                  "-vf", ("scale=720:1280:force_original_aspect_ratio=increase,"
                          "crop=720:1280,"
-                         f"zoompan=z='min(zoom+0.0006,1.10)':d={frames}:s=720x1280:fps=25,"
+                         f"zoompan={_zexpr}:d={frames}:s=720x1280:fps=25,"
                          "setsar=1"),
                  "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-an", str(out_mp4)],
                 check=True, timeout=120)

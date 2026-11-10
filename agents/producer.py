@@ -2047,6 +2047,38 @@ def _tod_mismatch(clip_tod: "str | None", slot_tod: "str | None") -> int:
     return 1
 
 
+def _action_trim_start(clip_id: str, dur: float, win: float):
+    """PD 2026-11-10: aim the one-take trim WINDOW at the clip's SALIENT ACTION (the
+    Gemini action layer, assets.action_moments) so the trimmed segment actually SHOWS
+    the story the caption will describe — not a random 'unused' window that misses the
+    moment (하비 said 'Leo climbs on Ryani' but the trim showed a different part). Returns
+    None when the clip has no stored action moments → caller falls back to _free_trim_start.
+    RF_ACTION_TRIM=0 disables."""
+    import os as _os
+    if _os.getenv("RF_ACTION_TRIM", "1") == "0":
+        return None
+    try:
+        from agents import clip_actions as _ca
+        moments = _ca.actions_for(_db(), clip_id)
+    except Exception:
+        return None
+    if not moments:
+        return None
+    def _score(m):
+        actor = str(m.get("actor") or "").lower()
+        pet = 1 if any(k in actor for k in ("leo", "ryani", "\ub808\uc624", "\ub7b4\ub2c8")) else 0
+        length = float(m.get("end") or 0) - float(m.get("start") or 0)
+        return (pet, length)
+    try:
+        best = max(moments, key=_score)
+        a_start = float(best.get("start") or 0.0)
+    except Exception:
+        return None
+    lead = min(0.8, win * 0.2)   # small lead-in so the action's START is inside the window
+    ts = max(0.0, min(a_start - lead, max(0.0, dur - win)))
+    return round(ts, 2)
+
+
 def _rf_long_candidates(context: dict) -> list[dict]:
     """The 12s+ original clips available to RF, longest-first (id/dur/sc/date).
     PD 2026-06-12: honor the BATCH dedup (context['exclude_asset_ids'], per slot) so
@@ -2118,7 +2150,9 @@ def _rf_long_candidates(context: dict) -> list[dict]:
         segs = used_segs.get(v["id"], [])
         win = min(v["dur"], _win)
         seed = int(_hl.sha1(v["id"].encode()).hexdigest(), 16)
-        ts = _free_trim_start(v["dur"], segs, win, seed)
+        ts = _action_trim_start(v["id"], v["dur"], win)   # PD 2026-11-10: aim at the action moment
+        if ts is None:
+            ts = _free_trim_start(v["dur"], segs, win, seed)
         if segs and ts is None:
             continue  # every window of this clip was recently used → skip
         v["trim_start"] = ts if ts is not None else 0.0
