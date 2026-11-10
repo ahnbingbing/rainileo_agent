@@ -1587,6 +1587,19 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   좁은 가드와 겹치면 순손해다** — 추가 안전은 0이고(가드가 이미 잡음) 그 가드가 허용하는 정상 케이스만 억누른다. 버그를
   막을 땐 **가장 좁은 지점**(여기선 "같은 클립 쪼개기")만 막고, 넓은 기본값으로 뭉개지 마라. `RF_*` 전부 가역. cf [[C_rfeditdir]]·[[rf_editing_direction_memories]].
 
+- **C_photozerosec. 재료검증이 사진 켄번스 비트를 0.04초로 세어 추억-믹스를 숨어서 죽였다 — "끝까지 돌려야" 보인 버그(11/10)** —
+  C_onetakeovercorrect로 컷수-강제를 풀었는데도 **전체 파이프라인**을 돌리니 11-16 슬롯이 20분간 **5번 재작성(재료검증 3+구조검증 1)**하며
+  렌더에 못 갔다. 통계(컨셉 단계 컷수 3/6/4)만 봤으면 못 봤을, 전체 run이 드러낸 버그: `_rf_footage_gate`(재료검증)가 각 컷을 asset의
+  ffprobe 길이로 cap하는데 **JPEG(사진)은 ffprobe가 ~0.04s(단일 프레임)를 돌려준다** → `min(요청4s, 0.04)=0.04≈0` → 사진 켄번스 비트가
+  **0초로 계산** → 사진을 엮은 추억-믹스가 13s content floor를 못 넘음 → "실현 길이 부족" 리젝 → 영상-only/원테이크로 되밀림. **이게
+  C_rfeditdir 사진믹스를 숨어서 죽이던 범인이자, 얇은 풀(최근 공개본 17개 하드제외)에서 멀티컷이 churn한 근본.** 한 번 깊이 읽고
+  "사진은 probe→None→요청초 인정"이라 결론냈던 건 **틀렸다** — slack/jpeg는 probe가 None이 아니라 0.04를 주고 캐시까지 한다(한 번의
+  코드독해로 단언 금지, [[D_streamguard]] "로그가 진실"·실측이 진실). Fix(a7d3dbf)=게이트가 `kind`를 읽어 **사진은 요청 초를 그대로
+  인정**(정지 이미지는 켄번스로 아무 길이나 가능), 영상만 실제 길이로 cap. 유닛검증: 사진3+영상2 믹스 10.1s→22.0s 통과. ★교훈=**정지
+  자산의 "실현 길이"는 파일 길이가 아니라 디스플레이 시간이다** — 영상 기준(실제 duration이 상한)을 사진에 적용하면 0으로 뭉갠다; 자산
+  종류별로 "실현"의 정의가 다르다. 그리고 **컨셉 단계 통계가 통과여도 전체 파이프라인은 다른 게이트(소비처)에서 막힐 수 있다 — "끝까지
+  돌려 결과를 보라"**(PD)가 이 버그를 드러냈다. RF_FOOTAGE_GATE 가역. cf [[C_onetakeovercorrect]]·[[C_rfeditdir]]·[[rf_nulldur_burst_seq_openai_9-4]](같은 duration-맹점 계열).
+
 ### 4.5 인프라 / 파이프라인
 - **C_ingestclobber. 소비처 배선이 끝나도 쓰기 경로가 안 지켜주면 무의미하다 — ingest의 INSERT OR REPLACE가 VM-계산 컬럼을 매 import마다 NULL로 지웠다(11/5)** —
   Gemini 액션레이어(`action_moments`)를 RF 선택+캡션에 배선(C_actionlayer)하고 VM 백필을 돌렸더니 로그는 `done=262`인데 DB엔 **70개만** 남았다. 근본=`ingest_register.import_`의 `INSERT OR REPLACE INTO assets`가 **행 전체를 재삽입** → Mac export가 싣지 않는 **VM-계산 컬럼(`action_moments`·`duration_sec`·`vis_phash`·`has_human`)을 매번 통째로 NULL**로 만든다. 3.9h 백필 동안 운영 봇의 ingest가 계속 덮어써, 마지막 ingest 이후에 쓴 70개만 살아남았다. 이건 C_nulldur에서 duration을 **일회성 prev-보존 가드**로만 막았던 바로 그 패턴이 새 컬럼에서 재발한 것 — 증상(duration)만 막고 메커니즘(REPLACE가 미기재 컬럼을 민다)을 안 고쳤기 때문. Fix(ad08281)=`ON CONFLICT(asset_id) DO UPDATE` 업서트(미기재 컬럼은 건드리지 않아 보존)+빈 VM-owned 키 드롭(NULL export가 실값을 못 덮게) → `_VM_OWNED` 집합으로 **일반화**(일회성 가드 supersede). ★교훈 2겹: ①**결정→소비처 배선→내구성이 한 세트다** — 선택/캡션을 꽂아도 그 데이터가 동시-쓰기(24/7 운영 봇)에서 살아남지 못하면 갭은 그대로이고, **재런으로 메우는 건 무의미**(다음 ingest가 또 wipe한다). 운영 DB의 모든 쓰기는 멱등+보존(upsert)이어야 한다. ②**일회성 가드는 다음 컬럼에서 재발한다** — 한 증상을 패치하지 말고 메커니즘을 일반화하라. cf C_nulldur(같은 ingest 경로의 duration 일회성 가드 — 이번에 일반 upsert로 흡수), C_actionlayer(이 백필이 점등하려던 소비처 배선), D_streamguard(작동하는 폴백이 죽은 주력을 가리듯, 작동하는 백필이 지워지는 쓰기를 가렸다).
