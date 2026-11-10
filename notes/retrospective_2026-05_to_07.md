@@ -1555,6 +1555,21 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   over-promise로 오인하게 했다 → 삭제. 자동생성 디렉티브는 소비 후 정리돼야 다음 재생산을 안 오염시킨다.
   cf [[C_freshpool]]·[[C_neighbordup]]·[[D_streamguard]](로그가 진실)·[[giri_title_defect_class]].
 
+- **C_rfeditdir. "편집이 안 된다"는 콘텐츠 선택이 아니라 편집 *방향성* 문제였다 — 허용(permission)은 행동(behavior)이 아니다(11/10)** —
+  PD: "너는 왜 이렇게 편집이 안될까? 사진과 동영상을 적정히 섞으면서 하잖아… 사진은 길게 보여주면서 동영상 왜이리 짧게." RF 쇼츠가
+  영상-only에 하드컷만이라 Apple '추억'처럼 안 엮였다. 첫 본능은 틀렸다 — **별도 '추억' 리엘 빌더**(`/tmp/memories_proto.py`)를 짰다가
+  PD 교정: **"왜 기존 파이프라인에 있는 걸 안 쓰고. 나는 편집 방향성만 다르게 하길 원한 거야."** Writer/Director는 이미 콘텐츠·스토리·
+  클립선택·캡션을 다 한다 — 새로 지을 게 아니라 **편집 방향만** 바꿔야 했다(C_mviter 파이프라인 우회의 같은 계열). 근본 3겹: ①사진 금지를
+  supersede(466a410)해 **허용**했지만 Writer에 **능동 지시가 없어** 모델이 디폴트로 영상-only를 골랐다 — *금지를 지운다고 모델이 그걸 하지는
+  않는다*; themed/montage엔 사진비트를 적극 엮으라는 능동 directive(261800a)를 줘야 photo_cuts 0→1↑ ②크로스디졸브가 **AV assemble 경로에만**
+  배선돼 RF는 매 경계를 하드컷 → 끊김; RF에 `RF_CHAIN_TRANSITION=crossfade` 기본 배선(9b57c90)으로 추억처럼 흐름 ③사진이 0.5s 플래시거나
+  반대로 너무 길게 — `RF_PHOTO_FLASH=0`으로 **스토리기반 풀길이 켄번스 비트**(줌인↔줌아웃 교대)+액션겨냥 트림(`RF_ACTION_TRIM`). 인프라는 건드릴
+  필요 없었다: `available_photos`가 DB상 `file_path=None`이어도 렌더때 `_ensure_local`이 **GCS서 on-demand fetch**(동기화 잡 불필요, 검증 OK).
+  ★교훈 2겹: ①**허용 ≠ 행동** — 룰을 supersede해 길을 열어도, 모델은 *능동 지시*가 없으면 익숙한 디폴트로 돌아간다. review-learning의 supersede는
+  "금지 제거"에서 끝나면 안 되고 "적극 하라"까지 가야 문다. ②**다른 편집 *느낌*을 원하면 기존 콘텐츠 파이프라인의 편집 *방향*을 바꿔라, 선택 로직을
+  다시 짓지 마라** — 별도 빌더는 Writer/Director의 그라운딩·캐릭터·캡션 계약을 전부 잃는다(프로토타입이 "쪼르르 달려감" 날조 캡션을 낸 이유).
+  전부 킬스위치 가역(`RF_CHAIN_TRANSITION`·`RF_PHOTO_FLASH`·`RF_ACTION_TRIM`·`FORCE_EDITING_CONCEPT`). cf [[C_mviter]]·[[rf_fix_production_reproduction]]·[[grammar_rf_caption_grounding_gap]].
+
 ### 4.5 인프라 / 파이프라인
 - **C_ingestclobber. 소비처 배선이 끝나도 쓰기 경로가 안 지켜주면 무의미하다 — ingest의 INSERT OR REPLACE가 VM-계산 컬럼을 매 import마다 NULL로 지웠다(11/5)** —
   Gemini 액션레이어(`action_moments`)를 RF 선택+캡션에 배선(C_actionlayer)하고 VM 백필을 돌렸더니 로그는 `done=262`인데 DB엔 **70개만** 남았다. 근본=`ingest_register.import_`의 `INSERT OR REPLACE INTO assets`가 **행 전체를 재삽입** → Mac export가 싣지 않는 **VM-계산 컬럼(`action_moments`·`duration_sec`·`vis_phash`·`has_human`)을 매번 통째로 NULL**로 만든다. 3.9h 백필 동안 운영 봇의 ingest가 계속 덮어써, 마지막 ingest 이후에 쓴 70개만 살아남았다. 이건 C_nulldur에서 duration을 **일회성 prev-보존 가드**로만 막았던 바로 그 패턴이 새 컬럼에서 재발한 것 — 증상(duration)만 막고 메커니즘(REPLACE가 미기재 컬럼을 민다)을 안 고쳤기 때문. Fix(ad08281)=`ON CONFLICT(asset_id) DO UPDATE` 업서트(미기재 컬럼은 건드리지 않아 보존)+빈 VM-owned 키 드롭(NULL export가 실값을 못 덮게) → `_VM_OWNED` 집합으로 **일반화**(일회성 가드 supersede). ★교훈 2겹: ①**결정→소비처 배선→내구성이 한 세트다** — 선택/캡션을 꽂아도 그 데이터가 동시-쓰기(24/7 운영 봇)에서 살아남지 못하면 갭은 그대로이고, **재런으로 메우는 건 무의미**(다음 ingest가 또 wipe한다). 운영 DB의 모든 쓰기는 멱등+보존(upsert)이어야 한다. ②**일회성 가드는 다음 컬럼에서 재발한다** — 한 증상을 패치하지 말고 메커니즘을 일반화하라. cf C_nulldur(같은 ingest 경로의 duration 일회성 가드 — 이번에 일반 upsert로 흡수), C_actionlayer(이 백필이 점등하려던 소비처 배선), D_streamguard(작동하는 폴백이 죽은 주력을 가리듯, 작동하는 백필이 지워지는 쓰기를 가렸다).
