@@ -77,9 +77,10 @@ asset_id로, `duration_seconds = 원본 길이 그대로`, 캡션은 클립 위�
   길게. "Leo가 햇살에 천천히 눕는 순간" / "두 펫이 마주봤다 떨어지는 순간". 통째로 좋은 긴
   원본이 있으면 1컷으로, `duration_seconds = 원본 길이 그대로`.
 - **여러 순간을 엮기 / 추억 믹스** (themed_compilation, rapid_montage, cross_cutting): 하루·관계·
-  변화처럼 **여러 distinct 순간**에 걸친 이야기. 영상 컷 사이에 **사진 비트(켄번스)**를 엮어
-  리듬·강조를 만들고, 전환은 크로스디졸브로 흐르게(Apple 추억 그래머). "5월 22일 하루의
-  조각들" / "누나 껌딱지 레오의 하루(산책→낮잠→펫하우스)". 컷 수는 이야기가 정한다.
+  변화처럼 **여러 distinct 순간**에 걸친 이야기. 각 beat는 그 순간을 가장 잘 담는 자산(영상 또는
+  사진)으로 — 사진이 더 나은 순간이 섞이면 자연히 영상+사진 추억 믹스가 된다(아래 beat별 자산선택
+  규칙). 전환은 크로스디졸브로 흐르게(Apple 추억 그래머). "5월 22일 하루의 조각들" / "누나 껌딱지
+  레오의 하루(산책→낮잠→펫하우스)". 컷 수는 이야기가 정한다.
 - **편집 컨셉 선택 기준**: 한 장면이 통째로 완결 → long_take. 여러 순간/관계/하루 →
   themed_compilation·rapid_montage(사진+영상 믹스). 비교 가능 → split_screen/before_after.
   마지막에 반전 모먼트 → twist_ending. 자산과 이야기가 부르는 대로 고르되, 여러 순간
@@ -194,13 +195,14 @@ Required field: `editing_concept` — one of:
 
 If `forced_editing_concept` is set in the input, you MUST use that exact slug. Each editing_concept has signature constraints — your cuts MUST match them.
 
-**★ 사진을 적극 엮어라 — 여러 순간 스토리엔 사진 비트를 넣는다 (PD 2026-11-10).** `available_photos`
-풀에는 영상으로는 못 담은 순간(또렷한 피크 표정, 포트레이트, 디테일, 둘이 붙어있는 한 컷)이 많다.
-`themed_compilation` / `rapid_montage` / 여러 순간을 잇는 vlog·관계 스토리에서는 **영상 컷 사이사이에
-사진 비트 1~3개를 능동적으로 끼워** 리듬·강조·여백을 만들어라(단일 `long_take`·`before_after`엔 불필요).
-사진 컷은 `source_hint: "photo_i2v"` + 화면에 보이는 것에 그라운딩한 캡션으로. **내용(사건)은 여전히
-영상이 지고** 사진은 액센트다 — 사진으로 때우지 말되, 좋은 정지 순간이 있으면 영상-only로만 짜지 말고
-사진을 적극 활용해라. (파이프라인이 사진을 켄번스로 살린다 — 정지 덤프가 아니다.)
+**★ 사진과 영상은 동등한 후보다 — beat마다 그 순간을 가장 잘 보여주는 걸 골라라 (PD 2026-11-10).**
+각 beat(순간)를 짤 때, 그 순간을 **가장 잘 나타내는 자산**을 `available_videos`와 `available_photos`
+**둘 다에서** 고른다 — 매체(영상/사진)가 아니라 *그 순간을 얼마나 잘 담는가*가 기준이다. 사진은 할당량도,
+때우기용도, 피해야 할 것도 아니다. 영상이 모든 beat를 더 잘 담으면 영상-only가 맞다. 하지만 어떤 순간은
+**사진이 더 낫다** — 영상엔 없는 또렷한 피크 표정·포트레이트·디테일·둘이 붙은 한 컷, 혹은 그 순간의
+영상 자체가 없을 때. 그러면 그 beat엔 사진을 써라(파이프라인이 켄번스로 살린다 — 정지 덤프 아님).
+사진 beat는 `source_hint: "photo_i2v"` + 화면에 보이는 것에 그라운딩한 캡션. 요컨대: 매체를 미리 정하지
+말고, beat가 요구하는 그림을 가장 잘 주는 자산을 집어라.
 
 ## Cut schema (real_footage specific)
 
