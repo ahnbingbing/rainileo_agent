@@ -3731,28 +3731,45 @@ def _vlm_post_render_caption_rewrite(work_dir: Path, manifests: dict,
         mp4 = anim_dir / f"{tag}.mp4"
         if not mp4.exists():
             continue
-        frames: list[Path] = []
-        for t in (0.5, 2.5, 4.5):
-            jpg = work_dir / f"_vlm_{tag}_{t}.jpg"
+        # PD 2026-11-10: GROUND ON THE VIDEO, not 3 stills. 3 keyframes can't see MOTION, so a
+        # grooming/stretching/head-turning pet reads as "자는 중/꿀잠" — the action was misread
+        # and that wrong caption shipped. Gemini watches the clip natively (motion), the only way
+        # to tell grooming from sleeping. Frame mode kept as a fallback (video too big / read fail
+        # / RF_CAPTION_VLM_VIDEO=0).
+        parts = None
+        if os.getenv("RF_CAPTION_VLM_VIDEO", "1") == "1":
             try:
-                subprocess.run(
-                    ["ffmpeg", "-y", "-ss", str(t), "-i", str(mp4),
-                     "-frames:v", "1", "-q:v", "3", str(jpg)],
-                    capture_output=True, check=False, timeout=10,
-                )
-                if jpg.exists() and jpg.stat().st_size > 1000:
-                    frames.append(jpg)
-            except Exception:
+                _vb = mp4.read_bytes()
+                if 0 < len(_vb) < int(os.getenv("RF_CAPTION_VLM_VIDEO_MAX_BYTES", "18000000")):
+                    parts = [f"Cut: {tag}. WATCH this short video clip — motion is what tells "
+                             f"grooming/stretching from sleeping, approaching from standing still.",
+                             _gt.Part.from_bytes(data=_vb, mime_type="video/mp4")]
+            except Exception as e:
+                log.warning("caption VLM: video read failed for %s (%s) — frame fallback", tag, e)
+                parts = None
+        if parts is None:
+            frames: list[Path] = []
+            for t in (0.5, 2.5, 4.5):
+                jpg = work_dir / f"_vlm_{tag}_{t}.jpg"
+                try:
+                    subprocess.run(
+                        ["ffmpeg", "-y", "-ss", str(t), "-i", str(mp4),
+                         "-frames:v", "1", "-q:v", "3", str(jpg)],
+                        capture_output=True, check=False, timeout=10,
+                    )
+                    if jpg.exists() and jpg.stat().st_size > 1000:
+                        frames.append(jpg)
+                except Exception:
+                    continue
+            if not frames:
                 continue
-        if not frames:
-            continue
-        parts = [f"Cut: {tag}. 3 keyframes at 0.5s, 2.5s, 4.5s of this 5s clip."]
-        for j in frames:
-            try:
-                parts.append(_gt.Part.from_bytes(data=j.read_bytes(),
-                                                 mime_type="image/jpeg"))
-            except Exception:
-                pass
+            parts = [f"Cut: {tag}. 3 keyframes at 0.5s, 2.5s, 4.5s of this clip."]
+            for j in frames:
+                try:
+                    parts.append(_gt.Part.from_bytes(data=j.read_bytes(),
+                                                     mime_type="image/jpeg"))
+                except Exception:
+                    pass
         parts.append(
             "1-2 short Korean sentences describing what actually happens. "
             "Also state which pets are visible (cat / dog) and whether either is "
