@@ -6358,6 +6358,54 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
             _apply_edit_plan(manifests, _plan, anim_dir, progress_cb)
             manifests["_edit_plan"] = _plan  # carry mismatch for the upstream loop
 
+    # PD 2026-11-10: re-assert the body budget AFTER the Editor. The Editor LLM overwrites each
+    # cut's duration (_apply_edit_plan) and can re-expand past the 18s cap the producer already
+    # applied (it emitted 23s for an 18s episode) → RF drags, retention dies (the 10-29 cap
+    # lesson). Re-clamp DETERMINISTICALLY here — the authoritative budget is code, not the LLM.
+    # SHRINK only (the cut set is settled; dropping now would desync the captions JSON), down to
+    # the ~2.5s/caption legibility floor so captions never truncate. RF_BODY_CAP_AFTER_EDIT=0 off.
+    if not dry_run and os.getenv("RF_BODY_CAP_AFTER_EDIT", "1") == "1":
+        _cuts = manifests.get("cuts") or []
+        _cap = float(os.getenv("RF_BODY_MAX_SEC", "18"))
+        _floor = float(os.getenv("RF_CUT_MIN_SEC", "2.5"))
+        def _d(c):
+            return float(c.get("duration_seconds") or c.get("trim_dur") or 4)
+        def _fl(c):
+            caps = c.get("captions") or c.get("scenes") or []
+            n = len(caps) if isinstance(caps, list) else 1
+            return max(_floor, (n or 1) * _floor)
+        _tot = sum(_d(c) for c in _cuts)
+        if _cuts and _tot > _cap:
+            _floors = [_fl(c) for c in _cuts]
+            _shrinkable = sum(_d(c) - f for c, f in zip(_cuts, _floors))
+            if _shrinkable > 0:
+                _ratio = min(1.0, (_tot - _cap) / _shrinkable)
+                _newdur = {}  # tag → clamped seconds, to propagate to the sources manifest
+                for c, f in zip(_cuts, _floors):
+                    _nd = round(_d(c) - (_d(c) - f) * _ratio, 2)
+                    c["duration_seconds"] = _nd
+                    if c.get("trim_dur"):
+                        c["trim_dur"] = _nd
+                    _tg = c.get("tag") or c.get("cut_tag")
+                    if _tg:
+                        _newdur[_tg] = _nd
+                # The trim reads trim_dur from the sources manifest FILE, not the cut list —
+                # write the clamped durations there too, else the editor's over-budget values win.
+                try:
+                    _sp = manifests.get("sources")
+                    if _sp and Path(_sp).is_file():
+                        _sj = json.loads(Path(_sp).read_text(encoding="utf-8"))
+                        for _tg, _nd in _newdur.items():
+                            if isinstance(_sj.get(_tg), dict) and _sj[_tg].get("trim_dur"):
+                                _sj[_tg]["trim_dur"] = _nd
+                        Path(_sp).write_text(json.dumps(_sj, ensure_ascii=False, indent=2),
+                                             encoding="utf-8")
+                except Exception as _e:
+                    log.warning("budget re-cap: sources manifest update failed: %s", _e)
+                if progress_cb:
+                    progress_cb(f":scissors: 본문 예산 재적용(에디터 후) {_tot:.0f}s→"
+                                f"{sum(_d(c) for c in _cuts):.0f}s")
+
     # Step 1: trim source clips into animated/ (PD 2026-06-02: split trim
     # from caption burn so VLM rewrite can run between them).
     _trim_real_footage_clips(manifests, anim_dir, progress_cb, dry_run)
