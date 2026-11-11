@@ -1632,6 +1632,21 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   완성. 주의: PD 기준 narration은 **캡션 토큰**이지 before_after 연출만으론 부족(게이트가 연출 팔레트를 면제 안 함 = 체커와 동일 바).
   RF_ERA_GATE 가역. cf [[C_timeframe]]·[[C13]](시점 캡션 flatten)·[[C_multicutlayers]](같은 11월 RF-edit 스레드)·[[grounding_pd_notes_gpt4omini]].
 
+- **C_clipknowledgebackfill. footage-aware RF는 "렌더-끝 패치"가 아니라 "ideation을 footage에 그라운딩"으로 근본을 옮긴다 —
+  스키마는 백필 전에 완성하고, 치료는 ID가 아니라 '내용'으로 검증하라(11/11)** — "RF 편집이 안 됨"의 근본은 캡션(story)과
+  화면(footage)이 **따로 결정돼 합의 레벨이 없음** → 렌더-끝 그라운딩 게이트(C_timeframe·grounding_pd_notes 계열)는 "막을" 뿐
+  이길 수 없는 싸움(한쪽 맞추면 다른쪽 깨짐; 증거=11-21 cut2 전구간 랴니만인데 캡션 "레오 호기심"). 해법=그라운딩을 **상류 ideation으로**:
+  `clip_knowledge`(Gemini 네이티브 영상+오디오 → frame-truth `subjects_in_video` / 소재 beats / off-screen `audio_events` /
+  pd_notes 영상-교차검증 `pd_verified.conflicts`)에서**만** 컨셉을 뽑게 brainstorm을 뜯어고침(`concept_brainstorm._clip_knowledge_material`
+  + `_grounded_violations` 결정론 게이트). ★교훈 2겹: ①**생산자-소유 메타는 백필 전에 스탬프하라** — CK_SCHEMA가 `captured_iso`(era-mix
+  앵커)·`duration_sec`(트림)·`schema_version`을 LLM에 맡겨 비웠다가 나중에 추가하면 **전 클립 Gemini 재추출 = 재비용**. 결정론 필드는
+  생산 지점(`video_actions.clip_knowledge`)이 clip row에서 스탬프 — 백필이 완전한 레코드를 한 번에 굽는다. ②**검증기 ID-통과 ≠ 치료됨**
+  — `_grounded_violations`는 cited clip id가 실재하는지만 보므로 "0 드롭"은 바닥 신호일 뿐; 진짜 치료는 **내용 레벨**(승자 "2층 난간 레오/
+  1층서 짖는 랴니"가 클립 summary와 축자일치, 카페 "레오 호기심"이 이번엔 `subjects_in_video=[둘 다]`라 없는-펫-호명 아님)로 확인해야
+  한다 = C_photozerosec·C_multicutlayers의 "끝까지 돌려야/내용을 봐야 보인다"를 ideation에도 적용. 빌드는 전부 **OFF**(USE_CLIP_KNOWLEDGE=0·
+  RF_CONCEPT_BRAINSTORM=0) — v2 롤백 교훈대로 스모크 통과 + **PD 스팟체크 후에만 플립**(기본 ON 금지). cf [[C_eramixgen]]·[[C_photozerosec]]·
+  [[rf_editing_direction_memories]](별도 빌더 금지·기존 자산 진화)·[[grounding_pd_notes_gpt4omini]].
+
 ### 4.5 인프라 / 파이프라인
 - **C_ingestclobber. 소비처 배선이 끝나도 쓰기 경로가 안 지켜주면 무의미하다 — ingest의 INSERT OR REPLACE가 VM-계산 컬럼을 매 import마다 NULL로 지웠다(11/5)** —
   Gemini 액션레이어(`action_moments`)를 RF 선택+캡션에 배선(C_actionlayer)하고 VM 백필을 돌렸더니 로그는 `done=262`인데 DB엔 **70개만** 남았다. 근본=`ingest_register.import_`의 `INSERT OR REPLACE INTO assets`가 **행 전체를 재삽입** → Mac export가 싣지 않는 **VM-계산 컬럼(`action_moments`·`duration_sec`·`vis_phash`·`has_human`)을 매번 통째로 NULL**로 만든다. 3.9h 백필 동안 운영 봇의 ingest가 계속 덮어써, 마지막 ingest 이후에 쓴 70개만 살아남았다. 이건 C_nulldur에서 duration을 **일회성 prev-보존 가드**로만 막았던 바로 그 패턴이 새 컬럼에서 재발한 것 — 증상(duration)만 막고 메커니즘(REPLACE가 미기재 컬럼을 민다)을 안 고쳤기 때문. Fix(ad08281)=`ON CONFLICT(asset_id) DO UPDATE` 업서트(미기재 컬럼은 건드리지 않아 보존)+빈 VM-owned 키 드롭(NULL export가 실값을 못 덮게) → `_VM_OWNED` 집합으로 **일반화**(일회성 가드 supersede). ★교훈 2겹: ①**결정→소비처 배선→내구성이 한 세트다** — 선택/캡션을 꽂아도 그 데이터가 동시-쓰기(24/7 운영 봇)에서 살아남지 못하면 갭은 그대로이고, **재런으로 메우는 건 무의미**(다음 ingest가 또 wipe한다). 운영 DB의 모든 쓰기는 멱등+보존(upsert)이어야 한다. ②**일회성 가드는 다음 컬럼에서 재발한다** — 한 증상을 패치하지 말고 메커니즘을 일반화하라. cf C_nulldur(같은 ingest 경로의 duration 일회성 가드 — 이번에 일반 upsert로 흡수), C_actionlayer(이 백필이 점등하려던 소비처 배선), D_streamguard(작동하는 폴백이 죽은 주력을 가리듯, 작동하는 백필이 지워지는 쓰기를 가렸다).
