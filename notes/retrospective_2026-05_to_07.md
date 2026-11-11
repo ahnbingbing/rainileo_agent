@@ -1616,6 +1616,22 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   종류별로 "실현"의 정의가 다르다. 그리고 **컨셉 단계 통계가 통과여도 전체 파이프라인은 다른 게이트(소비처)에서 막힐 수 있다 — "끝까지
   돌려 결과를 보라"**(PD)가 이 버그를 드러냈다. RF_FOOTAGE_GATE 가역. cf [[C_onetakeovercorrect]]·[[C_rfeditdir]]·[[rf_nulldur_burst_seq_openai_9-4]](같은 duration-맹점 계열).
 
+- **C_eramixgen. 검수기만 era-mix를 막으면 리롤이 수렴 안 한다 — 생성기가 '같은 규칙'으로 렌더 전에 막아야 한다(11/11)** —
+  아기 레오(2025-11, ~2개월)와 다 큰 레오(2026)를 **시점 명시 없이 한 '현재' 카페 나들이**로 봉합한 11-21 에피가 "레오가 갑자기
+  작아짐"으로 나왔다. 검수기 쪽 결정론 게이트(`reviewer._temporal_grounding_gate`, C_timeframe 계열, PD 6/23)는 이미 촬영일 span +
+  시점 토큰 스캔으로 post-render cap≤5를 먹이는데, **Writer는 그 규칙을 모른 채 계속 같은 결함을 다시 뽑아** 리롤이 수렴하지 않았다
+  (self-heal이 같은 걸 반복 리젝). 근본=**검수기만 고치면 샌다의 era 버전** — 체커는 "막을" 뿐 "고치게" 하지 못한다. Fix(e6edeea)=
+  span/token 로직을 `agents/era_mix.py` **공유 모듈로 추출**해 ①post-render Giri 게이트를 거울-리팩터(바이트 동등)하고 ②`producer`
+  구조 게이트(`_rf_structure_issues` 사이트)에 **렌더 전 Writer-facing** 체크를 꽂았다: span fire & 번인 캡션에 시점 토큰 없음 →
+  `[시대혼합]` 재작성 피드백(같은 시기 통일 **또는** 과거↔현재 캡션 명시)으로 기존 `[구조검증]` 재-propose 루프에 실어 강제. 둘이
+  한 함수를 읽어 **영원히 lockstep**(규칙을 한 곳에서 바꾸면 양쪽이 같이 움직임 — 복붙 두 벌은 드리프트한다). ★교훈 2겹: ①**생성기·검수기
+  lockstep의 era 적용** — 체커의 결정론 verdict는 리롤이 수렴하는 **생성기 피드백**이 짝을 이뤄야 비로소 고쳐진다([[A24]]·[[view_data_concrete_hook_title]]의
+  title-cap 리롤 미수렴과 동형). ②**해결은 레인 비대칭이어도 규칙은 하나다** — AV는 era 위험을 *selection*에서 막고(`_av_era_floor`,
+  Leo 6개월 floor로 아기/pre-Leo 클립 자체를 배제; AV는 캐릭터를 regen하니 아카이브를 안 씀), RF는 memory-lane으로 아카이브를 **정당하게**
+  쓰므로 *narration*으로 막는다 — `_av_era_floor` docstring이 "CHECKER만 고치면 부족, GENERATOR가 애초에 막아야"라던 대칭을 RF 쪽에서
+  완성. 주의: PD 기준 narration은 **캡션 토큰**이지 before_after 연출만으론 부족(게이트가 연출 팔레트를 면제 안 함 = 체커와 동일 바).
+  RF_ERA_GATE 가역. cf [[C_timeframe]]·[[C13]](시점 캡션 flatten)·[[C_multicutlayers]](같은 11월 RF-edit 스레드)·[[grounding_pd_notes_gpt4omini]].
+
 ### 4.5 인프라 / 파이프라인
 - **C_ingestclobber. 소비처 배선이 끝나도 쓰기 경로가 안 지켜주면 무의미하다 — ingest의 INSERT OR REPLACE가 VM-계산 컬럼을 매 import마다 NULL로 지웠다(11/5)** —
   Gemini 액션레이어(`action_moments`)를 RF 선택+캡션에 배선(C_actionlayer)하고 VM 백필을 돌렸더니 로그는 `done=262`인데 DB엔 **70개만** 남았다. 근본=`ingest_register.import_`의 `INSERT OR REPLACE INTO assets`가 **행 전체를 재삽입** → Mac export가 싣지 않는 **VM-계산 컬럼(`action_moments`·`duration_sec`·`vis_phash`·`has_human`)을 매번 통째로 NULL**로 만든다. 3.9h 백필 동안 운영 봇의 ingest가 계속 덮어써, 마지막 ingest 이후에 쓴 70개만 살아남았다. 이건 C_nulldur에서 duration을 **일회성 prev-보존 가드**로만 막았던 바로 그 패턴이 새 컬럼에서 재발한 것 — 증상(duration)만 막고 메커니즘(REPLACE가 미기재 컬럼을 민다)을 안 고쳤기 때문. Fix(ad08281)=`ON CONFLICT(asset_id) DO UPDATE` 업서트(미기재 컬럼은 건드리지 않아 보존)+빈 VM-owned 키 드롭(NULL export가 실값을 못 덮게) → `_VM_OWNED` 집합으로 **일반화**(일회성 가드 supersede). ★교훈 2겹: ①**결정→소비처 배선→내구성이 한 세트다** — 선택/캡션을 꽂아도 그 데이터가 동시-쓰기(24/7 운영 봇)에서 살아남지 못하면 갭은 그대로이고, **재런으로 메우는 건 무의미**(다음 ingest가 또 wipe한다). 운영 DB의 모든 쓰기는 멱등+보존(upsert)이어야 한다. ②**일회성 가드는 다음 컬럼에서 재발한다** — 한 증상을 패치하지 말고 메커니즘을 일반화하라. cf C_nulldur(같은 ingest 경로의 duration 일회성 가드 — 이번에 일반 upsert로 흡수), C_actionlayer(이 백필이 점등하려던 소비처 배선), D_streamguard(작동하는 폴백이 죽은 주력을 가리듯, 작동하는 백필이 지워지는 쓰기를 가렸다).
