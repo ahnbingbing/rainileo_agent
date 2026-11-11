@@ -2261,14 +2261,43 @@ def _enforce_memorylane_anchors(manifests: dict, anim_dir: Path,
             con = _sql.connect(str(_dbp))
     except Exception:
         con = None
+    # Map each BURNED tag to its concept cut by ASSET_ID, not positional index: the editor can
+    # drop/reorder cuts (consistency guard dropped 2 of 4 here), after which concept_cuts[idx] no
+    # longer lines up with cap.keys()[idx] → the anchor restores the WRONG cut's caption. The
+    # sources manifest is the authoritative tag→asset_id map (survives reorder); fall back to
+    # positional only when it's unavailable.
+    _src_map = {}
+    try:
+        _sp = Path(manifests.get("sources") or "")
+        if _sp.exists():
+            _src_map = json.loads(_sp.read_text(encoding="utf-8"))
+    except Exception:
+        _src_map = {}
+
+    def _tag_asset(tag: str, idx: int) -> "str | None":
+        s = _src_map.get(tag)
+        aid = (s.get("asset_id") if isinstance(s, dict) else s) if s else None
+        if aid:
+            return aid
+        cc = concept_cuts[idx] if idx < len(concept_cuts) else {}
+        return cc.get("asset_id") or cc.get("secondary_asset_id")
+
+    _cc_by_asset = {}
+    for cc in concept_cuts:
+        _a = cc.get("asset_id") or cc.get("secondary_asset_id")
+        if _a and _a not in _cc_by_asset:
+            _cc_by_asset[_a] = cc
+
     live = []
     for idx, tag in enumerate(ordered_tags):
-        cc = concept_cuts[idx] if idx < len(concept_cuts) else {}
+        _aid = _tag_asset(tag, idx)
+        cc = _cc_by_asset.get(_aid) or (concept_cuts[idx] if idx < len(concept_cuts) else {})
         if cc.get("function") == "wink_ending":
             continue
-        d0 = _asset_shoot_date(con, cc.get("asset_id") or cc.get("secondary_asset_id"))
+        d0 = _asset_shoot_date(con, _aid)
         ya = round((tgt - d0).days / 365.25, 1) if d0 else None
-        live.append({"tag": tag, "years_ago": ya,
+        live.append({"tag": tag, "years_ago": ya, "asset_id": _aid, "d0": d0,
+                     "who": str(cc.get("who") or cc.get("subjects") or "").lower(),
                      "writer_caps": cc.get("captions") or []})
     if con is not None:
         try:
@@ -2278,9 +2307,20 @@ def _enforce_memorylane_anchors(manifests: dict, anim_dir: Path,
     dated = [x for x in live if x["years_ago"] is not None]
     if len(dated) < 2:
         return
+    # Trigger in LOCKSTEP with the Giri era gate (era_mix.era_span_fire) — NOT a private flat
+    # 2-year rule. Leo (born 2025-09) goes kitten→grown within ONE year, so a baby-Leo + present
+    # mix spans <2yr yet shows a dramatic age jump ("레오가 갑자기 커짐"); the flat rule missed
+    # exactly what the kitten-aware checker fires on → markers never restored, the reroll never
+    # converged (retro C_eramixgen). Fall back to the flat test if era_span_fire can't read dates.
+    try:
+        from agents import era_mix as _era_mix
+        _era_fire = _era_mix.era_span_fire(concept_cuts, ROOT / "data" / "agent.db")
+    except Exception:
+        _era_fire, _era_mix = None, None
     yrs = [x["years_ago"] for x in dated]
-    if max(yrs) < 2 and (max(yrs) - min(yrs)) < 2:
-        return  # not a multi-year memory-lane — leave present-tense captions alone
+    _flat_multiyear = not (max(yrs) < 2 and (max(yrs) - min(yrs)) < 2)
+    if not _era_fire and not _flat_multiyear:
+        return  # neither the kitten-aware gate nor the flat 2-year rule sees a memory-lane mix
 
     def _has_marker(scenes):
         return any(_TEMPORAL_MARKER.search((sc.get("ko") or "") + " " + (sc.get("en") or ""))
@@ -2300,6 +2340,39 @@ def _enforce_memorylane_anchors(manifests: dict, anim_dir: Path,
         cap[x["tag"]]["scenes"] = _fit_writer_caps(x["writer_caps"],
                                                    anim_dir / f"{x['tag']}.mp4")
         restored.append(f"{x['tag']}({role})")
+
+    # Kitten backstop (PD 2026-11-11): opener/closer restore only touches the ENDS, but the editor
+    # can reorder a baby-Leo cut into the MIDDLE (the burned opener becomes an adult clip while the
+    # kitten cut sits at position 2) → no temporal marker anywhere → "레오가 갑자기 커짐". When
+    # era_span_fire flagged a Leo-kitten mix AND no caption narrates the jump, anchor the kitten cut
+    # itself wherever it landed: restore the Writer's temporal caption for that clip if it wrote one,
+    # else prepend a minimal "그땐 아기 레오" marker to its first scene so the age jump reads as past.
+    _rstyle = str((manifests.get("concept") or {}).get("render_style")
+                  or manifests.get("render_style") or "").lower()
+    if (_rstyle != "ai_vtuber"  # RF only: AV regens pets at CURRENT age, so a source-date "아기
+            # 레오" marker would be wrong (and _av_era_floor already excludes kitten clips from AV)
+            and _era_mix is not None and _era_fire and _era_fire.get("leo_fire")
+            and not _era_mix.captions_narrate_era(
+                [{"scenes": (cap.get(t) or {}).get("scenes") or []} for t in ordered_tags])):
+        for x in live:
+            d0 = x.get("d0")
+            if not d0 or "leo" not in x.get("who", ""):
+                continue
+            leo_age = (d0 - _era_mix._LEO_BORN).days
+            if not (0 <= leo_age < 183):
+                continue  # only a clear kitten-era Leo cut needs the age anchor
+            scenes = cap.get(x["tag"], {}).get("scenes") or []
+            if _has_marker(scenes):
+                break  # already narrated on this cut — nothing to do
+            if _has_marker(x["writer_caps"]):
+                cap[x["tag"]]["scenes"] = _fit_writer_caps(
+                    x["writer_caps"], anim_dir / f"{x['tag']}.mp4")
+            elif scenes:
+                scenes[0]["ko"] = "그땐 아기 레오였죠 — " + (scenes[0].get("ko") or "").lstrip()
+                scenes[0]["en"] = "Back when Leo was a kitten — " + (scenes[0].get("en") or "").lstrip()
+            restored.append(f"{x['tag']}(kitten)")
+            break
+
     if restored:
         try:
             cap_path.write_text(json.dumps(cap, ensure_ascii=False, indent=2),
@@ -3627,7 +3700,10 @@ def _rf_caption_punchup(work_dir: Path, manifests: dict, anim_dir: Path,
         "표현은 *한 번만* 매력적이며 랴니에게만(레오는 8개월이라 금지). EN 줄도 KO보다 더 영리해지려 "
         "과장 번역하지 마라('veteran protocol engaged' 류 금지).\n"
         "규칙: ▲who/what/where/when(시점)·등장체는 절대 바꾸지 마라(사실 고정). ▲화면/사실에 없는 "
-        "관계·사건·'첫/처음/새 친구'를 새로 지어내지 마라. ▲펫은 이름(레오/랴니), 노란 친구 개는 "
+        "관계·사건·'첫/처음/새 친구'를 새로 지어내지 마라. ▲**없는 동작도 지어내지 마라** — 말맛은 "
+        "어조·속마음·위트이지 새 동작이 아니다. 쉬거나 자는 장면(머리 얹고 쉼·눈 감음)을 '코 툭/콕/"
+        "펀치/폴짝' 같은 의성어 *동작*으로 바꾸지 마라(화면에 그 동작이 실제로 있을 때만 그 의성어를 써라). "
+        "▲펫은 이름(레오/랴니), 노란 친구 개는 "
         "'태풍'. ▲여러 과거 클립이 한 흐름인 메모리레인이면 시점 앵커는 **처음·끝에만**(첫 줄 'N년 "
         "전/아기 땐', 마지막 줄 '지금도/오늘도'), 가운데 컷은 행동 그대로 — 매 컷 'N년/N년차' 반복 "
         "금지. ▲마지막 줄은 **첫 줄 정서를 되받는 북엔드 payoff**면 가장 강하다. ▲KO 한 줄+EN 한 "
@@ -3649,25 +3725,49 @@ def _rf_caption_punchup(work_dir: Path, manifests: dict, anim_dir: Path,
     except Exception as e:
         log.warning("punchup failed (keeping grounded captions): %s", e)
         return
-    n = 0
+    # Deterministic fabrication guard (PD 2026-11-11): the punch-up claims "사실 유지" but the LLM
+    # still invents a cute MICRO-ACTION the footage doesn't have — a resting Leo ("소파에 머리 얹고
+    #쉼") became "레오도 코 툭" (a nose-boop that never happens). Prompt rules alone don't stop it, so
+    # back them with a gate: if a punched caption introduces a sudden-physical-action onomatopoeia
+    # that is in NEITHER the grounded pre-punch caption NOR the clip's screen description, it's an
+    # invented action → keep the grounded caption for that scene. (A real boop like cut3's "냥냥펀치"
+    # survives because the screen says "레오가 발로 랴니 머리를 건드림".) RF_PUNCHUP_FABGUARD=0 disables.
+    _FAB_ACTION = ("툭", "콕", "톡", "탁", "팡", "퍽", "펀치", "슥", "쓱", "꾹", "폴짝",
+                   "뿅", "콩", "하이파이브", "들이받", "박치기")
+    _ACTION_SUPPORT = ("건드", "발로", "앞발", "터치", "때리", "치기", "펀치", "밀", "누르",
+                       "툭", "톡", "점프", "뛰", "올라", "덮", "물", "핥", "긁", "파고", "들이")
+    _fabguard = os.getenv("RF_PUNCHUP_FABGUARD", "1") != "0"
+    _by_id = {i["id"]: i for i in items}
+    n = reverted = 0
     for tag, entry in cap.items():
         if tag.startswith("_"):
             continue
         for idx, s in enumerate(entry.get("scenes") or []):
             ns = new.get(f"{tag}#{idx}")
-            if ns and (ns.get("ko") or "").strip():
-                s["ko"] = ns["ko"].strip()
-                if ns.get("en"):
-                    s["en"] = ns["en"].strip()
-                n += 1
+            if not (ns and (ns.get("ko") or "").strip()):
+                continue
+            if _fabguard:
+                _src = _by_id.get(f"{tag}#{idx}", {})
+                _pre, _screen = _src.get("ko", ""), _src.get("screen", "")
+                _introduced = [t for t in _FAB_ACTION if t in ns["ko"] and t not in _pre]
+                if _introduced and not any(w in _screen for w in _ACTION_SUPPORT):
+                    reverted += 1
+                    log.info("punchup fabrication guard: kept grounded '%s' (punch added %s "
+                             "unsupported by screen)", _pre[:30], _introduced[:2])
+                    continue  # keep the grounded pre-punch caption for this scene
+            s["ko"] = ns["ko"].strip()
+            if ns.get("en"):
+                s["en"] = ns["en"].strip()
+            n += 1
     if n and not dry_run:
         try:
             cap_path.write_text(json.dumps(cap, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception as e:
             log.warning("punchup write-back failed: %s", e); return
     if progress_cb:
-        progress_cb(f":sparkles: 캡션 말맛 punch-up — {n}개 자막 위트 강화 (사실 유지)")
-    log.info("rf caption punch-up: sharpened %d captions", n)
+        _rv = f" · 날조 {reverted}개 원복" if reverted else ""
+        progress_cb(f":sparkles: 캡션 말맛 punch-up — {n}개 자막 위트 강화 (사실 유지){_rv}")
+    log.info("rf caption punch-up: sharpened %d captions, reverted %d fabrications", n, reverted)
 
 
 def _vlm_post_render_caption_rewrite(work_dir: Path, manifests: dict,
