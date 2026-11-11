@@ -144,7 +144,7 @@ def _download(url: str, out: Path) -> Path:
     return out
 
 
-def _archive(mp3: Path, *, lyrics, prompt, style, title, model, task_id) -> None:
+def _archive(mp3: Path, *, lyrics, prompt, style, title, model, task_id, mood=None) -> None:
     ARCHIVE.mkdir(parents=True, exist_ok=True)
     stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     keep = ARCHIVE / f"song_{stamp}_{task_id[:8]}.mp3"
@@ -152,17 +152,21 @@ def _archive(mp3: Path, *, lyrics, prompt, style, title, model, task_id) -> None
         keep.write_bytes(mp3.read_bytes())
     except Exception:
         keep = mp3
+    rec = {"ts": stamp, "file": keep.name, "engine": "suno", "model": model,
+           "task_id": task_id, "title": title, "style": style,
+           "prompt": prompt, "lyrics": lyrics}
+    if mood:  # bgm-library tag so agents.cameraman._pick_bgm_track can match by concept mood
+        rec["mood"] = mood
     with MANIFEST.open("a", encoding="utf-8") as f:
-        f.write(json.dumps({"ts": stamp, "file": keep.name, "engine": "suno", "model": model,
-                            "task_id": task_id, "title": title, "style": style,
-                            "prompt": prompt, "lyrics": lyrics}, ensure_ascii=False) + "\n")
+        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     print(f"  archived → {keep}")
 
 
 def generate_song(*, out_mp3: Path, lyrics: str | None = None, prompt: str | None = None,
                   style: str | None = None, title: str | None = None,
                   model: str | None = None, instrumental: bool = False,
-                  vocal_gender: str | None = None, all_clips: bool = False) -> list[Path]:
+                  vocal_gender: str | None = None, all_clips: bool = False,
+                  mood: str | None = None) -> list[Path]:
     """Generate a song via Suno; write the first clip to out_mp3 (and siblings _2.mp3 … if all_clips).
     Returns the written paths. Importable by the MV pipeline."""
     model = model or os.getenv("SUNO_MODEL", "V6")
@@ -183,7 +187,7 @@ def generate_song(*, out_mp3: Path, lyrics: str | None = None, prompt: str | Non
     if not written:
         raise SystemExit("Suno: no downloadable audio_url in any clip")
     _archive(written[0], lyrics=lyrics, prompt=prompt, style=style, title=title,
-             model=model, task_id=task)
+             model=model, task_id=task, mood=mood)
     return written
 
 
@@ -198,6 +202,8 @@ def main() -> int:
     ap.add_argument("--vocal-gender", choices=["m", "f"], default=None)
     ap.add_argument("--instrumental", action="store_true")
     ap.add_argument("--all-clips", action="store_true", help="save both Suno variations")
+    ap.add_argument("--mood", help="tag this track with a BGM-library mood (cozy/warm_acoustic/…) "
+                    "so agents.cameraman._pick_bgm_track can match it to an episode's concept")
     ap.add_argument("--out", default="data/tmp/mv/song_ours.mp3")
     args = ap.parse_args()
 
@@ -209,7 +215,7 @@ def main() -> int:
     generate_song(out_mp3=ROOT / args.out if not os.path.isabs(args.out) else Path(args.out),
                   lyrics=lyrics, prompt=args.prompt, style=args.style, title=args.title,
                   model=args.model, instrumental=args.instrumental,
-                  vocal_gender=args.vocal_gender, all_clips=args.all_clips)
+                  vocal_gender=args.vocal_gender, all_clips=args.all_clips, mood=args.mood)
     return 0
 
 

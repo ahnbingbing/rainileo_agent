@@ -111,6 +111,30 @@ def _recent_bgm_tracks(n: int = 16) -> list[str]:
         return []
 
 
+def _generated_bgm(mood: str | None = None) -> list[str]:
+    """Suno-generated BGM tracks (as 'generated/<file>' so they resolve under assets/bgm/), from
+    the archive manifest. With `mood`, only tracks tagged that mood; else every tagged track.
+    Enables concept-matched ORIGINAL music (PD 2026-11-11) without a per-episode Suno call — the
+    pool is seeded offline by scripts/gen_bgm_library.py. Missing manifest/files → []."""
+    import json as _json
+    out: list[str] = []
+    gdir = ROOT / "assets" / "bgm" / "generated"
+    try:
+        for line in (gdir / "manifest.jsonl").read_text(encoding="utf-8").splitlines():
+            try:
+                rec = _json.loads(line)
+            except Exception:
+                continue
+            m, fn = rec.get("mood"), rec.get("file")
+            if not m or not fn or (mood and m != mood):
+                continue
+            if (gdir / fn).exists():
+                out.append(f"generated/{fn}")
+    except Exception:
+        return []
+    return sorted(set(out))
+
+
 def _pick_bgm_track(bgm_mood: str, seed_key: str) -> str:
     """Pick a BGM filename for a mood — biased HARD toward variety (PD 2026-07-01: "노래 좀
     다양하게"). Two repetition sources are fixed: (1) thin moods (some have only 1-2 tracks) →
@@ -123,6 +147,19 @@ def _pick_bgm_track(bgm_mood: str, seed_key: str) -> str:
     candidates = list(_BGM_MOOD_MAP.get(
         bgm_mood, ["backgroundmusicforvideos-cute-cheerful-whistle-cute-music-249653.mp3"]))
     all_tracks = sorted({t for v in _BGM_MOOD_MAP.values() for t in v})
+    # Concept-matched ORIGINAL music (PD 2026-11-11, library-match): when ON and THIS mood has
+    # Suno-generated tracks (seeded offline by scripts/gen_bgm_library.py), use ONLY the generated
+    # pool and keep the thin-pool widen WITHIN the generated originals — so a thin seed (1-2 tracks)
+    # isn't diluted back into the licensed library. An UN-seeded mood keeps its licensed mood pool
+    # (a mood-matched licensed track beats a cross-mood original). Off by default (USE_GENERATED_BGM
+    # =0) — seed + listen, then flip. Fully graceful: no generated for the mood → licensed library.
+    if os.getenv("USE_GENERATED_BGM", "0") == "1":
+        _gen_mood = _generated_bgm(bgm_mood)
+        if _gen_mood:
+            candidates = _gen_mood
+            all_tracks = _gen_mood  # widen stays WITHIN this mood — never a cross-mood original
+            #                         (a cozy nap must not get a comedy track). Seed ≥3/mood for
+            #                         within-mood variety (scripts/gen_bgm_library.py --per-mood 3).
     # PD 2026-06-24 (BGM 저작권 재발 방지): never pick a Content-ID-claimed track or one sharing
     # a claimed track's label (claims are often catalog-wide). Ledger from scripts/swap_bgm.py.
     try:
