@@ -190,12 +190,38 @@ def clip_knowledge(local_path: str, *, pd_notes: str | None = None,
         raise RuntimeError(f"Gemini video HTTP {e.code}: {e.read().decode(errors='replace')[:400]}")
     txt = out["candidates"][0]["content"]["parts"][0]["text"]
     try:
-        return json.loads(txt)
+        k = json.loads(txt)
     except json.JSONDecodeError:
         a, b = txt.find("{"), txt.rfind("}")
-        if a != -1 and b != -1:
-            return json.loads(txt[a:b + 1])
-        raise
+        if a == -1 or b == -1:
+            raise
+        k = json.loads(txt[a:b + 1])
+    # Stamp the deterministic M0-contract metadata the LLM doesn't own: schema_version (for
+    # evolution), captured_iso (temporal-grounding / era-mix read this off the clip, NOT the
+    # model's guess), duration_sec (trim-window math). Stamping at the PRODUCER means the backfill
+    # bakes complete records once — adding these later would mean re-running Gemini on every clip.
+    if isinstance(k, dict):
+        k["schema_version"] = CK_SCHEMA_VERSION
+        if captured_iso:
+            k["captured_iso"] = captured_iso
+        k.setdefault("duration_sec", _probe_duration(local_path))
+    return k
+
+
+CK_SCHEMA_VERSION = 1
+
+
+def _probe_duration(local_path: str) -> "float | None":
+    """Best-effort clip duration via ffprobe (None if unavailable — never fatal)."""
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nw=1:nk=1", str(local_path)],
+            capture_output=True, text=True, timeout=30)
+        return round(float(out.stdout.strip()), 2)
+    except Exception:
+        return None
 
 
 def _upload_as(local_path: str, mime: str) -> str:
