@@ -76,7 +76,7 @@ Writer(`producer._propose_realfootage_singlepass`)가 풀 메타데이터(이벤
 |---|---|---|
 | **Director(큰 그림·아크·연출)** | `agents/writer_director.py` **Director** (`director_shots.md`) — shot_size·camera_move·lighting·seedance/veo·regen/motion 프롬프트 조립 | ⚠️ **AV 전용**(코드 주석 `Director assembles prompts (AV only)`, writer_director.py:65 — 생성 footage용 cinematography). **RF로 확장**: shot *생성* 대신 **실footage 편집·아크 연출**(시퀀스·cut-role·edit-grammar) + **footage-aware(클립 RAG)** |
 | **Writer(스토리·캡션)** | `agents/writer_director.py` **Writer** 3-pass(draft→critique→revise, `writer_realfootage.md`) | ✅ RF 이미 씀. **footage-aware(클립 RAG)** + Director와 **양방향 그라운딩 루프** 추가 |
-| **아이디어·관객·트렌드 게이트** | `agents/concept_brainstorm.py` — 다중 후보(title·logline·beats·hook) + **audience-gate**(reviewer §1 렌즈) + **timely-hook**(222, 트렌드) + 실제 material 결합 | ⚠️ **AV 전용**(`best("ai_vtuber"…)` producer:960). **RF로 확장** → Director 상류 ideation |
+| **아이디어·관객 게이트(ideation)** | `agents/concept_brainstorm.py` — 다중 후보(title·logline·beats·hook) + **audience-gate**(reviewer §1 렌즈) + **timely-hook**(222, 트렌드) + 실제 material 결합(42) | ⚠️ **AV 전용**(`best("ai_vtuber"…)` producer:960), RF는 **OFF**(`RF_CONCEPT_BRAINSTORM=0` — "억지 컨셉 산으로" 교훈). ★**우회 말고 뜯어고친다**: 억지컨셉의 근본=**ungrounded ideation**(이미 material 결합을 시도하나 이벤트-레벨 메타라 거침) → **clip_knowledge(beats·소재·frame-truth)로 ideation을 그라운딩**하면 실재하는 소재에서만 컨셉이 나와 치료됨 → **RF 재활성**. Director **상류**(ideation=무슨 이야기, Director=어떻게 연출) |
 | **트렌드/밈 소스** | `scripts/trend_feed.py`(calendar + live discovery, `meme`, add/refresh) → `trends` 테이블 → `agents/writer.py:active_trends()` | ✅ 재사용. 지금 RF는 `producer._rf_trends_hint`(3238) **얇은 힌트 한 줄**만 → Title/Packaging이 제대로 소비 |
 | **Title/Packaging(트렌디 finalizer)** | `agents/channel_manager.py:make_packaging` — 훅 제목 + SEO + A/B arm | 단발 재포장 → **Director⇄Giri 대화형 트렌디 finalizer로 승격**(§3.5) |
 | **audience/품질 렌즈** | `agents/reviewer.py` §1 관객 렌즈 + title 게이트들 | ✅ 재사용. Giri가 3자 루프의 품질 백스톱 |
@@ -273,6 +273,9 @@ Giri(통과?·더 고칠 것?) 확인 → 수렴할 때까지 iterate → **최�
    (pipeline-change-impact: 생성기 고치면 검수기도.)
 5. **쓰기 멱등·보존** — clip_knowledge 컬럼은 upsert + `_VM_OWNED`(C_ingestclobber).
 6. **pd_notes는 감정·사연엔 여전히 authoritative**, 단 off-screen 물리적 존재 주장엔 영상 검증을 우선.
+7. **빌드는 기본 OFF, 스모크 통과 후에만 플립.** 재작업/새 패스(brainstorm·Director·Title)는 전부
+   플래그 뒤 OFF로 착지 → 스모크(출력 품질 + 과거 실패 케이스 회귀) + PD 스팟체크 통과 후에만 기본 ON.
+   "dry-run 통과 ≠ 라이브 OK", "기본 ON이 채널을 죽인다"(v2 롤백). 플립은 빌드와 **별도 단계**.
 
 ---
 
@@ -289,11 +292,19 @@ Giri(통과?·더 고칠 것?) 확인 → 수렴할 때까지 iterate → **최�
   summary·소재 임베딩, 인입 incremental + 백로그 백필. 의도 질의 → 올바른 소재 클립 검색 검증.
 
 **Track B — 에이전트 구조 (프롬프트/로직)** — A 완성 전엔 **기존 메타데이터를 placeholder 입력**으로
-스캐폴딩, A 착지 시 clip RAG 입력으로 **swap**.
-- **B1 — Director RF 확장**: 기존 Director(writer_director.py, AV 전용)에 RF 편집·아크 연출
-  (아크/시퀀스/컷역할) + 정직한 working 제목. + concept_brainstorm RF 확장.
-- **B2 — Director⇄Writer 루프**: 양방향 developing, 컨셉 mutable, bounded, 수렴 판정.
-  `_propose_realfootage_singlepass` 분리.
+스캐폴딩, A 착지 시 clip RAG 입력으로 **swap**. 파이프라인 = **brainstorm(무슨 이야기, 그라운디드
+ideation+관객) → Director(어떻게, 아크/시퀀스/컷역할) → Writer(컷별 캡션)**.
+- **B0 — brainstorm 뜯어고치기(footage-aware)**: 억지컨셉 근본=ungrounded ideation →
+  `concept_brainstorm`이 **clip_knowledge(beats·소재·frame-truth)에서만** 후보를 뽑게(실재 소재 결합),
+  audience-gate 유지. **빌드는 기본 OFF**(`RF_CONCEPT_BRAINSTORM=0` 유지).
+- **B0.5 — 스모크 테스트 → 그다음에 플립**: ON 하기 전 반드시 스모크. ①출력 품질(후보가 그라운디드·
+  관객성 있나) ②★**forced-concept 치료 회귀**(과거 "산으로 간" 케이스 재현 → 이제 clip_knowledge
+  그라운딩으로 억지 컨셉이 안 나오는지) ③후보 beats가 실재 소재 ⊆ 인지. **통과 + PD 스팟체크 후에만**
+  `RF_CONCEPT_BRAINSTORM=1`로 플립(빌드와 별개 단계, v2 롤백 교훈 — "기본 ON 금지, 검증 후 플립").
+- **B1 — Director RF 확장**: 기존 Director(writer_director.py, AV 전용) 사이드카 `run_rf_director` —
+  brainstorm 승자 위에 RF 편집·아크 연출(아크/시퀀스/컷역할) + 정직한 working 제목. `RF_DIRECTOR_PASS`.
+- **B2 — Director⇄Writer 루프**: 양방향 developing, 컨셉 mutable(필요시 brainstorm 재-ideate),
+  bounded, 수렴 판정. `_propose_realfootage_singlepass` 분리.
 - **B3 — Title/Packaging 에이전트**: `channel_manager.make_packaging` 승격 — Director 컨셉+지표·
   트렌드·밈 → 최종 제목/훅, **Director⇄Giri 3자 루프**, Giri title-bar 생성기-측 반영(§3.5).
 
