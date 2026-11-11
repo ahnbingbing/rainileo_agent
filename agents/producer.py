@@ -39,6 +39,7 @@ log = logging.getLogger("agents.producer")
 
 DB_PATH = Path(os.getenv("DB_PATH", str(ROOT / "data" / "agent.db"))).resolve()
 from agents import prompt_loader as _pl  # v2 diet A/B
+from agents import era_mix  # shared era-mix span/token gate (generator ↔ checker lockstep)
 PROPOSE_PROMPT_PATH = ROOT / "agents" / "prompts" / "producer_propose.md"
 KST = ZoneInfo("Asia/Seoul")
 
@@ -3748,6 +3749,18 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     # if it persists, the collapse/cap below still keep the ending. RF_STRUCTURE_GATE=0 reverts.
     if os.getenv("RF_STRUCTURE_GATE", "1") == "1" and concepts:
         _issues = _rf_structure_issues(concepts[0])
+        # Era-mix gate (PD 2026-11-11): clips from very different capture dates cut as one
+        # present moment (baby-Leo + grown, puppy-Ryani + now) read as "레오가 갑자기 작아짐".
+        # Giri already caps this POST-render (reviewer._temporal_grounding_gate), but the Writer
+        # never learned so rerolls didn't converge. Catch it here, pre-render, with the SAME shared
+        # rule (agents.era_mix): either unify the era or narrate the time-distance. RF_ERA_GATE=0 reverts.
+        if os.getenv("RF_ERA_GATE", "1") == "1":
+            _fire = era_mix.era_span_fire(concepts[0].get("cuts") or [], DB_PATH)
+            if _fire and not era_mix.captions_narrate_era(concepts[0].get("cuts") or []):
+                _issues = list(_issues) + [
+                    f"[시대혼합] {_fire['reason']} — 그런데 캡션이 시점(그때/N년 전/아기 시절)을 "
+                    "전혀 안 밝혀 다른 시기 footage를 한 순간처럼 이었다. 같은 시기 클립으로 통일하거나, "
+                    "과거↔현재를 캡션에 명시해 memory-lane으로 narration하라 (아기 레오+지금을 섞으려면 시점 명시 필수)"]
         if _issues and prior_feedback.count("[구조검증]") < int(os.getenv("RF_STRUCTURE_MAX_TRIES", "1")):
             if progress_cb:
                 progress_cb(f":triangular_ruler: 구조검증 — {len(_issues)}건 (클립 재사용/길이 예산) → 재작성")

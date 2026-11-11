@@ -48,6 +48,7 @@ log = logging.getLogger("agents.reviewer")
 FFMPEG_REVIEW_TIMEOUT = int(os.getenv("REVIEW_FFMPEG_TIMEOUT", "30"))
 
 from agents import canon  # central character canon — judge the SAME pets we generate
+from agents import era_mix  # shared era-mix span/token logic (generator ↔ checker lockstep)
 
 REVIEW_GUIDE = (ROOT / "notes" / "shorts_review_agent_giri.md").read_text(encoding="utf-8") \
     if (ROOT / "notes" / "shorts_review_agent_giri.md").exists() else ""
@@ -855,27 +856,11 @@ def _check_ryani_nape(client, model_name, frames, _types) -> dict:
         return {"nape_white": False, "genitalia_visible": False, "worst_frame": 0, "detail": ""}
 
 
-# Tokens that mark a caption as narrating an archive clip's time-distance
-# ("그때 / N년 전 / 아기 시절 / 자랐어요" …). Covers KO + EN. A single hit
-# ANYWHERE in the episode's captions proves the era-mix is narrated as memory-
-# lane and the temporal gate stands down.
-_TEMPORAL_TOKENS = (
-    # KO — unambiguous time-distance phrases. Korean substring-matches, so bare
-    # nouns are dangerous: "아가" hits "닮아가는", "아기" hits "아기자기", "자라"/"컸"
-    # hit unrelated verbs. We keep only tokens that don't collide, and space-
-    # guard the baby words ("아기 레오" matches; "아기자기" does not). Bias toward
-    # FIRING — a missing auto-pass token only over-flags, which PD prefers to a
-    # rubber-stamp.
-    "년 전", "년전", "개월 전", "개월전", "달 전", "주 전", "일 전",
-    "그때", "그 때", "그땐", "그시절", "그 시절", "시절", "예전", "옛날", "과거",
-    "어릴", "어렸", "아기 ", "아가 ", "새끼 ", "꼬꼬마", "갓난", "갓 태어",
-    "작년", "재작년", "처음 만", "만나기 전", "만나기전", "처음 왔",
-    "자랐", "커버린", "자라서", "자라났", "세월", "옛", "추억",
-    # EN — only unambiguous time-distance phrases. (Bare "baby"/"little"/"grew"
-    # false-match present captions: "a little", "baby steps", "grew quiet".)
-    "ago", "back then", "back when", "used to", "younger", "as a baby",
-    "as a puppy", "as a kitten", "grew up", "years back", "as a pup", "as a kit",
-)
+# Time-distance tokens that mark a caption as narrating an archive clip's age gap
+# ("그때 / N년 전 / 아기 시절 / 자랐어요" …) now live in agents.era_mix so the pre-render
+# Writer gate and this post-render Giri gate share ONE list. Imported here for the
+# _RYANI_BABY_PAT comment below and any direct reference.
+_TEMPORAL_TOKENS = era_mix._TEMPORAL_TOKENS
 
 
 def _title_script_gate(concept: "dict | None", report: dict) -> None:
@@ -1008,100 +993,19 @@ def _temporal_grounding_gate(concept: dict | None, report: dict) -> None:
     token. Span > 1 year WITH NO temporal token anywhere = an un-narrated
     era-mix → cap score ≤5 and force 수정 필요 (blocks auto-publish). Era-mix that
     IS narrated ("그땐 아기였는데 지금은~") passes untouched — narration is the fix,
-    not avoidance. Best-effort: any missing data → no-op (never false-positive)."""
+    not avoidance. Best-effort: any missing data → no-op (never false-positive).
+
+    PD 2026-11-11: the span/token logic moved to agents.era_mix so the pre-render Writer
+    gate (producer._rf_structure_issues) catches the SAME defect BEFORE a render is burned
+    — Giri remains the post-render backstop, both reading one shared rule."""
     if not concept:
         return
     cuts = concept.get("cuts") or []
-    if len(cuts) < 2:
+    fire = era_mix.era_span_fire(cuts, ROOT / "data" / "agent.db")
+    if not fire:
         return
-    import datetime as _dt
-    aids = [c.get("asset_id") or c.get("secondary_asset_id") for c in cuts]
-    aids = [a for a in aids if a]
-    if len(aids) < 2:
-        return
-    try:
-        con = sqlite3.connect(str(ROOT / "data" / "agent.db"))
-        try:
-            qs = ",".join("?" * len(aids))
-            rows = con.execute(
-                f"SELECT asset_id, captured_iso, subjects_csv FROM assets "
-                f"WHERE asset_id IN ({qs})",
-                aids,
-            ).fetchall()
-        finally:
-            con.close()
-    except Exception as e:
-        log.warning("temporal gate DB read failed: %s", e)
-        return
-    dates = []          # all dated cuts
-    leo_dates = []      # dates of cuts that contain Leo
-    for _aid, iso, subj in rows:
-        if not iso:
-            continue
-        try:
-            d = _dt.date.fromisoformat(str(iso)[:10])
-        except Exception:
-            continue
-        dates.append(d)
-        if "leo" in (subj or "").lower():
-            leo_dates.append(d)
-    if len(dates) < 2:
-        return
-    span_days = (max(dates) - min(dates)).days
-
-    # Two ways an episode reads as an un-narrated era-mix:
-    #
-    # (1) GENERAL — any two source clips are > 1 year apart. Catches archive
-    #     mixes like puppy-Ryani (2016) cut against present, where the same
-    #     animal is visibly a different age.
-    #
-    # (2) LEO KITTEN FAST-GROWTH — Leo (born 2025-09-25) changes dramatically
-    #     month-to-month in his first year, so a flat 1-year rule misses him.
-    #     PD flagged ep 030752 as "아기 레오 era-mix": a 4.4-month-old kitten Leo
-    #     clip (Feb) cut into a "오늘도…" present montage with 8-month Leo — only
-    #     ~4 months by date, but a baby vs a grown cat on screen. So when the
-    #     YOUNGEST Leo clip shows a clear kitten (< 6 months) AND the Leo clips
-    #     span > ~2.5 months, the visible age jump is real. Recent episodes use
-    #     today's ~10-month Leo (youngest > 6mo) so this never false-fires on them.
-    _LEO_BORN = _dt.date(2025, 9, 25)
-    general_fire = span_days > 365
-    leo_fire = False
-    if len(leo_dates) >= 2:
-        youngest_leo_age = (min(leo_dates) - _LEO_BORN).days
-        leo_span = (max(leo_dates) - min(leo_dates)).days
-        if youngest_leo_age < 183 and leo_span > 75:
-            leo_fire = True
-    if not (general_fire or leo_fire):
-        return
-    span_years = round(span_days / 365.25, 1)
-
-    # scan ALL caption text (ko + en, scene arrays + flat fields) for a token
-    blob = []
-    for c in cuts:
-        caps = c.get("captions") or []
-        if isinstance(caps, list):
-            for sc in caps:
-                if isinstance(sc, dict):
-                    blob.append(str(sc.get("ko", "")))
-                    blob.append(str(sc.get("en", "")))
-                else:
-                    blob.append(str(sc))
-        # ONLY scan what actually gets burned on screen. NOT time_ago_phrase —
-        # that is _stamp_years_ago's INTERNAL knowledge of the gap, not a visible
-        # caption; including it made the gate think every dated archive clip was
-        # "narrated" and pass (false negative on ep 034500's 2016-17 footage).
-        for k in ("ko", "en", "caption"):
-            if c.get(k):
-                blob.append(str(c[k]))
-    text = " ".join(blob).lower()
-    grounded = any(tok.lower() in text for tok in _TEMPORAL_TOKENS)
-    if leo_fire:
-        _reason = (f"아기 레오({youngest_leo_age/30.4:.1f}개월) 클립과 "
-                   f"{round(leo_span/30.4, 1)}개월 뒤 다 큰 레오 클립이 한 회차에 섞였습니다")
-    else:
-        _reason = f"클립 촬영일이 {span_years}년 차이로 벌어졌습니다"
-
-    if grounded:
+    _reason = fire["reason"]
+    if era_mix.captions_narrate_era(cuts):
         report.setdefault("_temporal_gate", []).append(
             f"era-mix ({_reason}) — 캡션 시점 narration 확인됨 (pass)")
         log.info("temporal gate: era-mix but narrated → pass (%s)", _reason)
