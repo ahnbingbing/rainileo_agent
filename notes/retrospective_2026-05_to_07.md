@@ -1647,6 +1647,28 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   RF_CONCEPT_BRAINSTORM=0) — v2 롤백 교훈대로 스모크 통과 + **PD 스팟체크 후에만 플립**(기본 ON 금지). cf [[C_eramixgen]]·[[C_photozerosec]]·
   [[rf_editing_direction_memories]](별도 빌더 금지·기존 자산 진화)·[[grounding_pd_notes_gpt4omini]].
 
+- **C_captionrewritechain. 검수기가 '초안'을 보면 렌더-끝 재작성이 뭘 하든 못 잡는다 — 그리고 그 재작성 체인은
+  아크·시점마커를 지우고 없는 동작을 지어낸다(11/11)** — B0.5 스팟체크에서 PD가 메모리레인 에피의 두 결함을 잡았다:
+  아기 레오(2025-11) 컷이 시점 프레이밍 없이 다 큰 레오로 점프("레오가 갑자기 커짐"), 그리고 쉬는 레오가 "코 툭"(없는
+  코-펀치)으로 캡셔닝됨. 근본=RF 렌더타임 캡션 **3단 재작성 체인**(동작-그라운딩 → 그라운딩 게이트 → 말맛 punch-up)이
+  Writer가 쓴 그라운디드 메모리레인 아크를 **컷별로** 덮어쓰는데(아크를 모름), **era 게이트·Giri는 재작성 *前* 초안만
+  본다**(`reviewer._temporal_grounding_gate(concept)` = card payload = draft) → 번인 캡션이 마커를 잃어도 통과.
+  ★교훈 3겹: ①**검수는 소비처(번인)로** — CLI가 payload 초안 캡션을 검증하고 "그라운딩 됨" 오보한 바로 그 실수를
+  검수기도 구조적으로 하고 있었다(캡션은 풀해상도/번인으로 읽어라를 파이프라인 레벨로; [[caption_readoff_lowres_misread]]).
+  ②**lockstep은 트리거·토큰 둘 다** — `_enforce_memorylane_anchors`가 평면 2년 임계라 1년 만에 아기→성체인 레오를
+  놓쳤고(era_mix.era_span_fire는 kitten-aware로 발화 = C_eramixgen 재발), 게다가 cameraman._TEMPORAL_MARKER(현재
+  "어느새/지금" 포함)와 era_mix._TEMPORAL_TOKENS(과거-only)가 **다른 토큰셋**이라 "narrated" 판정이 엇갈림 → 생성기
+  측 복원을 era_span_fire + past-only 판정에 맞춤. ③**에디터 드롭/재배열이 positional 매칭을 깨뜨린다** — 일관성
+  가드가 4컷→2컷 드롭하면 `concept_cuts[idx]`가 어긋나 앵커가 엉뚱한 컷에 붙음 → sources 매니페스트로 **asset_id 매칭**
+  (드롭/재배열 견딤) + kitten 백스톱(아기컷이 어디 밀려도 과거 마커). ④**punchup "사실 유지"는 거짓일 수 있다** —
+  프롬프트가 "동작 바꾸지 마라" 해도 LLM이 쉬는 장면을 "코 툭" 귀여운 동작으로 윤색 → 결정론 가드(pre-punch에도 screen
+  에도 없는 동작 의성어 도입 시 grounded 원복; 실제 근거 있는 "냥냥펀치"[screen=발로 머리 건드림]는 생존)로 백업
+  (프롬프트+게이트 lockstep = [[giri_title_defect_class]] 원칙). ★이 전부가 [[C_clipknowledgebackfill]]의 "렌더-끝
+  패치는 이길 수 없는 싸움" thesis의 직접 증거 — 체인을 더 패치할수록 상호작용이 늘어난다(스토캐스틱 다중 캡션 경로가
+  일관성 없이 발화); 진짜 해법은 캡션을 footage와 **상류에서 함께 결정**하는 재설계다. 이번 수정은 그때까지의 결정론 안전망.
+  RF_*·RF_PUNCHUP_FABGUARD 킬스위치, RF-only(AV는 current-age regen이라 _av_era_floor가 상류 차단). cf [[C_eramixgen]]·
+  [[C_clipknowledgebackfill]]·[[C13]](시점 캡션 flatten)·[[caption_readoff_lowres_misread]].
+
 ### 4.5 인프라 / 파이프라인
 - **C_ingestclobber. 소비처 배선이 끝나도 쓰기 경로가 안 지켜주면 무의미하다 — ingest의 INSERT OR REPLACE가 VM-계산 컬럼을 매 import마다 NULL로 지웠다(11/5)** —
   Gemini 액션레이어(`action_moments`)를 RF 선택+캡션에 배선(C_actionlayer)하고 VM 백필을 돌렸더니 로그는 `done=262`인데 DB엔 **70개만** 남았다. 근본=`ingest_register.import_`의 `INSERT OR REPLACE INTO assets`가 **행 전체를 재삽입** → Mac export가 싣지 않는 **VM-계산 컬럼(`action_moments`·`duration_sec`·`vis_phash`·`has_human`)을 매번 통째로 NULL**로 만든다. 3.9h 백필 동안 운영 봇의 ingest가 계속 덮어써, 마지막 ingest 이후에 쓴 70개만 살아남았다. 이건 C_nulldur에서 duration을 **일회성 prev-보존 가드**로만 막았던 바로 그 패턴이 새 컬럼에서 재발한 것 — 증상(duration)만 막고 메커니즘(REPLACE가 미기재 컬럼을 민다)을 안 고쳤기 때문. Fix(ad08281)=`ON CONFLICT(asset_id) DO UPDATE` 업서트(미기재 컬럼은 건드리지 않아 보존)+빈 VM-owned 키 드롭(NULL export가 실값을 못 덮게) → `_VM_OWNED` 집합으로 **일반화**(일회성 가드 supersede). ★교훈 2겹: ①**결정→소비처 배선→내구성이 한 세트다** — 선택/캡션을 꽂아도 그 데이터가 동시-쓰기(24/7 운영 봇)에서 살아남지 못하면 갭은 그대로이고, **재런으로 메우는 건 무의미**(다음 ingest가 또 wipe한다). 운영 DB의 모든 쓰기는 멱등+보존(upsert)이어야 한다. ②**일회성 가드는 다음 컬럼에서 재발한다** — 한 증상을 패치하지 말고 메커니즘을 일반화하라. cf C_nulldur(같은 ingest 경로의 duration 일회성 가드 — 이번에 일반 upsert로 흡수), C_actionlayer(이 백필이 점등하려던 소비처 배선), D_streamguard(작동하는 폴백이 죽은 주력을 가리듯, 작동하는 백필이 지워지는 쓰기를 가렸다).
