@@ -131,6 +131,49 @@ def knowledge_for(con: sqlite3.Connection, asset_id: str) -> dict:
         return {}
 
 
+def knowledge_or_synth(con: sqlite3.Connection, asset_id: str) -> dict:
+    """The single swap point consumers (brainstorm/Director/Writer) read. Returns the REAL
+    clip_knowledge when Track A has populated it; otherwise SYNTHESIZES a clip_knowledge-shaped
+    dict from the existing coarse signals (action_moments + scene_description + subjects_csv +
+    pd_notes) so the footage-aware consumers can be built + smoke-tested BEFORE the backfill lands.
+
+    The synthesized form is marked `_synth: True` and is EVENT-LEVEL (subjects from subjects_csv,
+    not per-frame truth) — so a consumer knows it is coarse and must not treat its subjects as the
+    frame-truth ceiling the real schema guarantees. Once the clip_knowledge column is backfilled,
+    the real dict (with true subjects_in_video / pd_verified) wins automatically."""
+    real = knowledge_for(con, asset_id)
+    if real:
+        return real
+    # placeholder synthesis — coarse, degrades to today's event-level signal (no regression)
+    try:
+        row = con.execute(
+            "SELECT scene_description, subjects_csv, pd_notes FROM assets WHERE asset_id=?",
+            (str(asset_id),)).fetchone()
+    except sqlite3.OperationalError:
+        row = None
+    scene = (row[0] if row else "") or ""
+    subs_csv = (row[1] if row else "") or ""
+    pdn = (row[2] if row else "") or ""
+    subs = [s for s in ("ryani", "leo") if s in subs_csv.lower()]
+    beats = []
+    for m in actions_for(con, asset_id):
+        if not isinstance(m, dict):
+            continue
+        who = [w for w in ("ryani", "leo") if w in str(m.get("actor", "")).lower()]
+        beats.append({"t0": m.get("start"), "t1": m.get("end"), "who": who or subs,
+                      "action": (m.get("desc") or m.get("action") or "").strip(),
+                      "material_type": "", "note": ""})
+    return {
+        "summary": scene.strip()[:200],
+        "subjects_in_video": subs,          # EVENT-level (coarse) — see _synth caveat above
+        "beats": beats,
+        "audio_events": [],
+        "pd_verified": {"subjects_claimed": subs, "conflicts": [],
+                        "context_kept": pdn.strip()[:200]},
+        "_synth": True,
+    }
+
+
 def format_knowledge(k: dict, *, max_beats: int = 10) -> str:
     """Compact clip_knowledge for a prompt / embedding doc: summary + visible subjects + beats +
     any off-screen audio. Grounding-first so a consumer reads frame-truth, not pd_notes claims."""

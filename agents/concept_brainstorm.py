@@ -119,6 +119,61 @@ def _real_material(limit_stories: int = 12, limit_clips: int = 12) -> str:
     return "\n\n".join(bits)
 
 
+def _clip_knowledge_material(limit_clips: int = 14) -> tuple[str, dict]:
+    """Footage-grounded ideation material for the RF lane: per-clip cards built from the
+    clip_knowledge layer (real when backfilled, else synthesized from action_moments+scene).
+    Returns (prompt_block, know_map) where know_map[asset_id]=clip_knowledge — the validator
+    checks each candidate's cited clips against it. This is the cure for the "forced concept /
+    산으로 갔다" failure: ideation can only draw on beats that a real clip actually has."""
+    import sqlite3
+    from agents import clip_actions as _ca
+    cards: list[str] = []
+    know_map: dict[str, dict] = {}
+    try:
+        con = sqlite3.connect(str(ROOT / "data" / "agent.db"))
+        rows = con.execute(
+            "SELECT asset_id FROM assets WHERE kind='video' AND captured_iso IS NOT NULL "
+            "ORDER BY captured_iso DESC LIMIT ?", (limit_clips,)).fetchall()
+        for (aid,) in rows:
+            k = _ca.knowledge_or_synth(con, aid)
+            if not k:
+                continue
+            know_map[str(aid)] = k
+            body = _ca.format_knowledge(k)
+            if body:
+                cards.append(f"[clip {aid}]\n{body}")
+        con.close()
+    except Exception:
+        pass
+    if not cards:
+        return "", {}
+    block = ("\n★실제 보유 클립의 '그라운디드 소재 카드'(각 카드 = 한 클립이 실제로 보여주는 것). "
+             "컨셉은 이 카드들 안의 실제 순간만 조합해서 짜라 — 카드에 없는 사건/동작/주체는 지어내지 "
+             "마라:\n\n" + "\n\n".join(cards))
+    return block, know_map
+
+
+def _grounded_violations(cand: dict, know_map: dict) -> list[str]:
+    """Deterministic footage-grounding check on ONE candidate (the structural cure, not prose).
+    A candidate must cite clip ids it uses (`clips`/`asset_ids`); every cited id must be a real
+    clip, and a candidate that cites NO real clip is pure invention. Returns violation strings;
+    empty = grounded. Lenient on beat-text (that's the Writer's job) — this gate stops a concept
+    built on clips/events that don't exist, which is what '산으로 갔다' was."""
+    if not know_map:
+        return []  # no grounding material (e.g. synth path empty) → don't block, Writer still grounds
+    cited = cand.get("clips") or cand.get("asset_ids") or cand.get("clip_ids") or []
+    if isinstance(cited, str):
+        cited = [cited]
+    cited = [str(c).strip() for c in cited if str(c).strip()]
+    if not cited:
+        return ["후보가 어떤 실제 클립을 쓰는지 밝히지 않음 (clips: [asset_id,...] 필요) — "
+                "실재 클립에 근거하지 않은 컨셉일 수 있음"]
+    unknown = [c for c in cited if c not in know_map]
+    if unknown:
+        return [f"존재하지 않는 클립을 참조: {', '.join(unknown[:3])} — 소재 카드에 있는 클립만 써라"]
+    return []
+
+
 def _audience_rubric() -> str:
     """The §1 audience-appeal mission from the review guide, so ranking uses the same lens."""
     try:
@@ -268,6 +323,12 @@ def brainstorm(style: str, brief: str, n: int = 5, *, context: dict | None = Non
     """Generate n DISTINCT storyline candidates for the brief. LLM, cheap."""
     facts = _character_facts()
     material = _real_material()
+    # RF ideates ONLY from what real clips show — append grounded per-clip cards so concepts
+    # combine real moments instead of inventing events the footage can't back ("산으로 갔다").
+    if style == "real_footage":
+        _gm, _ = _clip_knowledge_material()
+        if _gm:
+            material = (material + "\n" + _gm) if material else _gm
     structure = (
         "ai_vtuber는 상상을 마음껏 펼치는 레인이다. '현실→상상(과장 훅)→현실 복귀'는 강력한 "
         "기본형이지 유일한 형이 아니다 — 상상 축을 후보마다 과감히 바꿔라:\n"
@@ -294,7 +355,14 @@ def brainstorm(style: str, brief: str, n: int = 5, *, context: dict | None = Non
         "들어가야 한다.' 'why_appealing'에 '왜 RF 아닌 AV인지 + 끝까지 볼 훅'이 한 줄로 서야 한다."
         if style == "ai_vtuber"
         else (
-        "real_footage = 실제 보유 클립으로만 만드는 일상/메모리레인. 판타지·없는 사건 금지.\n"
+        "real_footage = 실제 보유 클립으로만 만드는 일상/메모리레인.\n"
+        "★그라운딩 원칙(RF의 뼈대): 컨셉은 위 '그라운디드 소재 카드'가 실제로 보여주는 순간만 "
+        "조합해 짠다. 왜냐하면 억지 컨셉이 '산으로 가는' 근본이 바로 클립에 없는 사건·주체를 "
+        "지어내는 것이고, 그러면 Writer가 캡션을 화면에 못 맞춰 어긋나기 때문이다. 그러니 "
+        "①각 후보는 자기가 쓰는 클립을 `clips`에 asset_id로 밝히고 ②그 카드의 beats에 실제로 있는 "
+        "순간만 쓰고 ③한 컷의 '보이는 주체'는 그 카드의 보이는 펫을 넘지 마라(소리로만 있는 펫은 "
+        "'소리로만'이라 쓰되 화면에 있는 것처럼 말하지 마라). 예: 랴니만 보이는 카드에 '레오가 "
+        "매복해 덮친다' 같은, 그 클립에 없는 드라마를 지어내지 마라. 판타지·없는 사건 금지.\n"
         "★후보마다 '앵글(무엇에 관한 회차인가)'을 확실히 다르게 잡아라 — 장소만 바꾼 같은 "
         "이야기는 금지. 특히 **'랴니는 차분·레오는 호기심, 각자의 방식/각자의 자리/두 리듬/평행 "
         "동행'류의 사건 없는 공존 관찰은 이미 너무 많이 했다 — 새 후보에 다시 쓰지 마라.**\n"
@@ -324,7 +392,8 @@ def brainstorm(style: str, brief: str, n: int = 5, *, context: dict | None = Non
           "최근 회차에서 이미 쓴 소재/장소/장치(물놀이·바다·분수 같은 반복 모티프)는 피하고, "
           "한 번도 안 해본 앵글을 우선하라 — 잘 만든 재탕보다 거친 신선함이 낫다.\n"
         "각 후보 = {title(한국어), logline(한 줄 요약), beats(컷별 한 줄 3~6개), "
-        "imagination_hook(상상 훅 한 줄; rf면 '없음'), why_appealing(시청자가 왜 좋아할지 한 줄)}.\n"
+        "imagination_hook(상상 훅 한 줄; rf면 '없음'), why_appealing(시청자가 왜 좋아할지 한 줄), "
+        "clips(이 후보가 쓰는 실제 클립 asset_id 배열 — real_footage면 필수, 소재 카드의 id만)}.\n"
         "후보끼리 훅이 겹치면 안 된다(다양성이 핵심). JSON 배열만 출력.")
     system += _active_trends_block(
         style, require=bool((context or {}).get("require_timely")))
@@ -534,6 +603,23 @@ def best(style: str, brief: str, n: int = 5, *, context: dict | None = None) -> 
         log.warning("require_timely set but no active trends — proposing non-timely "
                     "(trend_feed found nothing live for today)")
     cands = brainstorm(style, brief, n, context=context)
+    # RF footage-grounding gate (the structural cure for forced concepts): drop a candidate that
+    # cites no real clip or a clip that doesn't exist. If grounding material is present but NONE
+    # survive, keep the originals flagged rather than empty the slot (launch backstop + Giri catch).
+    if style == "real_footage" and cands:
+        _, _know = _clip_knowledge_material()
+        if _know:
+            _grounded = []
+            for c in cands:
+                viol = _grounded_violations(c, _know)
+                if viol:
+                    c["_grounding_violation"] = viol
+                    log.info("brainstorm grounding drop: %s — %s",
+                             str(c.get("title") or "")[:40], viol[0])
+                else:
+                    _grounded.append(c)
+            if _grounded:
+                cands = _grounded
     ranked = rank_by_audience(cands, style)
     exclude = (context or {}).get("exclude_concepts") or []
     if exclude and ranked:
