@@ -78,6 +78,87 @@ def actions_for(con: sqlite3.Connection, asset_id: str) -> list:
         return []
 
 
+# ─── clip_knowledge: the richer per-clip understanding (footage-aware RF redesign) ──────────────
+# notes/rf_footage_aware_direction_design.md §2.0. A superset of action_moments: condensed summary
+# + material-typed beats + audio events + the frame-truth(subjects_in_video) vs pd_notes(pd_verified)
+# separation. Stored in its OWN column so it can be built + backfilled while OFF, then flipped
+# independently of the action_moments layer. Ships OFF (USE_CLIP_KNOWLEDGE=0) per the build-OFF→
+# smoke→flip guardrail; no consumer reads it until the brainstorm/Director work lands.
+
+
+def knowledge_enabled() -> bool:
+    """Kill-switch for the clip_knowledge layer. Default OFF (0): build + backfill + smoke-test
+    BEFORE any consumer flips it on (guardrail §5.7, v2-rollback lesson). Fail-silent everywhere."""
+    return os.getenv("USE_CLIP_KNOWLEDGE", "0") == "1"
+
+
+def ensure_knowledge_column(con: sqlite3.Connection) -> None:
+    """Idempotent — add assets.clip_knowledge (JSON) if absent (same idiom as action_moments)."""
+    cols = {r[1] for r in con.execute("PRAGMA table_info(assets)").fetchall()}
+    if "clip_knowledge" not in cols:
+        con.execute("ALTER TABLE assets ADD COLUMN clip_knowledge TEXT")
+        con.commit()
+
+
+def extract_knowledge(file_path: str, *, pd_notes: str | None = None,
+                      captured_iso: str | None = None, model: str | None = None) -> dict:
+    """Gemini native video+audio → clip_knowledge dict (CK_SCHEMA). Source clip OR rendered cut."""
+    import video_actions as va  # scripts/video_actions.py (on sys.path above)
+    return va.clip_knowledge(str(file_path), pd_notes=pd_notes,
+                             captured_iso=captured_iso, model=model)
+
+
+def store_knowledge(con: sqlite3.Connection, asset_id: str, knowledge: dict) -> None:
+    ensure_knowledge_column(con)
+    con.execute("UPDATE assets SET clip_knowledge=? WHERE asset_id=?",
+                (json.dumps(knowledge, ensure_ascii=False), str(asset_id)))
+    con.commit()
+
+
+def knowledge_for(con: sqlite3.Connection, asset_id: str) -> dict:
+    """Stored clip_knowledge for an asset ({} if none / column absent)."""
+    try:
+        row = con.execute("SELECT clip_knowledge FROM assets WHERE asset_id=?",
+                          (str(asset_id),)).fetchone()
+    except sqlite3.OperationalError:
+        return {}
+    if not row or not row[0]:
+        return {}
+    try:
+        v = json.loads(row[0])
+        return v if isinstance(v, dict) else {}
+    except Exception:
+        return {}
+
+
+def format_knowledge(k: dict, *, max_beats: int = 10) -> str:
+    """Compact clip_knowledge for a prompt / embedding doc: summary + visible subjects + beats +
+    any off-screen audio. Grounding-first so a consumer reads frame-truth, not pd_notes claims."""
+    if not isinstance(k, dict) or not k:
+        return ""
+    subs = k.get("subjects_in_video") or []
+    parts = []
+    if k.get("summary"):
+        parts.append(str(k["summary"]).strip())
+    if subs:
+        parts.append("보이는 펫: " + ", ".join(subs))
+    for b in (k.get("beats") or [])[:max_beats]:
+        if not isinstance(b, dict):
+            continue
+        who = ",".join(b.get("who") or []) or "?"
+        s, e = b.get("t0"), b.get("t1")
+        span = (f"{float(s):.1f}-{float(e):.1f}s " if isinstance(s, (int, float))
+                and isinstance(e, (int, float)) else "")
+        mt = b.get("material_type") or ""
+        parts.append(f"· {span}{who} [{mt}] {(b.get('action') or '').strip()}"
+                     + (f" — {b['note'].strip()}" if b.get("note") else ""))
+    aud = [a for a in (k.get("audio_events") or []) if isinstance(a, dict) and not a.get("on_screen")]
+    if aud:
+        parts.append("화면 밖 소리: " + "; ".join(
+            f"{a.get('who','?')} {a.get('sound','')}".strip() for a in aud[:4]))
+    return "\n".join(parts)
+
+
 def format_actions(moments, *, max_n: int = 14) -> str:
     """Compact one-line timeline for prompts + the embedding doc, e.g.
     '0.5-1.2s leo: stalks the tail; 1.3-2.1s leo: climbs onto ryani's back; ...'."""
