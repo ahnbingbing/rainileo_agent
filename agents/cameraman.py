@@ -3139,6 +3139,20 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
         _pd_dir = os.getenv("PD_RERENDER_DIRECTIVE", "").strip()
         if _pd_dir:
             parts.append("PD의 캡션 수정 요청(화면 동작에 맞추되 이 방향을 최우선 반영): " + _pd_dir)
+        # PD 2026-11-12: the frame-VLM can't identify a specific prop from pixels (it called a blue
+        # TUG TOY '파란 천/cloth'), but the Writer named it correctly from pd_notes/clip-knowledge
+        # context. Feed the Writer's original caption as a PROP-NAME reference so the VLM keeps the
+        # specific object name instead of downgrading it to a vague/wrong guess — correct a noun only
+        # when it's clearly wrong. Action/timing stay the VLM's call.
+        _orig_cap = " / ".join((s.get("ko") or "").strip()
+                               for s in (cap.get(tag, {}).get("scenes") or []) if s.get("ko"))
+        if _orig_cap:
+            parts.append(
+                "[작가가 쓴 원래 캡션 — 사물·소품 이름 참고용]: 아래 캡션의 구체적 사물·장난감 이름"
+                "(예: '파란 터그', '공', '간식', '하네스')은 작가가 맥락(pd_notes·클립지식)을 알고 고른 "
+                "것이다. 화면에 그 사물이 보이면 그 이름을 그대로 써라 — 프레임만 보고 '천/물건' 같은 막연한 "
+                "말로 격하하거나 다른 사물로 바꾸지 마라(명백히 틀렸을 때만 교정). 동작·타이밍은 네가 본 대로:\n"
+                + _orig_cap[:300])
         beats = None
         _sys_grnd = _RF_ACTION_SYS + ("\n\n" + _hh_block if (_hh_block := _household_knowledge_block()) else "")
         try:
