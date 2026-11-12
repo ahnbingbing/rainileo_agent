@@ -94,8 +94,67 @@ def find_orphans(con: sqlite3.Connection | None = None, yt=None) -> list[dict]:
             con.close()
 
 
+def relink_orphans(con: sqlite3.Connection | None = None, yt=None,
+                   apply: bool = True) -> list[dict]:
+    """Root fix (PD 2026-11-12) for the dedup-blindness that let a scheduled-but-ORPHANED
+    video's clips slip past the RF reuse gates: bpHO0z shared the 2025-12-25 outing with the
+    orphan cExdhHxLUDM because cExdh's source card had NO youtube_video_id — so every gate
+    (keyed on video_id / publish_at) was blind to its clips. An orphan is almost always a lost
+    UPLOAD WRITEBACK (the card rendered + uploaded, but the video_id never landed on the card).
+    If a UNIQUE rendered RF card for the orphan's publish DATE has no video_id, it IS that card:
+    write the link back so arc/cooldown/dedup see its clips again. Conservative — only the
+    unambiguous one-card-per-date case is auto-linked; ambiguous orphans fall through to the
+    veto path (existing behavior). Env RECONCILE_RELINK=0 disables."""
+    import os
+    import datetime as _dt
+    if os.getenv("RECONCILE_RELINK", "1") == "0":
+        return []
+    close = False
+    if con is None:
+        from agents.producer import _db
+        con = _db()
+        close = True
+    relinked: list[dict] = []
+    try:
+        for o in find_orphans(con, yt):
+            try:
+                pa = _dt.datetime.fromisoformat(o["publish_at"].replace("Z", "+00:00"))
+                kst_date = (pa + _dt.timedelta(hours=9)).date().isoformat()
+            except Exception:
+                continue
+            cands = con.execute(
+                "SELECT card_id FROM cards WHERE date=? AND render_style='real_footage' "
+                "AND (youtube_video_id IS NULL OR youtube_video_id='') "
+                "AND state IN ('rendered','published')", (kst_date,)).fetchall()
+            if len(cands) != 1:
+                log.warning("reconcile relink: orphan %s (%s) has %d candidate card(s) "
+                            "— left for veto (no confident match)",
+                            o["video_id"], kst_date, len(cands))
+                continue
+            cid = cands[0][0]
+            if apply:
+                con.execute(
+                    "UPDATE cards SET youtube_video_id=?, uploaded=1, youtube_publish_at=?, "
+                    "state='published' WHERE card_id=?",
+                    (o["video_id"], o["publish_at"], cid))
+                con.commit()
+            relinked.append({"video_id": o["video_id"], "card_id": cid, "date": kst_date})
+            log.info("reconcile relink: %s -> card %s (%s) — dedup can see its clips again",
+                     o["video_id"], cid, kst_date)
+    finally:
+        if close:
+            con.close()
+    return relinked
+
+
 def orphan_report(con: sqlite3.Connection | None = None) -> str:
-    """One-line-per-orphan summary for the launch batch Slack post. '' when clean."""
+    """One-line-per-orphan summary for the launch batch Slack post. '' when clean.
+    Re-links recoverable orphans FIRST (so a lost-writeback video becomes visible to dedup
+    instead of being reported/vetoed) — only the truly unmatched remain to report."""
+    try:
+        relink_orphans(con)
+    except Exception as e:
+        log.warning("reconcile: relink_orphans failed (non-fatal): %s", e)
     try:
         orphans = find_orphans(con)
     except Exception as e:
@@ -117,6 +176,9 @@ def main() -> int:
                    help="un-schedule (set private, clear publishAt) each orphan")
     p.add_argument("--json", action="store_true", help="machine-readable output")
     a = p.parse_args()
+    _rel = relink_orphans()
+    for r in _rel:
+        print(f"  relinked {r['video_id']} -> card {r['card_id']} ({r['date']})")
     orphans = find_orphans()
     if a.json:
         print(json.dumps(orphans, ensure_ascii=False, indent=2))
