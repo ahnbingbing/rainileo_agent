@@ -3193,6 +3193,11 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
                            "ko": ko, "en": (b.get("en") or "").strip()})
             cur = en
         if scenes:
+            # Stash the Writer's ORIGINAL caption before the VLM overwrites it, so the
+            # reconciliation pass (_rf_caption_reconcile) can let the Writer adjudicate the VLM's
+            # changes instead of accepting them one-directionally (PD 2026-11-12: "VLM이 바꿀거면
+            # writer랑 논의한 다음에 정해야지"). VLM owns action/timing; Writer owns props/names/context.
+            manifests.setdefault("_writer_captions", {})[tag] = list(cap[tag].get("scenes") or [])
             cap[tag]["scenes"] = scenes
             n_written += 1
     if n_written and not dry_run:
@@ -3203,6 +3208,98 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
             return
     if progress_cb and n_written:
         progress_cb(f":clapper: 동작-그라운딩 캡션 — {n_written}컷 재작성 (화면 동작 기준)")
+
+
+def _rf_caption_reconcile(work_dir: Path, manifests: dict, anim_dir: Path,
+                          progress_cb=None, dry_run: bool = False) -> None:
+    """VLM⇄Writer caption AGREEMENT (PD 2026-11-12: "VLM이 바꿀거면 writer랑 논의한 다음에 정해야지").
+    The action-grounding VLM rewrites the Writer's captions ONE-directionally and keeps downgrading
+    the Writer's correct, context-rich details the frame-VLM can't know (파란 '터그'→'천', '따로 밥
+    먹던'→'분리 식사', a resting pose→'코 툭'). So the Writer now ADJUDICATES the VLM's changes under
+    a clear authority split: the VLM owns action/timing/who-is-on-screen (it watched the video); the
+    Writer owns props/names/context/story (it has pd_notes + clip knowledge). The Writer accepts the
+    VLM's action/timing fixes and restores any prop/name/context the VLM wrongly changed. One bounded
+    round. OFF by default (RF_CAPTION_RECONCILE=1 to enable); fail-silent (keeps the VLM captions)."""
+    if dry_run or os.getenv("RF_CAPTION_RECONCILE", "0") != "1":
+        return
+    originals = manifests.get("_writer_captions") or {}
+    if not originals:
+        return
+    cap_path = Path(manifests.get("captions") or (work_dir / "captions.json"))
+    try:
+        cap = json.loads(cap_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    _src_map = {}
+    try:
+        _sp = Path(manifests.get("sources") or "")
+        if _sp.exists():
+            _src_map = json.loads(_sp.read_text(encoding="utf-8"))
+    except Exception:
+        _src_map = {}
+    items = []
+    for tag, orig in originals.items():
+        vlm = (cap.get(tag, {}) or {}).get("scenes") or []
+        if not vlm or not orig:
+            continue
+        s = _src_map.get(tag)
+        aid = (s.get("asset_id") if isinstance(s, dict) else s) or ""
+        pdn = ""
+        try:
+            con = _db()
+            r = con.execute("SELECT substr(pd_notes,1,300) FROM assets WHERE asset_id=?",
+                            (str(aid),)).fetchone()
+            pdn = (r[0] or "").strip() if r and r[0] else ""
+        except Exception:
+            pdn = ""
+        items.append({"tag": tag,
+                      "writer_ko": [x.get("ko", "") for x in orig if x.get("ko")],
+                      "vlm_ko": [x.get("ko", "") for x in vlm if x.get("ko")],
+                      "vlm_en": [x.get("en", "") for x in vlm if x.get("ko")],
+                      "pd_notes": pdn})
+    if not items:
+        return
+    sys = (
+        "너는 'Ryani & Leo' 펫 숏츠의 작가다. 네가 쓴 캡션을 VLM(영상 분석기)이 '화면 동작 기준'으로 "
+        "다시 썼다. 일방적으로 VLM을 받아들이지 말고, 둘의 권한을 지켜 각 컷의 최종 캡션을 정하라:\n"
+        "• VLM 권한 = 동작·타이밍·누가 화면에 보이나(영상을 직접 봄). VLM이 동작/타이밍/주체를 교정했으면 "
+        "수용하라.\n"
+        "• 너(작가) 권한 = 사물·소품·이름·맥락·story(pd_notes·클립 맥락을 안다). VLM이 네가 쓴 구체적 "
+        "사물명을 막연하거나 틀리게 바꿨으면 되돌려라 — '파란 터그'→'파란 천', '따로 밥 먹던'→'분리 식사', "
+        "쉬는 장면→'코 툭' 같은 없는 동작은 네 원래 표현을 지켜라.\n"
+        "• 최종 = VLM의 동작/타이밍 + 너의 사물/이름/맥락. 자연스러운 구어체(번역투 한자어 금지). 각 컷의 "
+        "줄 수·순서는 vlm_ko를 따르고 표현만 조정, en도 같이 맞춰라.\n"
+        "출력 JSON만: {\"cuts\":[{\"tag\":\"..\",\"ko\":[..],\"en\":[..]}]} (ko/en 길이는 vlm_ko와 동일)"
+    )
+    user = json.dumps(items, ensure_ascii=False)
+    try:
+        from agents.llm_cascade import call_text_cascade
+        import re as _re
+        txt = call_text_cascade(sys, user, max_tokens=2000).strip()
+        txt = _re.sub(r"^```(?:json)?\s*", "", txt)
+        txt = _re.sub(r"\s*```$", "", txt)
+        out = {c.get("tag"): c for c in json.loads(txt).get("cuts", []) if c.get("tag")}
+    except Exception as e:
+        log.warning("caption reconcile failed (keeping VLM captions): %s", e)
+        return
+    n = 0
+    for tag, c in out.items():
+        scenes = (cap.get(tag, {}) or {}).get("scenes") or []
+        kos, ens = c.get("ko") or [], c.get("en") or []
+        for i, sc in enumerate(scenes):
+            if i < len(kos) and (kos[i] or "").strip() and kos[i].strip() != (sc.get("ko") or "").strip():
+                sc["ko"] = kos[i].strip()
+                if i < len(ens) and (ens[i] or "").strip():
+                    sc["en"] = ens[i].strip()
+                n += 1
+    if n and not dry_run:
+        try:
+            cap_path.write_text(json.dumps(cap, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as e:
+            log.warning("reconcile write-back failed: %s", e)
+            return
+    if progress_cb:
+        progress_cb(f":handshake: VLM⇄작가 캡션 합의 — {n}개 줄 작가 권한으로 되돌림/조정")
 
 
 def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
@@ -6639,6 +6736,13 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
                                          progress_cb=progress_cb, dry_run=dry_run)
         except Exception as ex:
             log.warning("action-grounded captions skipped: %s", ex)
+        # VLM⇄Writer agreement: let the Writer adjudicate the VLM's rewrite (restore prop/name/
+        # context it wrongly changed) instead of accepting it one-directionally. OFF by default.
+        try:
+            _rf_caption_reconcile(work_dir, manifests, anim_dir,
+                                  progress_cb=progress_cb, dry_run=dry_run)
+        except Exception as ex:
+            log.warning("caption reconcile skipped: %s", ex)
         if progress_cb:
             progress_cb(":lock: [1b/3] 단일-패스 캡션 보존 + 그라운딩 게이트")
         try:
