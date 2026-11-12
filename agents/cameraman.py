@@ -2124,6 +2124,10 @@ _RF_ACTION_SYS = (
     "activity — a leashed dog swimming is '리드줄에 묶였어도 마음껏 헤엄' (free despite the leash), "
     "NOT '리드줄 따라 헤엄' (as if the leash were a path she follows). Read the pet's attitude and "
     "caption that.\n"
+    "• DON'T FRAME A HABITUAL TRAIT AS NEW. Caption a signature behavior as the fun CONSTANT it is, "
+    "never a first/surprise. Ryani is a water-maniac who ALWAYS dives in, so a pool/stream entry is "
+    "'오늘도 풍덩!/역시 물개' — NEVER '오늘은 아예 들어갔어요/드디어 입수' (that falsely implies she "
+    "usually hesitates). Same for any known trait: celebrate it, don't announce it as novel.\n"
     "• OBJECT INTERACTION beats the generic default: if the pet has its MOUTH or PAWS ON an "
     "object — grabbing/biting/pulling/carrying a stick, branch, leaf, toy, blanket — caption "
     "THAT specific act (물다/문다/당기다/물고 간다/끌고 간다), NOT '냄새 맡는다/sniffing'. A snout "
@@ -3168,7 +3172,15 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
                 "말로 격하하거나 다른 사물로 바꾸지 마라(명백히 틀렸을 때만 교정). 동작·타이밍은 네가 본 대로:\n"
                 + _orig_cap[:300])
         beats = None
-        _sys_grnd = _RF_ACTION_SYS + ("\n\n" + _hh_block if (_hh_block := _household_knowledge_block()) else "")
+        # Inject canon CHARACTER_FACTS so the captioner knows HABITUAL traits the frames can't show
+        # — Ryani is a water-MANIAC who always dives in, so a pool/stream entry is '오늘도 풍덩!',
+        # NOT '오늘은 아예 풍덩 들어갔어요' (false-novelty framing that implies she usually won't).
+        try:
+            from agents import canon as _canon_cf
+            _cf_block = "\n\n[캐릭터 사실 — 캡션 프레이밍에 반영]:\n" + _canon_cf.CHARACTER_FACTS[:1000]
+        except Exception:
+            _cf_block = ""
+        _sys_grnd = _RF_ACTION_SYS + _cf_block + ("\n\n" + _hh_block if (_hh_block := _household_knowledge_block()) else "")
         try:
             resp = client.models.generate_content(
                 model=model, contents=parts,
@@ -6717,17 +6729,16 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
         except Exception as ex:
             log.warning("coherence-gate skipped: %s", ex)
 
-    # Step 1b: VLM post-render check + caption rewrite (same agent as ai_vtuber).
-    # PD 2026-06-06 ROOT CAUSE FIX: for single-pass real_footage, the captions
-    # are ALREADY grounded in clip ground truth by realfootage_concept.md. Re-
-    # running the Caption Agent here silently overwrote every upstream prompt fix
-    # (주체정확성/랴니대사/여운/가독성) — the reason PD's feedback "wasn't applied"
-    # for days. Skip the rewrite when the concept came from the single-pass
-    # author. Override with RF_FORCE_VLM_REWRITE=1 for debugging.
-    concept_author = (manifests.get("concept") or {}).get("author", "")
-    is_singlepass = concept_author == "realfootage_singlepass"
+    # Step 1b: caption pass. ONE path for ALL real_footage (PD 2026-11-12): the action-grounded
+    # path below carries every RF caption rule (grounding, VLM⇄Writer agreement, 함미하비/프롭/
+    # naturalness/length, 여운) — the legacy AV Caption-Agent rewrite (`else`) is the one that
+    # "silently overwrote every upstream prompt fix" (PD 2026-06-06). It used to be gated on
+    # `author == realfootage_singlepass`, but a RE-RENDER rebuilds manifests from the card and loses
+    # that tag → the episode fell to the legacy path and PD's caption fixes "weren't applied" (the
+    # swim re-render: 가족/질질/뜬금 captions). So DON'T split by author — RF always takes the
+    # grounded path; the legacy rewrite runs only under the explicit RF_FORCE_VLM_REWRITE=1 debug flag.
     force_rewrite = os.environ.get("RF_FORCE_VLM_REWRITE") == "1"
-    if is_singlepass and not force_rewrite:
+    if not force_rewrite:
         # PD 2026-06-13: don't run the full Caption-Agent rewrite (it clobbers upstream
         # single-pass fixes), but DO run the lighter GROUNDING GATE — it only corrects
         # cuts whose captions contradict the frame (subject absent / animal mis-ID /
