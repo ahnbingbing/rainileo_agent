@@ -352,6 +352,42 @@ def _propose_n_for_lane(target: dt.date, context: dict, lane: str, n: int,
     return got[:n]
 
 
+# ── Outing-aware clip cooldown (PD 2026-11-12) ──────────────────────────────
+# Root of the 2026-11-13 duplicate-nap pair: two slots drew DIFFERENT files
+# (med_2026_11_10_101154 vs _101431) from the SAME 11-10 nap session, so asset_id-exact
+# dedup was blind (same outing, different file). Fix: once ANY clip of a capture-DAY is
+# used, block that whole day's clips (= one outing). Env RF_OUTING_DEDUP=0 → exact-only.
+_OUTING_RE = re.compile(r"^med_(\d{4}_\d{2}_\d{2})_")
+# Recently-PUBLISHED clips stay visible to viewers far longer than the old 7d window —
+# the 11-14 re-upload reused a clip published 12 days earlier (11-02), outside 7d. Widen.
+_RECENT_PUBLISH_COOLDOWN_DAYS = int(os.getenv("RF_RECENT_PUBLISH_COOLDOWN_DAYS", "21"))
+
+
+def _outing_expand(asset_ids) -> set:
+    """Return asset_ids PLUS every clip sharing a used clip's capture-DAY (outing),
+    so one nap/outing can't be split across two slots as a false 'different' clip."""
+    ids = set(asset_ids or [])
+    if os.getenv("RF_OUTING_DEDUP", "1") == "0" or not ids:
+        return ids
+    keys = set()
+    for a in ids:
+        m = _OUTING_RE.match(a or "")
+        if m:
+            keys.add(m.group(1))
+    if not keys:
+        return ids
+    try:
+        from agents.producer import _db
+        with _db() as con:
+            for k in keys:
+                for (aid,) in con.execute(
+                        "SELECT asset_id FROM assets WHERE asset_id LIKE ?", (f"med_{k}_%",)):
+                    ids.add(aid)
+    except Exception as e:  # noqa: BLE001
+        log.warning("outing-expand failed (falling back to exact-id dedup): %s", e)
+    return ids
+
+
 def launch_pipeline(target: dt.date, *,
                     progress_cb: Callable[[str], None] | None = None,
                     slot_log_cb: Callable[[str], None] | None = None,
@@ -490,8 +526,8 @@ def launch_pipeline(target: dt.date, *,
         with _db() as _con:
             for _r in _con.execute(
                 "SELECT payload_json FROM cards WHERE date >= ? AND youtube_video_id IS NOT NULL "
-                "AND state!='archived' ORDER BY date DESC LIMIT 60",
-                ((target - dt.timedelta(days=7)).isoformat(),)).fetchall():
+                "AND state!='archived' ORDER BY date DESC LIMIT 120",
+                ((target - dt.timedelta(days=_RECENT_PUBLISH_COOLDOWN_DAYS)).isoformat(),)).fetchall():
                 try:
                     for _cut in (_json.loads(_r[0] or "{}").get("cuts") or []):
                         _aid = _cut.get("asset_id")
@@ -671,7 +707,8 @@ def launch_pipeline(target: dt.date, *,
                         sp(":art: RF grammar 롤링윈도우 — 한 캐스트를 3일(D/D+1/D+2)로 분산 "
                            "(footage=통제, 편집=변인)")
                         _cache["_today"] = ensure_rolling_window(
-                            target, progress_cb=sp, exclude_asset_ids=batch_used_assets)
+                            target, progress_cb=sp,
+                            exclude_asset_ids=_outing_expand(batch_used_assets))
                     except Exception as e:
                         log.warning("rolling-window build failed → standard RF: %s", e)
                         sp(f":warning: RF grammar 롤링윈도우 실패 → 표준 RF 폴백: {str(e)[:120]}")
@@ -707,7 +744,7 @@ def launch_pipeline(target: dt.date, *,
             # across episodes; the render is a fresh Seedance still), so excluding recently-used
             # refs just starves AV. Same-slot divergence for AV is handled by concept-dedup below.
             if lane == "real_footage" and batch_used_assets:
-                ctx["exclude_asset_ids"] = sorted(batch_used_assets)
+                ctx["exclude_asset_ids"] = sorted(_outing_expand(batch_used_assets))
             if batch_concepts:
                 ctx["exclude_concepts"] = list(batch_concepts)
             try:
@@ -743,7 +780,7 @@ def launch_pipeline(target: dt.date, *,
             # produce_and_render) still avoids the other slot's clips. Without this
             # the first propose excluded them but a retry re-picked them (재탕).
             if lane == "real_footage" and batch_used_assets:
-                concept["_batch_exclude_asset_ids"] = sorted(batch_used_assets)
+                concept["_batch_exclude_asset_ids"] = sorted(_outing_expand(batch_used_assets))
             # Register this concept so LATER slots (and self-heal rounds) diverge from it
             # — same-batch concept-dedup. theme carries the core motif ("내 꼬리는 어디에").
             _desc = {"title": concept.get("title"),
