@@ -861,6 +861,18 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   안 지워지면 다음 재생산을 오염시킨다.
 
 ### 4.4 실사(RF)
+- **C_outingdedup. dedup의 단위는 파일(asset_id)이 아니라 이벤트(나들이)다 — 같은 낮잠의 다른 컷이 중복을 뚫었다(11/12)** —
+  11/13 예약 두 편이 **같은 2026-11-10 낮잠 세션**(ou8k5=_101154 / mrzS6=_101431)을 썼는데, asset_id가 달라 배치
+  dedup(`batch_used_assets`)이 통과시켰다. 11/14는 **09-14 클립을 11/02 공개분에서 12일 만에 재사용**(re-upload) —
+  recent-published 쿨다운이 `date>=target-7d`라 12일 전은 윈도우 밖. 아이러니: 시대 8의 **"RF 나들이 프리미티브"
+  (같은날·같은장소=1 이벤트)**가 6/17에 이미 있었는데 **dedup이 그걸 안 썼다** — 개념은 있고 게이트는 파일 단위.
+  Fix(69793c1): `_outing_expand`가 쓴 클립의 **capture-DAY 전체를 차단**(한 세션의 다른 파일도 같은 이벤트) +
+  쿨다운 윈도우 7d→21d(콘텐츠가 *시청자에게 보이는* 기간에 맞춤, 아무 숫자 아님) + 3개 소비처 전부, RF한정, 킬스위치
+  `RF_OUTING_DEDUP`/`RF_RECENT_PUBLISH_COOLDOWN_DAYS`. ★교훈=**dedup 그래뉼래리티는 콘텐츠 단위와 일치해야 한다**
+  — 파일 둘이 한 이벤트면 한 번 쓴 것. 그리고 "최근 사용" 쿨다운은 임의 윈도우가 아니라 그 콘텐츠가 라이브로 떠 있는
+  기간. cf [[rf_dedup_blind_and_fabrication_9-10]](같은 story-first 경로의 asset_id 미기록)·A25(content-dedup이
+  form 반복을 놓침 — 여기선 asset-dedup이 event 반복을 놓침, 같은 "단위 불일치" 패밀리). 개념레벨 반복(같은 '나무 위'
+  앵글 두 번)은 아직 semantic 게이트 TODO.
 - **C_dedupblind. RF dedup 3중 게이트가 몇 달간 실명이었다 — 카드가 '무슨 클립을 썼는지'를 안 적었다(9/10)** —
   PD "9-12 12:30·18:00 RF가 같은 클립(med_2026_08_16_125328)에 날조 캡션". 세 근본이 한 story-first RF 경로에
   겹쳤다. ①**dedup 실명(핵심)**: single-pass/story-first RF 컨셉은 클립을 안 고른다 — cameraman이 렌더 시점에
