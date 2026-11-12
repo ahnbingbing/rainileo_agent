@@ -114,7 +114,20 @@ _SYS = (
     "답글 본문만 출력(따옴표·접두사 없이).")
 
 
+_HAS_TEXT = re.compile(r"[0-9A-Za-z가-힣ぁ-んァ-ヶ一-龥]")
+_EMOJI_REPLIES = ["🥰🐾", "🐾💕", "😊🐾", "❤️🐾", "🐶🐱💕", "🥰🥰", "🐾😽"]
+
+
+def _is_emoji_only(text: str) -> bool:
+    """No real letters/digits — just emoji/symbols (incl. ㅋㅋ/ㅠㅠ). Reply in kind (PD 2026-11-12)."""
+    return bool((text or "").strip()) and not _HAS_TEXT.search(text or "")
+
+
 def draft_reply(comment: dict) -> str:
+    # Emoji-only comment → emoji-only reply (PD: "이모지만 있는건 이모지만으로 답글"). Deterministic
+    # (no LLM → guaranteed no sentence), varied by comment id so it isn't the same every time.
+    if _is_emoji_only(comment.get("text", "")):
+        return _EMOJI_REPLIES[sum(ord(c) for c in comment["comment_id"]) % len(_EMOJI_REPLIES)]
     from agents import arc
     from agents.llm_cascade import call_text_cascade
     user = (f"[영상 제목] {comment.get('video_title','')}\n"
