@@ -46,9 +46,12 @@ def _channel_id(yt) -> str:
 
 
 def _recent_videos(con, n: int) -> list[str]:
+    # PUBLIC videos only — a future-scheduled upload (uploaded=1, publish_at in the future) is
+    # still private and has zero viewer comments, so it just wastes the per-video fetch.
     try:
         return [r[0] for r in con.execute(
             "SELECT youtube_video_id FROM cards WHERE youtube_video_id IS NOT NULL AND uploaded=1 "
+            "AND (youtube_publish_at IS NULL OR youtube_publish_at <= strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
             "ORDER BY youtube_publish_at DESC LIMIT ?", (n,)).fetchall() if r[0]]
     except Exception:
         return []
