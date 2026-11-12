@@ -246,6 +246,35 @@ Giri(통과?·더 고칠 것?) 확인 → 수렴할 때까지 iterate → **최�
 `agents/bandit.py`·`youtube/analytics.py`·`video_performance`(지표), `agents/reviewer.py` title
 게이트들(110·111·295·`_title_script_gate`), producer `_title_cast_subject_gate`(1246).
 
+### 3.6 PD 관찰 결함 = B1 수용/회귀 케이스 (2026-11-12 수영 에피 리뷰)
+
+PD가 실렌더(card `7caa60ec`, 여름 수영장 + 냇물 2컷)를 보고 캡션 결함 둘을 짚었다. 둘 다
+**개별 캡션을 패치할 문제가 아니라** Director 부재의 증상 — **B1 배선 때 같이 고치고, 이 두
+케이스를 회귀 테스트로 건다**(PD "근본원인 파악 후 수정", "다음 B1 배선 때 같이").
+
+**결함 A — 캡션에 장면 전환 "설명(이음)"이 없다.** cut1(수영장) → cut2(냇물)로 넘어갈 때
+*다른 장소/다른 때*인데 캡션이 그걸 **설명하지 않고** 그냥 점프한다(cut1 "늦가을에 여름 랴니가
+생각나네요"=회상 → cut3 "오늘도 물 좋아서"=현재, 시점 whiplash에 이음 캡션 無). PD가 말한
+"이음"은 **비디오 크로스디졸브가 아니다**(0.4s 디졸브는 이미 걸려 있음) — **캡션의 연결 서사**다.
+근본=캡션 `action` 필드가 **의도적으로 per-cut**("Describes ONLY what's visible in THIS cut,
+NOT the whole concept's narrative", `writer_realfootage.md`)이고, 컷 사이 다리인 `transition_in`은
+i2v 모션/연속성에만 쓰이고 **캡션 텍스트로 표면화되지 않는다**. 렌더타임 action-grounding VLM도
+per-cut이라 **컷 간 연결을 만들 권한이 없다**. → **시퀀스 레벨 권한(Director `director_brief`의
+arc + sequence[role, what_it_shows] + notes_to_writer)**이 장면/시점 전환을 캡션에 명시하도록 해야
+풀린다(§3.1 Director 소유).
+
+**결함 B — "마음은 이미 물속 한복판"이 이미 헤엄치는 footage에 붙었다.** 이 캡션은 *아직 안 들어간*
+기대 시점(리드줄에 묶여 물 쪽으로 몸이 쏠림)을 묘사하는데, footage는 **이미 물속에서 헤엄 중**.
+근본=Writer 플로리시가 per-cut 그라운딩만 통과(물 클립과 "물속"이 느슨하게 일치) → VLM이 **시간적
+상태**(이미-in vs ~하려-함)를 느슨하게 봐 생존. 게다가 cut1이 이미 "헤엄 월드클래스"를 세웠는데
+cut3가 그걸 모르고 "마음은 이미"로 되돌아감 = **컷 간 상태 인지 부재**.
+
+**공통 근본 = 캡션이 per-cut으로 고립 저작·그라운딩된다. 장면/시점 전환을 설명으로 잇고(A) 컷 간
+시간·서사 일관성을 강제할(B) 시퀀스-레벨 authority가 없다** — 그게 정확히 B1 Director `director_brief`
+(이미 빌드됨·OFF·미배선, progress_log 2026-11-12 13:16)의 일. B1 배선 시 **이 두 케이스를 스모크/회귀로
+걸어** must_keep 시퀀스 + notes_to_writer가 전환 설명과 시간 그라운딩을 실제로 만들어내는지 검증한다.
+(수정은 B1, 지금은 기록만.) cf [[rf_footage_aware_design]]·[[caption_readoff_lowres_misread]]·§4 coherence.
+
 ---
 
 ## 4. Layer 3 — 트림 coherence (Writer → Cameraman)
