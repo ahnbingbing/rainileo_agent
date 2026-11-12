@@ -39,7 +39,13 @@ channel's pet-parent / 함미하비 character voice, grounded in the video the c
    caption grounding + character facts so it can't invent traits). KO for KO comments, EN for EN.
 4. **Act** — auto-post safe via `comments.insert`; queue the rest to Slack (board channel) with
    an approve/edit affordance (mirror the pd_reviewer veto-queue pattern).
-5. **Schedule** — a poll cron (run_job.sh wrapper) at a sane cadence; kill-switch env.
+5. **Schedule = BATCH poll, not real-time** (PD 2026-11-12: "답글은 배치로 돌던지"). A periodic
+   cron (run_job.sh wrapper, same pattern as every other VM job), ~1–2×/day — frequent enough that
+   fans aren't left waiting, rare enough to dodge spam/rate-limit. Each run processes the whole
+   un-replied backlog in one pass: collect → classify → batch-post the safe ones → batch-append the
+   rest to the approval queue. **Approval is batched too** — PD reviews the queued drafts together
+   in Slack and approves in bulk (don't ping per comment). Per-run cap on auto-posts + queued items;
+   log auto-posted vs queued counts. Kill-switch env (OFF until smoke + PD spot-check).
 
 ## Guardrails (carry the project's hard-won rules)
 
