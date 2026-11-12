@@ -1426,7 +1426,7 @@ def _clip_reuse_gate(concept: "dict | None", report: dict) -> None:
         from agents.producer import _live_published_rf_assets
         con = sqlite3.connect(str(ROOT / "data" / "agent.db"))
         try:
-            live = _live_published_rf_assets(con, days=7)
+            live = _live_published_rf_assets(con)
         finally:
             con.close()
     except Exception as e:

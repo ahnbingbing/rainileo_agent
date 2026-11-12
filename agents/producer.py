@@ -1345,7 +1345,33 @@ def _recently_used_rf_assets(con: sqlite3.Connection,
     return used
 
 
-def _live_published_rf_assets(con: sqlite3.Connection, days: int = 7) -> set[str]:
+_OUTING_DAY_RE = re.compile(r"^med_(\d{4}_\d{2}_\d{2})_")
+
+
+def _expand_to_outings(con: sqlite3.Connection, asset_ids) -> set[str]:
+    """Outing-aware dedup (PD 2026-11-12): once ANY clip of a capture-DAY is used,
+    block that whole day's clips — two files from one nap/outing are ONE event, so
+    the RF dedup gates (all asset_id-exact) were blind to a same-session duplicate
+    (the 11-13 duplicate-nap). RF_OUTING_DEDUP=0 restores exact-only."""
+    ids = set(asset_ids or [])
+    if os.getenv("RF_OUTING_DEDUP", "1") == "0" or not ids:
+        return ids
+    keys = set()
+    for a in ids:
+        m = _OUTING_DAY_RE.match(a or "")
+        if m:
+            keys.add(m.group(1))
+    for k in keys:
+        try:
+            for (aid,) in con.execute(
+                    "SELECT asset_id FROM assets WHERE asset_id LIKE ?", (f"med_{k}_%",)):
+                ids.add(aid)
+        except Exception:
+            pass
+    return ids
+
+
+def _live_published_rf_assets(con: sqlite3.Connection, days: int | None = None) -> set[str]:
     """asset_ids that are LIVE in a real_footage episode published in the last `days`
     (youtube_video_id set, not archived). This is the EXACT set the post-render reviewer's
     `_clip_reuse_gate` caps at ≤5 / 수정 필요 — so selection must hard-exclude it or every
@@ -1356,6 +1382,8 @@ def _live_published_rf_assets(con: sqlite3.Connection, days: int = 7) -> set[str
     used: set[str] = set()
     try:
         import datetime as _dt
+        if days is None:
+            days = int(os.getenv("RF_RECENT_PUBLISH_COOLDOWN_DAYS", "21"))
         since = (_dt.date.today() - _dt.timedelta(days=days)).isoformat()
         for (pj,) in con.execute(
             "SELECT payload_json FROM cards WHERE date >= ? AND youtube_video_id IS NOT NULL "
@@ -1370,7 +1398,7 @@ def _live_published_rf_assets(con: sqlite3.Connection, days: int = 7) -> set[str
                 continue
     except Exception as e:
         log.warning("live-published rf asset lookup failed: %s", e)
-    return used
+    return _expand_to_outings(con, used)
 
 
 def _scheduled_window_rf_assets(con: sqlite3.Connection, target: dt.date,
@@ -3385,13 +3413,13 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     # exact kill-set here, never relaxed: a thinner pool (or an empty slot) beats a futile
     # render. Post-duration-backfill the pool is large, so this rarely bites.
     try:
-        _live_kill = _live_published_rf_assets(_db(), days=7)
+        _live_kill = _live_published_rf_assets(_db())
         if _live_kill:
             _bk = len(avail_videos)
             avail_videos = [v for v in avail_videos
                             if (v.get("id") or v.get("asset_id")) not in _live_kill]
             if len(avail_videos) < _bk and progress_cb:
-                progress_cb(f":lock: 최근 7일 공개본 클립 {_bk - len(avail_videos)}개 "
+                progress_cb(f":lock: 최근 공개본(+같은 나들이) 클립 {_bk - len(avail_videos)}개 "
                             f"하드 제외 (재사용 게이트 정합 — 확정 Giri 실패 방지)")
     except Exception as _e:
         log.warning("live-published hard exclude skipped: %s", _e)
@@ -3400,7 +3428,7 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     # the exact same 7 photos). Best-effort — relax if it would starve the writer.
     # neighbor-dedup (above) also covers the photo/archive pools so a neighbor's clip
     # can't re-enter through a non-video candidate list.
-    _excl = set(context.get("exclude_asset_ids") or []) | _neighbor_excl
+    _excl = _expand_to_outings(_db(), set(context.get("exclude_asset_ids") or []) | _neighbor_excl)
     if _excl:
         _kept = [v for v in avail_videos
                  if v.get("id") not in _excl and v.get("asset_id") not in _excl]
