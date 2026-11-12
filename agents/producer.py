@@ -4374,6 +4374,9 @@ def _render_realfootage_direct(concept: dict, target: dt.date,
     if progress_cb:
         progress_cb(f":movie_camera: real_footage 렌더 시작: {title}")
     # use_brain=False — use the concept's cuts/asset_ids directly, no re-planning.
+    from agents import stage_timing as _st
+    import time as _t
+    _render_t0 = _t.perf_counter()
     out = render_card(card["card_id"], progress_cb=progress_cb, use_brain=False,
                       concept=concept)
 
@@ -4391,7 +4394,16 @@ def _render_realfootage_direct(concept: dict, target: dt.date,
     # wrapper (_render_realfootage_with_retry) decides whether to re-generate.
     report = None
     if out:
+        _giri_t0 = _t.perf_counter()
         report = _giri_review_realfootage(out, concept, target, progress_cb)
+        _giri_s = _t.perf_counter() - _giri_t0
+        _render_s = _t.perf_counter() - _render_t0 - _giri_s
+        if _st.ENABLED:
+            msg = (f":stopwatch: attempt split: render_card {_render_s:.0f}s · "
+                   f"giri-review {_giri_s:.0f}s")
+            log.info(msg)
+            if progress_cb:
+                progress_cb(msg)
     # #3: surface the Editor's intent↔footage verdict (persisted in render_meta) so the
     # retry wrapper can do an upstream re-propose on a `different_clip` mismatch.
     try:

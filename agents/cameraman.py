@@ -24,6 +24,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -4347,12 +4348,18 @@ def _fit_caption_reading_time(manifests: dict, in_dir: Path, progress_cb=None) -
             if _extend or _shrink:
                 _target = min(_max_cut, avail_real) if _shrink else raw_used
                 tmp = mp4.with_suffix(".fit.mp4")
+                # PD 2026-11-12: re-trim at the final canvas (1080×1920), NOT 720×1280 —
+                # this OVERWRITES the proxy-downscaled trim output, so a 720 here would
+                # reintroduce the lossy 720→1080 upscale at burn and contradict the
+                # _trim_real_footage_clips canvas contract. Same framing (increase+crop),
+                # just the canvas resolution. Honors RF_TRIM_PROXY (=0 → legacy 720×1280).
+                _fcw, _fch = (1080, 1920) if os.getenv("RF_TRIM_PROXY", "1") != "0" else (720, 1280)
                 try:
                     subprocess.run(
                         ["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-ss", f"{t0}",
                          "-i", str(src_path), "-t", f"{_target:.2f}",
-                         "-vf", "scale=720:1280:force_original_aspect_ratio=increase,"
-                         "crop=720:1280,setsar=1", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+                         "-vf", f"scale={_fcw}:{_fch}:force_original_aspect_ratio=increase,"
+                         f"crop={_fcw}:{_fch},setsar=1", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
                          "-an", str(tmp)], check=True, timeout=180)
                     tmp.replace(mp4)
                     clip_dur = float(subprocess.run(
@@ -4844,8 +4851,14 @@ def _run(cmd: list[str], step: str, progress_cb: ProgressCb = None,
                           card_id=os.getenv("CURRENT_CARD_ID") or None)
     except Exception:
         pass
+    from agents import stage_timing as _st
+    _t0 = time.perf_counter()
     proc = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT,
                           timeout=int(os.getenv("RENDER_STEP_TIMEOUT", "600")))
+    # strip the bracketed progress prefix ("[1c/3] Burning captions" → "Burning captions")
+    # so repeated subprocess steps aggregate under a stable name in the timing ledger.
+    _step_name = re.sub(r'^:[a-z_]+:\s*(\[[^]]*\]\s*)?', '', step).strip()
+    _st.record(f"run:{_step_name}", time.perf_counter() - _t0)
     if proc.returncode != 0:
         err = proc.stderr[-2000:] if proc.stderr else proc.stdout[-2000:]
         raise RuntimeError(f"Step '{step}' failed (rc={proc.returncode}):\n{err}")
@@ -5247,13 +5260,18 @@ def _prerender_photo_kenburns_cuts(manifests: dict, work_dir: Path,
         _inc = 8.0 / frames  # ~8% move over the beat
         _zexpr = (f"z='min(zoom+{_inc:.5f},1.08)'" if n % 2 == 0
                   else f"z='if(eq(on,0),1.08,max(zoom-{_inc:.5f},1.0))'")
+        # PD 2026-11-12: render the Ken Burns still at the final canvas (1080×1920) — the
+        # source is a full-res PHOTO, and a 720×1280 render would be upscaled 720→1080 by
+        # the downstream canvas-normalize (lossy on a high-res still) and contradict the
+        # proxy-downscale contract. Honors RF_TRIM_PROXY (=0 → legacy 720×1280).
+        _kcw, _kch = (1080, 1920) if os.getenv("RF_TRIM_PROXY", "1") != "0" else (720, 1280)
         try:
             subprocess.run(
                 ["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-loop", "1",
                  "-i", str(photo_path), "-t", f"{dur:.2f}",
-                 "-vf", ("scale=720:1280:force_original_aspect_ratio=increase,"
-                         "crop=720:1280,"
-                         f"zoompan={_zexpr}:d={frames}:s=720x1280:fps=25,"
+                 "-vf", (f"scale={_kcw}:{_kch}:force_original_aspect_ratio=increase,"
+                         f"crop={_kcw}:{_kch},"
+                         f"zoompan={_zexpr}:d={frames}:s={_kcw}x{_kch}:fps=25,"
                          "setsar=1"),
                  "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-an", str(out_mp4)],
                 check=True, timeout=120)
@@ -5924,19 +5942,45 @@ def _trim_real_footage_clips(manifests: dict, anim_dir: Path,
         #    black bars, fuller screen) but can crop the subject out at the sides.
         # A portrait clip already fills 9:16, so neither applies. RF_PANSCAN=0 disables both
         # (assemble then letterboxes at concat anyway). RF_LANDSCAPE_MODE=off also disables.
+        # PD 2026-11-12 PROXY-DOWNSCALE: the final episode canvas is 1080×1920 (burn
+        # and assemble both normalize to it). A portrait source — modern iPhone video
+        # is 4K (2160×3840) — passed through trim UNSCALED, so burn AND assemble each
+        # re-encoded 4K frames (~68s + ~106s of a ~9min render / stage-timing 2026-11-12).
+        # Normalize every trimmed clip to the canvas ONCE here → burn/assemble then touch
+        # only 1080×1920. Zero quality loss: the final delivered episode IS 1080×1920, so
+        # this just moves the downscale earlier (done once at trim) instead of letting burn
+        # re-encode 4K. Landscape now letterboxes/panscans STRAIGHT to the canvas (was
+        # 720×1280 then upscaled by burn — lossy). Color/HDR is untouched: a plain scale
+        # preserves the HLG tag, so assemble still tone-maps HLG→SDR (see _color_prefix).
+        # Kill-switch RF_TRIM_PROXY=0 restores the pre-2026-11-12 passthrough (landscape →
+        # 720×1280 letterbox, portrait → source resolution).
+        _proxy = os.getenv("RF_TRIM_PROXY", "1") != "0"
+        _CW, _CH = (1080, 1920) if _proxy else (720, 1280)
         _land_mode = os.getenv("RF_LANDSCAPE_MODE", "letterbox").lower()
         if os.getenv("RF_PANSCAN", "1") == "0":
             _land_mode = "off"
+        _reframed_to_canvas = False
         if _land_mode != "off":
             _dw, _dh = _probe_display_dims(src_path)
             _is_land = bool(_dw and _dh and (_dw / _dh) > (720.0 / 1280.0))
             if _is_land:
                 if _land_mode == "panscan":
                     _reframe = _panscan_fill_filter(
-                        trim_dur, is_landscape=True, pan=not bool(crop_vf))
+                        trim_dur, is_landscape=True, pan=not bool(crop_vf),
+                        W=_CW, H=_CH)
                 else:  # letterbox (default)
-                    _reframe = _letterbox_fill_filter()
+                    _reframe = _letterbox_fill_filter(_CW, _CH)
                 vf = ",".join(p for p in (vf, _reframe) if p)
+                _reframed_to_canvas = _proxy  # reframe already emits exactly _CW×_CH
+        # Portrait (and any non-reframed) clip: downscale to the canvas so burn/assemble
+        # stop re-encoding 4K. decrease+pad matches their normalize, so it's a no-op
+        # downstream (and an already-canvas clip stays byte-for-byte the same framing).
+        if _proxy and not _reframed_to_canvas:
+            vf = ",".join(p for p in (
+                vf,
+                f"scale={_CW}:{_CH}:force_original_aspect_ratio=decrease,"
+                f"pad={_CW}:{_CH}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1",
+            ) if p)
 
         # PD 2026-07-10: gently de-haze a SOFT clip (smudged phone lens) — measured
         # per-clip, applied FIRST so it recovers detail on the raw frame before crop/
@@ -6649,18 +6693,21 @@ def _rf_face_gate(manifests: dict, anim_dir: Path,
 def run_real_footage_pipeline(manifests: dict, work_dir: Path,
                               progress_cb: ProgressCb = None,
                               dry_run: bool = False) -> Path:
+    from agents import stage_timing as _st
+    _st.reset()  # profile THIS render (per-thread ledger); dump()ed before return
     ts = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
     # Step 0a: pre-render Seedance interp gap-fill cuts (legacy).
-    _prerender_interp_fills(manifests, work_dir, progress_cb, dry_run)
-    # Step 0b: pre-render Tier 2 photo cuts. PD 2026-06-13: real photos default to a
-    # ken-burns still (no drift); only RF_PHOTO_MODE=i2v uses Seedance generation.
-    _prerender_photo_kenburns_cuts(manifests, work_dir, progress_cb, dry_run)
-    _prerender_photo_i2v_cuts(manifests, work_dir, progress_cb, dry_run)
-    # Step 0c: pre-render Tier 3 chain-from-prev cuts (after 0a/0b resolved).
-    _prerender_chain_from_prev(manifests, work_dir, progress_cb, dry_run)
-    # Step 0d: pre-render split_horizontal / split_vertical cuts (PD 2026-06-03).
-    _prerender_split_cuts(manifests, work_dir, progress_cb, dry_run)
+    with _st.stage("0:prerender(interp/photo/chain/split)"):
+        _prerender_interp_fills(manifests, work_dir, progress_cb, dry_run)
+        # Step 0b: pre-render Tier 2 photo cuts. PD 2026-06-13: real photos default to a
+        # ken-burns still (no drift); only RF_PHOTO_MODE=i2v uses Seedance generation.
+        _prerender_photo_kenburns_cuts(manifests, work_dir, progress_cb, dry_run)
+        _prerender_photo_i2v_cuts(manifests, work_dir, progress_cb, dry_run)
+        # Step 0c: pre-render Tier 3 chain-from-prev cuts (after 0a/0b resolved).
+        _prerender_chain_from_prev(manifests, work_dir, progress_cb, dry_run)
+        # Step 0d: pre-render split_horizontal / split_vertical cuts (PD 2026-06-03).
+        _prerender_split_cuts(manifests, work_dir, progress_cb, dry_run)
 
     # Step 0e (#3): Editor agent — judge INTENT vs actual FOOTAGE, then set per-cut
     # technique/tempo/trim, reorder, drop, and flag any intent↔footage mismatch.
@@ -6668,8 +6715,9 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
     anim_dir = work_dir / "animated"
     if not dry_run and os.getenv("EDITOR_AGENT", "1") != "0":
         manifests["style"] = "real_footage"
-        _plan = _run_editor(manifests.get("concept") or manifests, manifests,
-                            "real_footage", progress_cb)
+        with _st.stage("0e:editor-agent(LLM)"):
+            _plan = _run_editor(manifests.get("concept") or manifests, manifests,
+                                "real_footage", progress_cb)
         if _plan:
             _apply_edit_plan(manifests, _plan, anim_dir, progress_cb)
             manifests["_edit_plan"] = _plan  # carry mismatch for the upstream loop
@@ -6724,18 +6772,21 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
 
     # Step 1: trim source clips into animated/ (PD 2026-06-02: split trim
     # from caption burn so VLM rewrite can run between them).
-    _trim_real_footage_clips(manifests, anim_dir, progress_cb, dry_run)
+    with _st.stage("1:trim-clips(ffmpeg)"):
+        _trim_real_footage_clips(manifests, anim_dir, progress_cb, dry_run)
 
     # Step 1a-face: HARD RULE face gate — drop any cut whose render still shows a human
     # FACE after the crop (PD 2026-06-12: a face leaked into a render).
     if not dry_run:
-        _rf_face_gate(manifests, anim_dir, progress_cb)
+        with _st.stage("1a:face-gate(VLM)"):
+            _rf_face_gate(manifests, anim_dir, progress_cb)
 
     # Step 1a-continuity: trim a clip that pans OFF our pet for its tail (retro C14 #1 /
     # RF0800) — runs BEFORE captioning so the caption stages fit the trimmed clip.
     if not dry_run:
         try:
-            _rf_subject_exit_tail_trim(work_dir, manifests, anim_dir, progress_cb)
+            with _st.stage("1a:subject-tail-trim(VLM)"):
+                _rf_subject_exit_tail_trim(work_dir, manifests, anim_dir, progress_cb)
         except Exception as ex:
             log.warning("subject-tail-trim skipped: %s", ex)
 
@@ -6743,7 +6794,8 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
     # memory-lane through-line (retro C14 #2 / RF1800) — before captioning.
     if not dry_run:
         try:
-            _rf_cross_cut_coherence_gate(manifests, anim_dir, progress_cb)
+            with _st.stage("1a:coherence-gate(VLM)"):
+                _rf_cross_cut_coherence_gate(manifests, anim_dir, progress_cb)
         except Exception as ex:
             log.warning("coherence-gate skipped: %s", ex)
 
@@ -6768,36 +6820,41 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
         # the true union+location as a hard constraint and stops erasing a present pet /
         # mislabelling an outdoor outing as home. Also attaches truth to the concept for Giri.
         try:
-            _rf_grounded_truth(manifests, anim_dir, progress_cb=progress_cb, dry_run=dry_run)
+            with _st.stage("1b:grounded-truth(VLM gpt-4o-mini)"):
+                _rf_grounded_truth(manifests, anim_dir, progress_cb=progress_cb, dry_run=dry_run)
         except Exception as ex:
             log.warning("subject/location grounding skipped: %s", ex)
         # Layer 2 (PD 2026-07-06): regenerate captions FROM the clip's observed action arc,
         # anchored to when each beat happens (sniff→walk→squat=mark). Runs BEFORE the
         # grounding gate, which then verifies + the count-cap/여운 tail finish.
         try:
-            _rf_action_grounded_captions(work_dir, manifests, anim_dir,
-                                         progress_cb=progress_cb, dry_run=dry_run)
+            with _st.stage("1b:action-grounded-captions(video VLM)"):
+                _rf_action_grounded_captions(work_dir, manifests, anim_dir,
+                                             progress_cb=progress_cb, dry_run=dry_run)
         except Exception as ex:
             log.warning("action-grounded captions skipped: %s", ex)
         # VLM⇄Writer agreement: let the Writer adjudicate the VLM's rewrite (restore prop/name/
         # context it wrongly changed) instead of accepting it one-directionally. OFF by default.
         try:
-            _rf_caption_reconcile(work_dir, manifests, anim_dir,
-                                  progress_cb=progress_cb, dry_run=dry_run)
+            with _st.stage("1b:caption-reconcile(VLM+Writer)"):
+                _rf_caption_reconcile(work_dir, manifests, anim_dir,
+                                      progress_cb=progress_cb, dry_run=dry_run)
         except Exception as ex:
             log.warning("caption reconcile skipped: %s", ex)
         if progress_cb:
             progress_cb(":lock: [1b/3] 단일-패스 캡션 보존 + 그라운딩 게이트")
         try:
-            _rf_caption_grounding_gate(work_dir, manifests, anim_dir,
-                                       progress_cb=progress_cb, dry_run=dry_run)
+            with _st.stage("1b:caption-grounding-gate(VLM)"):
+                _rf_caption_grounding_gate(work_dir, manifests, anim_dir,
+                                           progress_cb=progress_cb, dry_run=dry_run)
         except Exception as ex:
             log.warning("grounding gate skipped: %s", ex)
         # PD 2026-06-15: the missing wit stage — sharpen the grounded captions into 말맛
         # (RF singlepass otherwise skips AV's Caption-Agent/Polisher → flat 묘사체).
         try:
-            _rf_caption_punchup(work_dir, manifests, anim_dir,
-                                progress_cb=progress_cb, dry_run=dry_run)
+            with _st.stage("1b:caption-punchup(LLM)"):
+                _rf_caption_punchup(work_dir, manifests, anim_dir,
+                                    progress_cb=progress_cb, dry_run=dry_run)
         except Exception as ex:
             log.warning("caption punch-up skipped: %s", ex)
     else:
@@ -6852,7 +6909,8 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
         progress_cb, dry_run,
     )
     if not dry_run:
-        _fade_out_ending(manifests, captioned_dir, progress_cb)  # 여운 f/o
+        with _st.stage("1c:fade-out-ending(ffmpeg)"):
+            _fade_out_ending(manifests, captioned_dir, progress_cb)  # 여운 f/o
 
     # Step 2: ensure bumpers exist
     if not INTRO_BUMPER.exists() or not OUTRO_BUMPER.exists():
@@ -6917,6 +6975,7 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
             raise RuntimeError(
                 f"real_footage too short ({_dur:.1f}s < {_min}s) — likely dropped "
                 f"cuts; refusing to publish a stub")
+    _st.dump("RF pipeline", progress_cb)
     return out
 
 
