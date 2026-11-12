@@ -6,8 +6,11 @@
 
 ## What it does (confirmed scope)
 
-**Reply to VIEWER comments on our own channel's videos** — in the channel's pet-parent /
-함미하비 character voice, grounded in the video the comment is on.
+**Find the UN-REPLIED viewer comments and reply to them** (PD 2026-11-12: "내가 댓글을 못단
+것들을 찾고 거기에 다는 거") — the backlog PD can't keep up with, NOT every new comment. A comment
+is a target iff **none of its replies are from our channel** (check each top-level comment's
+replies for our `authorChannelId`; if PD/channel already answered it → SKIP). Reply in the
+channel's pet-parent / 함미하비 character voice, grounded in the video the comment is on.
 
 - NOT commenting on other channels (growth/outreach) — explicitly out for now.
 - NOT the pinned first-comment on our uploads — **TODO, later** (PD: "아직은 필요 없을 듯").
@@ -26,9 +29,11 @@
 
 ## Build components (when implemented — a focused session, not a rushed add-on)
 
-1. **Fetch** — YouTube Data API `commentThreads.list` per recent channel video. ⚠️ needs the
-   `youtube.force-ssl` OAuth scope (current token may only have upload/manage — verify + re-auth
-   if missing). Track already-seen comment IDs so replies aren't duplicated.
+1. **Fetch + filter to UN-REPLIED** — YouTube Data API `commentThreads.list` (part=`snippet,replies`)
+   per recent channel video. ⚠️ needs the `youtube.force-ssl` OAuth scope (current token may only
+   have upload/manage — verify + re-auth if missing). Keep a comment ONLY if **no reply under it is
+   from our channel** (our `authorChannelId`) — that's PD's backlog; drop ones already answered.
+   Also track already-handled comment IDs in the DB so the agent never replies twice.
 2. **Classify** — safe-vs-needs-approval (cheap LLM or rules + LLM). Err toward approval.
 3. **Generate reply** — character voice, grounded in THAT video's concept/captions (reuse the
    caption grounding + character facts so it can't invent traits). KO for KO comments, EN for EN.
