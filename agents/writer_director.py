@@ -46,6 +46,7 @@ WRITER_REALFOOTAGE_PROMPT = PROMPTS_DIR / "writer_realfootage.md"
 WRITER_CRITIQUE_PROMPT = PROMPTS_DIR / "writer_critique.md"
 WRITER_REVISE_PROMPT = PROMPTS_DIR / "writer_revise.md"
 DIRECTOR_SHOTS_PROMPT = PROMPTS_DIR / "director_shots.md"
+RF_DIRECTOR_PROMPT = PROMPTS_DIR / "director_realfootage.md"
 CONTE_CUESHEET_PROMPT = PROMPTS_DIR / "conte_cuesheet.md"
 CAPTION_AGENT_PROMPT = PROMPTS_DIR / "caption_agent.md"
 CAMERAMAN_VALIDATOR_PROMPT = PROMPTS_DIR / "cameraman_validator.md"
@@ -847,6 +848,49 @@ def run_director(story_concepts: list[dict], context: dict,
 # ──────────────────────────────────────────────────────────────────────
 # Public entry
 # ──────────────────────────────────────────────────────────────────────
+def run_rf_director(concept: dict, grounded_cards: str, *,
+                    progress_cb=None) -> dict | None:
+    """RF edit-direction sidecar (footage-aware redesign, B1). Unlike run_director (AV
+    cinematography — it INVENTS shots), this reads what the REAL clips show and shapes the ARC:
+    given a grounded concept (brainstorm winner) + the grounded clip cards, it returns a
+    director_brief {working_title, arc, edit_grammar, sequence[{role, what_it_shows, clip,
+    must_keep}], notes_to_writer} per agents/prompts/director_realfootage.md — so the promised
+    payoff is a REAL, must-keep cut (fixes the 'build-up but no payoff' Giri failure). The Writer
+    then grounds captions cut-by-cut onto this sequence.
+
+    OFF by default — the caller gates on RF_DIRECTOR_PASS. Best-effort: any failure returns None
+    and the caller falls back to the plain RF single-pass (no regression)."""
+    try:
+        system = _pl.load(RF_DIRECTOR_PROMPT)
+        user = (
+            "## 선택된 컨셉 (brainstorm 승자)\n"
+            + json.dumps(concept, ensure_ascii=False)
+            + "\n\n## 그라운디드 클립 카드 — 이 클립들이 '실제로' 보여주는 것 "
+              "(아크·시퀀스는 여기 있는 순간만 쓸 것; clip은 이 카드의 asset_id만)\n"
+            + (grounded_cards or "(no grounded cards)")
+            + "\n\ndirector_brief JSON 하나만 출력하라."
+        )
+        out_text = _call_anthropic(
+            system, user, model=DIRECTOR_MODEL,
+            max_tokens=int(os.getenv("RF_DIRECTOR_MAX_TOKENS", "4000")))
+        brief = _parse_json_loose(out_text)
+        if isinstance(brief, list) and brief:
+            brief = brief[0]
+        if not (isinstance(brief, dict) and isinstance(brief.get("sequence"), list)
+                and brief["sequence"]):
+            log.warning("run_rf_director: brief missing sequence → fallback")
+            return None
+        if progress_cb:
+            _seq = brief["sequence"]
+            _po = next((c.get("role") for c in _seq if c.get("role") == "payoff"), "?")
+            progress_cb(f":clapper: RF Director — {len(_seq)}컷 아크 "
+                        f"'{str(brief.get('working_title') or '')[:30]}' (payoff={_po})")
+        return brief
+    except Exception as e:
+        log.warning("run_rf_director failed (fallback to plain RF single-pass): %s", e)
+        return None
+
+
 def propose_concepts_v2(target_date: dt.date, context: dict, *,
                         style_filter: str | None = None,
                         progress_cb=None,
