@@ -3062,10 +3062,19 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
         progress_cb(":clapper: [1a/3] 동작-그라운딩 캡션 (클립 동작 arc → 순간별 캡션)")
     min_read = float(os.getenv("CAPTION_MIN_SEC", "2.5"))
     n_written = 0
-    for tag in tags:
+    # Hoist the static per-episode blocks so the parallel workers don't each recompute them.
+    try:
+        from agents import canon as _canon_cf0
+        _cf_block = "\n\n[캐릭터 사실 — 캡션 프레이밍에 반영]:\n" + _canon_cf0.CHARACTER_FACTS[:1000]
+    except Exception:
+        _cf_block = ""
+    _hh_block = _household_knowledge_block()
+
+    def _caption_one(tag):
+        """Produce (tag, scenes|None) for ONE cut — independent, so cuts run in parallel."""
         mp4 = anim_dir / f"{tag}.mp4"
         if not mp4.exists():
-            continue
+            return tag, None
         try:
             dur = float(subprocess.run(
                 ["ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -3074,7 +3083,7 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
         except Exception:
             dur = 0.0
         if dur <= 2.0:                      # too short to segment — leave writer's caption
-            continue
+            return tag, None
         # PD 2026-10-06: CAPTIONING needs FINE frames — grounding just asks "who / where" (coarse is
         # fine, ~2s), but a caption describes MOMENT-TO-MOMENT action and a pet's move (paw raise,
         # head turn, lick) takes ~0.3-1s — even 1.5s samples BETWEEN the beat and mis-attributes it.
@@ -3100,7 +3109,7 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
                     jp.unlink()
                 except Exception:
                     pass
-            continue
+            return tag, None
         _cd = _clip_date(tag)
         if _cd:
             parts.append(f"[clip captured {_cd}]")
@@ -3175,15 +3184,10 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
                 "말로 격하하거나 다른 사물로 바꾸지 마라(명백히 틀렸을 때만 교정). 동작·타이밍은 네가 본 대로:\n"
                 + _orig_cap[:300])
         beats = None
-        # Inject canon CHARACTER_FACTS so the captioner knows HABITUAL traits the frames can't show
-        # — Ryani is a water-MANIAC who always dives in, so a pool/stream entry is '오늘도 풍덩!',
-        # NOT '오늘은 아예 풍덩 들어갔어요' (false-novelty framing that implies she usually won't).
-        try:
-            from agents import canon as _canon_cf
-            _cf_block = "\n\n[캐릭터 사실 — 캡션 프레이밍에 반영]:\n" + _canon_cf.CHARACTER_FACTS[:1000]
-        except Exception:
-            _cf_block = ""
-        _sys_grnd = _RF_ACTION_SYS + _cf_block + ("\n\n" + _hh_block if (_hh_block := _household_knowledge_block()) else "")
+        # canon CHARACTER_FACTS (_cf_block) + household facts (_hh_block) hoisted above — they let the
+        # captioner know HABITUAL traits the frames can't show (Ryani the water-maniac → '오늘도 풍덩!',
+        # never '오늘은 아예 풍덩 들어갔어요' false-novelty).
+        _sys_grnd = _RF_ACTION_SYS + _cf_block + ("\n\n" + _hh_block if _hh_block else "")
         try:
             resp = client.models.generate_content(
                 model=model, contents=parts,
@@ -3205,7 +3209,7 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
                 except Exception:
                     pass
         if not isinstance(beats, list) or not beats:
-            continue
+            return tag, None
         # sanitize → ordered, non-overlapping, ≥ min_read, within clip
         scenes, cur = [], 0.1
         for b in beats:
@@ -3221,12 +3225,23 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
             scenes.append({"start": round(st, 2), "end": round(en, 2),
                            "ko": ko, "en": (b.get("en") or "").strip()})
             cur = en
+        return tag, (scenes or None)
+
+    # Run the per-cut workers IN PARALLEL (cuts are independent — each does its own frame-extract +
+    # native-action + VLM) then apply results serially. This is the biggest render-speed lever: the
+    # caption VLM latency was paid once PER CUT in series. RF_CAPTION_CONCURRENCY=1 restores serial.
+    from concurrent.futures import ThreadPoolExecutor as _TPE
+    _maxw = max(1, min(int(os.getenv("RF_CAPTION_CONCURRENCY", "4")), len(tags)))
+    if _maxw > 1 and len(tags) > 1:
+        with _TPE(max_workers=_maxw) as _ex:
+            _pairs = list(_ex.map(_caption_one, tags))
+    else:
+        _pairs = [_caption_one(t) for t in tags]
+    for tag, scenes in _pairs:
         if scenes:
-            # Stash the Writer's ORIGINAL caption before the VLM overwrites it, so the
-            # reconciliation pass (_rf_caption_reconcile) can let the Writer adjudicate the VLM's
-            # changes instead of accepting them one-directionally (PD 2026-11-12: "VLM이 바꿀거면
-            # writer랑 논의한 다음에 정해야지"). VLM owns action/timing; Writer owns props/names/context.
-            manifests.setdefault("_writer_captions", {})[tag] = list(cap[tag].get("scenes") or [])
+            # Stash the Writer's ORIGINAL caption before the VLM overwrites it (for the VLM⇄Writer
+            # agreement in _rf_caption_reconcile). VLM owns action/timing; Writer owns props/names.
+            manifests.setdefault("_writer_captions", {})[tag] = list(cap.get(tag, {}).get("scenes") or [])
             cap[tag]["scenes"] = scenes
             n_written += 1
     if n_written and not dry_run:
