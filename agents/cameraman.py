@@ -1844,7 +1844,8 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
             _ti = (_cc.get("transition_in") or "").strip().lower()
             cut_grammar[_tag] = {"is_photo": bool(_is_photo),
                                  "shoot_date": _m.group(1) if _m else None,
-                                 "transition_in": _ti or "dissolve"}
+                                 "transition_in": _ti or "dissolve",
+                                 "edit_effect": (_cc.get("edit_effect") or "").strip().lower()}
 
     result = {
         "sources": str(sources_path),
@@ -3539,6 +3540,11 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
     mismatched = []  # (tag, idx, vlm, ko, reason)
     pet_absent_tags = []  # cuts where NO frame shows our pet (human/scenery only)
     finished_tags = []    # cuts whose SOURCE clip already has baked-in text/stickers (finished product)
+    # Our own split motion-wipe (PD 2026-11-13) is a two-panel composite over a blurred base — the
+    # VLM reads that as an "edited/decorated" clip and the finished-source gate would drop it. Exempt
+    # our intentional composites (edit_effect=split_*); the gate still catches EXTERNAL decorated clips.
+    _split_tags = {t for t, g in (manifests.get("cut_grammar") or {}).items()
+                   if (g.get("edit_effect") or "").startswith("split_")}
     _svs_by_tag = {}  # tag → scene_vs, for the Layer-3 opening-visibility pass
     n_scenes = 0
     _BREEDS = {"코기": "corgi", "웰시": "corgi", "corgi": "corgi",
@@ -3584,7 +3590,7 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
         # Finished-product source (PD 2026-07-12): if the source already carries baked-in
         # caption text / stickers / hearts, it's an edited short, not raw footage — never
         # layer our captions on it (XBeEe1saTwk did exactly that). Drop the cut.
-        if any(vv.get("baked_text") for vv in _valid):
+        if any(vv.get("baked_text") for vv in _valid) and tag not in _split_tags:
             finished_tags.append(tag)
         # Pass 2: evaluate each scene (using its own frame + the cut-level animal).
         for idx, ko, v in scene_vs:
@@ -6487,6 +6493,10 @@ def _build_edit_effect_filter(effect: str, dur: float, extra_pad: float = 0.0) -
         # (the 여운 is "caption alive while video continues", not a fade to black).
         return f"tpad=stop_mode=clone:stop_duration={extra_pad:.2f}", []
     if e in ("", "static", "none"):
+        return "", []
+    # split_* is a two-clip effect already baked into the cut's source by
+    # _prerender_split_cuts (the motion wipe) — the trim just plays it, no extra filter.
+    if e.startswith("split_"):
         return "", []
     # Speed (uses setpts which doesn't preserve audio sync — but we already strip audio)
     if e.startswith("speed_"):
