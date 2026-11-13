@@ -859,6 +859,21 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   먹여라.** 부가: 이 슬롯이 9회 리롤 churn한 진짜 근본은 stale auto-디렉티브 `pd_concept_directives` id=185
   (cut1=랴니+레오 함께 강제, 2026-11-07 생성)였고 삭제로 해소 — 자동생성 remediation 디렉티브가 소비 후
   안 지워지면 다음 재생산을 오염시킨다.
+- **B_pdmirror. Giri를 PD 거울로 유지하려면 '제너레이터만 먹는 corpus'를 검수기에도 먹여라 — 그리고 운영 상태는 VM에 물어라(11/13)** —
+  PD: "기리는 retro/핸드오프(내 lossy 요약)보다 내가 한 '말들'을 모아 내 피드백 방식으로 사고하게 설계돼야." 실측하니
+  `pd_taste`(pd_selections — PD의 veto/교정 + 이유)가 **이미 존재하는데 소비가 제너레이터(Writer/brainstorm/still)뿐**,
+  Giri(검수기)는 안 읽었다 — [[giri-update]]가 말한 "review-learning이 생성기만 갱신, 검수기 미sync→러버스탬프 drift"의
+  **코드 증거**. Fix(P0 92ca48b): `reviewer.py`가 `taste_digest(for_review=True)`를 리뷰 컨텍스트에 주입("PD가 이렇게
+  리젝/교정해왔다 — 이 기준으로 깐깐히"), `GIRI_PD_TASTE` OFF→스모크→플립. +P2 PD 판단 스타일 렌즈(`PD_LENS_BLOCK`,
+  `GIRI_PD_LENS`)로 corpus에 없는 새 케이스도 PD식으로. +P3 자가-감사 배치(`giri_audit.py`)가 corpus와 현 게이트를 대조해
+  "**PD가 반복해 말했는데 Giri가 안 잡는 갭**"만 리포트(코드 자동수정 금지 — 사람이 giri-update로 결정론 게이트+회귀); 얇은
+  로컬 corpus서도 실갭 6건을 뽑았다. ★곁다리 교훈=**stale 로컬 DB로 운영을 오진하지 마라**: "먹이기가 6월에 끊겼다"는
+  로컬 `pd_selections` 12행을 보고 내린 판단이었으나, veto 로깅(`slack/app.py:_do_veto`)은 VM에서 계속 돌았고 로컬이
+  stale였을 뿐(진짜 결함은 '끊김'이 아니라 '얇음'+'미소비'). WHERE-THIS-RUNS대로 운영 ground truth는 VM DB/라이브에
+  물어라 — 안 그러면 없는 버그를 고치고 있는 버그를 놓친다. ★교훈=**검수기도 생성기와 같은 ground truth를 읽어야
+  거울이다**(한쪽만 먹으면 drift), **갭은 surface만·적용은 사람**(LLM 자동 게이트합성 금지), **운영 오진 방지는 VM에
+  질의**. cf [[B1]](러버스탬프→결정론)·[[B5]](러버스탬프 역방향)·giri-update·review-learning(생성기 짝)·
+  grounding_pd_notes_gpt4omini(PD 말이 최고 소스).
 
 ### 4.4 실사(RF)
 - **C_outingdedup. dedup의 단위는 파일(asset_id)이 아니라 이벤트(나들이)다 — 같은 낮잠의 다른 컷이 중복을 뚫었다(11/12)** —

@@ -59,9 +59,16 @@ PD 메타: "배치로 돌아야 / 세션시작마다?" → 안전한 합집합:
 - **★pd_taste corpus는 이미 존재하지만 반쪽**: `agents/pd_taste.py`(테이블 `pd_selections` — lane/kind{concept,clip,cut,caption,schedule,tone}/decision{approve,veto,swap,correct,pick,reject}/reason, `log_selection` 52·`taste_digest` 82·`_SEED` 9행 118). **소비는 제너레이터만**(producer RF 3715·concept_brainstorm 430·still_select 126) — **Giri는 안 읽음**(review-learning이 제너레이터만 갱신, 검수기 미sync = 러버스탬프 drift의 코드 증거). **먹이기도 끊김**: 실측 12행·마지막 2026-06-22(veto→log 경로가 6월 이후 비활성).
 - 배치 패턴(미러용): `scripts/_batch_gate_audit.py`(63, 날짜별 게이트 발화 audit→Slack)·`agents/pd_reviewer.py:review_batch`(339, 일 03:00). Slack: `agents/notify.py`는 **POST만**, **board 채널 READER 없음**(신규 필요). 세션 transcript: 디스크 비상주(캡처 필요).
 
-## 빌드 플랜 (phased — 다음 세션 착수, 전부 OFF→스모크→플립)
+## 빌드 플랜 (phased — 전부 OFF→스모크→플립)
 
-**스파인:** 기반(pd_selections·pd_notes·progress_log)은 있는데 ①**먹이기가 끊겼고** ②**Giri가 corpus를 안 소비**한다. 새 인프라를 짓기 전에 **있는 걸 다시 흐르게** 하는 게 최대 레버(RF 비주얼그래머의 "허용≠행동"과 동형).
+**빌드 결과 (2026-11-13 — P0~P3 코드 완료, 커밋 92ca48b·2ab4baf·P1):**
+- **P0 ✅** 소비(reviewer.py `taste_digest(for_review)` 주입, `GIRI_PD_TASTE` OFF) + 먹이기 보강(`/veto`·스레드 veto가 PD 이유 캡처, 항상ON). ★정정: 먹이기는 **안 끊겼었다** — `slack/app.py:_do_veto`가 VM에서 늘 로깅. 내가 본 로컬 "6-22 중단"은 **stale 로컬 DB 오진**(WHERE-THIS-RUNS: 운영 DB=VM). 실제 문제는 ①얇음(concept veto만·제네릭 이유) ②Giri 미소비. 둘 다 수정.
+- **P2 ✅** PD 판단 스타일 렌즈(`PD_LENS_BLOCK`: skeptical·캡션↔footage 먼저·근본>표면, `GIRI_PD_LENS` OFF).
+- **P3 ✅** 자가-감사 배치(`agents/giri_audit.py`): corpus+게이트열거→LLM 갭리포트→`notes/giri_audit_latest.md`+Slack. 코드 자동수정 없음. 스모크=얇은 로컬 corpus서도 실갭 6건(RF사진컷·컨셉드리프트·활동편성중복·과거veto유사·메모리레인구조).
+- **P1 ✅코드(라이브 미검증)** `agents/pd_slack_corpus.py`: board 스레드 PD 코멘트 수집→corpus. 결정론 필터 검증. ★**NEEDS-LIVE-SLACK-SMOKE**(첫 conversations.replies 리더, 봇 history 스코프+PD식별 VM 검증 필요), OFF/opt-in.
+- **남은 플립/배선**: ①`GIRI_PD_TASTE=1`·`GIRI_PD_LENS=1` VM 플립(스모크 후) ②giri_audit 주cron(run_job.sh)+세션시작 훅이 `giri_audit_latest.md` 읽기 ③P1 라이브 스모크→cron ④corpus가 VM서 실제 두터운지 확인.
+
+**스파인:** 기반(pd_selections)은 있었는데 **Giri가 corpus를 안 소비**하고 로깅이 **얇았다**("먹이기 끊김"은 stale 로컬 오진). 새 인프라를 짓기 전에 **있는 걸 다시 흐르게**(소비+보강)가 최대 레버였다(RF 비주얼그래머의 "허용≠행동"과 동형).
 
 ### Phase 0 — 흐름 복구 (가장 싸고 큰 레버)
 - **먹이기 재배선**: `/veto`·`/concept`·PD 캡션교정 경로가 `pd_taste.log_selection`을 부르는지 확인→끊긴 곳 복구(6월 이후 0행 근본). 각 이벤트에 **맥락**(무엇을 리뷰하다 나온 말) + 타임스탬프.
