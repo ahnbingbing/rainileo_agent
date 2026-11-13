@@ -53,10 +53,36 @@ PD 메타: "배치로 돌아야 / 세션시작마다?" → 안전한 합집합:
 - **결정론 > LLM 신뢰** (giri-update 비협상).
 - **빌드 OFF → 스모크 → 플립** (v2 롤백 규율).
 
-## 코드 앵커 (다음 세션)
-- Giri 렌즈: `agents/reviewer.py`(CHECK0·점수차원·판정맵), canon `agents/canon.py`.
-- PD 발화 소스: Slack API(board 채널)·`pd_notes`/`pd_taste` 테이블·`agents/progress_log`·세션 transcript.
-- 자가-감사: 신규 배치(예 `agents/giri_audit.py`) + run_job.sh cron.
+## 코드 앵커 (현황 매핑 — 2026-11-13 실측)
+- **Giri 렌즈**: `agents/reviewer.py:review()`(1711) — LLM 호출(1843, `VLM_MODEL` gemini-flash + `REVIEW_PROMPT` 66) + **결정론 게이트 시퀀스**(2047~2147, 각 게이트는 `report["점수"]` cap + 판정 강등 + `_*_override` 마커). canon `agents/canon.py`.
+- **PD 그라운드트루스 이미 주입**: `_pd_groundtruth_block`(1302, `assets.pd_notes` 컬럼을 컷별 asset_id로 당겨 authoritative 주입, 호출 1752).
+- **★pd_taste corpus는 이미 존재하지만 반쪽**: `agents/pd_taste.py`(테이블 `pd_selections` — lane/kind{concept,clip,cut,caption,schedule,tone}/decision{approve,veto,swap,correct,pick,reject}/reason, `log_selection` 52·`taste_digest` 82·`_SEED` 9행 118). **소비는 제너레이터만**(producer RF 3715·concept_brainstorm 430·still_select 126) — **Giri는 안 읽음**(review-learning이 제너레이터만 갱신, 검수기 미sync = 러버스탬프 drift의 코드 증거). **먹이기도 끊김**: 실측 12행·마지막 2026-06-22(veto→log 경로가 6월 이후 비활성).
+- 배치 패턴(미러용): `scripts/_batch_gate_audit.py`(63, 날짜별 게이트 발화 audit→Slack)·`agents/pd_reviewer.py:review_batch`(339, 일 03:00). Slack: `agents/notify.py`는 **POST만**, **board 채널 READER 없음**(신규 필요). 세션 transcript: 디스크 비상주(캡처 필요).
 
-cf giri-update 스킬·[[giri_outing_reuse_gate]]·[[grounding_pd_notes_gpt4omini]](pd_notes가 최고 소스)·
-review-learning(제너레이터 짝).
+## 빌드 플랜 (phased — 다음 세션 착수, 전부 OFF→스모크→플립)
+
+**스파인:** 기반(pd_selections·pd_notes·progress_log)은 있는데 ①**먹이기가 끊겼고** ②**Giri가 corpus를 안 소비**한다. 새 인프라를 짓기 전에 **있는 걸 다시 흐르게** 하는 게 최대 레버(RF 비주얼그래머의 "허용≠행동"과 동형).
+
+### Phase 0 — 흐름 복구 (가장 싸고 큰 레버)
+- **먹이기 재배선**: `/veto`·`/concept`·PD 캡션교정 경로가 `pd_taste.log_selection`을 부르는지 확인→끊긴 곳 복구(6월 이후 0행 근본). 각 이벤트에 **맥락**(무엇을 리뷰하다 나온 말) + 타임스탬프.
+- **Giri 소비**: `taste_digest(lane)`를 `REVIEW_PROMPT`에 **PD 발화 컨텍스트**로 주입(제너레이터가 이미 쓰는 그 digest를 검수기에도). 킬스위치 `GIRI_PD_TASTE=0`. 스모크=digest 있는 에피 1편 리뷰가 PD 원칙 반영하는지 육안.
+- 검증: 과거 PD가 veto한 유형을 Giri가 이제 감점하는지 회귀 1~2건.
+
+### Phase 1 — Corpus 확장 (PD의 raw 발화로)
+- **소스 통합**(설계 §1): pd_selections(veto/correct) + `assets.pd_notes` + `progress_log` PD 결정 + **Slack board/mp4-리뷰 스레드 READER 신규**(`slack_sdk conversations_history`, SLACK_BOARD_CHANNEL; veto 이유·리뷰 코멘트 당겨옴). ★retro는 *보조*로만.
+- 저장: pd_selections를 확장하거나 `pd_utterances` 신규(발화+맥락+ts+출처). 킬스위치로 OFF 수집부터.
+
+### Phase 2 — PD 판단 스타일 렌즈 (설계 §2·§3)
+- corpus에서 **반복 flag**(dup·캡션↔footage·날조·"앞만 쓰기"·split·톤) + **PD 사고순서/프레이밍**("끝까지 돌려봐", "이건 근본이 아니지") 도출 → Giri `REVIEW_PROMPT`에 **PD 렌즈 블록**(skeptical 디폴트·구체·근본지향, 제네릭 루브릭 아님). 객관=결정론 게이트 유지, 주관=이 렌즈.
+- 킬스위치 `GIRI_PD_LENS=0`. 스모크 후 PD 스팟체크 통과시만 플립.
+
+### Phase 3 — 자가-감사 배치 (설계 §"자가-감사")
+- 신규 `agents/giri_audit.py`(`_batch_gate_audit`/`review_batch` 미러): PD corpus를 읽고 현 Giri 게이트(2047~2147)를 열거→ **"PD가 반복해 말했는데 Giri가 아직 enforce 안 하는 기준"을 갭 리포트로 Slack**. ★블라인드 자동 코드업데이트 금지(LLM 자동합성 위험).
+- 주기 cron(주 1회 등, run_job.sh) — 매 세션 아님. **세션 시작**엔 최신 갭 리포트만 싸게 읽어 보여줌.
+- 각 갭은 **사람이 giri-update로 결정론 게이트 + 회귀** 적용(Phase 0~2가 흐름, 이게 지속 루프).
+
+### 가드레일 (전 Phase)
+- **PD 말=ground truth, retro=보조** / **결정론 > LLM 신뢰**(giri-update 비협상) / **OFF→스모크→플립**(v2 롤백 규율) / 자동 코드업뎃 금지(갭 surface만).
+
+cf giri-update 스킬·[[giri_title_defect_class]]·[[grounding_pd_notes_gpt4omini]](pd_notes가 최고 소스)·
+review-learning(제너레이터 짝 — 이번 플랜이 그 "검수기 짝"을 메움).
