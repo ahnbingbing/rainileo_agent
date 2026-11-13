@@ -16,11 +16,75 @@ selectors start from real data, not an empty table.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import datetime as dt
 import logging
+from pathlib import Path
 
 log = logging.getLogger("agents.pd_taste")
+
+# Git-tracked PD-feedback corpus (PD 2026-11-13). PD's richest feedback is in CLI sessions, not
+# Slack — but a session runs on the Mac (local DB) while Giri runs on the VM (VM DB), so the DB
+# can't carry it across. A git-tracked JSONL does: the giri-update/review-learning skills append
+# PD's verbatim words here when they fold a standard into Giri, it's committed + pulled to the VM,
+# and taste_digest merges it with the DB vetoes. data/ is gitignored, so this lives in notes/.
+_CORPUS_FILE = Path(__file__).resolve().parent.parent / "notes" / "pd_corpus.jsonl"
+
+
+def append_pd_corpus(*, lane: str | None, kind: str, decision: str, reason: str,
+                     subject: str = "", source: str = "session") -> bool:
+    """Append one PD utterance (verbatim `reason`) to the git-tracked corpus. Called by the
+    giri-update / review-learning skills at the moment PD gives a Giri-relevant standard in a
+    session — so the corpus grows where PD actually talks. Dedups by exact reason. COMMIT the
+    file so it reaches the VM's Giri. Returns True if a new line was written."""
+    reason = (reason or "").strip()
+    if not reason:
+        return False
+    try:
+        if _CORPUS_FILE.exists():
+            for ln in _CORPUS_FILE.read_text(encoding="utf-8").splitlines():
+                try:
+                    if json.loads(ln).get("reason", "").strip() == reason:
+                        return False  # already captured
+                except Exception:
+                    continue
+        rec = {"ts": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+               "lane": lane or "both", "kind": kind, "decision": decision,
+               "subject": subject, "reason": reason, "source": source}
+        _CORPUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(_CORPUS_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        return True
+    except Exception as e:
+        log.warning("append_pd_corpus failed: %s", e)
+        return False
+
+
+def _file_corpus_rows(lane: str | None = None) -> list[dict]:
+    """Read the git-tracked PD-feedback corpus as pd_selections-shaped rows (for taste_digest)."""
+    if not _CORPUS_FILE.exists():
+        return []
+    out = []
+    try:
+        for ln in _CORPUS_FILE.read_text(encoding="utf-8").splitlines():
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                r = json.loads(ln)
+            except Exception:
+                continue
+            r_lane = r.get("lane") or "both"
+            if lane and r_lane not in (lane, "both"):
+                continue
+            out.append({"created_at": r.get("ts", ""), "lane": r_lane,
+                        "kind": r.get("kind", "concept"), "decision": r.get("decision", "correct"),
+                        "subject": r.get("subject", ""), "chosen": "", "rejected": "",
+                        "reason": r.get("reason", "")})
+    except Exception as e:
+        log.warning("_file_corpus_rows failed: %s", e)
+    return out
 
 # decision vocabulary — what PD did
 APPROVE, VETO, SWAP, CORRECT, PICK, REJECT = (
@@ -92,7 +156,9 @@ def taste_digest(con: sqlite3.Connection, *, lane: str | None = None,
     - for_review=True (Giri): "이 기준으로 깐깐하게 잡아라" — the checker applies PD's rejections
       and corrections as hard standards, so a defect PD has flagged before is caught, not
       rubber-stamped."""
-    rows = recent_selections(con, lane=lane, n=n)
+    # Merge the DB vetoes with the git-tracked session-feedback corpus (PD's richest source). File
+    # rows first so recent session standards lead the digest.
+    rows = _file_corpus_rows(lane=lane) + recent_selections(con, lane=lane, n=n)
     if kinds:
         rows = [r for r in rows if r["kind"] in kinds]
     if not rows:

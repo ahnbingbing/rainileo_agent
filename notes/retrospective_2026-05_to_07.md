@@ -873,7 +873,16 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   물어라 — 안 그러면 없는 버그를 고치고 있는 버그를 놓친다. ★교훈=**검수기도 생성기와 같은 ground truth를 읽어야
   거울이다**(한쪽만 먹으면 drift), **갭은 surface만·적용은 사람**(LLM 자동 게이트합성 금지), **운영 오진 방지는 VM에
   질의**. cf [[B1]](러버스탬프→결정론)·[[B5]](러버스탬프 역방향)·giri-update·review-learning(생성기 짝)·
-  grounding_pd_notes_gpt4omini(PD 말이 최고 소스).
+  grounding_pd_notes_gpt4omini(PD 말이 최고 소스). ★후속 교훈(같은 세션)=**corpus는 PD가 실제로 말하는
+  곳에서 길러라, 구조적으로 쉬운 곳이 아니라.** PD 발화 수집을 처음 **Slack board 스레드 리더**(`pd_slack_corpus.py`,
+  conversations.replies)로 지었는데 — 쉬웠으나(thread→영상 매핑) **틀린 우물**: 라이브 스모크가 35스레드 0코멘트
+  (+채널 버그로 thread_not_found)를 뱉었고, PD는 Slack 스레드에 피드백을 거의 안 남긴다. PD의 진짜 발화는 **CLI
+  세션**(RF 비주얼그래머·캡션 수정 전부 세션 대화에서 나왔다 — "장난?", "캡션이 안 맞아"). Fix=Slack 리더 폐기 +
+  **세션-피드백 캡처**: git-추적 `notes/pd_corpus.jsonl`에 `pd_taste.append_pd_corpus()`가 PD 원문 append
+  (세션=로컬DB·Giri=VM DB라 DB로 못 건너감→git 파일이 전송), `taste_digest`가 DB veto + 파일 머지, giri-update/
+  review-learning 스킬이 그 append를 "Record" 단계에 보유. 교훈=**수집 파이프라인은 소스가 쉬운 곳이 아니라 신호가
+  진한 곳에 놔라**(0 수율이 그걸 증명했다·"끝까지 돌려 결과 보라"의 수집판)·**Mac↔VM 경계는 DB 아니라 git 파일로
+  건넌다**(운영 DB 미동기화).
 
 ### 4.4 실사(RF)
 - **C_outingdedup. dedup의 단위는 파일(asset_id)이 아니라 이벤트(나들이)다 — 같은 낮잠의 다른 컷이 중복을 뚫었다(11/12)** —

@@ -56,7 +56,16 @@ score DOWN**, and prefers a deterministic gate when the LLM can't be trusted.
    and confirm it now CATCHES the violation and caps the score. Do not trust a
    rubric edit you didn't see bite. Also re-run one KNOWN-GOOD episode to confirm
    you didn't introduce a false fail.
-9. **Record.** Memory: the bar + why + the cap + where it lives + the lane scope.
+9. **Record — memory AND the PD corpus.** Memory: the bar + why + the cap + where it
+   lives + the lane scope. AND append PD's **verbatim words** (the raw standard, not your
+   synthesis) to the git-tracked PD-feedback corpus:
+   `from agents import pd_taste; pd_taste.append_pd_corpus(lane=..., kind=..., decision="correct",
+   reason="<what PD actually said>")` → then COMMIT `notes/pd_corpus.jsonl`. This is how PD's
+   feedback reaches Giri: the corpus grows **in the CLI session where PD actually talks** (not
+   Slack), it's pulled to the VM on push, and `taste_digest` merges it into Giri's review context
+   (GIRI_PD_TASTE) + the self-audit (giri_audit) tracks it. A deterministic gate is the hard
+   enforcement; the corpus line is the soft lens + the audit trail that the gate exists because PD
+   said so.
 
 ## Non-negotiables
 
