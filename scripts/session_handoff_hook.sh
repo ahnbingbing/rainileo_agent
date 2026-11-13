@@ -14,13 +14,18 @@ latest="$(ls -t "$repo"/notes/session_handoff_*.md 2>/dev/null | head -1 || true
 py="$repo/.venv/bin/python"; [ -x "$py" ] || py="python3"
 loop="$("$py" "$repo/scripts/session_context.py" 2>/dev/null || true)"
 
-jq -Rs --arg path "${latest#$repo/}" --arg loop "$loop" '{
+# PD-mirror P3: surface the latest Giri self-audit gap report so each session sees the standards
+# PD repeatedly flags that Giri doesn't enforce yet (cheap read, no re-run). Best-effort.
+giri="$(cat "$repo/notes/giri_audit_latest.md" 2>/dev/null || true)"
+
+jq -Rs --arg path "${latest#$repo/}" --arg loop "$loop" --arg giri "$giri" '{
   hookSpecificOutput: {
     hookEventName: "SessionStart",
     additionalContext: (
       "세션 시작 자동 핸드오프 — 최신 " + $path
       + " (아래는 그 전문; 세션은 board가 한 일 위에서 이어가라):\n\n" + .
       + (if ($loop | length) > 0 then "\n\n---\n\n" + $loop else "" end)
+      + (if ($giri | length) > 0 then "\n\n---\n\n## Giri 자가-감사 최신 갭 리포트 (각 갭은 giri-update로 적용)\n\n" + $giri else "" end)
     )
   }
 }' "$latest"

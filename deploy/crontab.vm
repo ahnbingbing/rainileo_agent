@@ -77,6 +77,11 @@ LAUNCH_LEAD_DAYS=2
 # ── weekly / multi-day ───────────────────────────────────────────
 0  10 * * 1   $J -m agents.bandit --collect --slack              >> $LOG/cron.bandit_report.log 2>&1   # Mon
 0   3 */3 * * $J scripts/giri_weekly_update.sh                   >> $LOG/cron.giri.log 2>&1            # ~every 3 days (launchd was 259200s)
+# PD-mirror P3 (PD 2026-11-13): weekly Giri self-audit — surfaces standards PD repeatedly flags
+# that Giri's gates don't enforce yet (reads the pd_taste corpus vs the live gates). GAP REPORT
+# ONLY → Slack + notes/giri_audit_latest.md; never edits code. A human applies each gap via the
+# giri-update skill. Runs after the Mon bandit report.
+0  11 * * 1   $J -m agents.giri_audit --slack                   >> $LOG/cron.giri_audit.log 2>&1      # Mon
 
 # ── one-shot historical backfills (likely DONE — leave commented unless re-needed) ──
 # 10 7 * * *  $J scripts/revlm_pre2025_oneshot.sh                >> $LOG/cron.revlm.log 2>&1
