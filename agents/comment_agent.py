@@ -57,20 +57,36 @@ def _recent_videos(con, n: int) -> list[str]:
         return []
 
 
-def _title(con, vid: str) -> str:
-    try:
-        r = con.execute("SELECT payload_json FROM cards WHERE youtube_video_id=?", (vid,)).fetchone()
-        p = json.loads((r[0] if r else "") or "{}")
-        return str(p.get("title") or (p.get("concept") or {}).get("title") or "")
-    except Exception:
-        return ""
+def _recent_public_videos(yt, n: int) -> list[tuple]:
+    """Recent PUBLIC videos straight from the channel's uploads playlist — NOT from cards.
+    PD 2026-11-12: the card-based source was blind to orphan/uncarded uploads, so their viewer
+    comments were never seen (the same orphan-blindness as the RF dedup bug). Walk the uploads
+    playlist (ground truth) and keep the public ones. Returns [(video_id, title), ...]."""
+    ch = yt.channels().list(part="contentDetails", mine=True).execute()
+    up = ch["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
+    ids: list[str] = []
+    tok = None
+    while len(ids) < max(n, 50):
+        r = yt.playlistItems().list(part="contentDetails", playlistId=up,
+                                    maxResults=50, pageToken=tok).execute()
+        ids += [i["contentDetails"]["videoId"] for i in r.get("items", [])]
+        tok = r.get("nextPageToken")
+        if not tok:
+            break
+    out: list[tuple] = []
+    for i in range(0, len(ids), 50):
+        v = yt.videos().list(part="status,snippet", id=",".join(ids[i:i + 50])).execute()
+        for it in v.get("items", []):
+            if it["status"].get("privacyStatus") == "public":
+                out.append((it["id"], it["snippet"]["title"]))
+    return out[:n]
 
 
-def fetch_unreplied(con, yt, max_videos: int = 8, per_video: int = 30) -> list[dict]:
-    """Top-level comments on recent uploads with NO reply from our channel = PD's backlog."""
+def fetch_unreplied(con, yt, max_videos: int = 40, per_video: int = 50) -> list[dict]:
+    """Top-level comments on recent PUBLIC uploads with NO reply from our channel = PD's backlog."""
     me = _channel_id(yt)
     out: list[dict] = []
-    for vid in _recent_videos(con, max_videos):
+    for vid, title in _recent_public_videos(yt, max_videos):
         try:
             resp = yt.commentThreads().list(
                 part="snippet,replies", videoId=vid, maxResults=per_video,
@@ -78,7 +94,6 @@ def fetch_unreplied(con, yt, max_videos: int = 8, per_video: int = 30) -> list[d
         except Exception as e:  # noqa: BLE001
             log.info("comments for %s skipped: %s", vid, e)
             continue
-        title = _title(con, vid)
         for it in resp.get("items", []):
             sn = it["snippet"]
             top = sn["topLevelComment"]
