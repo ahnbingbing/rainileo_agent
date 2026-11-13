@@ -192,9 +192,14 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Reply to un-replied viewer comments (dry by default)")
     p.add_argument("--max-videos", type=int, default=8)
     p.add_argument("--max-replies", type=int, default=20)
+    p.add_argument("--post", action="store_true",
+                   help="actually POST (default: dry-run). Safe categories post when "
+                        "COMMENT_AGENT_AUTOPOST_SAFE=1; the rest stay queued.")
     p.add_argument("--json", action="store_true")
     a = p.parse_args()
-    r = run(max_videos=a.max_videos, max_replies=a.max_replies, dry_run=True)
+    if a.post:
+        os.environ["COMMENT_AGENT_POST"] = "1"
+    r = run(max_videos=a.max_videos, max_replies=a.max_replies, dry_run=not a.post)
     if a.json:
         print(json.dumps(r, ensure_ascii=False, indent=2))
         return 0
