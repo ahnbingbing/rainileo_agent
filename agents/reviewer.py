@@ -1751,6 +1751,24 @@ def review(video: Path, storyboard: list[dict] | None = None,
     # each clip actually is (삐용이 friend / car-seat day / Leo's tantrum …).
     context += _pd_groundtruth_block(concept)
 
+    # PD-mirror (PD 2026-11-13): Giri judges by PD's ACCUMULATED standards, not a generic rubric.
+    # The pd_taste corpus (every PD veto/correction + reason) already feeds the GENERATORS; feed the
+    # SAME ground truth to the CHECKER so a defect PD has flagged before is caught, not rubber-
+    # stamped (the review-learning-syncs-generators-not-checker drift). Review framing = apply PD's
+    # rejections as hard standards. OFF by default (GIRI_PD_TASTE) → build→smoke→flip.
+    if os.getenv("GIRI_PD_TASTE", "0") == "1":
+        try:
+            from agents import pd_taste as _pt
+            _lane = (concept or {}).get("render_style") or (concept or {}).get("lane")
+            _pc = sqlite3.connect(ROOT / "data" / "agent.db")
+            _td = _pt.taste_digest(_pc, lane=_lane, for_review=True,
+                                   n=int(os.getenv("GIRI_PD_TASTE_N", "40")))
+            _pc.close()
+            if _td:
+                context += "\n\n" + _td + "\n"
+        except Exception as e:
+            log.warning("Giri pd_taste digest injection failed: %s", e)
+
     # Recent-episode context for the cross-day concept-dedup check (PD 2026-08-02): give the
     # reviewer the themes of episodes published/scheduled in the last few days so it can flag
     # a near-rerun. An intentional 1탄/2탄 series is exempted in the rubric (not by this list).

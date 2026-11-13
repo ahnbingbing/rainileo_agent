@@ -422,10 +422,14 @@ def upload_cmd(ack, body, respond):
 # (예약 publishAt 해제 → 공개 안 됨, 되돌릴 수 있음). `/veto <id> delete` = 완전 삭제.
 # 인자: card_id prefix 또는 youtube_video_id.
 # ──────────────────────────────────────────────────────────────────────
-def _do_veto(vid: str, delete: bool = False) -> str:
+def _do_veto(vid: str, delete: bool = False, pd_reason: str = "") -> str:
     """Shared veto core (PD 2026-06-09): take down a scheduled/published video
     (private by default, since launch videos are scheduled publishAt) + revoke
-    cards.uploaded so arc/cooldown drop it. Returns a status string."""
+    cards.uploaded so arc/cooldown drop it. Returns a status string.
+
+    `pd_reason` (PD 2026-11-13, PD-mirror): if PD typed WHY after the id, that is the
+    load-bearing corpus signal — a real sentence beats the generic "이런 회차는 내림", and
+    Giri reads the same reason via taste_digest. Logged verbatim when present."""
     from youtube.upload import veto_video
     try:
         action = veto_video(vid, delete=delete)
@@ -454,9 +458,11 @@ def _do_veto(vid: str, delete: bool = False) -> str:
                 from agents import pd_taste as _pt
                 _lane = (_row[0] if _row else None) or "both"
                 _title = (_row[1] if _row else "") or vid
+                _reason = (pd_reason or "").strip()
+                _reason = (f"PD veto '{_title}': {_reason}" if _reason
+                           else f"PD veto: '{_title}' — 이런 회차는 내림(다음 선택에서 유사 회피).")
                 _pt.log_selection(con, lane=_lane, kind=_pt.K_CONCEPT, decision=_pt.VETO,
-                                  subject=vid, rejected=_title,
-                                  reason=f"PD veto: '{_title}' — 이런 회차는 내림(다음 선택에서 유사 회피).")
+                                  subject=vid, rejected=_title, reason=_reason)
             except Exception as _e:
                 log.warning("pd_taste veto log failed: %s", _e)
     except Exception as e:
@@ -492,7 +498,11 @@ def veto_cmd(ack, body, respond):
         respond("\n".join(lines))
         return
     ident = parts[0].strip("`<>")
-    do_delete = len(parts) > 1 and parts[1].lower() in ("delete", "del", "삭제")
+    _rest = parts[1:]
+    do_delete = bool(_rest) and _rest[0].lower() in ("delete", "del", "삭제")
+    # Everything after the id (and the optional delete keyword) is PD's REASON — the corpus
+    # signal. `/veto <id> 캡션이 영상이랑 안 맞아` logs that sentence, not a generic note.
+    pd_reason = " ".join(_rest[1:] if do_delete else _rest).strip()
     with db() as con:
         row = con.execute(
             "SELECT card_id, youtube_video_id FROM cards "
@@ -506,7 +516,7 @@ def veto_cmd(ack, body, respond):
         respond(f":x: `{ident}` 에 매칭되는 영상이 없어요")
         return
     respond(f":no_entry: veto → {vid} ({'삭제' if do_delete else '비공개 전환'})...")
-    respond(_do_veto(vid, delete=do_delete))
+    respond(_do_veto(vid, delete=do_delete, pd_reason=pd_reason))
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -2014,6 +2024,13 @@ def handle_thread_replies(message, client, context):
     if text_lower.split()[0] in veto_keywords if text_lower.split() else False:
         from agents.launch import video_id_for_thread, resolve_batch_veto
         do_delete = any(w in text_lower for w in ("delete", "del", "삭제"))
+        # Capture PD's reason (PD-mirror): drop the leading veto keyword + delete tokens; the rest
+        # is PD's words. In the batch path a label token may remain — acceptable noise, the reason
+        # still carries the real signal. Giri reads it back via taste_digest.
+        _vtoks = (text or "").split()
+        _veto_reason = " ".join(
+            w for w in _vtoks[1:]
+            if w.lower() not in ("delete", "del", "삭제")).strip()
         # Batch-summary thread first: it holds ALL 4 videos, so a plain `veto` is ambiguous
         # — the reply must name which (`veto 260705_RF2100`). resolve_batch_veto matches the
         # label / lane+slot / video_id, and returns the roster if it can't disambiguate.
@@ -2028,7 +2045,7 @@ def handle_thread_replies(message, client, context):
                     text=":question: 이 배치엔 영상이 여러 개예요 — 어느 걸 취소할지 "
                          f"파일명으로 알려주세요:\n{opts}")
                 return
-            action = _do_veto(batch_vid, delete=do_delete)
+            action = _do_veto(batch_vid, delete=do_delete, pd_reason=_veto_reason)
             client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=action)
             return
         # Legacy 1:1 per-slot thread.
@@ -2041,7 +2058,7 @@ def handle_thread_replies(message, client, context):
                      "(아직 예약 전이거나 런칭 슬롯 쓰레드가 아님). 메인에서 "
                      "`/veto <video_id>` 로도 취소할 수 있어요.")
             return
-        action = _do_veto(vid, delete=do_delete)
+        action = _do_veto(vid, delete=do_delete, pd_reason=_veto_reason)
         client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=action)
         return
 

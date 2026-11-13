@@ -80,10 +80,18 @@ def recent_selections(con: sqlite3.Connection, *, lane: str | None = None,
 
 
 def taste_digest(con: sqlite3.Connection, *, lane: str | None = None,
-                 kinds: tuple[str, ...] | None = None, n: int = 60) -> str:
-    """A compact 'PD가 이렇게 선택해왔다' brief for injection into a selector. Groups
-    recent decisions by kind and renders decision + reason as principle bullets.
-    Empty string when there's no history yet (selector falls back to its base lens)."""
+                 kinds: tuple[str, ...] | None = None, n: int = 60,
+                 for_review: bool = False) -> str:
+    """A compact 'PD가 이렇게 선택해왔다' brief. Groups recent decisions by kind and renders
+    decision + reason as principle bullets. Empty string when there's no history yet (caller
+    falls back to its base lens).
+
+    Two framings for the two consumers of the SAME corpus (the point of the PD-mirror: the
+    generator and the checker read one ground truth):
+    - default (selectors): "이 취향을 따라 골라라" — bias generation toward what PD keeps.
+    - for_review=True (Giri): "이 기준으로 깐깐하게 잡아라" — the checker applies PD's rejections
+      and corrections as hard standards, so a defect PD has flagged before is caught, not
+      rubber-stamped."""
     rows = recent_selections(con, lane=lane, n=n)
     if kinds:
         rows = [r for r in rows if r["kind"] in kinds]
@@ -94,7 +102,12 @@ def taste_digest(con: sqlite3.Connection, *, lane: str | None = None,
         by_kind.setdefault(r["kind"], []).append(r)
     label = {K_CONCEPT: "컨셉 선택", K_CLIP: "클립 선택", K_CUT: "컷 구성",
              K_CAPTION: "캡션", K_SCHEDULE: "편성", K_TONE: "톤"}
-    out = ["## PD가 과거에 이렇게 선택/교정해왔다 (이 취향을 따라 골라라)"]
+    if for_review:
+        out = ["## PD가 과거에 이렇게 리젝/교정해왔다 — 이 기준을 그대로 적용해 깐깐하게 심사하라",
+               "(아래는 PD가 실제로 내린 판정·이유다. 같은 류의 결함이 이 영상에 있으면 반드시 감점하고 "
+               "판정을 낮춰라 — '괜찮아 보인다'는 러버스탬프를 PD의 축적된 기준이 이긴다.)"]
+    else:
+        out = ["## PD가 과거에 이렇게 선택/교정해왔다 (이 취향을 따라 골라라)"]
     for k, items in by_kind.items():
         out.append(f"\n### {label.get(k, k)}")
         seen = set()
