@@ -14,7 +14,7 @@ the Files API (resumable), we wait for it to finish processing, then ask for the
   # or, importable:  from video_actions import actions;  moments = actions(local_path)
 """
 from __future__ import annotations
-import json, os, ssl, sys, time, urllib.request, urllib.error
+import json, os, ssl, subprocess, sys, tempfile, time, urllib.request, urllib.error
 from pathlib import Path
 
 try:
@@ -97,8 +97,49 @@ def _upload(local_path: str) -> str:
     return uri
 
 
+def _proxy(local_path: str) -> "tuple[str, bool]":
+    """Downscale a clip to a small low-res proxy BEFORE the native-video VLM (PD 2026-11-13).
+    Action detection doesn't need 1080p — and a full-res cut is the root of the render-time
+    timeout: a 1080×1920 cut (~18MB) made generateContent exceed 240s and fail, so the caption
+    fell back to the Writer's guessed action ("endures" over a clip where the pet actually kicks).
+    A ~480p/12fps proxy (~1.4MB) analyzes in ~20s with the SAME action fidelity. Returns
+    (path, is_temp); on any ffmpeg failure returns the original (is_temp=False). Kill-switch
+    VIDEO_ACTIONS_PROXY=0."""
+    if os.getenv("VIDEO_ACTIONS_PROXY", "1") != "1":
+        return local_path, False
+    try:
+        h = int(os.getenv("VIDEO_ACTIONS_PROXY_H", "854"))
+        fps = os.getenv("VIDEO_ACTIONS_PROXY_FPS", "12")
+        fd, out = tempfile.mkstemp(suffix="_va_proxy.mp4"); os.close(fd)
+        subprocess.run(
+            ["ffmpeg", "-y", "-nostats", "-loglevel", "error", "-i", local_path,
+             "-vf", f"scale=-2:{h}", "-r", str(fps), "-c:v", "libx264", "-crf", "30",
+             "-an", out],
+            check=True, timeout=120)
+        if os.path.getsize(out) > 0:
+            return out, True
+        os.unlink(out)
+    except Exception:
+        pass
+    return local_path, False
+
+
 def actions(local_path: str, *, model: str | None = None) -> list:
-    """Upload a local clip to Gemini and return its action moments [{start,end,actor,action,desc}]."""
+    """Upload a local clip to Gemini and return its action moments [{start,end,actor,action,desc}].
+    The clip is first downscaled to a low-res proxy (_proxy) — a full-res cut times the native VLM
+    out; the proxy keeps the action fidelity at a fraction of the payload."""
+    proxy, is_temp = _proxy(local_path)
+    try:
+        return _actions_on(proxy, model=model)
+    finally:
+        if is_temp:
+            try:
+                os.unlink(proxy)
+            except Exception:
+                pass
+
+
+def _actions_on(local_path: str, *, model: str | None = None) -> list:
     uri = _upload(local_path)
     body = json.dumps({
         "contents": [{"parts": [

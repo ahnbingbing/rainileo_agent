@@ -96,9 +96,15 @@ another form. The fix is deliberate composition by you, grounded in the footage.
   You must have TWO real clips that support it — never force a split onto footage where the second
   subject/moment isn't actually there (that fabricates). One split per episode at most; it's an
   accent, not the format.
+  When you compose a split you MUST also write **`split_caption`** {ko, en} — the one line the split
+  SAYS. The caption pipeline reads only pixels, so it sees two pets but can NOT know that the top
+  panel is 2015 and the bottom is 2026; that meaning is yours to state. Caption the juxtaposition,
+  not one panel ("처음 만난 날, 그리고 한 몸이 된 지금" — not "거실에서 서로를 바라본다"). Keep the
+  top↔bottom / then↔now relationship explicit and short.
 **Example:** the cards show a 2015 puppy-Ryani clip and a 2026 grown-Ryani clip of the same play
-bow — so the develop cut is `split_with` the puppy clip (then/now together), and the payoff lands
-on a `match_cut` from her mid-leap into the landing, no dissolve, so the motion reads continuous.
+bow — so the develop cut is `split_with` the puppy clip with `split_caption` "그때도 지금도, 이
+자세 그대로" (then/now together), and the payoff lands on a `match_cut` from her mid-leap into the
+landing, no dissolve, so the motion reads continuous.
 
 ## Output — director_brief (JSON only)
 
@@ -113,7 +119,8 @@ on a `match_cut` from her mid-leap into the landing, no dissolve, so the motion 
      "clip": "<asset_id from the grounded cards>",
      "must_keep": true|false,
      "transition_in": "dissolve|match_cut",
-     "split_with": "<asset_id of a second clip shown top/bottom at the same time, or omit>"}
+     "split_with": "<asset_id of a second clip shown top/bottom at the same time, or omit>",
+     "split_caption": {"ko": "<the juxtaposition line>", "en": "<...>"}}
   ],
   "notes_to_writer": "<grounding constraints + what the payoff must land, in one or two lines>"
 }
@@ -123,6 +130,7 @@ on a `match_cut` from her mid-leap into the landing, no dissolve, so the motion 
   invented clips). `split_with` must differ from that cut's own `clip`.
 - Exactly one `payoff` cut, `must_keep: true`.
 - `transition_in` defaults to `dissolve` if omitted; the first cut has no transition.
-- At most one cut carries `split_with`, and only when two real clips earn it.
+- At most one cut carries `split_with`; when it does, `split_caption` is REQUIRED (the pipeline
+  can't infer the then↔now meaning from pixels).
 - Keep `sequence` to the number of cuts the story needs — don't pad to a length; don't collapse a
   real multi-beat story to one cut.

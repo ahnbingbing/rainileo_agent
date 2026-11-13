@@ -3030,8 +3030,14 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
         cap = json.loads(cap_path.read_text(encoding="utf-8"))
     except Exception:
         return
+    # Split cuts carry the Director's past↔now juxtaposition caption — a meaning the frame-reading
+    # VLM can't re-derive (it sees two pets, not which panel is 2015 vs 2026). Skip them here so the
+    # Director's split_caption survives (PD 2026-11-13: "edit direction right, caption must match it").
+    _split_tags = {t for t, g in (manifests.get("cut_grammar") or {}).items()
+                   if (g.get("edit_effect") or "").startswith("split_")}
     tags = [k for k in cap.keys() if not k.startswith("_")
-            and isinstance(cap.get(k), dict) and cap[k].get("scenes")]
+            and isinstance(cap.get(k), dict) and cap[k].get("scenes")
+            and k not in _split_tags]
     if not tags:
         return
     # PD 2026-08-01: per-clip capture date so the VLM won't name a pet that didn't exist yet
@@ -3402,8 +3408,14 @@ def _rf_caption_grounding_gate(work_dir: Path, manifests: dict, anim_dir: Path,
     except Exception as e:
         log.warning("grounding gate: captions.json unreadable: %s", e)
         return
+    # Our split motion-wipe is a Director-authored composite with a then↔now semantic caption the
+    # frame checks can't validate (the VLM sees two pets, not the panels' eras, and reads the
+    # composite as 'decorated'). Exclude split cuts from frame-grounding — they're authoritative.
+    _split_tags = {t for t, g in (manifests.get("cut_grammar") or {}).items()
+                   if (g.get("edit_effect") or "").startswith("split_")}
     tags = [k for k in cap.keys() if not k.startswith("_")
-            and isinstance(cap.get(k), dict) and cap[k].get("scenes")]
+            and isinstance(cap.get(k), dict) and cap[k].get("scenes")
+            and k not in _split_tags]
     if not tags:
         return
     if progress_cb:

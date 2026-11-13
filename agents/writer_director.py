@@ -932,6 +932,17 @@ def apply_rf_visual_grammar(concept: dict, brief: dict) -> dict:
                 secondary_aids.add(sw)
                 applied["split"] += 1
                 split_done = True
+                # The split's caption must state the top↔bottom / then↔now meaning — the caption
+                # VLM reads only pixels and can't know which panel is past. Install the Director's
+                # juxtaposition line as this cut's caption; action-grounding skips split cuts so it
+                # survives (the meaning isn't in the frame for the VLM to re-derive).
+                sc = item.get("split_caption") or {}
+                sc_ko = (sc.get("ko") or "").strip() if isinstance(sc, dict) else ""
+                sc_en = (sc.get("en") or "").strip() if isinstance(sc, dict) else ""
+                if sc_ko:
+                    _end = float(cut.get("duration_seconds") or 5.0)
+                    cut["captions"] = [{"start": 0.3, "end": max(2.0, _end - 0.3),
+                                        "ko": sc_ko, "en": sc_en}]
         if secondary_aids:
             def _is_split(c):
                 return (c.get("edit_effect") or "").lower() in ("split_vertical", "split_horizontal")
