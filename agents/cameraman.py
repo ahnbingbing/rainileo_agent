@@ -5578,15 +5578,18 @@ def _rf_grammar_cards(concept: dict) -> str:
     return json.dumps(rows, ensure_ascii=False)
 
 
-def _clip_subject_vcenter(clip: str, t_sec: float) -> "float | None":
-    """Vertical center (0=top .. 1=bottom) of the main pet in a clip, via one cheap frame VLM —
-    so a top/bottom split panel crops AROUND the pet instead of slicing it off at the edge (PD
-    2026-11-13: "나뉘었을때 주인공들이 잡혀야"). Best-effort: returns None on any failure (caller
-    falls back to a center crop). Only called on split cuts (≤1/episode), so the cost is trivial."""
+def _clip_subject_prominent(clip: str, t_sec: float) -> "bool | None":
+    """Is the pet a PROMINENT close-up (fills a good part of the frame) vs small-in-a-wide-shot?
+    A split panel only looks good on close-up material (PD 2026-11-13: looking at the actual clip,
+    the top panel failed because the clip was a WIDE room shot — Ryani tiny + turned away + mostly
+    floor, nothing to crop to). This binary is reliable (gpt-4o-mini is poor at precise coordinates
+    but fine at 'close-up or not'), and it decides the panel's framing: prominent → cover-crop to
+    fill; wide → contain-fit so the small subject is still fully visible (never a floor-only crop).
+    One cheap frame VLM. Best-effort → None on failure."""
     try:
         import base64 as _b64, tempfile as _tf, json as _json
         from openai import OpenAI
-        fd, jpg = _tf.mkstemp(suffix="_vc.jpg"); os.close(fd)
+        fd, jpg = _tf.mkstemp(suffix="_prom.jpg"); os.close(fd)
         _extract_frame(Path(clip), max(0.0, t_sec), Path(jpg))
         if not Path(jpg).exists() or Path(jpg).stat().st_size == 0:
             return None
@@ -5595,35 +5598,41 @@ def _clip_subject_vcenter(clip: str, t_sec: float) -> "float | None":
             Path(jpg).unlink()
         except Exception:
             pass
-        cl = OpenAI(timeout=int(os.getenv("RF_SPLIT_VC_TIMEOUT", "30")), max_retries=1)
+        cl = OpenAI(timeout=int(os.getenv("RF_SPLIT_PROM_TIMEOUT", "30")), max_retries=1)
         r = cl.chat.completions.create(
-            model=os.getenv("VLM_GROUNDING_MODEL", "gpt-4o-mini"), max_tokens=60,
+            model=os.getenv("VLM_GROUNDING_MODEL", "gpt-4o-mini"), max_tokens=40,
             messages=[{"role": "user", "content": [
-                {"type": "text", "text": "This is one video frame. Return ONLY JSON "
-                 '{"vcenter": <0.0-1.0>} = the VERTICAL center of the main pet (dog/cat) in the '
-                 "frame, 0.0=very top, 1.0=very bottom. If no clear pet, return 0.5."},
+                {"type": "text", "text": "One video frame. Return ONLY JSON {\"prominent\": "
+                 "true|false}. true = a pet (dog/cat) is a CLOSE-UP, filling roughly a third or more "
+                 "of the frame and clearly the subject. false = wide shot, pet small/far/mostly "
+                 "background or floor, or no clear pet."},
                 {"type": "image_url", "image_url": {
                     "url": f"data:image/jpeg;base64,{b64}", "detail": "low"}}]}])
         txt = (r.choices[0].message.content or "").strip()
         a, b = txt.find("{"), txt.rfind("}")
-        vc = float(_json.loads(txt[a:b + 1]).get("vcenter"))
-        return min(1.0, max(0.0, vc))
+        return bool(_json.loads(txt[a:b + 1]).get("prominent"))
     except Exception as e:
-        log.debug("_clip_subject_vcenter failed: %s", e)
+        log.debug("_clip_subject_prominent failed: %s", e)
         return None
 
 
-def _split_panel_crop(vc: "float | None") -> str:
-    """Crop expr for a 1080×960 split panel. Centered by default; when a subject vcenter is known,
-    slide the 960-tall crop window so the pet stays framed (clamped to the scaled frame)."""
-    if vc is None:
-        return "crop=1080:960"
-    return f"crop=w=1080:h=960:x=0:y='clip({vc:.3f}*in_h-480,0,in_h-960)'"
+def _detect_prominent_over_window(clip: str, t0: float, dur: float) -> "bool | None":
+    """A clip is split-worthy if the pet is a prominent close-up for most of the window. Sample a
+    couple frames; prominent if ANY says so (a brief turn-away shouldn't disqualify a close-up)."""
+    seen = False
+    for frac in (0.3, 0.6, 0.1):
+        p = _clip_subject_prominent(clip, t0 + dur * frac)
+        if p is True:
+            return True
+        if p is False:
+            seen = True
+    return False if seen else None
 
 
 def _split_motion_wipe_filter(ts_a: float, ts_b: float, dur: float,
-                              top_vc: "float | None" = None,
-                              bot_vc: "float | None" = None) -> str:
+                              top_prominent: "bool | None" = None,
+                              bot_prominent: "bool | None" = None,
+                              top_speed: float = 1.0, bot_speed: float = 1.0) -> str:
     """The MOTION split (PD 2026-11-13, iOS Photos Memories grammar; memory
     rf_split_motion_wipe_spec). PD's differentiator: 'it must divide WHILE there is motion' —
     a static side-by-side grid is wrong. So the two panels SWEEP in:
@@ -5633,25 +5642,48 @@ def _split_motion_wipe_filter(ts_a: float, ts_b: float, dur: float,
       • a BLURRED full-frame base (the primary clip) sits behind so an uncovered edge during
         the sweep is a soft background, NEVER black (PD: '검은색이 보이면 안되고'),
       • BOTH clips play live the whole time — motion preserved, not frozen frames.
-    Layout is a deterministic Python choice (top/bottom), per the 'mechanical = Python' split.
-    Subject framing is center-crop here; subject-aware crop (keep the pet in each panel) is the
-    footage-aware follow-up. Returns a filter_complex producing [vout]."""
+
+    Subject framing is FOOTAGE-AWARE (PD 2026-11-13, after looking at the real clip). A cover-crop
+    only reads well on a CLOSE-UP (the Leo panel worked; the wide-shot Ryani panel showed only floor
+    because there was no close subject to crop to, and VLM coordinate detection is unreliable on a
+    tiny subject). So per panel: `prominent` → cover-crop to FILL (the subject reads big); otherwise
+    → CONTAIN-FIT over a blurred fill (the whole frame shows, so a small subject is still fully
+    visible — never a floor-only crop). Both keep '검은색 금지'. Returns a filter_complex → [vout]."""
     wipe = float(os.getenv("RF_SPLIT_WIPE_SEC", "0.5"))
     blur = int(os.getenv("RF_SPLIT_BLUR", "24"))
     top_x = f"if(lt(t,{wipe}),-1080+(t/{wipe})*1080,0)"
     bot_x = f"if(lt(t,{wipe}),1080-(t/{wipe})*1080,0)"
-    # Subject-aware vertical crop: slide each panel's 960-tall window to the pet (center on None).
-    top_crop = _split_panel_crop(top_vc)
-    bot_crop = _split_panel_crop(bot_vc)
+
+    def _panel(src_lbl, out_lbl, ts, speed, prominent):
+        # Per-panel playback speed (PD 2026-11-13): each clip's best moment (the pet facing the
+        # camera) lands at a different time; speeding a panel up scans more of its footage into the
+        # same split window so that moment shows. Trim `dur*speed` of source → setpts compresses it
+        # to `dur`. speed=1.0 is unchanged.
+        sp = max(0.1, float(speed))
+        src = (f"{src_lbl}trim=start={ts}:duration={dur * sp:.3f},"
+               f"setpts=(PTS-STARTPTS)/{sp:.4f},")
+        if prominent:
+            # Close-up → cover-crop centered: the subject fills the panel.
+            return (f"{src}scale=1080:960:force_original_aspect_ratio=increase,"
+                    f"crop=1080:960[{out_lbl}];")
+        # Wide shot → contain-fit the whole frame over a blurred fill of itself (subject small but
+        # fully visible, no black, never a floor-only crop).
+        return (
+            f"{src}split=2[{out_lbl}A][{out_lbl}B];"
+            f"[{out_lbl}A]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960,"
+            f"boxblur={blur}:2[{out_lbl}bg];"
+            f"[{out_lbl}B]scale=1080:960:force_original_aspect_ratio=decrease[{out_lbl}fg];"
+            f"[{out_lbl}bg][{out_lbl}fg]overlay=(W-w)/2:(H-h)/2[{out_lbl}];"
+        )
     return (
-        f"[0:v]trim=start={ts_a}:duration={dur},setpts=PTS-STARTPTS,split=2[p0][p1];"
-        f"[p0]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+        f"[0:v]split=2[pbase][ppanel];"
+        f"[pbase]trim=start={ts_a}:duration={dur},setpts=PTS-STARTPTS,"
+        f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
         f"boxblur={blur}:2[base];"
-        f"[p1]scale=1080:960:force_original_aspect_ratio=increase,{top_crop}[top];"
-        f"[1:v]trim=start={ts_b}:duration={dur},setpts=PTS-STARTPTS,"
-        f"scale=1080:960:force_original_aspect_ratio=increase,{bot_crop}[bot];"
-        f"[base][top]overlay=x='{top_x}':y=0[s1];"
-        f"[s1][bot]overlay=x='{bot_x}':y=960[vout]"
+        + _panel("[ppanel]", "top", ts_a, top_speed, bool(top_prominent))
+        + _panel("[1:v]", "bot", ts_b, bot_speed, bool(bot_prominent))
+        + f"[base][top]overlay=x='{top_x}':y=0[stage1];"
+        f"[stage1][bot]overlay=x='{bot_x}':y=960[vout]"
     )
 
 
@@ -5697,17 +5729,25 @@ def _prerender_split_cuts(manifests: dict, work_dir: Path,
         motion = os.getenv("RF_SPLIT_MOTION", "1") == "1"
         if motion:
             # The iOS-Memories motion wipe (top/bottom, top←left, bottom←right, blurred
-            # no-black base, both live). Layout is top/bottom regardless of effect string.
-            # Subject-aware crop (PD 2026-11-13): detect each pet's vertical position so the panel
-            # frames it instead of slicing the edge. Best-effort; None → center crop. OFF-able.
-            top_vc = bot_vc = None
-            if os.getenv("RF_SPLIT_SUBJECT_CROP", "1") == "1" and not dry_run:
-                top_vc = _clip_subject_vcenter(primary, ts_a + dur / 2.0)
-                bot_vc = _clip_subject_vcenter(secondary, ts_b + dur / 2.0)
-                if progress_cb and (top_vc is not None or bot_vc is not None):
-                    progress_cb(f":frame_with_picture: split 주인공 크롭 "
-                                f"(top={top_vc}, bottom={bot_vc})")
-            filt = _split_motion_wipe_filter(ts_a, ts_b, dur, top_vc, bot_vc)
+            # no-black base, both live). Each panel zooms to the pet's FACE (detected per clip) so
+            # the face stays framed. Sample a representative frame ~40% into the window (the pet is
+            # usually settled there, not mid-exit). Best-effort; None → center crop. OFF-able.
+            top_prom = bot_prom = None
+            top_speed = bot_speed = 1.0
+            if os.getenv("RF_SPLIT_FACE_CROP", "1") == "1" and not dry_run:
+                top_prom = _detect_prominent_over_window(primary, ts_a, dur)
+                bot_prom = _detect_prominent_over_window(secondary, ts_b, dur)
+                # A wide/non-prominent panel plays faster so its subject's face-moment scans into
+                # the window (PD 2026-11-13); a close-up that's already good stays 1×.
+                _ws = float(os.getenv("RF_SPLIT_WIDE_SPEED", "1.6"))
+                top_speed = _ws if top_prom is False else 1.0
+                bot_speed = _ws if bot_prom is False else 1.0
+                if progress_cb:
+                    progress_cb(f":frame_with_picture: split 프레이밍 "
+                                f"(top={'close' if top_prom else f'wide×{top_speed:g}'}, "
+                                f"bottom={'close' if bot_prom else f'wide×{bot_speed:g}'})")
+            filt = _split_motion_wipe_filter(ts_a, ts_b, dur, top_prom, bot_prom,
+                                             top_speed, bot_speed)
             _label = "split-wipe"
         elif effect == "split_horizontal":
             # Legacy static: each input scaled to 540×1920, then hstacked.
