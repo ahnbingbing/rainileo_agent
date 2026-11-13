@@ -1703,6 +1703,24 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   **Director 능동구성**(`director_realfootage.md`가 `split_with`/`transition_in` 소유, 허용≠행동 트리거, `RF_DIRECTOR_PASS`)으로
   재빌드, 전부 OFF→스모크→플립. 켄번스·사진홀드도 버렸다("뭘까 이게"). cf [[C_rfeditdir]](허용≠행동 같은 뿌리)·
   [[C_onetakeovercorrect]](과잉교정)·[[C_photozerosec]]("끝까지 돌려 결과를 보라")·prompt-authoring(director 프롬프트 통합).
+- **C_splitcaption. 합성 편집의 캡션은 그 합성의 '의미'를 아는 쪽이 써야 한다 — 픽셀에 없는 건 VLM이 못 쓴다(11/13)** —
+  C_visiblelever의 split을 실 LLM E2E로 돌리니 편집은 맞는데 캡션이 틀렸다(PD: "편집 방향은 맞는데 캡션은 내용에 맞춰야지"). split 컷은
+  과거(위)↔현재(아래)를 동시에 보여주는데, 그 then↔now 의미는 **프레임에 없어서** 캡션 VLM이 재도출할 수 없다(두 펫만 볼 뿐 어느
+  패널이 2015인지 모름) → 캡션이 주 클립 하나만 설명. Fix=**합성을 작곡한 Director가 `split_caption`도 쓰고**(applier가 설치),
+  두 캡션 스테이지(action-grounded·grounding-gate)가 split 컷을 **스킵**해 Director의 줄이 살아남게. 일반화=픽셀/프레임 밖의
+  의미(시대·사연·병치)는 그걸 아는 상류가 저작하고 하류 그라운딩은 그 컷을 건드리지 마라(VLM⇄Writer 권한분리의 split판). 부수로,
+  우리 split 합성물(두 패널+블러)을 그라운딩 가드가 "외부 데코 클립"으로 오탐→의도적 합성은 결정론 예외(edit_effect=split_*).
+  cf [[C_visiblelever]]·[[grounding_pd_notes_gpt4omini]](VLM⇄Writer 권한분리)·[[C_captionpathsplit]](같은 "소비처가 계약 못 받음").
+- **C_vlmpayload. 네이티브-미디어 VLM이 타임아웃하면 재시도·타임아웃 전에 '페이로드부터 줄여라' — 1080p 컷이 액션 VLM을 240s 넘겨 죽였다(11/13)** —
+  위 E2E의 cut3 캡션이 "랴니 참는다"인데 실제는 레오가 치고 랴니가 받는 상호작용 → 근본=빠른 동작을 잡는 **네이티브 비디오 액션 VLM**
+  (`video_actions.actions`, 프레임샘플이 놓치는 1~2초 동작용)이 **매 컷 타임아웃**(gemini-2.5-flash·thinkingBudget=0인데도 generateContent
+  >240s)해서, 캡션이 Writer의 추측 동작으로 fallback. 측정으로 근본 확정: 1080×1920 컷(~18MB)=259s 실패 vs **480p/12fps 프록시
+  (~1.4MB)=~20s 성공·동작 충실도 동일**(12배 페이로드). 즉 모델도 재시도도 아니고 **입력 크기**였다. Fix=`_proxy`가 VLM 전 다운스케일
+  (킬스위치 `VIDEO_ACTIONS_PROXY=0`); 보너스로 RF 렌더 ~830s→480s(타임아웃 제거). ★또 하나: fallback으로 쓰려던 소스 클립 저장
+  `action_moments` 커버리지가 **3/3260≈0**(C_ingestclobber가 지운 뒤 재백필 안 됨)이었다 — **fallback을 설계하기 전에 그 데이터가 실제로
+  있는지부터 확인하라**(없는 fallback은 환상). 일반화=느린 네이티브-미디어 호출은 타임아웃을 늘리거나 재시도를 붙이기 전에 **페이로드를
+  측정하고 줄여라**(C_toolshort "집계 전에 전제를 프레임/파일로 검증"의 perf판·#3 trim 프록시와 같은 레버). cf [[C_splitcaption]](같은 E2E가
+  드러냄)·[[mv_pipeline_and_action_layer]](액션레이어 설계)·[[C_ingestclobber]](백필이 지워진 이유)·[[rf_render_stage_profiling]].
 - **D_lanemix. 라이브 채널 변경은 되돌림을 런타임 플래그로 출하하라 — git-revert만으론 부족하다(9/9)** —
   일일 슬롯 믹스를 2av+2rf 라틴스퀘어 → **3rf+1av**(RF가 도달에서 AV를 이김: RF 514v > AV 341v)로 바꿨다. 문제는
   *무엇을 바꾸냐*가 아니라 *어떻게 안전하게 바꾸냐*였다 — 라이브 채널이라 잘못되면 즉시 되돌려야 한다. Fix=옛 경로
