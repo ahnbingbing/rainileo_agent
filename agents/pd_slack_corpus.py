@@ -92,22 +92,36 @@ def collect(con: sqlite3.Connection, *, days: int = 7, apply: bool = False) -> l
         log.warning("pd_slack_corpus: launch_threads read failed: %s", e)
         return []
 
+    # Diagnostics so "collected 0" is never ambiguous: distinguish "no threads / no comments" from
+    # "the bot can't read" (missing conversations:history scope → every replies call errors).
+    diag = {"threads": len(threads), "reply_errors": 0, "first_error": "",
+            "pd_msgs": 0, "fed": 0}
     out: list[dict] = []
     for th in threads:
         try:
             resp = client.conversations_replies(channel=ch, ts=th["thread_ts"], limit=50)
             msgs = resp.get("messages") or []
         except Exception as e:
+            diag["reply_errors"] += 1
+            if not diag["first_error"]:
+                diag["first_error"] = str(e)[:160]
             log.debug("replies fetch failed for %s: %s", th["thread_ts"], e)
             continue
         for m in msgs:
             if not _is_pd_message(m):
                 continue
+            diag["pd_msgs"] += 1
             text = (m.get("text") or "").strip()
             if not _looks_like_feedback(text):
                 continue
+            diag["fed"] += 1
             out.append({"video_id": th["video_id"], "lane": th["lane"],
                         "title": th["title"], "text": text, "ts": m.get("ts")})
+    globals()["_LAST_DIAG"] = diag
+    if not out:
+        log.info("pd_slack_corpus diag: threads=%d reply_errors=%d pd_msgs=%d%s",
+                 diag["threads"], diag["reply_errors"], diag["pd_msgs"],
+                 (f" first_error={diag['first_error']}" if diag["first_error"] else ""))
 
     if apply and out:
         try:
@@ -144,6 +158,16 @@ def main() -> int:
     rows = collect(con, days=a.days, apply=a.apply)
     con.close()
     print(f"collected {len(rows)} PD feedback comment(s){' (applied)' if a.apply else ' (dry)'}")
+    d = globals().get("_LAST_DIAG") or {}
+    if d:
+        print(f"  diag: threads={d.get('threads')} reply_errors={d.get('reply_errors')} "
+              f"pd_msgs={d.get('pd_msgs')} fed={d.get('fed')}")
+        if d.get("first_error"):
+            print(f"  ⚠ replies error (likely a Slack scope issue — needs "
+                  f"conversations:history / groups:history): {d['first_error']}")
+        elif d.get("threads") and not d.get("pd_msgs"):
+            print("  → threads read OK, but no PD (human) messages in them "
+                  "(PD leaves feedback elsewhere — this net is for future thread comments).")
     for r in rows[:20]:
         print(f"  [{r['lane']}] {(r['title'] or '')[:24]} — {r['text'][:80]}")
     return 0
