@@ -5561,20 +5561,40 @@ def _rf_transition_grammar(ordered_attrs: "list[dict]") -> "dict[str, float]":
 
 def _rf_grammar_cards(concept: dict) -> str:
     """Grounded clip cards for the RF Director's visual-grammar pass — the chosen cuts with just
-    enough to judge pairing/transition (asset_id → shoot date, what it shows, which pet). The
-    Director composes split/match-cut among THESE clips, so split_with always names a real,
-    already-grounded cut."""
+    enough to judge pairing/transition (asset_id → shoot date, what it shows, which pet, and the
+    SHOT SCALE). The Director composes split/match-cut among THESE clips, so split_with always
+    names a real, already-grounded cut.
+
+    `shot` (close-up vs wide) is the signal that makes the 'only split prominent clips' rule real —
+    the Director can't tell shot scale from an action sentence, so we VLM-detect it here (clips are
+    local by now; RF_SPLIT_FACE_CROP gates it; best-effort, omitted on failure). Video cuts only."""
+    want_shot = os.getenv("RF_SPLIT_FACE_CROP", "1") == "1"
+    con = _db() if want_shot else None
     rows = []
     for c in (concept.get("cuts") or []):
         aid = str(c.get("asset_id") or "")
         m = re.match(r"med_(\d{4}_\d{2}_\d{2})", aid)
-        rows.append({
+        row = {
             "asset_id": aid,
             "shoot_date": m.group(1) if m else None,
             "who": c.get("who") or "",
             "what_it_shows": c.get("action") or c.get("what_it_shows")
             or c.get("beat") or "",
-        })
+        }
+        if con is not None and aid and (c.get("source_hint") or "").strip().lower() != "photo_i2v":
+            try:
+                r = con.execute("SELECT file_path, duration_sec FROM assets WHERE asset_id=?",
+                                (aid,)).fetchone()
+                fp = r[0] if r else None
+                if fp and not Path(fp).is_absolute():
+                    fp = str(ROOT / fp)
+                if fp and Path(fp).exists():
+                    prom = _clip_subject_prominent(fp, min(1.0, float(r[1] or 2) * 0.4))
+                    if prom is not None:
+                        row["shot"] = "close-up" if prom else "wide"
+            except Exception as e:
+                log.debug("grammar card shot-scale skipped for %s: %s", aid[:20], e)
+        rows.append(row)
     return json.dumps(rows, ensure_ascii=False)
 
 
@@ -10077,12 +10097,23 @@ def render_card(card_id_prefix: str, *,
         if progress_cb:
             progress_cb(f":movie_camera: Rendering `{card_id[:8]}` with **{style}** pipeline")
 
+        # PD 2026-06-11: pre-download ALL source assets up front (serialized) so the
+        # render never fails mid-preprocess on a pruned/missing photo ("not found").
+        if not dry_run:
+            try:
+                _prestage_concept_assets(concept, card, progress_cb)
+            except Exception as e:
+                log.warning("asset prestage failed (non-fatal): %s", e)
+
         # RF Director — ACTIVE visual-grammar composition (PD 2026-11-13; the 허용≠행동 trigger).
         # Split and match-cut are allowed but the Writer never chooses them, so they never appear.
         # Here the Director reads the chosen clips and actively composes the grammar (a top/bottom
         # motion-wipe split for two clips that belong together, a hard match-cut where motion
-        # carries across). Runs BEFORE prestage so a split's secondary clip gets downloaded too.
-        # OFF by default (RF_DIRECTOR_PASS); best-effort — any failure leaves the concept as-is.
+        # carries across). Runs AFTER prestage so the clips are LOCAL — the grammar cards can then
+        # carry a per-clip prominence signal (close-up vs wide), so the Director only splits clips
+        # whose pet is prominent (a split of a wide shot shrinks the subject to nothing). A split's
+        # secondary clip is always one of the already-prestaged concept cuts, so nothing new is
+        # needed. OFF by default (RF_DIRECTOR_PASS); best-effort — any failure leaves concept as-is.
         if (style == "real_footage" and isinstance(concept, dict)
                 and os.getenv("RF_DIRECTOR_PASS", "0") == "1"):
             try:
@@ -10093,14 +10124,6 @@ def render_card(card_id_prefix: str, *,
                     concept = apply_rf_visual_grammar(concept, brief)
             except Exception as e:
                 log.warning("RF director visual-grammar pass skipped: %s", e)
-
-        # PD 2026-06-11: pre-download ALL source assets up front (serialized) so the
-        # render never fails mid-preprocess on a pruned/missing photo ("not found").
-        if not dry_run:
-            try:
-                _prestage_concept_assets(concept, card, progress_cb)
-            except Exception as e:
-                log.warning("asset prestage failed (non-fatal): %s", e)
 
         ts = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
         work_dir = ROOT / "data" / "tmp" / f"cameraman_{card_id[:8]}_{ts}"

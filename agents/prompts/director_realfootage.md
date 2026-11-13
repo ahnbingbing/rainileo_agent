@@ -97,11 +97,11 @@ another form. The fix is deliberate composition by you, grounded in the footage.
   subject/moment isn't actually there (that fabricates). One split per episode at most; it's an
   accent, not the format.
   **Split only PROMINENT clips** — each half of a split is a small panel, so the clip must be a
-  CLOSE or MID shot where the pet clearly fills the frame (a face/body close-up, the pet doing the
-  thing up close). A WIDE establishing shot — the pet tiny across a room, mostly floor/background —
-  makes a useless panel (the subject shrinks to nothing). If one of the two clips you'd pair is a
-  wide shot, don't split; pick a different, closer clip or use a plain cut. Prefer clips that read
-  as a portrait/close moment of the pet.
+  CLOSE or MID shot where the pet clearly fills the frame. A WIDE establishing shot — the pet tiny
+  across a room, mostly floor/background — makes a useless panel (the subject shrinks to nothing).
+  Each grounded card carries a **`shot`** tag (`close-up` or `wide`): compose a split ONLY from
+  clips tagged `close-up`. If either clip you'd pair is `wide` (or untagged and clearly an
+  establishing shot), don't split — pick a different, closer clip or use a plain cut.
   When you compose a split you MUST also write **`split_caption`** {ko, en} — the one line the split
   SAYS. The caption pipeline reads only pixels, so it sees two pets but can NOT know that the top
   panel is 2015 and the bottom is 2026; that meaning is yours to state. Caption the juxtaposition,
