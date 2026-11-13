@@ -1473,6 +1473,78 @@ def _clip_reuse_gate(concept: "dict | None", report: dict) -> None:
              report.get("판정"), report.get("점수"))
 
 
+def _outing_reuse_gate(concept: "dict | None", report: dict) -> None:
+    """DETERMINISTIC (PD 2026-11-12, giri-update). _clip_reuse_gate matches EXACT asset_ids, so it
+    MISSED the 2026-11-13 duplicate-nap: two neighboring episodes drew DIFFERENT files
+    (med_2026_11_10_101154 vs _101431) from the SAME 11-10 nap session — a viewer sees the same
+    event twice. Lockstep with the producer's now outing-aware dedup (69793c1/34878b0): flag when
+    this episode reuses a capture-DAY (outing) that a NEIGHBORING scheduled/recent RF episode also
+    uses via a DIFFERENT clip. The LLM can't see outings from frames → compute it and cap. RF-only,
+    cap ≤5 (=수정 필요). GIRI_OUTING_GATE=0 reverts."""
+    import os as _os
+    import re as _re
+    import json as _json
+    if _os.getenv("GIRI_OUTING_GATE", "1") == "0" or not concept:
+        return
+    if (concept.get("render_style") or concept.get("style") or "real_footage") != "real_footage":
+        return
+    _dayre = _re.compile(r"^med_(\d{4}_\d{2}_\d{2})_")
+
+    def _days(cuts):
+        d = {}
+        for c in (cuts or []):
+            aid = c.get("asset_id") if isinstance(c, dict) else None
+            m = _dayre.match(aid or "")
+            if aid and m:
+                d.setdefault(m.group(1), set()).add(aid)
+        return d
+
+    mine = _days(concept.get("cuts"))
+    if not mine:
+        return
+    my_vid = concept.get("youtube_video_id")
+    neighbor: dict = {}
+    try:
+        con = sqlite3.connect(str(ROOT / "data" / "agent.db"))
+        try:
+            # neighboring RF episodes a viewer sees close together: scheduled/published within ±4
+            # days of now (adjacent slots). Memory-lane far apart is fine; adjacent is the dup.
+            rows = con.execute(
+                "SELECT youtube_video_id, payload_json FROM cards WHERE render_style='real_footage' "
+                "AND youtube_video_id IS NOT NULL AND state!='archived' "
+                "AND youtube_publish_at >= strftime('%Y-%m-%dT%H:%M:%SZ','now','-4 days') "
+                "AND youtube_publish_at <= strftime('%Y-%m-%dT%H:%M:%SZ','now','+4 days')").fetchall()
+        finally:
+            con.close()
+        for vid, pj in rows:
+            if my_vid and vid == my_vid:
+                continue
+            for day, aids in _days((_json.loads(pj or "{}").get("cuts") or [])).items():
+                neighbor.setdefault(day, set()).update(aids)
+    except Exception as e:  # noqa: BLE001
+        log.warning("outing-reuse gate skipped: %s", e)
+        return
+    # a DIFFERENT clip of a shared outing (same clip would already be caught by _clip_reuse_gate)
+    dup_days = sorted(d for d, my_aids in mine.items()
+                      if neighbor.get(d) and (my_aids - neighbor[d]))
+    if not dup_days:
+        return
+    note = (f"나들이 재사용(결정론): 이 편이 이웃 예약편과 같은 나들이(촬영일 {', '.join(dup_days[:2])})의 "
+            f"다른 클립을 썼다 — 같은 사건을 시청자가 연달아 두 번 본다. 겹치지 않는 다른 날 소재로 교체하라.")
+    prev = report.get("가장_큰_문제", "") or ""
+    report["가장_큰_문제"] = note if (not prev or "없" in prev[:6]) else f"{note} / {prev}"
+    try:
+        report["점수"] = min(int(report.get("점수", 10)), 5)
+    except Exception:
+        report["점수"] = 5
+    if report.get("판정", "") in ("업로드", "즉시 업로드", "소폭 수정 후 업로드", ""):
+        report["판정"] = "수정 필요"
+    report["최종_결정"] = report.get("판정", "수정 필요")
+    report["_outing_reuse_gate_override"] = note
+    log.info("outing-reuse gate FIRED: days=%s → 판정=%s 점수=%s", dup_days[:2],
+             report.get("판정"), report.get("점수"))
+
+
 def _caption_scene_sets(concept: "dict | None") -> list:
     """(label, scenes) for each RF cut — ground truth is the captions.json actually BURNED
     (workdir), not the card payload, which can be stale/overwritten (e.g. a concurrent
@@ -2042,6 +2114,7 @@ def review(video: Path, storyboard: list[dict] | None = None,
     # generator's clip-cooldown seed.
     try:
         _clip_reuse_gate(concept, report)
+        _outing_reuse_gate(concept, report)
     except Exception as e:
         log.warning("Clip-reuse gate failed: %s", e)
 
