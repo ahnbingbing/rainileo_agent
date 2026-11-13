@@ -1426,13 +1426,34 @@ def _clip_reuse_gate(concept: "dict | None", report: dict) -> None:
         from agents.producer import _live_published_rf_assets
         con = sqlite3.connect(str(ROOT / "data" / "agent.db"))
         try:
-            live = _live_published_rf_assets(con)
+            # (B) PD 2026-11-12: segment-aware — a clip reused at a NON-overlapping window is NOT a
+            # dup. Flips on the SAME flag as the selection rescue so the two never drift (the drift
+            # IS the #1 RF-reject bug). OFF → whole-clip asset_id match (unchanged).
+            if os.getenv("RF_SEGMENT_RESCUE", "0") == "1":
+                from agents.producer import _live_published_rf_segments
+                _live_seg = _live_published_rf_segments(con)
+                dup = []
+                for _c in ((concept or {}).get("cuts") or []):
+                    _aid = _c.get("asset_id")
+                    _wins = _live_seg.get(_aid)
+                    if not _aid or not _wins:
+                        continue
+                    try:
+                        _st = float(_c.get("trim_start") or 0)
+                        _d = float(_c.get("duration_seconds") or _c.get("trim_dur") or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    if _d > 0 and any(min(_st + _d, _e) - max(_st, _s) >= 1.0 for (_s, _e) in _wins):
+                        dup.append(_aid)
+                dup = sorted(set(dup))
+            else:
+                live = _live_published_rf_assets(con)
+                dup = sorted(mine & live)
         finally:
             con.close()
     except Exception as e:
         log.warning("clip-reuse gate skipped: %s", e)
         return
-    dup = sorted(mine & live)
     if not dup:
         return
     note = (f"클립 재사용(결정론): 이 편이 최근 7일 내 공개된 다른 에피소드가 이미 쓴 클립을 다시 썼다 "

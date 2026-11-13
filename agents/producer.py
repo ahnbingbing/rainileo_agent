@@ -1401,6 +1401,39 @@ def _live_published_rf_assets(con: sqlite3.Connection, days: int | None = None) 
     return _expand_to_outings(con, used)
 
 
+def _live_published_rf_segments(con: sqlite3.Connection, days: int | None = None) -> dict:
+    """asset_id → [(start,end),...] trim WINDOWS used by RF episodes published/scheduled in the
+    last `days` (youtube_video_id set). The SEGMENT twin of _live_published_rf_assets (SAME
+    source), for segment-aware reuse (B, PD 2026-11-12): the SAME clip reused at a NON-overlapping
+    window isn't a dup ("같은 영상 안 쓴 구간은 또 써도 되잖아"). NO outing-expand here — that's for
+    DIFFERENT clips of one event (a dup); this is one clip's OWN used windows. Shared by the
+    selection rescue AND the reviewer gate (gated together on RF_SEGMENT_RESCUE so they can't
+    drift — the coupling the whole-clip version guards)."""
+    segs: dict = {}
+    try:
+        import datetime as _dt
+        if days is None:
+            days = int(os.getenv("RF_RECENT_PUBLISH_COOLDOWN_DAYS", "21"))
+        since = (_dt.date.today() - _dt.timedelta(days=days)).isoformat()
+        for (pj,) in con.execute(
+            "SELECT payload_json FROM cards WHERE date >= ? AND youtube_video_id IS NOT NULL "
+            "AND state!='archived'", (since,)).fetchall():
+            try:
+                for c in (json.loads(pj or "{}").get("cuts") or []):
+                    aid = (c.get("asset_id") or c.get("secondary_asset_id")
+                           or (c.get("asset") or {}).get("asset_id"))
+                    if not aid:
+                        continue
+                    st = float(c.get("trim_start") or 0)
+                    d = float(c.get("duration_seconds") or c.get("trim_dur") or 0)
+                    segs.setdefault(aid, []).append((st, st + d if d > 0 else st + 1e6))
+            except Exception:
+                continue
+    except Exception as e:
+        log.warning("live-published rf segments lookup failed: %s", e)
+    return segs
+
+
 def _scheduled_window_rf_assets(con: sqlite3.Connection, target: dt.date,
                                 days: int = 3) -> set[str]:
     """asset_ids used by RF cards whose youtube_publish_at falls within ±`days` of
@@ -3416,8 +3449,36 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         _live_kill = _live_published_rf_assets(_db())
         if _live_kill:
             _bk = len(avail_videos)
-            avail_videos = [v for v in avail_videos
-                            if (v.get("id") or v.get("asset_id")) not in _live_kill]
+            # (B) PD 2026-11-12: segment-level rescue. A recently-published clip is whole-blocked
+            # by default — but a LONG clip's UNUSED footage is fair game ("안 쓴 구간은 또 써도 되잖아").
+            # When RF_SEGMENT_RESCUE=1, KEEP such a clip (marking its used windows so (A) shifts the
+            # trim to a free window); only block clips with NO free window OR that are outing-mates
+            # (a DIFFERENT clip of a used event — no own used window = a real dup). The reviewer's
+            # _clip_reuse_gate flips on the SAME flag, so selection↔reviewer stay in lockstep.
+            if os.getenv("RF_SEGMENT_RESCUE", "0") == "1":
+                _live_seg = _live_published_rf_segments(_db())
+                _rescued = 0
+                _kept2 = []
+                for v in avail_videos:
+                    _vid = v.get("id") or v.get("asset_id")
+                    if _vid not in _live_kill:
+                        _kept2.append(v)
+                        continue
+                    _w = _live_seg.get(_vid)
+                    _vdur = v.get("dur") or 0
+                    if (_w and _vdur
+                            and _free_trim_start(float(_vdur), list(_w), min(float(_vdur), 6.0)) is not None):
+                        v["used_segments"] = [[round(s, 1), round(e, 1)] for (s, e) in _w]
+                        _kept2.append(v)
+                        _rescued += 1
+                    # else: outing-mate (no own window) or fully-used → excluded
+                avail_videos = _kept2
+                if _rescued and progress_cb:
+                    progress_cb(f":recycle: 세그먼트 재사용(B) — 최근 쓴 긴 클립 {_rescued}개를 "
+                                f"'안 쓴 구간'으로 유지 (트림 자동분산이 겹침 없는 창 선택)")
+            else:
+                avail_videos = [v for v in avail_videos
+                                if (v.get("id") or v.get("asset_id")) not in _live_kill]
             if len(avail_videos) < _bk and progress_cb:
                 progress_cb(f":lock: 최근 공개본(+같은 나들이) 클립 {_bk - len(avail_videos)}개 "
                             f"하드 제외 (재사용 게이트 정합 — 확정 Giri 실패 방지)")
