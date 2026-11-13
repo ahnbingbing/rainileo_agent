@@ -4070,10 +4070,49 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
                    + (("\n[이전 피드백]\n" + prior_feedback) if prior_feedback else ""))
             return _propose_realfootage_singlepass(target, context, progress_cb,
                                                    prior_feedback=_fb)
+    # PD 2026-11-12 (A): DETERMINISTIC trim diversity — the root of the "구간중복 재작성" thrash.
+    # best_videos gives the Writer NO 'where to trim' guidance (only dur), and the recently-used
+    # windows sit buried in a huge context, so the Writer lands on the FRONT (trim_start≈0) and
+    # reused clips collide on the same window — even though the clip has unused middle/end footage
+    # (PD: "항상 영상 앞만 쓰면서... 영상 전체 단위로 봐서"). WHERE to cut is a MECHANICAL concern =
+    # Python's job (the one-take path already shifts via _action/_free_trim_start). Shift any
+    # overlapping cut to a free, non-overlapping window HERE, so the clip's other segments get used
+    # instead of the gate thrashing the Writer into rewrites. RF_AUTO_TRIM_SHIFT=0 reverts.
+    if os.getenv("RF_AUTO_TRIM_SHIFT", "1") == "1" and _used_segs:
+        try:
+            import hashlib as _hl2
+            _dur_by_id = {v["id"]: v.get("dur") for v in (avail_videos + _arch_field) if v.get("id")}
+            _shifted = 0
+            for _c0 in concepts:
+                for _cut in (_c0.get("cuts") or []):
+                    _aid = _cut.get("asset_id")
+                    _wins = _used_segs.get(_aid)
+                    _cdur = _dur_by_id.get(_aid)
+                    if not _aid or not _wins or not _cdur:
+                        continue
+                    try:
+                        _d = float(_cut.get("duration_seconds") or _cut.get("trim_dur") or 0)
+                        _st = float(_cut.get("trim_start") or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    if _d <= 0 or not any(min(_st + _d, _e) - max(_st, _s) >= 1.0 for (_s, _e) in _wins):
+                        continue  # clean (no overlap) — leave it
+                    _seed = int(_hl2.sha1(_aid.encode()).hexdigest(), 16)
+                    _ts = _action_trim_start(_aid, float(_cdur), _d)
+                    if _ts is None:
+                        _ts = _free_trim_start(float(_cdur), [(_s, _e) for (_s, _e) in _wins], _d, _seed)
+                    if _ts is not None and abs(_ts - _st) > 0.3:
+                        _cut["trim_start"] = round(_ts, 2)
+                        _shifted += 1
+            if _shifted and progress_cb:
+                progress_cb(f":scissors: 트림 자동 분산 — 겹치는 {_shifted}컷을 클립의 안 쓴 구간으로 이동")
+        except Exception as e:
+            log.warning("RF auto trim-shift failed: %s", e)
     # PD 2026-06-14: SEGMENT-reuse gate (singlepass parity with the one-take path).
     # If a cut reuses a clip on a window that overlaps a recently-used segment of the
     # SAME clip → "동일 구간 반복"; re-write ONCE with the specifics ("[구간중복]" sentinel
-    # bounds the retry). Toggle via RF_SEGMENT_GATE_NORMAL=0.
+    # bounds the retry). Toggle via RF_SEGMENT_GATE_NORMAL=0. Now a BACKSTOP — the auto
+    # trim-shift above resolves most overlaps deterministically, so this rarely fires.
     if (os.getenv("RF_SEGMENT_GATE_NORMAL", "1") == "1"
             and "[구간중복]" not in prior_feedback and _used_segs):
         try:
