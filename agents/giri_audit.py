@@ -49,6 +49,31 @@ def enumerate_gates() -> list[tuple[str, str]]:
     return sorted(gates)
 
 
+_PASS_VERDICTS = ("업로드", "소폭 수정 후 업로드")
+
+
+def rubber_stamp_instances(con: sqlite3.Connection, *, limit: int = 40) -> list[dict]:
+    """The sharpest mirror-drift signal: episodes Giri PASSED that PD then VETOED. Joins
+    giri_reviews (Giri's own saved judgment) → cards (card_id ↔ youtube_video_id) → pd_selections
+    vetoes. Each hit is a concrete rubber-stamp — Giri said ship, PD said no — so the gap report
+    can name the exact standard Giri missed, not just reason abstractly."""
+    con.row_factory = sqlite3.Row
+    try:
+        rows = con.execute(
+            "SELECT gr.card_id, gr.verdict, gr.score, gr.gates_fired, "
+            "       c.youtube_video_id AS vid, c.theme AS theme, ps.reason AS veto_reason "
+            "FROM giri_reviews gr "
+            "JOIN cards c ON c.card_id = gr.card_id "
+            "JOIN pd_selections ps ON ps.subject = c.youtube_video_id AND ps.decision = 'veto' "
+            "WHERE gr.verdict IN (?, ?) "
+            "ORDER BY gr.id DESC LIMIT ?",
+            (*_PASS_VERDICTS, limit)).fetchall()
+    except Exception as e:
+        log.warning("rubber_stamp_instances query failed: %s", e)
+        return []
+    return [dict(r) for r in rows]
+
+
 def corpus_brief(con: sqlite3.Connection, *, lane: str | None = None, n: int = 80) -> str:
     """PD's accumulated standards — the veto/correction corpus, in the checker framing. This is
     the ground truth the audit measures Giri's gates against (PD's words, not a retro synthesis)."""
@@ -65,8 +90,10 @@ _AUDIT_SYSTEM = """\
 비판적으로 적용해야 한다. 그런데 Giri의 '강제'(결정론 게이트)는 사람이 게이트를 추가할 때만 늘어나,
 PD가 반복해 말한 기준인데 Giri가 아직 안 잡는 '갭'이 쌓인다.
 
-입력: (A) PD가 실제로 내린 리젝/교정 corpus, (B) Giri가 지금 enforce하는 게이트 목록.
+입력: (A) PD가 실제로 내린 리젝/교정 corpus, (B) Giri가 지금 enforce하는 게이트 목록,
+(C) **Giri가 통과시켰는데 PD가 veto한 회차**(러버스탬프 실증 — 가장 강한 신호).
 너의 일: **PD가 반복적으로 지적/교정하는데 (A)에 있는데 (B)의 어떤 게이트도 안 잡는 기준**을 찾아라.
+★(C)가 있으면 거기서 시작하라 — Giri가 ship이라 했는데 PD가 내린 그 회차가 놓친 바로 그 기준이다.
 
 규칙:
 - 코드를 쓰지 마라. 갭을 surface만 한다(사람이 giri-update로 결정론 게이트+회귀로 적용한다).
@@ -79,14 +106,20 @@ PD가 반복해 말한 기준인데 Giri가 아직 안 잡는 '갭'이 쌓인다
 """
 
 
-def find_gaps(corpus: str, gates: list[tuple[str, str]]) -> str | None:
+def find_gaps(corpus: str, gates: list[tuple[str, str]],
+              rubber_stamps: list[dict] | None = None) -> str | None:
     """LLM gap analysis. Best-effort — returns a markdown report, or None on any failure (the
     caller still writes the deterministic corpus+gates dump so a human can eyeball)."""
-    if not corpus:
+    rubber_stamps = rubber_stamps or []
+    if not corpus and not rubber_stamps:
         return None
     gate_lines = "\n".join(f"- {n}: {d}" for n, d in gates) or "(none)"
+    rs_lines = "\n".join(
+        f"- [{r.get('verdict')}·{r.get('score')}점] '{(r.get('theme') or '')[:34]}' "
+        f"→ PD veto: {(r.get('veto_reason') or '')[:90]}" for r in rubber_stamps) or "(없음)"
     user = (f"## (A) PD corpus (리젝/교정)\n{corpus}\n\n"
             f"## (B) Giri 현재 게이트 ({len(gates)}개)\n{gate_lines}\n\n"
+            f"## (C) Giri 통과 → PD veto (러버스탬프 실증, {len(rubber_stamps)}건)\n{rs_lines}\n\n"
             "위 규칙대로 갭 리포트 JSON 하나만 출력하라.")
     try:
         from agents.writer_director import _call_anthropic, DIRECTOR_MODEL
@@ -132,9 +165,10 @@ def run(*, lane: str | None = None, n: int = 80, slack: bool = False,
     try:
         corpus = corpus_brief(con, lane=lane, n=n)
         gates = enumerate_gates()
+        rubber = rubber_stamp_instances(con)
     finally:
         con.close()
-    report = find_gaps(corpus, gates)
+    report = find_gaps(corpus, gates, rubber)
     if not report:
         # No LLM / no corpus — still emit a deterministic dump so the gap-hunt isn't blocked.
         gate_lines = "\n".join(f"- {n_}: {d}" for n_, d in gates)
