@@ -228,7 +228,8 @@ def build_cmd(clips: list[Path], cut_durations: list[float],
               cut_speed: float = 1.3,
               per_cut_speeds: dict[int, float] | None = None,
               xfade_into: set[int] | None = None,
-              xfade_dur: float = 0.2) -> list[str]:
+              xfade_dur: float = 0.2,
+              xfade_durs: dict[int, float] | None = None) -> list[str]:
     """Build the full ffmpeg invocation.
 
     `clips` is the FULL ordered list of video inputs in the final episode.
@@ -309,11 +310,19 @@ def build_cmd(clips: list[Path], cut_durations: list[float],
     # boundaries (bumpers, true scene cuts) stay hard concat. Default (empty
     # set) = the existing single concat, so nothing changes unless enabled.
     xfade_into = xfade_into or set()
+    # PD 2026-11-12 (RF visual grammar): each dissolving boundary may carry its OWN
+    # duration (an era/time jump dissolves long, a same-outing continuous moment tight)
+    # instead of one uniform length — the deterministic transition grammar assigns these
+    # per cut. `xfade_durs` maps clip-index → dur; any index not listed falls back to the
+    # uniform `xfade_dur`, so the legacy single-length behavior is unchanged when empty.
+    xfade_durs = xfade_durs or {}
     if xfade_into:
         def _post_dur(idx: int) -> float:
             raw = ffprobe_duration(clips[idx])
             sp = 1.0 if idx in bumper_indices else per_cut_speeds.get(idx, cut_speed)
             return raw / sp if sp else raw
+        def _xf_dur(idx: int) -> float:
+            return float(xfade_durs.get(idx, xfade_dur))
         # xfade requires BOTH inputs at an identical timebase, but `concat`
         # emits tb=1/1000000 while a raw fps=30 input is tb=1/30 — feeding a
         # concat result straight into xfade fails ("timebase do not match").
@@ -326,16 +335,17 @@ def build_cmd(clips: list[Path], cut_durations: list[float],
         for i in range(1, n):
             lbl = "[vout]" if i == n - 1 else f"[vx{i}]"
             if i in xfade_into:
-                off = max(0.0, acc_dur - xfade_dur)
+                _d = _xf_dur(i)
+                off = max(0.0, acc_dur - _d)
                 seg.append(f"{acc}[v{i}]xfade=transition=fade:"
-                           f"duration={xfade_dur}:offset={off:.3f},{TB}{lbl}")
+                           f"duration={_d}:offset={off:.3f},{TB}{lbl}")
                 acc_dur = off + _post_dur(i)
             else:
                 seg.append(f"{acc}[v{i}]concat=n=2:v=1:a=0,{TB}{lbl}")
                 acc_dur = acc_dur + _post_dur(i)
             acc = lbl
         video_chain = ";".join(norm_chains) + ";" + ";".join(seg)
-        xfade_total = xfade_dur * len(xfade_into)
+        xfade_total = sum(_xf_dur(i) for i in xfade_into)
     else:
         video_chain = ";".join(norm_chains) + ";" + \
                       f"{v_inputs}concat=n={n}:v=1:a=0[vout]"
@@ -479,6 +489,10 @@ def main() -> int:
                         "Empty = all hard cuts (default).")
     p.add_argument("--xfade-dur", type=float, default=0.2,
                    help="crossfade duration in seconds (default 0.2)")
+    p.add_argument("--xfade-durs", default="",
+                   help="optional JSON {cut_tag: dur} for PER-CUT dissolve lengths "
+                        "(RF visual grammar: era-jump long, same-outing tight). Any tag "
+                        "not listed falls back to --xfade-dur. Empty = uniform (default).")
     p.add_argument("--dry-run", action="store_true",
                    help="print the ffmpeg command, do not run it")
     args = p.parse_args()
@@ -571,18 +585,34 @@ def main() -> int:
     # Map crossfade cut tags → clip indices (same offset logic as tempo).
     xfade_into: set[int] = set()
     xfade_tags = {t.strip() for t in args.xfade_tags.split(",") if t.strip()}
+    # Optional per-cut dissolve lengths (RF visual grammar). Parse the tag→dur JSON
+    # and remap by clip index, same offset logic as xfade_into / tempo.
+    xfade_durs: dict[int, float] = {}
+    _durs_by_tag: dict = {}
+    if args.xfade_durs.strip():
+        try:
+            _durs_by_tag = {str(k): float(v)
+                            for k, v in json.loads(args.xfade_durs).items()}
+        except Exception as e:
+            print(f"WARN: could not parse --xfade-durs ({e}); using uniform "
+                  f"--xfade-dur", file=sys.stderr)
     if xfade_tags:
         for i, tag in enumerate(cut_order):
             if tag in xfade_tags and i > 0:  # i==0 has no prev cut to dissolve from
                 clip_i = i + (1 if intro_idx is not None else 0)
                 xfade_into.add(clip_i)
+                if tag in _durs_by_tag:
+                    xfade_durs[clip_i] = _durs_by_tag[tag]
         if xfade_into:
-            print(f"Crossfade into : {sorted(xfade_into)} (dur={args.xfade_dur}s)")
+            _dbg = (f" per-cut={sorted(xfade_durs.items())}" if xfade_durs else "")
+            print(f"Crossfade into : {sorted(xfade_into)} (dur={args.xfade_dur}s)"
+                  f"{_dbg}")
 
     cmd = build_cmd(clips, cut_durations, intro_idx, outro_idx, music, out,
                     args.volume, args.fadein, args.fadeout,
                     per_cut_speeds=per_cut_speeds,
-                    xfade_into=xfade_into, xfade_dur=args.xfade_dur)
+                    xfade_into=xfade_into, xfade_dur=args.xfade_dur,
+                    xfade_durs=xfade_durs)
 
     print(f"Captions manifest: {_rel(captions_path)}")
     if intro:

@@ -69,6 +69,37 @@ to the clips' real energy and the concept. For a multi-era memory-lane, require 
 narrated (a past clip framed "그땐 ~" / present "지금은 ~"); never stitch different ages as one
 present moment.
 
+## 6. Compose the visual grammar — split and transition, when the footage earns it
+
+**Principle:** you own not just WHICH moments and in what order, but HOW one cut gives way to the
+next and when two moments share the screen. This is the channel's borrow from the iOS Photos
+"Memories" reel — but used only where a real moment earns it, never as decoration.
+**Why:** the channel's RF edits default to one flat grammar — straight cuts with the same soft
+dissolve — because these richer moves are *allowed* but nobody actively *chooses* them, so they
+never appear (the same "허용≠행동" gap that buried woven photos and varied trims). Yet over-using
+them is worse: a split or a hard cut every few seconds reads cheap, the gaudy-overlay mistake in
+another form. The fix is deliberate composition by you, grounded in the footage.
+**How:** for each cut, decide its transition and whether it's a split:
+- **`transition_in`** — how this cut arrives from the previous one:
+  - `match_cut` — a HARD cut with no dissolve, for when motion or action carries straight across
+    the boundary (a leap continuing, a head-turn completing) and a dissolve would mush it. Crisp,
+    rhythmic. Use sparingly — only where the two clips genuinely continue one motion.
+  - `dissolve` — the default soft cross-dissolve; use it for everything else, and especially a
+    time jump.
+- **`split_with`** — name a SECOND clip's asset_id to show this cut and that clip **at the same
+  time**, top/bottom, each panel sweeping in (the pipeline renders the motion wipe). Compose a
+  split ONLY when the two clips genuinely belong on screen together:
+  - **둘이 동시에** — the two pets (or two moments) are doing something at the same time and the
+    pairing is the point (Leo watching while Ryani leaps).
+  - **과거↔현재** — an old clip and a recent one of the same subject, so the then/now sits side by
+    side (baby Ryani above, grown Ryani below). This is the memory-lane pairing.
+  You must have TWO real clips that support it — never force a split onto footage where the second
+  subject/moment isn't actually there (that fabricates). One split per episode at most; it's an
+  accent, not the format.
+**Example:** the cards show a 2015 puppy-Ryani clip and a 2026 grown-Ryani clip of the same play
+bow — so the develop cut is `split_with` the puppy clip (then/now together), and the payoff lands
+on a `match_cut` from her mid-leap into the landing, no dissolve, so the motion reads continuous.
+
 ## Output — director_brief (JSON only)
 
 ```json
@@ -80,13 +111,18 @@ present moment.
     {"role": "cold_open|develop|turn|payoff",
      "what_it_shows": "<the real on-screen moment this cut uses>",
      "clip": "<asset_id from the grounded cards>",
-     "must_keep": true|false}
+     "must_keep": true|false,
+     "transition_in": "dissolve|match_cut",
+     "split_with": "<asset_id of a second clip shown top/bottom at the same time, or omit>"}
   ],
   "notes_to_writer": "<grounding constraints + what the payoff must land, in one or two lines>"
 }
 ```
 
-- Every `clip` must be an asset_id present in the grounded cards (no invented clips).
+- Every `clip` and every `split_with` must be an asset_id present in the grounded cards (no
+  invented clips). `split_with` must differ from that cut's own `clip`.
 - Exactly one `payoff` cut, `must_keep: true`.
+- `transition_in` defaults to `dissolve` if omitted; the first cut has no transition.
+- At most one cut carries `split_with`, and only when two real clips earn it.
 - Keep `sequence` to the number of cuts the story needs — don't pad to a length; don't collapse a
   real multi-beat story to one cut.

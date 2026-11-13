@@ -305,6 +305,19 @@ def salvage(card_id: str, report: dict, *, progress_cb=None,
     if xfade and os.getenv("CHAIN_TRANSITION", "hardcut").lower() == "crossfade":
         asm += ["--xfade-tags", ",".join(xfade),
                 "--xfade-dur", os.getenv("CHAIN_XFADE_DUR", "0.2")]
+        # RF visual grammar (PD 2026-11-12): a salvage re-assemble is an ALTERNATE render
+        # path — it must inherit the same per-cut dissolve grammar the main render used, or a
+        # caption-salvaged RF episode silently reverts to uniform dissolves (the recurring
+        # "대체 경로가 계약 상속 안 함" trap). Rebuild the per-cut durs from the persisted
+        # cut_grammar attrs over this salvage's surviving cut order. OFF unless flipped.
+        if lane == "real_footage" and os.getenv("RF_TRANSITION_GRAMMAR", "0") == "1":
+            from agents import cameraman as _cm
+            _attrs = meta.get("cut_grammar") or {}
+            _order = meta.get("cut_tags") or list(xfade)
+            _ordered = [{"tag": t, **(_attrs.get(t) or {})} for t in _order if t]
+            _durs = _cm._rf_transition_grammar(_ordered)
+            if _durs:
+                asm += ["--xfade-durs", json.dumps(_durs)]
     try:
         cm._run(asm, ":clapper: [salvage] 재조립", progress_cb, False)
     except Exception as e:

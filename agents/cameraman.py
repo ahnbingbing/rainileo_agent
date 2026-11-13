@@ -1823,12 +1823,36 @@ def generate_manifests(card: dict, assets: list[dict], style: str,
     captions_path = work_dir / "captions.json"
     captions_path.write_text(json.dumps(captions, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    # RF visual-grammar transition attrs (PD 2026-11-12) — per-tag {is_photo, shoot_date}
+    # consumed at assembly by _rf_transition_grammar when RF_TRANSITION_GRAMMAR is on. Keyed by
+    # tag (not index) so later cut-drops (face-gate, coherence) just remove entries; the dissolve
+    # grammar recomputes adjacency over the survivors.
+    cut_grammar: dict = {}
+    if style == "real_footage":
+        for _i, _it in enumerate(cuts):
+            _tag = _it.get("tag")
+            if not _tag:
+                continue
+            _aid = (_it.get("asset") or {}).get("asset_id") or ""
+            _m = re.match(r"med_(\d{4}_\d{2}_\d{2})", str(_aid))
+            _cc = concept_cuts[_i] if _i < len(concept_cuts) else {}
+            _hint = (_cc.get("source_hint") or "").strip().lower()
+            _is_photo = (_hint == "photo_i2v"
+                         or (_it.get("asset") or {}).get("kind") == "photo")
+            # transition_in: the Director's active match-cut mark (RF visual grammar) — a hard
+            # cut INTO this cut instead of the default dissolve. Read at assembly.
+            _ti = (_cc.get("transition_in") or "").strip().lower()
+            cut_grammar[_tag] = {"is_photo": bool(_is_photo),
+                                 "shoot_date": _m.group(1) if _m else None,
+                                 "transition_in": _ti or "dissolve"}
+
     result = {
         "sources": str(sources_path),
         "captions": str(captions_path),
         "cuts": cuts,
         "concept": concept or {},  # full concept dict (set_description, regen_direction, etc.)
         "concept_cuts": concept_cuts,  # per-cut Director metadata (seedance_mode, references, fill_anchors)
+        "cut_grammar": cut_grammar,  # per-tag transition attrs (RF visual grammar)
     }
 
     # ── BGM selection based on concept mood (PD 2026-06-07: hash-varied pick so
@@ -5470,17 +5494,116 @@ def _prerender_photo_i2v_cuts(manifests: dict, work_dir: Path,
     )
 
 
+def _rf_transition_grammar(ordered_attrs: "list[dict]") -> "dict[str, float]":
+    """Deterministic per-cut transition lengths — the 'mechanical = Python' half of the RF
+    visual grammar (PD 2026-11-12; notes/rf_visual_grammar_design.md).
+
+    Principle: escape the uniform 0.4s dissolve by letting the FOOTAGE decide the bridge
+    length, the way Apple Photos Memories does — a time/era jump cross-dissolves LONG, a woven
+    photo still gets a gentle dissolve so its ken-burns can breathe, and two cuts from the SAME
+    outing dissolve TIGHT (a continuous moment needs no long bridge). Every boundary stays a
+    cross-dissolve — we vary only LENGTH, never inserting a hard cut: a true match-cut is a
+    semantic motion-continuity call the Director owns (Part B), and auto-firing hard cuts off a
+    same-day heuristic would read choppy (the '촌스러움' guardrail). Varying length alone keeps
+    the reel smooth while killing the monotony PD flagged.
+
+    `ordered_attrs` = [{tag, is_photo, shoot_date("YYYY_MM_DD"|None)}] in final surviving-cut
+    order. Returns {tag: dur} for every cut after the first (the transition INTO it). Caller
+    gates on RF_TRANSITION_GRAMMAR; thresholds are env-tunable."""
+    base = float(os.getenv("RF_XFADE_DUR", "0.4"))
+    long_d = float(os.getenv("RF_XFADE_LONG", "0.7"))
+    photo_d = float(os.getenv("RF_XFADE_PHOTO", "0.5"))
+    tight_d = float(os.getenv("RF_XFADE_TIGHT", "0.25"))
+    era_days = int(os.getenv("RF_ERA_JUMP_DAYS", "180"))
+
+    def _parse(s):
+        try:
+            return dt.datetime.strptime(s, "%Y_%m_%d").date() if s else None
+        except Exception:
+            return None
+
+    out: "dict[str, float]" = {}
+    for j in range(1, len(ordered_attrs)):
+        prev, cur = ordered_attrs[j - 1], ordered_attrs[j]
+        tag = cur.get("tag")
+        if not tag:
+            continue
+        d_prev, d_cur = _parse(prev.get("shoot_date")), _parse(cur.get("shoot_date"))
+        if d_prev and d_cur and abs((d_cur - d_prev).days) >= era_days:
+            dur = long_d          # era / time jump → long dissolve
+        elif prev.get("is_photo") or cur.get("is_photo"):
+            dur = photo_d         # a woven still → gentle dissolve
+        elif d_prev and d_cur and d_prev == d_cur:
+            dur = tight_d         # same outing / continuous → tight dissolve
+        else:
+            dur = base
+        out[tag] = dur
+    return out
+
+
+def _rf_grammar_cards(concept: dict) -> str:
+    """Grounded clip cards for the RF Director's visual-grammar pass — the chosen cuts with just
+    enough to judge pairing/transition (asset_id → shoot date, what it shows, which pet). The
+    Director composes split/match-cut among THESE clips, so split_with always names a real,
+    already-grounded cut."""
+    rows = []
+    for c in (concept.get("cuts") or []):
+        aid = str(c.get("asset_id") or "")
+        m = re.match(r"med_(\d{4}_\d{2}_\d{2})", aid)
+        rows.append({
+            "asset_id": aid,
+            "shoot_date": m.group(1) if m else None,
+            "who": c.get("who") or "",
+            "what_it_shows": c.get("action") or c.get("what_it_shows")
+            or c.get("beat") or "",
+        })
+    return json.dumps(rows, ensure_ascii=False)
+
+
+def _split_motion_wipe_filter(ts_a: float, ts_b: float, dur: float) -> str:
+    """The MOTION split (PD 2026-11-13, iOS Photos Memories grammar; memory
+    rf_split_motion_wipe_spec). PD's differentiator: 'it must divide WHILE there is motion' —
+    a static side-by-side grid is wrong. So the two panels SWEEP in:
+      • top/bottom layout (1080×960 each) — the 9:16 canvas is tall, so top/bottom reads far
+        better than two ultra-narrow 540-wide columns (PD rejected left/right),
+      • the TOP panel wipes in from the LEFT, the BOTTOM panel from the RIGHT (opposing sweep),
+      • a BLURRED full-frame base (the primary clip) sits behind so an uncovered edge during
+        the sweep is a soft background, NEVER black (PD: '검은색이 보이면 안되고'),
+      • BOTH clips play live the whole time — motion preserved, not frozen frames.
+    Layout is a deterministic Python choice (top/bottom), per the 'mechanical = Python' split.
+    Subject framing is center-crop here; subject-aware crop (keep the pet in each panel) is the
+    footage-aware follow-up. Returns a filter_complex producing [vout]."""
+    wipe = float(os.getenv("RF_SPLIT_WIPE_SEC", "0.5"))
+    blur = int(os.getenv("RF_SPLIT_BLUR", "24"))
+    top_x = f"if(lt(t,{wipe}),-1080+(t/{wipe})*1080,0)"
+    bot_x = f"if(lt(t,{wipe}),1080-(t/{wipe})*1080,0)"
+    return (
+        f"[0:v]trim=start={ts_a}:duration={dur},setpts=PTS-STARTPTS,split=2[p0][p1];"
+        f"[p0]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+        f"boxblur={blur}:2[base];"
+        f"[p1]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[top];"
+        f"[1:v]trim=start={ts_b}:duration={dur},setpts=PTS-STARTPTS,"
+        f"scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[bot];"
+        f"[base][top]overlay=x='{top_x}':y=0[s1];"
+        f"[s1][bot]overlay=x='{bot_x}':y=960[vout]"
+    )
+
+
 def _prerender_split_cuts(manifests: dict, work_dir: Path,
                             progress_cb: ProgressCb = None,
                             dry_run: bool = False) -> None:
-    """PD 2026-06-03: split_horizontal / split_vertical edit_effect.
+    """PD 2026-06-03 / rebuilt 2026-11-13: split_horizontal / split_vertical edit_effect.
 
     Each split cut has TWO assets (cut.asset_id + cut.secondary_asset_id).
     ffmpeg combines them into one 1080×1920 mp4 (the cut's source).
     Subsequent trim/caption-burn treats it as a single clip.
 
-    split_horizontal: left + right side-by-side (each 540×1920)
-    split_vertical:   top + bottom stacked (each 1080×960)
+    DEFAULT (RF_SPLIT_MOTION=1): the MOTION wipe — panels sweep in (top from left, bottom from
+    right) over a blurred no-black base, both clips live (_split_motion_wipe_filter). This is the
+    iOS Photos Memories look PD signed off on; layout is deterministically top/bottom regardless
+    of the requested effect (PD: top/bottom beats narrow left/right on a 9:16 canvas).
+    Legacy static stack (RF_SPLIT_MOTION=0): split_horizontal = left+right 540×1920 hstack;
+    split_vertical = top+bottom 1080×960 vstack — kept as a kill-switch fallback.
     """
     sources_path = Path(manifests["sources"])
     sources = json.loads(sources_path.read_text(encoding="utf-8"))
@@ -5505,8 +5628,14 @@ def _prerender_split_cuts(manifests: dict, work_dir: Path,
         ts_b = float(entry.get("secondary_trim_start", 0.0))
         dur = float(entry.get("trim_dur", 5.0))
         out_mp4 = split_dir / f"{tag}.mp4"
-        if effect == "split_horizontal":
-            # Each input scaled+padded to 540×1920, then hstacked.
+        motion = os.getenv("RF_SPLIT_MOTION", "1") == "1"
+        if motion:
+            # The iOS-Memories motion wipe (top/bottom, top←left, bottom←right, blurred
+            # no-black base, both live). Layout is top/bottom regardless of effect string.
+            filt = _split_motion_wipe_filter(ts_a, ts_b, dur)
+            _label = "split-wipe"
+        elif effect == "split_horizontal":
+            # Legacy static: each input scaled to 540×1920, then hstacked.
             filt = (
                 "[0:v]" + f"trim=start={ts_a}:duration={dur},setpts=PTS-STARTPTS,"
                 "scale=540:1920:force_original_aspect_ratio=increase,"
@@ -5516,7 +5645,8 @@ def _prerender_split_cuts(manifests: dict, work_dir: Path,
                 "crop=540:1920" + "[b];"
                 "[a][b]hstack=inputs=2[vout]"
             )
-        else:  # split_vertical
+            _label = effect
+        else:  # legacy static split_vertical
             filt = (
                 "[0:v]" + f"trim=start={ts_a}:duration={dur},setpts=PTS-STARTPTS,"
                 "scale=1080:960:force_original_aspect_ratio=increase,"
@@ -5526,6 +5656,7 @@ def _prerender_split_cuts(manifests: dict, work_dir: Path,
                 "crop=1080:960" + "[b];"
                 "[a][b]vstack=inputs=2[vout]"
             )
+            _label = effect
         cmd = [
             "ffmpeg", "-y", "-nostats", "-loglevel", "error",
             "-i", str(primary),
@@ -5537,7 +5668,7 @@ def _prerender_split_cuts(manifests: dict, work_dir: Path,
             "-an",
             str(out_mp4),
         ]
-        _run(cmd, f":left_right_arrow: split {tag} ({effect})",
+        _run(cmd, f":left_right_arrow: {_label} {tag} ({effect})",
              progress_cb, dry_run)
         # Replace cut's source with the pre-rendered split mp4. trim is
         # already applied in the filter so trim_start=0, trim_dur=dur.
@@ -6943,11 +7074,34 @@ def run_real_footage_pipeline(manifests: dict, work_dir: Path,
     # RF_CHAIN_TRANSITION=hardcut. Dissolve length ~0.4s matches the reference reel.
     _rf_cuts = manifests.get("cuts") or []
     if os.getenv("RF_CHAIN_TRANSITION", "crossfade").lower() == "crossfade":
+        # A cut the Director marked `transition_in: match_cut` hard-cuts in (no dissolve) — so it
+        # is EXCLUDED from the crossfade set. All other j>0 cuts cross-dissolve as before.
+        _cg = manifests.get("cut_grammar") or {}
+
+        def _is_match_cut(_tag):
+            return (_cg.get(_tag) or {}).get("transition_in") == "match_cut"
         _xf_tags = [it.get("tag") for j, it in enumerate(_rf_cuts)
-                    if j > 0 and isinstance(it, dict) and it.get("tag")]
+                    if j > 0 and isinstance(it, dict) and it.get("tag")
+                    and not _is_match_cut(it.get("tag"))]
         if _xf_tags:
             asm_cmd += ["--xfade-tags", ",".join(_xf_tags),
                         "--xfade-dur", os.getenv("RF_XFADE_DUR", "0.4")]
+            # PD 2026-11-12 RF visual grammar: deterministic per-cut dissolve lengths
+            # (era-jump long / photo gentle / same-outing tight) instead of a uniform
+            # 0.4s. OFF by default — flip RF_TRANSITION_GRAMMAR=1 after smoke.
+            if os.getenv("RF_TRANSITION_GRAMMAR", "0") == "1":
+                _attrs = manifests.get("cut_grammar") or {}
+                _ordered = [{"tag": it.get("tag"),
+                             **(_attrs.get(it.get("tag")) or {})}
+                            for it in _rf_cuts
+                            if isinstance(it, dict) and it.get("tag")]
+                _durs = _rf_transition_grammar(_ordered)
+                if _durs:
+                    asm_cmd += ["--xfade-durs", json.dumps(_durs)]
+                    if progress_cb:
+                        _kinds = len({round(v, 2) for v in _durs.values()})
+                        progress_cb(":left_right_arrow: RF 전환 그래머 — "
+                                    f"디졸브 길이 {_kinds}종 (per-cut)")
     _run(
         asm_cmd,
         ":clapper: [3/3] Final assembly",
@@ -9611,6 +9765,7 @@ def _persist_render_meta(work_dir: Path, manifests: dict, cuts: list,
             "anim_dir": str(work_dir / "animated"),
             "cut_tags": [c.get("tag") for c in (cuts or []) if c.get("tag")],
             "xfade_tags": list(xfade_tags or []),
+            "cut_grammar": manifests.get("cut_grammar") or {},  # RF per-cut transition attrs
             "font_override": manifests.get("font_override") or "",
             "concept": manifests.get("concept") or {},
             "concept_cuts": concept_cuts or [],
@@ -9802,6 +9957,23 @@ def render_card(card_id_prefix: str, *,
         log.info("Card %s → style=%s, %d assets", card_id[:8], style, len(assets))
         if progress_cb:
             progress_cb(f":movie_camera: Rendering `{card_id[:8]}` with **{style}** pipeline")
+
+        # RF Director — ACTIVE visual-grammar composition (PD 2026-11-13; the 허용≠행동 trigger).
+        # Split and match-cut are allowed but the Writer never chooses them, so they never appear.
+        # Here the Director reads the chosen clips and actively composes the grammar (a top/bottom
+        # motion-wipe split for two clips that belong together, a hard match-cut where motion
+        # carries across). Runs BEFORE prestage so a split's secondary clip gets downloaded too.
+        # OFF by default (RF_DIRECTOR_PASS); best-effort — any failure leaves the concept as-is.
+        if (style == "real_footage" and isinstance(concept, dict)
+                and os.getenv("RF_DIRECTOR_PASS", "0") == "1"):
+            try:
+                from agents.writer_director import run_rf_director, apply_rf_visual_grammar
+                brief = run_rf_director(concept, _rf_grammar_cards(concept),
+                                        progress_cb=progress_cb)
+                if brief:
+                    concept = apply_rf_visual_grammar(concept, brief)
+            except Exception as e:
+                log.warning("RF director visual-grammar pass skipped: %s", e)
 
         # PD 2026-06-11: pre-download ALL source assets up front (serialized) so the
         # render never fails mid-preprocess on a pruned/missing photo ("not found").

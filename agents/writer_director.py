@@ -891,6 +891,69 @@ def run_rf_director(concept: dict, grounded_cards: str, *,
         return None
 
 
+def apply_rf_visual_grammar(concept: dict, brief: dict) -> dict:
+    """Apply the RF Director brief's VISUAL GRAMMAR — `split_with` and `transition_in` — onto the
+    concept's cuts so the renderer actually composes them (the 허용≠행동 trigger: these moves are
+    allowed but never chosen, so they never appear). This reads ONLY the grammar fields; consuming
+    the arc/payoff/must_keep is the separate B1 wiring. Mutates and returns `concept`; best-effort
+    (any shape mismatch leaves the concept unchanged). Caller gates on RF_DIRECTOR_PASS.
+
+    - `transition_in: "match_cut"` → stamp the cut so assembly hard-cuts into it (no dissolve).
+    - `split_with: <asset_id>` → make that cut a top/bottom motion-wipe split (edit_effect=
+      split_vertical, secondary_asset_id=the named clip), and DROP the named clip's own standalone
+      cut so it isn't shown twice."""
+    try:
+        cuts = concept.get("cuts") or []
+        seq = (brief or {}).get("sequence") or []
+        if not (cuts and seq):
+            return concept
+        by_aid: dict = {}
+        for c in cuts:
+            aid = c.get("asset_id")
+            if aid and aid not in by_aid:
+                by_aid[aid] = c
+        secondary_aids: set = set()
+        applied = {"match_cut": 0, "split": 0}
+        split_done = False
+        for item in seq:
+            if not isinstance(item, dict):
+                continue
+            cut = by_aid.get(item.get("clip"))
+            if not cut:
+                continue
+            if (item.get("transition_in") or "").strip().lower() == "match_cut":
+                cut["transition_in"] = "match_cut"
+                applied["match_cut"] += 1
+            sw = item.get("split_with")
+            # at most ONE split per episode (prompt rule) — an accent, not the format
+            if sw and not split_done and sw != item.get("clip") and sw in by_aid:
+                cut["edit_effect"] = "split_vertical"
+                cut["secondary_asset_id"] = sw
+                secondary_aids.add(sw)
+                applied["split"] += 1
+                split_done = True
+        if secondary_aids:
+            def _is_split(c):
+                return (c.get("edit_effect") or "").lower() in ("split_vertical", "split_horizontal")
+            kept = [c for c in cuts
+                    if c.get("asset_id") not in secondary_aids or _is_split(c)]
+            # Never let a split merge an episode below the 2-cut floor (RF_MIN_CUTS) — a split is
+            # an accent on a multi-beat episode, not the whole thing. If it would, undo the split.
+            if len(kept) >= 2:
+                concept["cuts"] = kept
+            else:
+                for c in cuts:
+                    if c.get("secondary_asset_id") in secondary_aids or _is_split(c):
+                        c.pop("edit_effect", None)
+                        c.pop("secondary_asset_id", None)
+                applied["split"] = 0
+        concept["_rf_grammar_applied"] = applied
+        return concept
+    except Exception as e:
+        log.warning("apply_rf_visual_grammar failed (concept unchanged): %s", e)
+        return concept
+
+
 def propose_concepts_v2(target_date: dt.date, context: dict, *,
                         style_filter: str | None = None,
                         progress_cb=None,
