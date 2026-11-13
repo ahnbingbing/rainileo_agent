@@ -17,6 +17,7 @@ selectors start from real data, not an empty table.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import datetime as dt
 import logging
@@ -34,10 +35,11 @@ _CORPUS_FILE = Path(__file__).resolve().parent.parent / "notes" / "pd_corpus.jso
 
 def append_pd_corpus(*, lane: str | None, kind: str, decision: str, reason: str,
                      subject: str = "", source: str = "session") -> bool:
-    """Append one PD utterance (verbatim `reason`) to the git-tracked corpus. Called by the
-    giri-update / review-learning skills at the moment PD gives a Giri-relevant standard in a
-    session — so the corpus grows where PD actually talks. Dedups by exact reason. COMMIT the
-    file so it reaches the VM's Giri. Returns True if a new line was written."""
+    """Append one DISTILLED PD standard to the git-tracked corpus. `reason` must be the JUDGED
+    principle (one line, generalized — synthesize, don't transcribe), NOT PD's raw message
+    text-by-text (PD 2026-11-13: "판단을 해서 저장해야지, 플레인하게 텍스트 by 텍스트로 저장하면 안 돼").
+    Use `distill_and_append` to have an LLM do the judging, or pass an already-distilled principle.
+    Dedups by exact reason. COMMIT the file so it reaches the VM's Giri. Returns True if written."""
     reason = (reason or "").strip()
     if not reason:
         return False
@@ -59,6 +61,54 @@ def append_pd_corpus(*, lane: str | None, kind: str, decision: str, reason: str,
     except Exception as e:
         log.warning("append_pd_corpus failed: %s", e)
         return False
+
+
+_DISTILL_SYSTEM = """\
+너는 PD 피드백을 Giri(리뷰 검수기)의 지속 표준으로 '증류'하는 판단자다. PD가 세션에서 적은 원문을
+받아 판단하라 — 원문을 텍스트 그대로 저장하면 안 된다.
+
+판단 기준:
+- 이게 Giri가 앞으로 **모든/다수 에피소드에 적용할 지속 가능한 품질 표준**인가? (일회성 잡담, 특정 에피
+  지엽, 단순 감탄/확인은 저장하지 마라.)
+- 표준이면 **원칙 한 줄로 축약·일반화**하라 — 왜(실패 방지)가 드러나게, PD의 장황/맥락은 걷어내고.
+  (예: 원문 "이 캡션 랴니가 발로 차는데 참는다고 나오잖아" → 표준 "RF 캡션은 영상이 실제로 보여주는
+  동작에 맞춰라 — Writer 상상 서사 금지".)
+
+출력(JSON 하나): {"save": true|false, "kind": "concept|clip|cut|caption|schedule|tone",
+"decision": "correct|reject|pick", "standard": "<한 줄 원칙, 원문 복붙 금지>"}
+저장 가치 없으면 {"save": false}."""
+
+
+def distill_and_append(con: sqlite3.Connection, raw: str, *, lane: str | None = None,
+                       context: str = "", source: str = "session",
+                       model: str | None = None) -> "dict | None":
+    """JUDGE PD's raw session feedback into a durable standard, then save the DISTILLED principle
+    (not the raw text). PD 2026-11-13: "내가 적은 것 중에서 판단을 해서 저장해야지 — 플레인하게
+    텍스트 by 텍스트로 저장하면 안 돼." An LLM decides whether the feedback is a keep-worthy standard
+    and compresses it to one principle-first line; only then does it hit the corpus. Returns the
+    distilled dict (or None if not worth saving / on failure — never stores raw)."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        from agents.writer_director import _call_anthropic, DIRECTOR_MODEL
+        import json as _j
+        user = (f"## PD 원문{f' (맥락: {context})' if context else ''}\n{raw}\n\n"
+                "위 규칙대로 증류 판단 JSON 하나만 출력하라.")
+        out = _call_anthropic(_DISTILL_SYSTEM, user,
+                              model=model or os.getenv("GIRI_DISTILL_MODEL", DIRECTOR_MODEL),
+                              max_tokens=600)
+        a, b = out.find("{"), out.rfind("}")
+        obj = _j.loads(out[a:b + 1]) if a != -1 and b != -1 else {}
+        if not obj.get("save") or not (obj.get("standard") or "").strip():
+            return None
+        append_pd_corpus(lane=lane, kind=obj.get("kind", "concept"),
+                         decision=obj.get("decision", "correct"),
+                         reason=obj["standard"].strip(), source=source)
+        return obj
+    except Exception as e:
+        log.warning("distill_and_append failed (nothing stored): %s", e)
+        return None
 
 
 def _file_corpus_rows(lane: str | None = None) -> list[dict]:

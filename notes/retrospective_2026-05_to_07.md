@@ -882,7 +882,15 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   (세션=로컬DB·Giri=VM DB라 DB로 못 건너감→git 파일이 전송), `taste_digest`가 DB veto + 파일 머지, giri-update/
   review-learning 스킬이 그 append를 "Record" 단계에 보유. 교훈=**수집 파이프라인은 소스가 쉬운 곳이 아니라 신호가
   진한 곳에 놔라**(0 수율이 그걸 증명했다·"끝까지 돌려 결과 보라"의 수집판)·**Mac↔VM 경계는 DB 아니라 git 파일로
-  건넌다**(운영 DB 미동기화).
+  건넌다**(운영 DB 미동기화). ★또 하나(같은 세션, PD 정정)=**corpus 저장은 '판단/증류'지 '텍스트 by 텍스트 플레인
+  저장'이 아니다.** 세션 캡처를 `append_pd_corpus(reason="PD 원문 그대로")`로 지었더니 PD: "내가 적은 것 중에서
+  판단을 해서 저장해야지, 플레인하게 다 저장하면 안 돼." → `distill_and_append`(LLM이 PD 원문을 판단: 지속 표준인가?
+  →원칙 한 줄로 축약·일반화, 원문/장황 걷어냄). 이건 **synthesize-don't-transcribe**(prompt-authoring·merge-
+  retrospective·auto-memory가 이미 비협상으로 요구하는 그 원칙)을 **corpus에도** 적용한 것 — 프롬프트·메모리엔 지키면서
+  corpus엔 어겼던 일관성 구멍. +PD "기리가 판단하면서 저장해야해" → `reviewer.review()`가 매 판단마다 자기 verdict/
+  발동게이트/결함수를 `giri_reviews`에 저장(Giri 통과↔PD veto 조인=러버스탬프 실증, 자가감사 입력). 교훈=**학습
+  저장소에 넣는 건 전부 증류된 판단이어야 한다**(raw 덤프는 신호를 희석·반복 재발)·**검수기는 읽기만 말고 자기 판단을
+  남겨 PD와 대조 가능해야 거울이 교정된다**.
 
 ### 4.4 실사(RF)
 - **C_outingdedup. dedup의 단위는 파일(asset_id)이 아니라 이벤트(나들이)다 — 같은 낮잠의 다른 컷이 중복을 뚫었다(11/12)** —

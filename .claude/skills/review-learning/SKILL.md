@@ -59,14 +59,15 @@ audit, every time.
 7. **Verify end-to-end.** Re-render or dry-run one affected episode and confirm the
    learned behavior actually appears downstream — and that nothing it superseded broke.
 
-8. **Record — memory AND the PD corpus.** Write/update one memory file (principle + why +
-   how-to-apply + the worked example), link related memories with [[name]], add the MEMORY.md
-   pointer. AND append PD's **verbatim words** to the git-tracked PD-feedback corpus so the
-   CHECKER (Giri) learns from the same note, not just the generator:
-   `from agents import pd_taste; pd_taste.append_pd_corpus(lane=..., kind=..., decision="correct"|"reject",
-   reason="<what PD actually said>")` → commit `notes/pd_corpus.jsonl`. The corpus grows in the
-   session where PD actually talks; `taste_digest` merges it into Giri + the self-audit. (dedup is
-   by exact text, so a paired giri-update doing the same append is harmless.)
+8. **Record — memory AND the PD corpus (JUDGED, not dumped).** Write/update one memory file
+   (principle + why + how-to-apply + the worked example), link related memories with [[name]], add
+   the MEMORY.md pointer. AND save the standard to the git-tracked PD-feedback corpus so the CHECKER
+   (Giri) learns from the same note — but **distil it, never store PD's raw message text-by-text**
+   (synthesize, don't transcribe): `from agents import pd_taste;
+   pd_taste.distill_and_append(con, "<PD's raw feedback>", lane=...)` (LLM judges keep-worthiness +
+   compresses to one principle), or pass an already-distilled principle to
+   `pd_taste.append_pd_corpus(...)`. Commit `notes/pd_corpus.jsonl`. `taste_digest` merges it into
+   Giri + the self-audit. (dedup is by exact text, so a paired giri-update append is harmless.)
 
 ## The non-negotiables PD called out
 

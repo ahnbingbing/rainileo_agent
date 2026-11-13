@@ -1,2 +1,3 @@
 {"ts": "2026-11-13 21:52:50", "lane": "real_footage", "kind": "caption", "decision": "correct", "subject": "", "reason": "split 합성 컷의 캡션은 주 클립만 말하지 말고 과거↔현재 병치 의미를 명시해야(위=과거/아래=현재).", "source": "session"}
 {"ts": "2026-11-13 21:53:18", "lane": "real_footage", "kind": "caption", "decision": "correct", "subject": "", "reason": "RF 캡션은 영상이 실제로 보여주는 동작(네이티브 액션VLM 기준)에 맞춰라 — Writer가 상상한 서사(예: '랴니 참는다')로 쓰지 마라. 레오가 치고 랴니가 받아치는데 '참는다'는 틀림.", "source": "session"}
+{"ts": "2026-11-13 22:03:00", "lane": "real_footage", "kind": "caption", "decision": "reject", "subject": "", "reason": "캡션은 영상이 실제로 보여주는 동작/행동과 일치해야 한다 — Writer의 상상 서사나 내면 묘사로 화면과 모순되게 만들지 마라", "source": "session"}

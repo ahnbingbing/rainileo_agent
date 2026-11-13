@@ -2199,7 +2199,46 @@ def review(video: Path, storyboard: list[dict] | None = None,
         except OSError:
             pass
 
+    # Giri saves its OWN judgment while it judges (PD 2026-11-13: "기리가 판단하면서 저장해야해") —
+    # a distilled record (verdict, score, which standards fired, defect count), NOT a raw dump. This
+    # gives the mirror an audit trail: joined with PD's vetoes it shows where Giri PASSED what PD then
+    # vetoed (the concrete rubber-stamp instances the self-audit hunts). Best-effort, kill-switch.
+    if os.getenv("GIRI_SAVE_JUDGMENT", "1") == "1":
+        _save_giri_judgment(video, concept, report)
+
     return report
+
+
+def _save_giri_judgment(video: "Path", concept: dict | None, report: dict) -> None:
+    """Persist Giri's distilled judgment of one episode to the giri_reviews table (best-effort,
+    never raises). Stores the verdict/score + the concrete standards Giri fired (the `_*_override`
+    gate markers) + the defect count — Giri's judgment, not the raw review text."""
+    try:
+        gates = sorted(k[:-9] for k in report
+                       if k.endswith("_override") and k.startswith("_"))
+        rec = {
+            "card_id": str((concept or {}).get("card_id") or ""),
+            "video": getattr(video, "name", str(video)),
+            "lane": str((concept or {}).get("render_style") or ""),
+            "verdict": str(report.get("판정") or ""),
+            "score": int(report.get("점수") or 0),
+            "gates_fired": json.dumps(gates, ensure_ascii=False),
+            "n_mismatches": len(report.get("caption_vs_clip_mismatches") or []),
+        }
+        con = sqlite3.connect(ROOT / "data" / "agent.db", timeout=30)
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS giri_reviews ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT, card_id TEXT, video TEXT, "
+            "lane TEXT, verdict TEXT, score INTEGER, gates_fired TEXT, n_mismatches INTEGER)")
+        con.execute(
+            "INSERT INTO giri_reviews (created_at, card_id, video, lane, verdict, score, "
+            "gates_fired, n_mismatches) VALUES (datetime('now'),?,?,?,?,?,?,?)",
+            (rec["card_id"], rec["video"], rec["lane"], rec["verdict"], rec["score"],
+             rec["gates_fired"], rec["n_mismatches"]))
+        con.commit()
+        con.close()
+    except Exception as e:
+        log.warning("_save_giri_judgment failed: %s", e)
 
 
 def print_report(report: dict) -> None:
