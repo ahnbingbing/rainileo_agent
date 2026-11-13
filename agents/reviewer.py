@@ -63,6 +63,26 @@ for p in ["photo_selection_guide_v1.0.md", "photo_selection_guide.md"]:
         except Exception:
             pass
 
+# PD 판단 스타일 렌즈 (PD-mirror P2, PD 2026-11-13) — Giri가 PD의 결정(P0 digest)뿐 아니라 PD가
+# 판단하는 *방식*으로 사고하게 하는 증류 프로필. corpus에 없는 새 케이스도 PD처럼 보게 한다.
+# OFF 기본(GIRI_PD_LENS), context에 주입(정적 REVIEW_PROMPT은 런타임 게이트 불가).
+PD_LENS_BLOCK = """\
+## PD처럼 심사하라 — 판단 방식 (러버스탬프 금지)
+너는 PD의 거울이다. 예쁜 프레임은 통과한 프레임이 아니다. 기본값은 **회의적** — 결함을 찾아라,
+좋게 봐주지 마라. PD가 실제로 보는 순서와 기준:
+1. **캡션↔화면 일치 먼저** — 각 캡션이 그 클립이 *실제로 보여주는 것*과 맞나? 영상에 없는 동작·감정·
+   사물·펫을 지어내면(날조/오독) 가장 큰 결함이다. "둘 다"인데 한 마리만, 실외를 실내로, 촬영 시점에
+   없던 펫 호명 — 전부 하드 감점.
+2. **컨셉이 footage에 정직한가** — 클립이 담지 않은 서사를 캡션이 약속하면(빌드업 후 페이오프 없음) 깨진
+   영상이다. 상류(컨셉/footage)가 틀렸는지, 표면(캡션/제목)만 고치면 되는지 구분해 말하라.
+3. **중복** — 이웃 예약편과 같은 클립/나들이인가.
+4. **제목 정직성** — 제목이 cut1(훅)·내용을 배신하나(한자·과장·다른 나들이 봉합).
+5. **톤/취향** — 위트 반복 상투어, 번역투, 설교조.
+**표면보다 근본** — "재캡션/재제목으로 고쳐지나(소폭), 아니면 컨셉/footage 자체가 틀렸나(재작업)"를
+판정에 명시하라. **끝까지 보고 판단** — 통계·요약이 아니라 실제 프레임·캡션으로. 판정은 반드시 **구체적
+다음 행동**(업로드/소폭수정/재작업/폐기)으로 끝낸다.
+"""
+
 REVIEW_PROMPT = f"""\
 {REVIEW_GUIDE}
 
@@ -1768,6 +1788,11 @@ def review(video: Path, storyboard: list[dict] | None = None,
                 context += "\n\n" + _td + "\n"
         except Exception as e:
             log.warning("Giri pd_taste digest injection failed: %s", e)
+
+    # PD-mirror P2 — PD's reasoning METHOD (skeptical, footage-match-first, root-over-surface) so
+    # Giri judges PD-style even on cases not in the corpus. OFF by default (GIRI_PD_LENS).
+    if os.getenv("GIRI_PD_LENS", "0") == "1":
+        context += "\n\n" + PD_LENS_BLOCK + "\n"
 
     # Recent-episode context for the cross-day concept-dedup check (PD 2026-08-02): give the
     # reviewer the themes of episodes published/scheduled in the last few days so it can flag
