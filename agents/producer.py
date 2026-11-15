@@ -391,6 +391,30 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
                 s += 0.5                                   # kinetic = minor footage-fit nudge
             elif act in _LOW_MOTION_ACTS:
                 s -= 0.3                                   # pure nap = slight penalty
+            # PD 2026-11-15: source-agnostic RECENCY bonus. The strongest signal above
+            # (pd_notes, +2.0) comes ONLY from 함미하비 Slack descriptions — iCloud clips
+            # carry it ~1% of the time (Nov iCloud: 0%). So the daily iCloud dump was
+            # structurally outranked by older Slack footage in every tier and never aired
+            # (PD: "icloud에 새로운 것 많은데 또 자주 썼던 것 반복 / 함미하비 슬랙방 내용만
+            # 나온다"). This bonus rewards NEWNESS itself — which is independently what the
+            # channel wants ("오늘 뭐해" freshness) — so a just-ingested clip competes with a
+            # described-moment Slack clip regardless of source. It only reorders WITHIN the
+            # fresh tiers (A/B are ≤RF_DIVERSE_RECENT_DAYS); memory-lane (C) is ~0 and still
+            # served by archive_videos. Tuned to match, not wildly exceed, pd_notes so
+            # owner-described hooks still surface (jitter + diversity_sample mix both).
+            # Kill switch: RF_RECENCY_BONUS=0.
+            if os.getenv("RF_RECENCY_BONUS", "1") != "0":
+                try:
+                    _d0 = dt.date.fromisoformat((r["captured_iso"] or "")[:10])
+                    _age = (target - _d0).days
+                    if _age <= 14:
+                        s += float(os.getenv("RF_RECENCY_B14", "1.2"))
+                    elif _age <= 30:
+                        s += float(os.getenv("RF_RECENCY_B30", "0.6"))
+                    elif _age <= 60:
+                        s += float(os.getenv("RF_RECENCY_B60", "0.2"))
+                except Exception:
+                    pass
             return s
         import random as _rnd
         _A = [r for r in _video_rows if _fresh(r) and _reuse.get(r["asset_id"], 0) == 0]

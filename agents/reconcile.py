@@ -147,6 +147,110 @@ def relink_orphans(con: sqlite3.Connection | None = None, yt=None,
     return relinked
 
 
+def find_unscheduled(con: sqlite3.Connection | None = None, yt=None,
+                     horizon_days: int = 14) -> list[dict]:
+    """The INVERSE of an orphan: cards the DB believes are SCHEDULED (uploaded=1, a future
+    youtube_publish_at) whose YouTube video is `private` WITHOUT a publishAt — the schedule
+    silently never stuck, so the slot will NOT publish although the DB says it will (the
+    11/17 18:00 slot that vanished: DB uploaded=1 + publish_at set, YT publishAt=None, no
+    veto). DB-knows / YouTube-forgot. Returns [{video_id, card_id, publish_at, title}] for
+    upcoming slots only (past = already public or genuinely missed, not repairable here)."""
+    close = False
+    if con is None:
+        from agents.producer import _db
+        con = _db()
+        close = True
+    try:
+        now = dt.datetime.now(dt.timezone.utc)
+        horizon = now + dt.timedelta(days=horizon_days)
+        want: list[tuple] = []
+        for cid, vid, pa, theme in con.execute(
+                "SELECT card_id, youtube_video_id, youtube_publish_at, theme FROM cards "
+                "WHERE youtube_video_id IS NOT NULL AND youtube_video_id!='' "
+                "AND uploaded=1 AND youtube_publish_at IS NOT NULL").fetchall():
+            try:
+                paz = dt.datetime.fromisoformat(pa.replace("Z", "+00:00"))
+            except Exception:
+                continue
+            if now < paz <= horizon:   # only upcoming, not-yet-published slots
+                want.append((cid, vid, pa, theme or ""))
+        if not want:
+            return []
+        if yt is None:
+            from youtube.oauth import get_youtube
+            yt = get_youtube()
+        ids = [w[1] for w in want]
+        status: dict = {}
+        for i in range(0, len(ids), 50):
+            v = yt.videos().list(part="status", id=",".join(ids[i:i + 50])).execute()
+            for it in v.get("items", []):
+                status[it["id"]] = it["status"]
+        # A stuck card is only a LOST slot if no OTHER video already carries a publishAt for
+        # the same slot time. Superseded re-renders (the old id after a replace) are also
+        # private+no-publishAt, but their slot IS covered by the winner — re-asserting their
+        # publishAt would DOUBLE-BOOK the slot. Build the covered-slot set from YouTube truth
+        # (every video actually scheduled) and skip stuck cards whose slot is already live.
+        def _slot(iso: str) -> str:
+            # normalize to minute so YT reformatting (sub-second / offset) can't hide a match
+            try:
+                return dt.datetime.fromisoformat((iso or "").replace("Z", "+00:00")).astimezone(
+                    dt.timezone.utc).strftime("%Y-%m-%dT%H:%M")
+            except Exception:
+                return iso or ""
+        try:
+            covered = {_slot(s["publish_at"]) for s in list_scheduled_videos(yt)}
+        except Exception as e:  # noqa: BLE001
+            log.warning("find_unscheduled: scheduled-set read failed (%s) — "
+                        "skipping to avoid double-booking", e)
+            return []
+        out: list[dict] = []
+        for cid, vid, pa, title in want:
+            st = status.get(vid)
+            if st is None:
+                continue  # video gone → orphan/deleted path, not this one
+            if st.get("privacyStatus") != "private" or st.get("publishAt"):
+                continue  # already public or already scheduled
+            if _slot(pa) in covered:
+                continue  # slot already filled by another video → this is a superseded dup
+            out.append({"video_id": vid, "card_id": cid,
+                        "publish_at": pa, "title": title})
+        return out
+    finally:
+        if close:
+            con.close()
+
+
+def reschedule_stuck(con: sqlite3.Connection | None = None, yt=None,
+                     apply: bool = True) -> list[dict]:
+    """Repair DB-scheduled / YouTube-unscheduled drift by re-asserting each stuck card's
+    publishAt so the slot actually airs (reversible — PD can still /veto). Returns the
+    slots acted on, each stamped `repaired` True/False. Env RECONCILE_RESCHEDULE=0 off."""
+    import os
+    if os.getenv("RECONCILE_RESCHEDULE", "1") == "0":
+        return []
+    try:
+        stuck = find_unscheduled(con, yt)
+    except Exception as e:  # noqa: BLE001
+        log.warning("reconcile: find_unscheduled failed (non-fatal): %s", e)
+        return []
+    if not stuck or not apply:
+        return stuck
+    from youtube.upload import ensure_scheduled
+    for s in stuck:
+        try:
+            s["repaired"] = ensure_scheduled(s["video_id"], s["publish_at"], yt=yt)
+            if s["repaired"]:
+                log.info("reschedule: re-asserted %s publishAt=%s (slot recovered)",
+                         s["video_id"], s["publish_at"])
+            else:
+                log.error("reschedule: %s would not take publishAt=%s — slot still at risk",
+                          s["video_id"], s["publish_at"])
+        except Exception as e:  # noqa: BLE001
+            s["repaired"] = False
+            log.warning("reschedule: %s failed: %s", s["video_id"], e)
+    return stuck
+
+
 def orphan_report(con: sqlite3.Connection | None = None) -> str:
     """One-line-per-orphan summary for the launch batch Slack post. '' when clean.
     Re-links recoverable orphans FIRST (so a lost-writeback video becomes visible to dedup
@@ -155,17 +259,34 @@ def orphan_report(con: sqlite3.Connection | None = None) -> str:
         relink_orphans(con)
     except Exception as e:
         log.warning("reconcile: relink_orphans failed (non-fatal): %s", e)
+    lines: list[str] = []
+    # Repair the inverse drift FIRST: slots the DB thinks are scheduled but YouTube forgot
+    # to schedule (publishAt dropped) → re-assert so they actually air, and tell PD.
+    try:
+        repaired = reschedule_stuck(con)
+        if repaired:
+            ok = [r for r in repaired if r.get("repaired")]
+            bad = [r for r in repaired if not r.get("repaired")]
+            if ok:
+                lines.append(f":arrows_counterclockwise: *예약 유실 복구 {len(ok)}건* "
+                             f"(DB는 예약인데 YouTube publishAt 누락 → 재예약):")
+                for r in ok:
+                    lines.append(f"  • {_kst(r['publish_at'])}  {r['video_id']}  {r['title'][:34]}")
+            for r in bad:
+                lines.append(f":rotating_light: 예약 복구 실패 {r['video_id']} "
+                             f"({_kst(r['publish_at'])}) — 수동 확인 필요")
+    except Exception as e:
+        log.warning("reconcile: reschedule_stuck failed (non-fatal): %s", e)
     try:
         orphans = find_orphans(con)
     except Exception as e:
         log.warning("reconcile: orphan_report failed: %s", e)
-        return ""
-    if not orphans:
-        return ""
-    lines = [f":warning: *예약 고아 {len(orphans)}건* (YouTube 예약됨 · 카드 없음 — "
-             f"`python -m agents.reconcile --veto`로 정리):"]
-    for o in orphans:
-        lines.append(f"  • {_kst(o['publish_at'])}  {o['video_id']}  {o['title'][:34]}")
+        orphans = []
+    if orphans:
+        lines.append(f":warning: *예약 고아 {len(orphans)}건* (YouTube 예약됨 · 카드 없음 — "
+                     f"`python -m agents.reconcile --veto`로 정리):")
+        for o in orphans:
+            lines.append(f"  • {_kst(o['publish_at'])}  {o['video_id']}  {o['title'][:34]}")
     return "\n".join(lines)
 
 
@@ -174,8 +295,19 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Reconcile YouTube schedule vs DB cards")
     p.add_argument("--veto", action="store_true",
                    help="un-schedule (set private, clear publishAt) each orphan")
+    p.add_argument("--reschedule", action="store_true",
+                   help="repair DB-scheduled / YouTube-unscheduled slots (re-assert publishAt)")
     p.add_argument("--json", action="store_true", help="machine-readable output")
     a = p.parse_args()
+    if a.reschedule:
+        stuck = reschedule_stuck(apply=True)
+        if not stuck:
+            print("clean — every DB-scheduled slot carries a publishAt on YouTube.")
+        else:
+            for s in stuck:
+                flag = "✓ re-scheduled" if s.get("repaired") else "!! FAILED"
+                print(f"  {flag}  {_kst(s['publish_at'])}  {s['video_id']}  {s['title'][:40]}")
+        return 0
     _rel = relink_orphans()
     for r in _rel:
         print(f"  relinked {r['video_id']} -> card {r['card_id']} ({r['date']})")

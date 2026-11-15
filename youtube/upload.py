@@ -69,7 +69,53 @@ def upload_short(
             raise RuntimeError(f"upload failed: {e}") from e
 
     log.info("upload ok: video_id=%s", response["id"])
+    # PD 2026-11-15: a SCHEDULED upload must verify publishAt actually stuck. YouTube is
+    # eventually-consistent and occasionally accepts the insert but silently drops
+    # publishAt — the video then sits `private` FOREVER while our DB records it as
+    # "scheduled/published" (the 11/17 18:00 slot that vanished: DB uploaded=1 +
+    # publish_at set, but YT publishAt=None → the slot never aired and nothing caught it).
+    # The veto path already verifies publishAt got CLEARED; this is its mirror — verify it
+    # got SET. On failure we raise, so the caller treats the slot as unscheduled (loud) in-
+    # stead of trusting a silent half-state. Kill switch: YT_VERIFY_PUBLISHAT=0.
+    if publish_at_iso and os.getenv("YT_VERIFY_PUBLISHAT", "1") != "0":
+        if not ensure_scheduled(response["id"], publish_at_iso, yt=yt):
+            raise RuntimeError(
+                f"upload {response['id']} 예약 실패: publishAt이 YouTube에 박히지 않음 "
+                f"(요청 {publish_at_iso}). 슬롯이 조용히 비지 않도록 중단.")
     return response
+
+
+def ensure_scheduled(video_id: str, publish_at_iso: str, yt=None,
+                     attempts: int = 3) -> bool:
+    """Guarantee `video_id` is private + carries a publishAt on YouTube, (re)asserting the
+    schedule until it sticks. Returns True once confirmed, False if publishAt would not
+    persist after `attempts` (caller must treat the slot as NOT safely scheduled). Used
+    both inline after a scheduled upload and by the reconciler that repairs DB-says-
+    scheduled / YouTube-has-no-publishAt drift."""
+    yt = yt or get_youtube()
+    for attempt in range(attempts):
+        try:
+            items = yt.videos().list(part="status", id=video_id).execute().get("items", [])
+            st = items[0]["status"] if items else {}
+        except Exception as e:  # noqa: BLE001
+            log.warning("ensure_scheduled: status read failed for %s: %s", video_id, e)
+            st = {}
+        if st.get("publishAt") and st.get("privacyStatus") == "private":
+            if attempt:
+                log.info("ensure_scheduled: %s confirmed publishAt=%s", video_id, st.get("publishAt"))
+            return True
+        try:
+            yt.videos().update(part="status", body={
+                "id": video_id,
+                "status": {"privacyStatus": "private", "publishAt": publish_at_iso,
+                           "selfDeclaredMadeForKids": False}}).execute()
+        except Exception as e:  # noqa: BLE001
+            log.warning("ensure_scheduled: re-apply failed for %s: %s", video_id, e)
+        log.warning("ensure_scheduled: %s publishAt not yet set (attempt %d/%d)",
+                    video_id, attempt + 1, attempts)
+    log.error("ensure_scheduled: %s publishAt WOULD NOT STICK — slot at risk of silent no-publish",
+              video_id)
+    return False
 
 
 def set_thumbnail(video_id: str, image_path: Path | str) -> None:
