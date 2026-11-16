@@ -1740,6 +1740,21 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   RF_*·RF_PUNCHUP_FABGUARD 킬스위치, RF-only(AV는 current-age regen이라 _av_era_floor가 상류 차단). cf [[C_eramixgen]]·
   [[C_clipknowledgebackfill]]·[[C13]](시점 캡션 flatten)·[[caption_readoff_lowres_misread]].
 
+- **C_junkgate. selfheal의 best-effort 폴백이 Giri-실패본을 그대로 예약했다 — "junk 금지"를 폴백이 배신한다(11/17)** —
+  11/17 21:00 RF 슬롯을 selfheal로 채우다 3연속 실패했고, 근본이 세 겹이었다. ①**마일스톤 era-주입(702aabb)이 ±7일로 과발동** —
+  입양일(11/15)의 ±7일 창(11/8~22) 전체가 입양기 directive를 받아 11/17 컨셉이 전부 2017~2022 옛 사진으로 몰렸고, 그 옛 사진은
+  VM(GCS)에 미미러여서 `_drop_unavailable_av_cuts`가 전량 드롭 → 0컷(C_milestoneforce의 "재료가 풀에 있어야"가 이번엔 *가용성*
+  까지 깨진 변주). ②`RF_PHOTO_MODE=off`로 우회하니 신선 영상은 떴지만 **selfheal 재롤이 길이검증(<13s)으로 대안을 못 만들면,
+  처음 렌더한 Giri-실패본을 best-effort로 그냥 업로드** — 호수 풍경에 "랴니가 물 좋아해요" 날조(Giri 4/10)·위글 컨셉≠가을산책
+  footage(Giri 3/10)가 둘 다 그렇게 예약됐다("junk 금지"가 폴백에서 무력화된 게이트 실명). ③얇은 신선 풀(최근 나들이 11/13 하나,
+  이웃편이 이미 다 씀)+과한 anti-reuse가 재롤을 길이-실패로 몰았다. **PD의 더 깊은 지적**: "수영도 반복(11/12 올림)·그동안 올린
+  ~500편을 RAG로 놓고 봐야" — reviewer_macro는 최근 *footage* 중복만 보고 *테마* 반복을 못 봐 수영을 "distinct"로 통과시켰다.
+  ★교훈 셋: ①**폴백도 품질 게이트를 통과해야 한다** — best-effort가 Giri verdict를 안 보고 ship하면 "junk 금지"는 거짓이다(검수
+  실패본을 예약하느니 슬롯을 비워라). ②**강제 directive의 창은 좁혀라** — 마일스톤 ±7일은 기념일 하루가 아니라 2주를 오염시킨다.
+  ③**반복은 footage가 아니라 published 테마다** — 이미 올린 코퍼스를 RAG로 놓고 봐야 오판이 안 난다. 임시 탈출=수동 Lane-3(클립
+  핀+캡션 직접 작성+프레임 검수)로 그루밍본(2025-11 작년 footage, grooming은 published 26편 중 2편=distinct) 확정.
+  cf [[C_milestoneforce]]·[[rf_fix_production_reproduction]]·D_streamguard(작동하는 폴백이 죽은 주력을 가림 — 여기선 best-effort가 Giri를 가림).
+
 ### 4.5 인프라 / 파이프라인
 - **C_trimproxyscale. 중간 산출물은 전달 해상도로 한 번만 만들어라 — 모든 하류가 1080으로 내릴 거면서 4K를 끌고 다니는 건 순수 낭비고, 집계된 총 렌더 시간이 그 낭비를 가린다(11/12)** —
   RF 렌더가 ~9분이라 "왜 이렇게 느린가"가 반복됐다. 핸드오프는 두 가지를 **가정**했다: 캔버스가 720×1280이고, Giri 리트라이가 주범이라고. 둘 다 틀렸다. `agents/stage_timing.py`(STAGE_TIMING=1 게이트, 프로덕션 no-op)로 스테이지별 벽시계를 재니 **ffmpeg 4K 재인코드(trim+burn+assembly ~41%)와 직렬 VLM 그라운딩(~43%)이 공동주범**이었고(이 render_card 직접 1회 측정엔 Giri 루프가 아예 없었다). 4K 재인코드의 근본=최종 캔버스는 실제로 **1080×1920**(burn `SCREEN_WIDTH`·assemble `EPISODE_W`)인데, **세로 4K 소스(요즘 아이폰 2160×3840)가 trim을 무스케일 통과**해 burn·assembly가 매 스테이지마다 4K를 재인코드했다(랜드스케이프는 더 나빠서 720으로 내렸다가 burn이 1080으로 되올림 — lossy). Fix(2b4147e)=`_trim_real_footage_clips`가 **모든 RF 클립을 1080×1920로 1회 정규화**(킬스위치 `RF_TRIM_PROXY=0`)→burn/assemble의 정규화는 no-op이 되고 4K 재인코드가 사라진다. 품질 무손실(전달물이 이미 1080×1920). 측정: 646.7s→500.1s(~23%); assembly 106→68s·burn 68→49s, **보너스로 VLM 게이트도 빨라짐**(이제 4K가 아닌 1080 프레임을 샘플 ~315→239s). trim 자체는 4K 소스 **디코드-바운드**라 거의 안 줆(새 바닥 ~99s). ★교훈 셋: ①**측정이 추측을 이긴다** — 느린 파이프라인은 프로파일링하고 최적화하라, 추정하지 마라(핸드오프의 캔버스·주범 가정 둘 다 측정이 뒤집음). ②**중간 산출물은 전달 해상도로, 한 번만** — 모든 하류가 1080으로 내릴 거면 4K를 끌고 다니는 건 pure waste이고, **집계된 총 렌더 시간이 스테이지별 낭비를 가린다**(C_photozerosec의 "집계가 버그를 가림"·D_slotdownweight의 "per-video가 채널보존을 가림"의 perf판). ③**형제 경로를 빠뜨리지 마라** — change-impact로 `_fit_caption_reading_time`(caption-fit 재트림)·`_prerender_photo_kenburns_cuts`(photo-KB 추억믹스)가 같은 720을 쓰고 있었음을 잡아 같은 플래그로 1080에 정렬했다(안 잡았으면 그 경로만 720→1080 upscale로 lossy하게 남는다). 색은 불변=**plain scale이 HLG 태그를 보존**해 assemble이 여전히 HLG→SDR 톤맵한다(arib-std-b67 생존·최종 색태그 pre-change와 동일 검증 — §Colour gotchas의 HLG 누수 함정을 안 건드림). cf [[C_photozerosec]]·[[D_slotdownweight]]·[[C_captionpathsplit]](형제 경로 드리프트)·pipeline-change-impact.
@@ -2522,6 +2537,23 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   요소는 컷마다 v2v가 통합 생성하게 — 단 금지 대상은 **"촌스러운" 떡칠/싸구려 글리터**지 반짝임 자체가 아님(PD 교정),
   장면에 녹아든 고퀄 반짝임은 허용. ★메타=돈 드는 생성 렌더는 **PD 컨펌 먼저**, 미감은 추측 말고 **PD 레퍼런스
   (share.google→google redirect→소스 URL)를 받아 캘리브레이션**. 상세 작업사양 전체: `notes/mv_agent_feedback_log.md`.
+
+- **C_sdrvui. HLG/SDR 톤맵은 됐는데 최종 색태그가 '일부만' 완전했다 — 밝기 불일치의 근본(11/17)** —
+  PD "RF 파이프라인 중 일부는 밝고 일부는 제대로 나온다, 이상하다". assemble_episode는 입력별로 HLG→SDR 톤맵을 **이미** 했지만
+  (`_color_prefix`), 최종 bt709 VUI 스탬프가 에피마다 달랐다: HLG 입력이 하나라도 있으면 톤맵 필터(zscale)가 프레임에 bt709를 박아
+  **완전**하게 나오지만, **전부-SDR 에피는 `-color_trc/-color_primaries` 출력 플래그만으론 libx264가 VUI에 안 써서
+  trc/primaries=unknown** → 일부 플레이어가 감마를 HDR로 오해해 허옇게 떴다. 측정: 최근 finals 절반이 `tv/bt709/unknown/unknown`
+  vs 정상 `tv/bt709/bt709/bt709`. Fix(46a8328)=모든 입력에 `setparams=range=tv:colorspace=bt709:color_primaries=bt709:color_trc=bt709`
+  를 프레임 단위로 스탬프(메타데이터만, 픽셀 불변) → HLG든 SDR이든 항상 완전한 VUI. E2E 검증: bt709/unknown/unknown 입력이
+  tv/bt709/bt709/bt709로. ★교훈: **"톤맵했다"≠"태그했다"** — 색 정합은 픽셀 변환뿐 아니라 출력 VUI까지 완전해야 하고, 출력
+  플래그는 인코더가 조용히 무시할 수 있으니 **필터로 프레임에 박아** 보장하라. 소스가 HLG/SDR 섞이면 "일부만 맞는" 증상이 바로
+  이 불완전 스탬프다. cf §Colour gotchas(HLG 누수)·[[C_rftrimproxy]](plain scale이 HLG 태그 보존).
+
+- **D_bumperab. 인트로 범퍼 A/B 종결 → outro_only 기본 규칙, 그리고 "잊힌 enforcer"(11/17)** — 훅 앞 브랜드 인트로가 스크롤-스톱을
+  깬다는 2026-10-12 A/B를 PD가 종결(아웃트로만). `_bumper_arm` 기본을 outro_only로(BUMPER_MODE로 가역). ★change-impact가 잡은
+  잊힌 enforcer 둘: `caption_salvage`(폴백 렌더가 intro를 하드코딩 → `_bumper_cli_args`로 통일)·Giri 프레임샘플(`reviewer.py`가 intro
+  1.5s만큼 건너뛰고 컨텐츠 샘플 → outro_only 에피의 **훅 구간을 놓침** → 규칙 반영). 규칙을 한 곳만 바꾸면 폴백·검수가 옛 계약을
+  계속 집행한다. cf [[D_lanemix]](라이브 변경은 런타임 플래그로 가역)·pipeline-change-impact.
 
 ---
 
