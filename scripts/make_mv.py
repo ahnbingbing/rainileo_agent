@@ -158,7 +158,7 @@ def karaoke_lines(suno_task: str, music_index: int = 0) -> list[dict]:
 def make_mv(song, clips, lines, out, *, bumper=BUMPER_DEFAULT, work=None,
             caption_box=True, fontsize=60, title=None, credit="작곡 라레수 · 작사 함미하비",
             title_style=None, title_image=None, outro_hold=0.0,
-            bumper_overlap_fade=None, caption_style=None) -> Path:
+            bumper_overlap_fade=None, caption_style=None, reuse_body=False) -> Path:
     """Build a music video.
       song   : path to the song mp3 (its first `total` seconds are used)
       clips  : [{"src": path, "dur": seconds}, ...] in order (real or AV cuts)
@@ -174,38 +174,42 @@ def make_mv(song, clips, lines, out, *, bumper=BUMPER_DEFAULT, work=None,
     work.mkdir(parents=True, exist_ok=True)
     total = round(sum(c["dur"] for c in clips), 2)
 
-    # 1) per-clip: colour-correct + geometry → CFR bt709 segment. Last clip slowed to fill its slot.
-    segs = []
-    for i, c in enumerate(clips):
-        src, dur = Path(c["src"]), float(c["dur"])
-        ss = float(c.get("ss", 0.1))   # per-clip start offset — land on the action on long source clips
-        seg = work / f"seg{i:02d}.mp4"
-        # `fill`: slow a SHORT fixed-length source (e.g. a 5s Seedance cut) to exactly `dur` so it
-        # fills its slot — same path as the finale. Long real clips omit it and get trimmed instead.
-        last = (i == len(clips) - 1) or bool(c.get("fill"))
-        grade = ("," + c["grade"]) if c.get("grade") else ""   # per-clip cinematic grade (real cuts)
-        if last:   # slow the (≤4.9s) clip to EXACTLY `dur` so body == total → no end-freeze
-            vf = f"{_color_vf(src)},setpts=({dur}/4.9)*PTS,{GEOM}{grade}"
-            _run(["ffmpeg", "-y", "-ss", ss, "-t", "4.9", "-i", src, "-vf", vf, "-an",
-                  "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p",
-                  *BT709, "-t", dur, seg])
-        else:
-            vf = f"{_color_vf(src)},{GEOM}{grade}"
-            # non-fill = a long REAL clip → trim to the full requested `dur` (NOT capped at 4.9s,
-            # which is only the Seedance-cut length; capping real clips shortened the video and
-            # broke the song/outro timing). Short Seedance cuts use fill=True instead.
-            _run(["ffmpeg", "-y", "-ss", ss, "-t", dur, "-i", src, "-vf", vf, "-an",
-                  "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", *BT709, seg])
-        segs.append(seg)
-
-    # 2) concat body
-    cl = work / "concat.txt"
-    # absolute paths: ffmpeg concat resolves `file` entries relative to the LIST's dir, so a
-    # relative seg path (caller passed relative out/work) would double the prefix.
-    cl.write_text("".join(f"file '{s.resolve()}'\n" for s in segs), encoding="utf-8")
     body = work / "body.mp4"
-    _run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", cl,
-          "-c:v", "libx264", "-preset", "fast", "-crf", "19", "-pix_fmt", "yuv420p", *BT709, body])
+    # ★FAST path (title/caption-only reruns): if the per-clip concat body is already cached and
+    # unchanged (same clips/order/durations), skip re-encoding all cuts — only steps 3-5 (captions,
+    # title, song/bumper) rerun. Title tweaks become ~seconds instead of a full re-encode (PD 2026-11-16).
+    if not (reuse_body and body.exists()):
+        # 1) per-clip: colour-correct + geometry → CFR bt709 segment. Last clip slowed to fill its slot.
+        segs = []
+        for i, c in enumerate(clips):
+            src, dur = Path(c["src"]), float(c["dur"])
+            ss = float(c.get("ss", 0.1))   # per-clip start offset — land on the action on long source clips
+            seg = work / f"seg{i:02d}.mp4"
+            # `fill`: slow a SHORT fixed-length source (e.g. a 5s Seedance cut) to exactly `dur` so it
+            # fills its slot — same path as the finale. Long real clips omit it and get trimmed instead.
+            last = (i == len(clips) - 1) or bool(c.get("fill"))
+            grade = ("," + c["grade"]) if c.get("grade") else ""   # per-clip cinematic grade (real cuts)
+            if last:   # slow the (≤4.9s) clip to EXACTLY `dur` so body == total → no end-freeze
+                vf = f"{_color_vf(src)},setpts=({dur}/4.9)*PTS,{GEOM}{grade}"
+                _run(["ffmpeg", "-y", "-ss", ss, "-t", "4.9", "-i", src, "-vf", vf, "-an",
+                      "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p",
+                      *BT709, "-t", dur, seg])
+            else:
+                vf = f"{_color_vf(src)},{GEOM}{grade}"
+                # non-fill = a long REAL clip → trim to the full requested `dur` (NOT capped at 4.9s,
+                # which is only the Seedance-cut length; capping real clips shortened the video and
+                # broke the song/outro timing). Short Seedance cuts use fill=True instead.
+                _run(["ffmpeg", "-y", "-ss", ss, "-t", dur, "-i", src, "-vf", vf, "-an",
+                      "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", *BT709, seg])
+            segs.append(seg)
+
+        # 2) concat body
+        cl = work / "concat.txt"
+        # absolute paths: ffmpeg concat resolves `file` entries relative to the LIST's dir, so a
+        # relative seg path (caller passed relative out/work) would double the prefix.
+        cl.write_text("".join(f"file '{s.resolve()}'\n" for s in segs), encoding="utf-8")
+        _run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", cl,
+              "-c:v", "libx264", "-preset", "fast", "-crf", "19", "-pix_fmt", "yuv420p", *BT709, body])
 
     # 3) karaoke captions (song-synced) + end video fade, 4) song audio + fades → mv
     # Merge CONSECUTIVE identical-text lines: Suno's word alignment sometimes splits one sung
@@ -380,8 +384,12 @@ def main() -> int:
     lines = cfg["lines"]
     if isinstance(lines, dict):   # {suno_task, music_index}
         lines = karaoke_lines(lines["suno_task"], lines.get("music_index", 0))
-    make_mv(cfg["song"], cfg["clips"], lines, cfg["out"],
-            bumper=cfg.get("bumper", BUMPER_DEFAULT))
+    kw = dict(bumper=cfg.get("bumper", BUMPER_DEFAULT))
+    # pass optional title-card / caption / credit keys from the config when present
+    for k in ("title", "title_style", "title_image", "caption_style", "credit", "fontsize", "outro_hold"):
+        if k in cfg:
+            kw[k] = cfg[k]
+    make_mv(cfg["song"], cfg["clips"], lines, cfg["out"], **kw)
     return 0
 
 
