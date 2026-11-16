@@ -509,6 +509,59 @@ def _launch_intro_directive(today: str, render_style: str,
     return None
 
 
+# Human labels for milestone tags (the DB stores machine tags; the directive speaks Korean).
+_MILESTONE_LABEL = {
+    "leo_adoption_anniversary": "레오 입양 기념일",
+    "channel_anniversary": "채널 개설 기념일",
+    "leo_birthday": "레오 생일",
+    "ryani_birthday": "랴니 생일",
+    "children_day": "어린이날",
+}
+
+
+def _milestone_directive(con: sqlite3.Connection, today: str, render_style: str) -> str:
+    """A dated milestone (adoption anniversary / birthday / channel anniversary) is a
+    ONCE-A-YEAR can't-miss hook — unlike season, which is optional flavor. So on its date a
+    milestone FORCES a memory-lane directive, so the arc never again ships generic daily
+    content on Leo's adoption day while the first-day footage sits unused (PD 2026-11-16:
+    "레오가 작년 11/15에 왔는데 그날 첫날 내용으로… 이미 다 아는 정보인데 왜 안 써"). Fires below
+    PD /concept (PD still wins) but above season-plan, and independent of ARC enabled() — a
+    birthday is a birthday even with the showrunner off. '' when today is no milestone.
+    Kill switch MILESTONE_FORCE=0."""
+    import datetime as _dt
+    if os.getenv("MILESTONE_FORCE", "1") == "0":
+        return ""
+    try:
+        d = _dt.date.fromisoformat(today[:10])
+    except Exception:
+        return ""
+    try:
+        rows = con.execute(
+            "SELECT tag, subjects_csv, notes, memory_lane_default_variant "
+            "FROM milestones WHERE month=? AND day=?", (d.month, d.day)).fetchall()
+    except Exception as e:  # noqa: BLE001
+        log.warning("milestone lookup failed: %s", e)
+        return ""
+    if not rows:
+        return ""
+    labels = " · ".join(_MILESTONE_LABEL.get(r[0], r[0]) for r in rows)
+    notes = "; ".join((r[2] or "").strip() for r in rows if (r[2] or "").strip())
+    subjects = ",".join(sorted({s for r in rows for s in (r[1] or "").split(",") if s}))
+    rf = render_style == "real_footage"
+    era = (
+        "해당 시점(입양 첫날/과거/아기 시절)의 **아카이브 footage를 반드시 캐스팅**해 지금과 "
+        "side_by_side로 대조하는 메모리레인으로 — 캡션에 시점을 또렷이 명시(예: '그때, 1년 전' ↔ "
+        "'지금'). 실제 과거 클립이 있으니 임의 메모리레인이 아니라 바로 그 시점을 꺼내라."
+        if rf else
+        "과거(입양 첫날/아기 시절)를 상상+아카이브 레퍼런스로 재현해 현재와 대조하라 — 시점을 또렷이."
+    )
+    return (
+        f"[기념일 강제 컨셉 — 이 방향을 최우선으로] ★오늘은 {labels}. 이 날을 정면 훅/제목으로 "
+        f"다뤄라(일반 일상 금지). {era} 대상: {subjects or 'leo,ryani'}. "
+        f"{('참고: ' + notes) if notes else ''} (캐릭터 사실·자산 충실도는 그대로.)"
+    )
+
+
 def next_directive(con: sqlite3.Connection, *, today: str, render_style: str) -> str:
     """Showrunner directive for THIS episode: what it should contribute to the
     shared arc, given the rolling plan + what already aired. Injected into the
@@ -530,6 +583,12 @@ def next_directive(con: sqlite3.Connection, *, today: str, render_style: str) ->
     if pd:
         return ("[PD 지정 컨셉 — 이 방향을 최우선으로] " + pd +
                 " (단 캐릭터 사실/자산 충실도는 그대로 지켜라.)")
+    # A dated milestone (adoption anniversary / birthday) FORCES its concept — a once-a-year
+    # hook is not optional flavor. Fires even when ARC is off (a birthday is a birthday), but
+    # still yields to an explicit PD /concept above. Season stays optional in the plan below.
+    ms = _milestone_directive(con, today, render_style)
+    if ms:
+        return ms
     if not enabled():
         return ""
     # Launch-week intro overlay takes precedence (deterministic — no LLM
