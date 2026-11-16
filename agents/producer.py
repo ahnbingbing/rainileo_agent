@@ -533,6 +533,77 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
     archive_videos.sort(key=lambda v: v.get("date", ""))  # oldest → newest
     archive_year_summary = dict(sorted(_per_year.items()))
 
+    # PD 2026-11-16: MILESTONE-ERA footage injection. When the target date is a registered
+    # milestone, arc._milestone_directive FORCES the writer to cast first-day / past-era
+    # footage — but the archive sampler above caps ~8/year by RECENCY, so for an adoption day it
+    # surfaces that year's DECEMBER clips, not the actual arrival; the 2025-11-15 first-day set
+    # (383 assets) sat unused while the directive asked for it (directive ≠ availability — the
+    # milestone twin of D26). So when a milestone is active, GUARANTEE footage captured within
+    # ±MILESTONE_POOL_DAYS of its month/day across PAST years into the pool (earliest year =
+    # the arrival / first occurrence), bypassing the per-year cap. Kill switch MILESTONE_POOL=0.
+    if os.getenv("MILESTONE_POOL", "1") != "0":
+        try:
+            _md = int(os.getenv("MILESTONE_POOL_DAYS", "7"))
+            # Fire when target is within ±_md of a milestone (so an anniversary episode a day or
+            # two late — e.g. rendered 11-17 for the 11-15 adoption day — still gets the era
+            # footage). Match milestones by (month,day) proximity to target, then center the
+            # footage window on the MILESTONE's date, not the (possibly offset) target.
+            _near = []
+            for _o in range(-_md, _md + 1):
+                _dd = target + dt.timedelta(days=_o)
+                _near.append((_dd.month, _dd.day))
+            _mrow = None
+            for _mm, _ddy in _near:
+                _r = con.execute("SELECT tag, subjects_csv, month, day FROM milestones "
+                                 "WHERE month=? AND day=? LIMIT 1", (_mm, _ddy)).fetchone()
+                if _r:
+                    _mrow = _r
+                    break
+            if _mrow:
+                _mtag = (_mrow["tag"] or "")
+                # The milestone's PET of interest = first token of the tag when it's a pet name
+                # (leo_adoption → leo, ryani_birthday → ryani); channel/holiday tags → both pets.
+                # Filter to that pet so an adoption/birthday surfaces THAT animal's first-day/baby
+                # footage, not 11 years of the other pet's mid-November clips.
+                _pet = _mtag.split("_", 1)[0] if _mtag.split("_", 1)[0] in ("leo", "ryani") else None
+                _subj_sql = f" AND subjects_csv LIKE '%{_pet}%'" if _pet else ""
+                _cap = int(os.getenv("MILESTONE_POOL_N", "16"))
+                _ref = dt.date(2024, _mrow["month"], _mrow["day"])  # leap-safe, milestone-centered
+                _window = sorted({(_ref + dt.timedelta(days=o)).strftime("%m-%d")
+                                  for o in range(-_md, _md + 1)})
+                _qm = ",".join("?" * len(_window))
+                _have = _recent_ids | {v["id"] for v in archive_videos}
+                _n_inj = 0
+                for r in con.execute(
+                    f"""SELECT asset_id, activity, subjects_csv, mood, scene_description, pd_notes,
+                               duration_sec, captured_iso, location_type, notes, has_human
+                        FROM assets
+                        WHERE vlm_analyzed_at IS NOT NULL AND kind='video' AND quality_score >= 0.6
+                          AND captured_iso IS NOT NULL
+                          AND substr(captured_iso,6,5) IN ({_qm})
+                          AND substr(captured_iso,1,4) < ?{_subj_sql}
+                        ORDER BY captured_iso ASC LIMIT ?""",   # oldest (arrival/baby) first
+                        _window + [str(target.year), _cap]).fetchall():
+                    if r["asset_id"] in _have:
+                        continue
+                    _have.add(r["asset_id"])
+                    archive_videos.append({
+                        "id": r["asset_id"], "act": r["activity"] or "",
+                        "sub": _ground_subjects(r["subjects_csv"], r["captured_iso"]),
+                        "mood": r["mood"] or "", "sc": _ground_truth_sc(r),
+                        "dur": r["duration_sec"], "date": (r["captured_iso"] or "")[:10],
+                        "years_ago": _years_ago(r["captured_iso"] or ""),
+                        "loc": r["location_type"] or "", "has_human": bool(r["has_human"]),
+                        "motion": _motion_level(r), "outing": _outing_flag(r),
+                        "milestone_era": True, **_extra_vlm(r)})
+                    _n_inj += 1
+                if _n_inj:
+                    archive_videos.sort(key=lambda v: v.get("date", ""))
+                    log.info("RF pool: injected %d milestone-era clips (±%dd of %02d-%02d)",
+                             _n_inj, _md, _mrow[0], _mrow[1])
+        except Exception as _e:  # noqa: BLE001
+            log.warning("milestone-era pool injection skipped: %s", _e)
+
     # PD 2026-06-11: year-stratified OLD photos too — 2500+ photos exist but only the
     # recent ~50 reached the writer, so aged baby Ryani/Leo (2016~) was never usable
     # (the Ryani-intro needs exactly that). Same year-cap pattern as archive_videos.
