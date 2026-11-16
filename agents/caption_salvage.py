@@ -297,8 +297,9 @@ def salvage(card_id: str, report: dict, *, progress_cb=None,
            # RF) → it assembled stale/wrong cuts (a leftover cut crept into the front,
            # the re-captioned cut never made it in).
            "--in-dir", str(captioned_dir),
-           "--intro-bumper", str(cm.INTRO_BUMPER),
-           "--outro-bumper", str(cm.OUTRO_BUMPER),
+           # PD 2026-11-17: honour the standing bumper rule (outro_only — no intro)
+           # via the same helper the main render uses, instead of hard-wiring the intro.
+           *cm._bumper_cli_args(card_id),
            "--music", manifests["bgm"],
            "--out", str(out)]
     xfade = meta.get("xfade_tags") or []

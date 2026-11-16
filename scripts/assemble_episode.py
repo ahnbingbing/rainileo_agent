@@ -296,11 +296,23 @@ def build_cmd(clips: list[Path], cut_durations: list[float],
                 eq_filter = f"eq=brightness={delta:.3f},"
         # HLG/HDR cuts are tone-mapped to SDR here (SDR cuts & the bumper pass
         # through) so the concat output can't inherit an HDR tag — see _color_prefix.
+        # PD 2026-11-17 ("일부는 밝고 일부는 제대로"): the HLG/SDR mapping was already
+        # per-input, but the FINAL VUI stamp was inconsistent — when every input was
+        # already SDR, the `-color_trc/-color_primaries` OUTPUT flags alone did NOT
+        # reliably reach libx264's VUI (finals came out color_trc/primaries=unknown),
+        # so some players re-interpreted the gamma → the washed-out / bright ones.
+        # (Measured: half of recent finals were tv/bt709/unknown/unknown vs the correct
+        # tv/bt709/bt709/bt709.) Fix: stamp bt709 at the FRAME level on EVERY input via
+        # setparams (metadata only, zero pixel change) so the concat output carries
+        # complete bt709 and every episode gets an identical, fully-tagged SDR file —
+        # regardless of whether any HLG clip was present to trigger the tonemap filter.
         norm_chains.append(
             f"[{i}:v]{_color_prefix(clips[i])}{setpts_filter}{eq_filter}"
             f"scale={EPISODE_W}:{EPISODE_H}:force_original_aspect_ratio=decrease,"
             f"pad={EPISODE_W}:{EPISODE_H}:(ow-iw)/2:(oh-ih)/2:color=black,"
-            f"setsar=1,fps=30[v{i}]"
+            f"setsar=1,fps=30,"
+            f"setparams=range=tv:colorspace=bt709:color_primaries=bt709:color_trc=bt709"
+            f"[v{i}]"
         )
     v_inputs = "".join(f"[v{i}]" for i in range(n))
     # PD 2026-06-09 보강 옵션: between CHAINED one-take cuts, a short crossfade

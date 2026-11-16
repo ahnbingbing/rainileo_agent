@@ -200,13 +200,18 @@ OUTRO_BUMPER = ROOT / "assets" / "branding" / "outro_bumper.mp4"
 
 
 def _bumper_arm(card_id: str | None) -> str:
-    """A/B the 1.5s intro bumper (PD 2026-10-12 growth). On Shorts a branded intro BEFORE the
-    hook costs the scroll-stop and breaks the loop (replays = the breakout signal). 'outro_only'
-    drops the intro (keeps the outro CTA); 'intro_outro' is the control. Deterministic per card
-    so the render and the perf attribution agree without threading, ~50/50. Kill switch
-    BUMPER_AB=0 → always intro_outro (control). No card_id → control (safe default)."""
-    if os.getenv("BUMPER_AB", "1") == "0" or not card_id:
-        return "intro_outro"
+    """Which bumpers wrap the episode. PD 2026-11-17 CONCLUDED the intro-bumper A/B
+    (started PD 2026-10-12): on Shorts a branded intro BEFORE the hook costs the scroll-stop
+    and breaks the replay loop, so the standing RULE is now 'outro_only' — NO intro bumper,
+    keep the outro CTA — for both lanes. BUMPER_MODE overrides and keeps this reversible:
+    'intro_outro' restores the front bumper, 'ab' re-runs the old deterministic ~50/50 A/B.
+    No card_id → outro_only (the rule)."""
+    mode = os.getenv("BUMPER_MODE", "outro_only")
+    if mode in ("outro_only", "intro_outro"):
+        return mode
+    # BUMPER_MODE=ab → legacy deterministic per-card A/B (kept for future experiments).
+    if not card_id:
+        return "outro_only"
     import hashlib
     h = int(hashlib.sha1(str(card_id).encode("utf-8")).hexdigest()[:8], 16)
     return "outro_only" if (h % 2 == 0) else "intro_outro"

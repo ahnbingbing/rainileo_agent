@@ -508,7 +508,12 @@ def _extract_frames(video: Path, n_cuts: int = 4, per_cut: int = 2,
     duration = _probe_dur(video)
     if duration <= 0:
         duration = 30.0
-    intro = _probe_dur(ROOT / "assets" / "branding" / "intro_bumper.mp4")
+    # PD 2026-11-17: the intro bumper was dropped (outro_only is the standing rule), so
+    # episodes start with CONTENT at t=0 — not a 1.5s branded card. Offsetting past a
+    # non-existent intro would skip the hook when sampling review frames. Only assume an
+    # intro region when the rule actually keeps one (BUMPER_MODE restored it).
+    intro = (_probe_dur(ROOT / "assets" / "branding" / "intro_bumper.mp4")
+             if os.getenv("BUMPER_MODE", "outro_only") != "outro_only" else 0.0)
     outro = _probe_dur(ROOT / "assets" / "branding" / "outro_bumper.mp4")
     c0 = min(intro + 0.3, duration * 0.25) if intro > 0 else 0.5
     c1 = max(duration - outro - 0.3, c0 + 1.0) if outro > 0 else duration - 0.6
