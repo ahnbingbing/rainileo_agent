@@ -793,6 +793,52 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
     except sqlite3.OperationalError:
         character_objects = []
 
+    # PD 2026-11-17 ROOT FIX (gutted-render / "missing source" 슬롯 실패의 근본): the DB keeps
+    # records for assets ingested on the Mac that never reached the VM and were pruned — ~3% of the
+    # fresh pool is neither on local disk NOR in GCS. With no availability check at SELECTION, the
+    # Writer builds a concept around one, it drops at render ("gutted render: only 1/2 cuts
+    # survived — missing source"), the slot fails and self-heal re-rolls into the same landmines
+    # (the session-long 0컷/gutted failures). Surface ONLY fetchable assets: local is instant, and
+    # a GCS HEAD (gcs.exists — not a download) runs only for the non-local few. RF_AVAIL_FILTER=0 reverts.
+    if os.getenv("RF_AVAIL_FILTER", "1") == "1":
+        try:
+            _pools = [best_photos, best_videos, archive_videos, archive_photos]
+            _ids = {e.get("id") or e.get("asset_id")
+                    for pool in _pools for e in pool
+                    if isinstance(e, dict) and (e.get("id") or e.get("asset_id"))}
+            if _ids:
+                _fp = {r[0]: r[1] for r in con.execute(
+                    "SELECT asset_id, file_path FROM assets WHERE asset_id IN "
+                    f"({','.join('?' for _ in _ids)})", list(_ids)).fetchall()}
+                from icloud import gcs as _gcs
+                _seen: dict = {}
+
+                def _avail(e) -> bool:
+                    aid = e.get("id") or e.get("asset_id")
+                    if aid in _seen:
+                        return _seen[aid]
+                    fp = _fp.get(aid)
+                    ok = bool(fp and Path(fp).exists())
+                    if not ok and fp:
+                        try:
+                            ok = bool(_gcs.enabled() and _gcs.exists(fp))
+                        except Exception:
+                            ok = False
+                    _seen[aid] = ok
+                    return ok
+
+                _before = sum(len(p) for p in _pools)
+                best_photos[:] = [e for e in best_photos if _avail(e)]
+                best_videos[:] = [e for e in best_videos if _avail(e)]
+                archive_videos[:] = [e for e in archive_videos if _avail(e)]
+                archive_photos[:] = [e for e in archive_photos if _avail(e)]
+                _dropped = _before - sum(len(p) for p in _pools)
+                if _dropped:
+                    log.info("RF avail-filter: dropped %d unavailable pool assets (local+GCS both missing)",
+                             _dropped)
+        except Exception as _e:
+            log.warning("RF availability filter skipped: %s", _e)
+
     return {
         "target_date": target.isoformat(),
         "tone_history_7d": tones,
