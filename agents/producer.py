@@ -3406,6 +3406,21 @@ def _apply_rf_split_compose(concept: dict, progress_cb: ProgressCb = None) -> No
             progress_cb(f":scissors: split 페어링 — 중복 standalone {len(consumed)}컷 흡수")
 
 
+_RF_CAPTION_VOICES = ("따뜻한 공감 관찰", "1인칭 캐릭터 시트콤", "밈·드립")
+
+
+def _rf_caption_voice(target: dt.date) -> str:
+    """Which caption VOICE this episode writes in. PD 2026-11-17: captions must be fun in
+    CONTENT (not styling — the handwriting burn is fine), and the three voices must ROTATE so
+    the channel doesn't sound the same every day ("세 개가 돌아가면서 나와야"). Deterministic by
+    date so it cycles; the voices themselves are defined in realfootage_concept.md. RF_CAPTION_
+    VOICE overrides to pin one (testing)."""
+    pin = os.getenv("RF_CAPTION_VOICE", "")
+    if pin in _RF_CAPTION_VOICES:
+        return pin
+    return _RF_CAPTION_VOICES[target.toordinal() % len(_RF_CAPTION_VOICES)]
+
+
 def _propose_realfootage_singlepass(target: dt.date, context: dict,
                                      progress_cb: ProgressCb = None,
                                      prior_feedback: str = "") -> list[dict]:
@@ -3497,6 +3512,19 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         system += _cb._exclude_block(context) + _cb._overused_format_block()
     except Exception as _xe:
         log.debug("rf concept-dedup/format block skipped: %s", _xe)
+    # PD 2026-11-17: assign THIS episode's caption VOICE (rotates daily). The three voices are
+    # defined in the prompt; here we tell the Writer which one to write in, so captions stay
+    # fun-in-CONTENT and vary across days instead of flattening to description ("그루밍 삼매경").
+    try:
+        _voice = _rf_caption_voice(target)
+        system += (f"\n\n## ★이번 회차 캡션 보이스 = 「{_voice}」\n"
+                   f"모든 캡션을 이 보이스로 써라(프롬프트의 '캡션 보이스 로테이션' 정의 참조). 핵심은 글씨가 아니라 "
+                   f"말의 '내용'을 재밌게 — 설명조('…삼매경', '…하고 있어요')에 머물지 말고 이 보이스의 위트/캐릭터/"
+                   f"공감 한 방을 넣어라. 단 footage에 실제로 있는 것만, 도사체·억지 영리함·페르소나 라벨 남발은 금지.")
+        if progress_cb:
+            progress_cb(f":speech_balloon: 캡션 보이스: {_voice}")
+    except Exception as _ve:
+        log.debug("caption voice inject skipped: %s", _ve)
     # Feed both videos (Tier 1) and photos (Tier 2). PD 2026-06-06: photos are
     # NOT dropped anymore — every photo cut is animated via Seedance photo_i2v
     # so the writer can use a photo for the payoff/closer and still get motion.
