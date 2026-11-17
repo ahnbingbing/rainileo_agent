@@ -62,9 +62,20 @@ STEP 1을 글로 풀어 쓰기 시작하면 출력 예산(12k 토큰)이 클립 
   베이스 톤은 절대 "잔잔" 고정이 아니라 **그 컷 footage의 에너지**다. 위트 한 스푼 + 발랄 에너지가 합격선.
 
 ### 더 높일 축 2 — 편집 리듬 (단조로움 X)
-컷마다 같은 static = 지루. **리듬을 설계**해라.
-- 빠른 컷(speed_1.3x) 몰아치다 → 한 컷 ken_burns 숨 고르기 → 킥에서 freeze.
-- 도입 빠르게, 킥/엔딩 느리게(여운). edit_effect를 컷마다 의도적으로 다르게.
+컷마다 같은 static = 지루. **리듬을 설계**해라 — 편집은 소재만큼 회차의 "결"을 만든다.
+- **per-cut 완급.** 빠른 컷(speed_1.3x) 몰아치다 → 한 컷 ken_burns 숨 고르기 → 킥에서 freeze.
+  하이라이트(점프·달리기·장난의 결정적 동작)는 `speed_0.5x` 슬로모로 늘려 감정을 키워라. 도입 빠르게,
+  킥/엔딩 느리게(여운). edit_effect를 컷마다 의도적으로 다르게.
+- **분할 화면(split)은 '둘이 동시에'를 한 프레임에 담는 시그니처다 — 대비가 훅이면 적극 써라.**
+  왜: 두 펫(또는 한 펫의 과거↔현재, 한 사건의 두 각도)이 **동시에/나란히** 뭔가 할 때 컷을 번갈아
+  자르면 "동시에"가 안 보여 밋밋해진다 — split은 그 대비·합을 한 화면에서 터뜨리는 iOS-포토앱식
+  편집이다(정적 그리드가 아니라 상/하로 쓸려 나뉘는 **모션-와이프**, 양쪽 다 살아 움직인다).
+  어떻게: 짝이 될 두 클립을 골라 한 컷의 `edit_effect`를 `split_vertical`(상/하, 세로영상 기본) 또는
+  `split_horizontal`(좌/우)로, `secondary_asset_id`에 다른 반쪽 클립의 asset_id를 넣어라. 그 반쪽
+  클립은 **따로 standalone 컷으로 또 쓰지 마라**(한 번만). 비슷한 샷 크기(둘 다 클로즈업 등)끼리 짝지어야
+  깔끔하다. 예: "레오는 물 앞에서 얼음, 랴니는 벌써 풍덩" → 레오 망설임 클립 + 랴니 입수 클립을
+  `split_vertical` 한 화면에(물매니아 대비가 한 방에 터진다). 매 회차 강제는 아니다 — **'동시/대비'가
+  그 회차의 진짜 훅일 때** 꺼내는 강한 카드다.
 
 ### 더 높일 축 3 — 스토리 깊이/반전 (단순 관찰 X)
 클립 나열이 아니라 **진짜 arc + 전환점**. 단, 전환은 자산에 실제 있는 순간에서.
@@ -590,7 +601,8 @@ JSON 배열 (real_footage 컨셉 1개):
       "motion_prompt": "사진 컷일 때만: 잔잔한 움직임 영어 한 문장 (영상 컷은 생략)",
       "crop_out": "top|bottom|left|right (배경 사람 제외할 방향; 없으면 생략)",
       "duration_seconds": 7,
-      "edit_effect": "static|ken_burns|speed_1.3x|freeze_last_frame",
+      "edit_effect": "static|ken_burns|speed_1.3x|speed_0.5x(슬로모)|freeze_last_frame|split_horizontal|split_vertical",
+      "secondary_asset_id": "med_... (edit_effect가 split_* 일 때만 — 분할 화면의 '다른 반쪽' 클립. 그 클립은 standalone 컷으로 또 쓰지 마라)",
       "action": "이 클립 실제 내용 (sc 기반, 컷마다 고유)",
       "captions": [
         {"start": 0.5, "end": 3.5, "ko": "짧은 캡션1", "en": "..."},

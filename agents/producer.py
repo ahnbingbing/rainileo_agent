@@ -3319,6 +3319,47 @@ def _rf_trends_hint(target: dt.date) -> str:
             "마라(그건 거짓이 된다). 트렌드는 선택이지 의무가 아니다.")
 
 
+def _apply_rf_split_compose(concept: dict, progress_cb: ProgressCb = None) -> None:
+    """Clean/validate split-screen cuts in an RF concept so the editing-variety capability
+    actually renders (PD 2026-11-17). The Writer puts two clips in one frame by setting a cut's
+    edit_effect=split_horizontal/vertical + secondary_asset_id (cameraman materializes these into
+    the split prerender). Two safeties: (1) RF_SPLIT_COMPOSE=0 strips splits back to flat cuts
+    (revert). (2) the paired 'secondary' clip must appear ONCE — if it ALSO stands alone as its
+    own cut the viewer sees it twice, so drop that standalone; and a split cut whose
+    secondary_asset_id is missing/self/invalid is downgraded to a normal effect so the render
+    never half-applies a split with nothing to compare against."""
+    cuts = concept.get("cuts") or []
+    if not isinstance(cuts, list) or not cuts:
+        return
+    _SPLIT = ("split_horizontal", "split_vertical")
+    if os.getenv("RF_SPLIT_COMPOSE", "1") == "0":
+        for c in cuts:
+            if isinstance(c, dict) and (c.get("edit_effect") or "") in _SPLIT:
+                c["edit_effect"] = "static"
+                c.pop("secondary_asset_id", None)
+        return
+    standalone = {c.get("asset_id") for c in cuts
+                  if isinstance(c, dict) and c.get("asset_id")}
+    consumed: set = set()
+    for c in cuts:
+        if not isinstance(c, dict) or (c.get("edit_effect") or "") not in _SPLIT:
+            continue
+        sec = c.get("secondary_asset_id")
+        if not sec or sec == c.get("asset_id"):
+            c["edit_effect"] = "static"          # no valid pair → not a real split
+            c.pop("secondary_asset_id", None)
+            continue
+        if sec in standalone:
+            consumed.add(sec)                    # the pair clip also stands alone → absorb it
+    if consumed:
+        concept["cuts"] = [c for c in cuts
+                           if not (isinstance(c, dict)
+                                   and c.get("asset_id") in consumed
+                                   and (c.get("edit_effect") or "") not in _SPLIT)]
+        if progress_cb:
+            progress_cb(f":scissors: split 페어링 — 중복 standalone {len(consumed)}컷 흡수")
+
+
 def _propose_realfootage_singlepass(target: dt.date, context: dict,
                                      progress_cb: ProgressCb = None,
                                      prior_feedback: str = "") -> list[dict]:
@@ -3972,6 +4013,10 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         # SINGLE continuous-playthrough cut (captions re-spaced), so the clip plays
         # once instead of restarting per cut. PD: "반복으로 동영상을 짜르는게 문제".
         _collapse_rf_same_clip_segments(c, progress_cb)
+        # PD 2026-11-17: materialize/clean split-screen cuts (editing variety). The Writer may
+        # pair two clips into one frame via edit_effect=split_* + secondary_asset_id; keep the
+        # pair clean (the secondary must not ALSO stand alone) and honour the kill-switch.
+        _apply_rf_split_compose(c, progress_cb)
         # PD 2026-06-08: do NOT force finale=video. A photo_i2v finale / Ryani
         # zoom is fine WHEN the quality (marking accuracy) is good — the quality
         # gate decides, not a blanket rule. (Earlier blanket auto-swap removed.)
