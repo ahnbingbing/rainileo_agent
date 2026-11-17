@@ -490,6 +490,24 @@ def launch_pipeline(target: dt.date, *,
         except Exception as e:
             log.warning("pre-batch VLM drain skipped: %s", e)
 
+    # PD 2026-11-17: vis_phash backfill = the visual-similarity cooldown's INPUT signal.
+    # The appearance-based RF cooldown (_recently_used_rf_vphashes + RF_VISUAL_COOLDOWN,
+    # and _diversity_sample's intra-pool dedup) was effectively BLIND: vis_phash was never
+    # wired into ingest, so coverage had decayed to ~0% on recent clips → visually near-
+    # identical 산책/낮잠 컷 kept getting picked ("산책도 유사한 컷이 자꾸 들어간다"). Compute
+    # missing vis_phash recent-first here, next to the VLM drain, so a clip's LOOK is known
+    # before this batch selects it. Bounded per batch (recent-first keeps up with daily
+    # intake + chips at the backlog). LAUNCH_PREBATCH_VPHASH=0 reverts.
+    if os.getenv("LAUNCH_PREBATCH_VPHASH", "1") != "0":
+        try:
+            from agents.visual_hash import backfill as _vph_backfill
+            _vres = _vph_backfill(limit=int(os.getenv("LAUNCH_PREBATCH_VPHASH_LIMIT", "150")),
+                                  kinds=("video",))
+            if progress_cb and _vres.get("hashed"):
+                progress_cb(f":art: vis_phash 백필 {_vres['hashed']}개(시각 다양성 신호 확보)")
+        except Exception as e:
+            log.warning("pre-batch vis_phash backfill skipped: %s", e)
+
     context = _gather_context(con, target)
     # WAL so parallel slots (each its own connection) don't lock each other.
     try:
