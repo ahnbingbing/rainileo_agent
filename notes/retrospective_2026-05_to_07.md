@@ -1756,6 +1756,18 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   cf [[C_milestoneforce]]·[[rf_fix_production_reproduction]]·D_streamguard(작동하는 폴백이 죽은 주력을 가림 — 여기선 best-effort가 Giri를 가림).
   ★위 셋은 코드로 수정(63e5991·8127c6b): #2 junk-gate(`RF_BESTEFFORT_FLOOR`=7, 소진·타임아웃 두 ship 경로 모두 — AV는 2026-06-10부터 이미 통과분만 게시, RF를 그 정책에 정렬)·#3 마일스톤 창 ±7→±1(`MILESTONE_POOL_DAYS`)·#1 아래 D_themecooldown.
 
+- **C_poolavail. 선택 풀이 '렌더 가능'을 검증 안 하면, DB에만 있고 파일은 없는 자산이 컨셉을 죽인다 — 세션 내내의 gutted/0컷 근본(11/17)** —
+  이 세션이 반복해서 "gutted render: only 1/2 cuts survived — missing source" / 0컷으로 슬롯을 비우고(그래서 그루밍·마일스톤을 수동으로
+  피벗해야 했다), split 데모 풀렌더도 그걸로 2라운드 0/4 실패했다. 근본=**DB에 레코드는 있는데 파일이 local에도 GCS에도 없는 자산**(Mac에서
+  인입됐지만 VM/GCS로 안 넘어오고 프루닝됨)이 ~3% 섞여 있고, **선택 단계에 가용성 체크가 없다.** Writer가 2~3컷 중 하나라도 그 '유령'을 고르면
+  render의 `_ensure_local`이 못 가져와 컷을 드롭 → gutted → 슬롯 실패 → self-heal이 재롤, 그런데 이웃-재사용 배제가 신선 가용분을 깎을수록
+  남은 풀의 유령 비율이 올라 재히트. 측정: 평범한 날의 surfaced 366컷 중 3컷이 완전 미가용. Fix(ea53456)=`_gather_context` 반환 직전,
+  네 풀(available/archive×video/photo)을 **가져올 수 있는 자산만** 남긴다 — local 존재는 즉시, GCS는 `gcs.exists`(다운로드 아닌 HEAD)로
+  non-local 소수만 확인. 검증: 미가용 3→0. `RF_AVAIL_FILTER=0` 복원. ★교훈: **"DB에 있다 ≠ 렌더할 수 있다"** — 선택은 '존재하는 레코드'가
+  아니라 '가져올 수 있는 파일'에서 해야 한다(C_nulldur의 "집계가 가린 메타 맹점"의 가용성판: 풀 카운트는 커 보이는데 그 안에 렌더 불가가 섞여
+  있다). 더 깊은 축=Mac→GCS 동기화 갭(일부 slack/icloud 자산이 미러 안 됨)은 별도 인프라 follow-up; 필터는 "못 그릴 걸 고르지 마라"의 견고한
+  방어선이다. cf [[C_milestoneforce]](재료가 풀에 있어야 — 그 가용성판)·[[C_nulldur]]·[[rf_footage_aware_design]].
+
 - **D_themecooldown. "같은 소재라도 footage 신선하면 OK"(7월)와 "수영 너무 자주 했다"(11월)의 화해 = 구별-테마만 쿨다운(11/17)** —
   PD 2026-07-05은 테마-반복을 **의도적으로 non-fail**로 만들었다(신선도 단위=실제 영상; vhash-fresh면 LLM 테마-reject를 pass로 강등).
   그런데 PD 2026-11-17 "수영 11-12에 올렸는데 또 수영은 반복·그동안 올린 ~500편을 RAG로 봐야". 둘은 모순이 아니라 **주력 vs 구별**의
