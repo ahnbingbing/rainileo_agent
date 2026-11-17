@@ -5660,10 +5660,22 @@ def _detect_prominent_over_window(clip: str, t0: float, dur: float) -> "bool | N
     return False if seen else None
 
 
+_SPLIT_MOTIONS = ("opposing", "opposing_rev", "same_left", "converge", "diagonal")
+
+
+def _pick_split_motion(seed_path: str) -> str:
+    """Deterministic split-motion variant from a seed (the primary clip path). Stable on
+    re-render; different footage → a different sweep, so splits aren't all the same wipe."""
+    import hashlib
+    h = int(hashlib.sha1((seed_path or "").encode("utf-8")).hexdigest()[:8], 16)
+    return _SPLIT_MOTIONS[h % len(_SPLIT_MOTIONS)]
+
+
 def _split_motion_wipe_filter(ts_a: float, ts_b: float, dur: float,
                               top_prominent: "bool | None" = None,
                               bot_prominent: "bool | None" = None,
-                              top_speed: float = 1.0, bot_speed: float = 1.0) -> str:
+                              top_speed: float = 1.0, bot_speed: float = 1.0,
+                              motion: str = "opposing") -> str:
     """The MOTION split (PD 2026-11-13, iOS Photos Memories grammar; memory
     rf_split_motion_wipe_spec). PD's differentiator: 'it must divide WHILE there is motion' —
     a static side-by-side grid is wrong. So the two panels SWEEP in:
@@ -5682,8 +5694,23 @@ def _split_motion_wipe_filter(ts_a: float, ts_b: float, dur: float,
     visible — never a floor-only crop). Both keep '검은색 금지'. Returns a filter_complex → [vout]."""
     wipe = float(os.getenv("RF_SPLIT_WIPE_SEC", "0.5"))
     blur = int(os.getenv("RF_SPLIT_BLUR", "24"))
-    top_x = f"if(lt(t,{wipe}),-1080+(t/{wipe})*1080,0)"
-    bot_x = f"if(lt(t,{wipe}),1080-(t/{wipe})*1080,0)"
+    # PD 2026-11-17: "상하만 있으면 안 되고 여러 모션이 있어야 함" — one fixed opposing wipe reads
+    # monotone. The panels always settle top@y=0 / bottom@y=960 (the 9:16 top/bottom layout PD
+    # signed off), but HOW they sweep IN varies per cut. Each variant keeps every non-negotiable:
+    # a blurred full-frame base behind (never black), both clips live, and real motion WHILE it
+    # divides. Entry animates over `wipe` sec then holds. Expressions are overlay x/y over t.
+    _FROM_L = f"if(lt(t,{wipe}),-1080+(t/{wipe})*1080,0)"   # x: slide in from screen-left
+    _FROM_R = f"if(lt(t,{wipe}),1080-(t/{wipe})*1080,0)"    # x: slide in from screen-right
+    _TOP_DOWN = f"if(lt(t,{wipe}),-960+(t/{wipe})*960,0)"   # top y: drop in from above
+    _BOT_UP = f"if(lt(t,{wipe}),1920-(t/{wipe})*960,960)"   # bottom y: rise in from below
+    _MOTIONS = {
+        "opposing":     (_FROM_L, _FROM_R, "0", "960"),     # top←left, bottom←right (classic)
+        "opposing_rev": (_FROM_R, _FROM_L, "0", "960"),     # mirrored sweep
+        "same_left":    (_FROM_L, _FROM_L, "0", "960"),     # both sweep from the left (unison)
+        "converge":     ("0", "0", _TOP_DOWN, _BOT_UP),     # panels close in vertically to the seam
+        "diagonal":     (_FROM_L, _FROM_R, _TOP_DOWN, _BOT_UP),  # corners: top↙, bottom↗
+    }
+    top_x, bot_x, top_y, bot_y = _MOTIONS.get(motion, _MOTIONS["opposing"])
 
     def _panel(src_lbl, out_lbl, ts, speed, prominent):
         # Per-panel playback speed (PD 2026-11-13): each clip's best moment (the pet facing the
@@ -5713,8 +5740,8 @@ def _split_motion_wipe_filter(ts_a: float, ts_b: float, dur: float,
         f"boxblur={blur}:2[base];"
         + _panel("[ppanel]", "top", ts_a, top_speed, bool(top_prominent))
         + _panel("[1:v]", "bot", ts_b, bot_speed, bool(bot_prominent))
-        + f"[base][top]overlay=x='{top_x}':y=0[stage1];"
-        f"[stage1][bot]overlay=x='{bot_x}':y=960[vout]"
+        + f"[base][top]overlay=x='{top_x}':y='{top_y}'[stage1];"
+        f"[stage1][bot]overlay=x='{bot_x}':y='{bot_y}'[vout]"
     )
 
 
@@ -5777,9 +5804,15 @@ def _prerender_split_cuts(manifests: dict, work_dir: Path,
                     progress_cb(f":frame_with_picture: split 프레이밍 "
                                 f"(top={'close' if top_prom else f'wide×{top_speed:g}'}, "
                                 f"bottom={'close' if bot_prom else f'wide×{bot_speed:g}'})")
+            # PD 2026-11-17: vary the sweep motion per split (여러 모션). Deterministic by the
+            # primary clip path (stable on re-render, differs across episodes/footage) unless the
+            # concept named one via `split_motion`. RF_SPLIT_MOTION_VARY=0 → always 'opposing'.
+            _motion_name = (entry.get("split_motion")
+                            or (_pick_split_motion(primary)
+                                if os.getenv("RF_SPLIT_MOTION_VARY", "1") == "1" else "opposing"))
             filt = _split_motion_wipe_filter(ts_a, ts_b, dur, top_prom, bot_prom,
-                                             top_speed, bot_speed)
-            _label = "split-wipe"
+                                             top_speed, bot_speed, motion=_motion_name)
+            _label = f"split-wipe:{_motion_name}"
         elif effect == "split_horizontal":
             # Legacy static: each input scaled to 540×1920, then hstacked.
             filt = (
