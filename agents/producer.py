@@ -543,11 +543,15 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
     # the arrival / first occurrence), bypassing the per-year cap. Kill switch MILESTONE_POOL=0.
     if os.getenv("MILESTONE_POOL", "1") != "0":
         try:
-            _md = int(os.getenv("MILESTONE_POOL_DAYS", "7"))
-            # Fire when target is within ±_md of a milestone (so an anniversary episode a day or
-            # two late — e.g. rendered 11-17 for the 11-15 adoption day — still gets the era
-            # footage). Match milestones by (month,day) proximity to target, then center the
-            # footage window on the MILESTONE's date, not the (possibly offset) target.
+            # PD 2026-11-17: ±_md was 7, so the whole ±7-day window (e.g. 11-08..11-22 for the
+            # 11-15 adoption day) got era footage force-injected — which pushed EVERY episode in
+            # that fortnight toward old/unavailable nostalgia (the 11-17 "0컷" failure: injected
+            # 2017-2022 photos not mirrored to GCS). The launch batch renders target=publish-day
+            # (produced the day before), so a milestone episode is essentially never 2 days late;
+            # ±1 keeps the day-of + a one-day late-render tolerance while excluding the polluting
+            # tail. MILESTONE_POOL_DAYS overrides. Match the milestone by (month,day) proximity to
+            # target, then center the footage window on the MILESTONE's date, not the target.
+            _md = int(os.getenv("MILESTONE_POOL_DAYS", "1"))
             _near = []
             for _o in range(-_md, _md + 1):
                 _dd = target + dt.timedelta(days=_o)
@@ -4773,9 +4777,16 @@ def _render_realfootage_with_retry(concept: dict, target: dt.date,
         # Past the per-slot deadline, STOP retrying and ship the best attempt so far (or leave
         # empty) — a mediocre/empty slot beats an all-day batch runaway. RF_SLOT_MAX_SECONDS reverts.
         if attempt > 1 and _time.time() > _slot_deadline:
+            # PD 2026-11-17 junk-gate (same rule as exhaustion): on timeout, don't ship a
+            # sub-floor best-effort — an empty slot beats a Giri-failed episode.
+            _to_best = best_out or last_out
+            if _to_best and float(best_key[1] or 0) < float(os.getenv("RF_BESTEFFORT_FLOOR", "7")):
+                if progress_cb:
+                    progress_cb(f":alarm_clock: RF 슬롯 시간초과 · 최고 {best_key[1]}/10 < floor — 슬롯 비움(junk 금지)")
+                return _finish(None)
             if progress_cb:
                 progress_cb(f":alarm_clock: RF 슬롯 시간초과 — 재시도 중단, 최고 결과 사용(시도 {attempt-1})")
-            return _finish(best_out or last_out)
+            return _finish(_to_best)
         if progress_cb:
             progress_cb(f":repeat: real_footage 시도 {attempt}/{max_attempts}")
         out, report, card_id = _render_realfootage_direct(cur_concept, target, con, progress_cb)
@@ -4867,9 +4878,24 @@ def _render_realfootage_with_retry(concept: dict, target: dt.date,
                 log.warning("real_footage: all %d attempts face-violating/failed — skipping slot",
                             max_attempts)
                 return _finish(None)
+            # PD 2026-11-17 junk-gate: reaching exhaustion means NO attempt passed Giri
+            # (a passing verdict returns early above). The old code still shipped the
+            # best-SCORING fail — that is exactly how a 3-4/10 fabrication went public
+            # (호수 풍경에 "랴니가 물 좋아해요" 4/10, 위글 컨셉≠가을산책 footage 3/10). "junk
+            # 금지": only ship a best-effort that clears a quality floor; below it leave the
+            # slot EMPTY (빈 슬롯 > 검수 실패본 — selfheal/다음 배치가 다시 채운다).
+            # RF_BESTEFFORT_FLOOR=0 restores the old always-ship behavior.
+            _floor = float(os.getenv("RF_BESTEFFORT_FLOOR", "7"))
+            _best_score = float(best_key[1] or 0)
+            if _best_score < _floor:
+                if progress_cb:
+                    progress_cb(f":no_entry: 기리 미통과 {max_attempts}회 · 최고 {best_key[1]}/10 < {_floor:.0f} — 슬롯 비움(junk 금지)")
+                log.warning("real_footage: best %.0f/10 < floor %.0f after %d attempts — skipping slot (no junk)",
+                            _best_score, _floor, max_attempts)
+                return _finish(None)
             if progress_cb:
-                progress_cb(f":warning: 기리 미통과 {max_attempts}회 — 최고({'자기소개' if best_key[0] else '일반'} {best_key[1]}/10) 결과 사용")
-            log.warning("real_footage failed Giri after %d attempts — using best %s",
+                progress_cb(f":warning: 기리 미통과 {max_attempts}회 — 최고({'자기소개' if best_key[0] else '일반'} {best_key[1]}/10, ≥{_floor:.0f} floor) 결과 사용")
+            log.warning("real_footage failed Giri after %d attempts — shipping best %s (>= floor)",
                         max_attempts, best_key)
             _arc(best_card_id)
             return _finish(best_out)
