@@ -3990,6 +3990,25 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
                     f"[시대혼합] {_fire['reason']} — 그런데 캡션이 시점(그때/N년 전/아기 시절)을 "
                     "전혀 안 밝혀 다른 시기 footage를 한 순간처럼 이었다. 같은 시기 클립으로 통일하거나, "
                     "과거↔현재를 캡션에 명시해 memory-lane으로 narration하라 (아기 레오+지금을 섞으려면 시점 명시 필수)"]
+        # PD 2026-11-17 split nudge: two-pet contrast is split-screen's home, but the Writer
+        # defaults to cross-cutting the two pets (허용≠행동 — permission alone didn't move it:
+        # "랴니는 뛰고 레오는 버팅기고" shipped as sequential cuts, 0 splits). When the concept
+        # READS as a contrast (title/oneliner signal) AND shows both pets AND has no split yet,
+        # nudge a split on the re-proposal (the Writer still picks the pair). RF_SPLIT_NUDGE=0 off.
+        if os.getenv("RF_SPLIT_NUDGE", "1") == "1":
+            _c0 = concepts[0] if concepts else {}
+            _cuts0 = _c0.get("cuts") or []
+            _has_split = any((cut.get("edit_effect") or "").startswith("split") for cut in _cuts0)
+            _whos = {(cut.get("who") or "").lower() for cut in _cuts0}
+            _both = ("leo" in _whos and "ryani" in _whos) or "both" in _whos
+            _txt = (str(_c0.get("title", "")) + " " + str(_c0.get("narrative_oneliner", ""))).lower()
+            _contrast = any(k in _txt for k in
+                            ("대비", "각자", "동시", "vs", "반면", "는데", "따로", "반대", "한쪽", "달라", "둘 다"))
+            if _both and _contrast and not _has_split and len(_cuts0) >= 2:
+                _issues = list(_issues) + [
+                    "[split] 두 펫 대비가 훅인데 split을 안 썼다 — 레오/랴니 대비 beat를 번갈아 자르지 말고 "
+                    "한 컷을 edit_effect=split_vertical + secondary_asset_id로 두 클립을 동시에 보여줘라 "
+                    "(대비는 '동시에 보일 때' 터진다; 비슷한 샷 크기끼리 짝지어라)."]
         if _issues and prior_feedback.count("[구조검증]") < int(os.getenv("RF_STRUCTURE_MAX_TRIES", "1")):
             if progress_cb:
                 progress_cb(f":triangular_ruler: 구조검증 — {len(_issues)}건 (클립 재사용/길이 예산) → 재작성")
