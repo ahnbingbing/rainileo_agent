@@ -173,6 +173,72 @@ def signature_repeat(drafts: list, days: int) -> dict:
             if hit:
                 return {"token": sorted(hit, key=len, reverse=True)[0], "episode": ep_title}
     return {"token": "", "episode": ""}
+
+
+def _published_corpus(con, limit: int) -> list[tuple]:
+    """The FULL published/queued title corpus for distinctiveness scoring — "그동안 올린
+    ~500편을 RAG로 놓고 본다"(PD 2026-11-17). Unlike _recent_rendered_signatures (a recency
+    WINDOW), this is the whole history: it exists only to compute each title-token's document
+    frequency (how many episodes ever used it), which is what separates a STAPLE motif (산책·
+    낮잠 — in many episodes) from a DISTINCTIVE one (수영 — in a handful). Title-only, same as
+    the signature gate. Returns [(title, token_set), …]."""
+    try:
+        rows = con.execute(
+            "SELECT payload_json, theme FROM cards "
+            "WHERE state IN ('rendered','approved','published') OR uploaded=1 "
+            "ORDER BY COALESCE(updated_at, created_at) DESC LIMIT ?", (limit,)).fetchall()
+    except Exception:
+        return []
+    out = []
+    for pj, theme in rows:
+        try:
+            pl = json.loads(pj or "{}")
+        except Exception:
+            pl = {}
+        title = pl.get("title") or theme or ""
+        if isinstance(title, dict):
+            title = title.get("ko") or ""
+        toks = _motif_tokens(title)
+        if toks and title:
+            out.append((title, toks))
+    return out
+
+
+def distinctive_theme_cooldown(drafts: list, corpus: list, recent: list,
+                               distinctive_max: int) -> dict:
+    """Distinctive-theme recency cooldown (PD 2026-11-17, reconciling the 2026-07-05 rule
+    that theme-repeat is NOT a hard fail). The freshness unit stays the actual VIDEO, so a
+    STAPLE motif (산책·낮잠·간식) recurring with fresh footage still passes. But a DISTINCTIVE
+    소재 (수영 — 11-12 published, proposed again 11-17) reads as "또 그거" even with a different
+    clip. The CORPUS itself decides staple vs distinctive: a title-token whose document
+    frequency across the whole published history is ≤ distinctive_max is 'distinctive'; a
+    high-DF token (a daily staple) is exempt — no hand-curated vocab. A distinctive token
+    shared between a candidate and an episode published within the cooldown window → fail.
+    Returns {token, episode, df} on a hit, else {}."""
+    if not drafts or not recent:
+        return {}
+    from collections import Counter
+    df: Counter = Counter()
+    for _title, toks in corpus:
+        for t in set(toks):
+            df[t] += 1
+    for c in drafts:
+        t = c.get("title")
+        t = t.get("ko") if isinstance(t, dict) else (t or "")
+        cand = _motif_tokens(t)
+        # distinctive = rare in the corpus (but seen at least once — a brand-new token is
+        # novel, not a repeat). df==0 (never used) is skipped by the `0 <` guard.
+        distinctive = {x for x in cand if 0 < df.get(x, 0) <= distinctive_max}
+        if not distinctive:
+            continue
+        for ep_title, ep_toks in recent:
+            hit = distinctive & ep_toks
+            if hit:
+                tok = sorted(hit, key=lambda z: (df.get(z, 0), -len(z)))[0]  # rarest, then longest
+                return {"token": tok, "episode": ep_title, "df": df.get(tok, 0)}
+    return {}
+
+
 DB_PATH = Path(os.getenv("DB_PATH", str(ROOT / "data" / "agent.db"))).resolve()
 
 _CACHE: dict = {}  # keyed by (date, days) so a launch run fetches once
@@ -398,6 +464,11 @@ def fetch_macro_context(con, days: int | None = None) -> dict:
         "performance": _performance(con),
         "comments": _comments(con),
         "days": days,
+        # PD 2026-11-17 distinctive-theme cooldown inputs: the full-history corpus (for
+        # token document-frequency → staple vs distinctive) + the recency window a repeat
+        # must fall within. Cheap (title-only); see distinctive_theme_cooldown.
+        "published_corpus": _published_corpus(con, int(os.getenv("PUBLISHED_CORPUS_N", "500"))),
+        "cooldown_recent": _recent_rendered_signatures(con, int(os.getenv("THEME_COOLDOWN_DAYS", "14"))),
     }
     _CACHE[key] = ctx
     log.info("macro context: %d recent eps, %d perf rows, %d comments",
@@ -688,6 +759,33 @@ def run_reviewer(drafts: list, ctx: dict, lane: str, progress_cb=None) -> dict:
                                           + f" [signature-dejavu:{sig['token']}~{sig['episode'][:16]}]")
                 log.info("reviewer signature dejavu (advisory, token=%s ep=%s)",
                          sig["token"], sig["episode"])
+        # PD 2026-11-17 distinctive-theme cooldown. The July rule (theme-repeat is not a hard
+        # fail; footage is the freshness unit) is respected — this fires ONLY for a DISTINCTIVE
+        # 소재 (corpus-rare token, e.g. 수영) that a within-window published episode already used.
+        # Staples (high-DF: 산책·낮잠·간식) are exempt and still pass on fresh footage. It runs
+        # AFTER the vhash overrides and is NOT subject to the fresh-footage pass-override — a
+        # different clip of the SAME distinctive-recent 소재 still reads as "또 그거" to a viewer.
+        # THEME_COOLDOWN=0 reverts; THEME_COOLDOWN_DAYS / _DISTINCTIVE_MAX tune it.
+        if os.getenv("THEME_COOLDOWN", "1") != "0":
+            try:
+                cd = distinctive_theme_cooldown(
+                    drafts, ctx.get("published_corpus") or [], ctx.get("cooldown_recent") or [],
+                    int(os.getenv("THEME_COOLDOWN_DISTINCTIVE_MAX", "6")))
+            except Exception as e:
+                cd = {}
+                log.info("theme cooldown skipped: %s", e)
+            if cd.get("token"):
+                _cd_days = os.getenv("THEME_COOLDOWN_DAYS", "14")
+                od = (f"구별-테마 쿨다운: '{cd['token']}'은(는) 최근 {_cd_days}일 내 공개된 "
+                      f"「{cd['episode'][:24]}」와 같은 '구별되는 소재'다(전체 코퍼스 {cd['df']}편에만 "
+                      f"등장=주력 모티프 아님). footage가 달라도 시청자에겐 '또 그거'다 — 같은 소재를 "
+                      f"반복하지 말고 다른 소재/훅으로 바꿔라(산책·낮잠 같은 주력은 반복 OK).")
+                verdict["pass"] = False
+                verdict["rewrite_directive"] = (
+                    (verdict["rewrite_directive"] + " " if verdict["rewrite_directive"] else "") + od)
+                verdict["macro_notes"] = (verdict.get("macro_notes") or "") + f" [theme-cooldown:{cd['token']}]"
+                log.info("reviewer theme-cooldown → fail (token=%s df=%d ep=%s)",
+                         cd["token"], cd["df"], cd["episode"])
         if progress_cb:
             extra = ""
             if vo["comparable"]:
