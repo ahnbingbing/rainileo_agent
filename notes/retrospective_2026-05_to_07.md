@@ -1754,6 +1754,20 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   ③**반복은 footage가 아니라 published 테마다** — 이미 올린 코퍼스를 RAG로 놓고 봐야 오판이 안 난다. 임시 탈출=수동 Lane-3(클립
   핀+캡션 직접 작성+프레임 검수)로 그루밍본(2025-11 작년 footage, grooming은 published 26편 중 2편=distinct) 확정.
   cf [[C_milestoneforce]]·[[rf_fix_production_reproduction]]·D_streamguard(작동하는 폴백이 죽은 주력을 가림 — 여기선 best-effort가 Giri를 가림).
+  ★위 셋은 코드로 수정(63e5991·8127c6b): #2 junk-gate(`RF_BESTEFFORT_FLOOR`=7, 소진·타임아웃 두 ship 경로 모두 — AV는 2026-06-10부터 이미 통과분만 게시, RF를 그 정책에 정렬)·#3 마일스톤 창 ±7→±1(`MILESTONE_POOL_DAYS`)·#1 아래 D_themecooldown.
+
+- **D_themecooldown. "같은 소재라도 footage 신선하면 OK"(7월)와 "수영 너무 자주 했다"(11월)의 화해 = 구별-테마만 쿨다운(11/17)** —
+  PD 2026-07-05은 테마-반복을 **의도적으로 non-fail**로 만들었다(신선도 단위=실제 영상; vhash-fresh면 LLM 테마-reject를 pass로 강등).
+  그런데 PD 2026-11-17 "수영 11-12에 올렸는데 또 수영은 반복·그동안 올린 ~500편을 RAG로 봐야". 둘은 모순이 아니라 **주력 vs 구별**의
+  문제다: 매일 나오는 산책·낮잠·간식은 신선 footage면 반복 OK(주력), 그러나 **수영 같은 '구별되는 소재'를 며칠 안에 또 하면 다른
+  클립이어도 시청자에겐 "또 그거"**. 화해 메커니즘=**코퍼스가 스스로 주력↔구별을 판정**: published 전체 제목의 토큰 document-frequency를
+  세어, 흔한 토큰(산책=다수 편)은 staple=면제, 드문 토큰(수영=소수 편, DF≤`THEME_COOLDOWN_DISTINCTIVE_MAX`)은 distinctive — 그게
+  `THEME_COOLDOWN_DAYS`(14일) 내 공개편과 겹치면 soft-fail(rewrite-directive로 Writer가 다른 소재 재제안). ★결정론 게이트를 **vhash-fresh
+  강등의 뒤·면제**로 둔 게 핵심(신선 footage여도 구별-최근 소재는 통과시키면 안 됨). 리뷰어 코드가 수년간 "distinctive-token model은
+  follow-up"이라 자백해 둔 바로 그 모델을, **커리된 vocab 없이 코퍼스로**(=PD의 "RAG") 구현(8127c6b). 양 레인·초기+RF재시도에 배선, 단위검증
+  (수영장 df=1→fire·간식 staple→면제·신규→통과). ★교훈: **상충하는 두 PD 지시는 보통 한 축이 빠진 것** — "반복 금지"와 "반복 OK"는
+  *무엇의* 반복이냐(주력이냐 구별이냐)를 데이터(코퍼스)가 가르면 둘 다 참이 된다. 한계=exact-token이라 패러프레이즈(수영장↔물놀이)는 의미
+  임베딩 follow-up. `THEME_COOLDOWN=0` 가역. cf C_junkgate(이 쿨다운이 메운 "published 테마 반복" 갭)·[[diversity_vs_hook_quality]]·giri-update(결정론 게이트 선호).
 
 ### 4.5 인프라 / 파이프라인
 - **C_trimproxyscale. 중간 산출물은 전달 해상도로 한 번만 만들어라 — 모든 하류가 1080으로 내릴 거면서 4K를 끌고 다니는 건 순수 낭비고, 집계된 총 렌더 시간이 그 낭비를 가린다(11/12)** —
