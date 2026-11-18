@@ -2775,4 +2775,12 @@ Ryani = 무꼬리 프렌치불독(턱/가슴/발 흰마킹, 목뒤 무흰색, �
 이 전부가 C_mviter·cli_quality_drift_root의 "확립된 계약 안 쓰고 일회성 낮은-퀄 경로"의 **프롬프팅 발현**
 이자 grounding_pd_notes("가진 지식도 소비처에 배선 안 하면 무효")의 연장. 상세: `notes/model_prompting_guides.md`.
 미완(별도 트랙): Claude 텍스트 프롬프트(writer_director+prompts/*.md)는 prompt-authoring 경유 감사 — 핵심
-발견은 prefill이 Opus 4.6+에서 400(우리는 prefill 안 써서 안전)·Structured Outputs/캐시 breakpoint는 개선 플래그.
+발견은 prefill이 Opus 4.6+에서 400(우리는 prefill 안 써서 안전)·캐시 breakpoint는 _call_anthropic_raw 보호주석.
+
+**후속 — Structured Outputs(플래그→구현, 2026-11-18, `6df8d06`):** "프롬프트로 JSON 애원 말고 스키마로
+강제"를 **값어치 큰 곳만** 배선. S1=Gemini `responseSchema`(video_actions actions배열+clip_knowledge 중첩 —
+큰 truncation-prone 출력). S2=OpenAI strict `json_schema`(openai_vision 그라운딩 9필드). 둘 다 kill-switch
+(STRUCT_OUT_GEMINI/OPENAI)+스키마거부 시 무스키마 재시도+기존 파서 폴백, 실입력 검증. ★디자인 원칙=
+스키마는 기존 프롬프트 모양 미러(동작 무변, 강제만)·작은출력 게이트(thinkingBudget0라 truncation無)는
+**의도적 스킵**(churn위험>이득, cli_quality_drift_root의 "작동코드 churn 금지"). S3=Claude Writer/Director
+output_config는 복잡 중첩스키마+loose파서 이미 작동이라 최저ROI→defer.
