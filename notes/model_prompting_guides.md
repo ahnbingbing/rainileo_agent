@@ -475,7 +475,7 @@ Gemini API 단축 5요소: Subject·Action·Style·Camera·Composition/Ambiance.
 | `gen_song.py` | Suno | ✓ 필드 분리 | Style/태그 docstring, 아티스트명 가드 |
 | `gen_music.py` | Lyria-002 | ⚠ 보컬 섹션 혼입 위험 | instrumental-only 명시(§footgun) |
 | `gen_bgm_library.py` | Suno | ✓ | 확인 |
-| `writer_director.py`+`prompts/*.md` | Claude | ⚠ prefill? | **prefill 400(4.6+) 확인**, Structured Outputs, 캐시 breakpoint |
+| `writer_director.py`+`prompts/*.md` | Claude | ✓ 정렬 확인(2026-11-18) | no-prefill ✓·캐시 breakpoint 정확(system 정적/user 변동, _call_anthropic_raw에 보호주석)·프롬프트 구조 양호(역할·multishot·출력스키마)·NEVER/MUST는 calibrated 날조방지라 보존. 개선 플래그=Structured Outputs(JSON 보장, 더 큰 변경) |
 | `openai_vision.py` | gpt-4o-mini | ⚠ detail 명시? | `detail:"high"` 명시, 스키마 강제, 중립질문 |
 | `motion_b_vlm.py`/`video_actions.py` | Gemini | ✓ thinkingBudget=0 | Pro 라우팅 시 주의(§footgun), video 프롬프트 뒤 |
 | cameraman VLM 게이트 6종 | Gemini | ⚠ 유도질문/프레임수 | 중립질문·해상도·FPS 점검 |

@@ -156,6 +156,16 @@ def _call_anthropic_raw(system: str, user: str, *, model: str,
     fail explicitly, and wrapped by _call_anthropic for the fallback path."""
     client = anthropic.Anthropic()
     if cache_system:
+        # Prompt caching: the breakpoint sits on the SYSTEM block, which must stay
+        # byte-identical across requests for the cache to hit (notes/model_prompting_guides.md
+        # §Claude — the #1 caching pitfall). Keep `system` purely STABLE reference material
+        # (role + character sheets + shot grammar + static refs); ALL per-request variable
+        # data (date, selected clips, dynamic few-shots, directives) goes in the `user`
+        # message below, AFTER the cached block. Interpolating anything per-episode into
+        # `system` silently drops the hit rate to ~0% (watch cache_read_input_tokens in the
+        # log line below — it should be >0 on retry-loop re-renders). opus-4-7 cache floor is
+        # 2,048 tok; this ~25KB system clears it. (No assistant-turn prefill anywhere — it
+        # 400s on Opus 4.6+; JSON reliability comes from the loose parser + truncation-retry.)
         system_param = [{
             "type": "text",
             "text": system,
