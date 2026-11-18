@@ -2739,3 +2739,40 @@ Ryani = 무꼬리 프렌치불독(턱/가슴/발 흰마킹, 목뒤 무흰색, �
 - wait 루프의 `pgrep -f build.py`가 **자기 명령줄을 매칭**해 빌드가 시작조차 안 되고 "밤새 걸림"으로 오인. 빌드는 직접 실행·완료는 출력파일로 판정.
 - 검수 드래프트는 **unlisted**(일부공개)지 private 아님 — PD는 둘 다 "비공개"라 부른다. 삭제 전 unlisted/private 구분해 "(검토용)"만 지울 것.
 - 보컬 레퍼는 짐작 금지 실제 분석; **Suno는 아티스트명 거부** → 특성 묘사만; 초기/성숙 음원 구분(이찬혁 초기=더 앳됨).
+
+## §4.7 C_modelpromptspec — 모델별 프롬프팅은 "느낌"이 아니라 체크 가능한 공식 스펙 (2026-11-18)
+
+**증상:** MV가 카툰스럽고 결함났다. 근본을 파보니 특정 컷이 아니라 **CLI가 "모델마다 최적 프롬프팅이
+다른데 공식 문서를 확인하지 않고 범용 스타일로 질렀다"**였다. nano-banana 3원칙조차 PD가 알려줘서 안
+거지 CLI가 모델 문서에서 뽑은 게 아니었다 — 그 자체가 문제. LLM/모델 쓰는 **모든 곳**에 같은 구멍.
+
+**근본(원칙):** 각 모델의 프롬프팅 베스트프랙티스는 **1차 공식 문서에 적혀 있는 체크 가능한 스펙**이다.
+확인 없이 범용 스타일로 쓰면 모델과 싸운다(§3 하드룰 "평판 아니라 공식 소스"의 프롬프팅판). 이걸 영속한
+게 `notes/model_prompting_guides.md`(8모델 1차출처 + 사이트→모델 교차표 + 마이그레이션 플래그).
+
+- **가장 날카로운 축 = 부정(negation)이 모델을 두 진영으로 가른다.** nano-banana·FLUX·Seedance는
+  **전용 negative 필드가 없고** "NO X"에 반응해 **오히려 그 명사를 그린다**(랴니 꼬리 환각·12컷 엔싱크
+  사람 유입이 이 증상). Veo는 `negativePrompt`에 **명사**로만(main에 "no/don't" 공식 금지). gpt-image·
+  Claude는 부정이 **1급 지원**("state exclusions explicitly"). 우리는 부정 싫어하는 모델에 "NO TAIL/
+  NO dog/NO on-screen text"를 남발하고 있었다 — MV 카툰·환각의 근본축. → 모델이 어느 진영인지 보고
+  nano/flux/seedance는 **원하는 상태를 긍정 묘사**, Veo는 negativePrompt 명사로.
+- **마킹 충실도 = 프롬프트가 아니라 ref-lock(레퍼런스가 운반).** 랴니 흰 턱/가슴/발·목뒤 순검정은
+  긍정이든 부정이든 **산문으론 안정적으로 안 들어간다 — 드리프트한다**(PD 샘플 A/B 확인). 정답은 그
+  마킹을 담은 네이밍된 레퍼런스를 입력으로 주고 프롬프트는 "유지"만. 긍정-재작성과 ref-lock은 **별개·
+  보완**. (C_mviter의 "캐릭터 시트는 주입될 때만 효과"의 레퍼런스판.)
+- **모델 선택 자체가 레버 — "왜 이 모델인가"의 전제는 썩는다.** nano를 쓰던 이유는 "로컬 OpenAI 이미지
+  권한 無"였는데 그게 사라졌고(gpt-image-2 로컬 작동) nano는 공식 legacy가 됐다. → gpt-image-2를
+  포토리얼 **primary**로, Gemini는 **폴백 전용으로 축소 + 비-legacy(`gemini-3-pro-image-preview`)로
+  업그레이드**. 모델의 원래 선택 전제가 아직 유효한지 주기적으로 재검토하라.
+- **작동 중인 가드는 이론으로 churn하지 마라.** Seedance `_NO_TEXT_GUARD`(대문자 NO-리스트지만 PD가
+  실제 doubled-caption 버그를 고친 것)·openai_vision "BOTH 적극 탐색"(유도질문처럼 보이나 측정된 Leo
+  과소탐지 편향을 anti-hallucination 가드와 함께 교정한 것)은 **보존**하고 대안 레버를 **플래그만** 남겼다.
+  일반 규칙을 맹목 적용해 working 시스템을 되돌리면 그 자체가 품질저하(cli_quality_drift_root의 반대판).
+
+**교훈:** 프롬프트 품질 문제의 근본은 대개 "이 모델엔 이렇게 쓴다"는 **공식 스펙을 확인·배선하지 않음**이다.
+고치는 법 = (a) 모델별 1차출처 가이드를 영속하고 각 생성기 docstring이 그걸 가리키게(Level-1 가드), (b)
+부정은 모델 진영 보고, (c) identity/마킹은 ref-lock, (d) 모델 선택 전제 재검토, (e) 작동 가드는 플래그만.
+이 전부가 C_mviter·cli_quality_drift_root의 "확립된 계약 안 쓰고 일회성 낮은-퀄 경로"의 **프롬프팅 발현**
+이자 grounding_pd_notes("가진 지식도 소비처에 배선 안 하면 무효")의 연장. 상세: `notes/model_prompting_guides.md`.
+미완(별도 트랙): Claude 텍스트 프롬프트(writer_director+prompts/*.md)는 prompt-authoring 경유 감사 — 핵심
+발견은 prefill이 Opus 4.6+에서 400(우리는 prefill 안 써서 안전)·Structured Outputs/캐시 breakpoint는 개선 플래그.
