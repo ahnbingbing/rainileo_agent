@@ -185,6 +185,30 @@ Return ONLY valid JSON (no markdown fences):
 """
 
 
+# OpenAI Structured Outputs (notes/model_prompting_guides.md §VLM: "always use Structured Outputs
+# instead of JSON mode"). strict mode requires every property in `required` + additionalProperties
+# false — mirrors _BASE_PROMPT's shape exactly. Kill-switch STRUCT_OUT_OPENAI=0 reverts to the
+# prompt-asked JSON + regex-strip parser (kept below as the fallback).
+_GROUNDING_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "ryani_present": {"type": "boolean"},
+        "leo_present": {"type": "boolean"},
+        "other_animal": {"type": "string"},
+        "indoor_outdoor": {"type": "string", "enum": ["indoor", "outdoor", "ambiguous"]},
+        "location_type": {"type": "string",
+                          "enum": ["home", "cafe", "outdoor", "vet", "car", "other"]},
+        "location_specific": {"type": "string"},
+        "scene_ko": {"type": "string"},
+        "confidence": {"type": "number"},
+        "notes": {"type": "string"},
+    },
+    "required": ["ryani_present", "leo_present", "other_animal", "indoor_outdoor",
+                 "location_type", "location_specific", "scene_ko", "confidence", "notes"],
+}
+
+
 def _pd_notes_clause(pd_notes: str | None) -> str:
     pdn = (pd_notes or "").strip()
     if not pdn:
@@ -253,13 +277,28 @@ def ground_frames(frames: list[Path], pd_notes: str | None = None,
                         "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": _detail}})
 
     cl = OpenAI(timeout=int(os.getenv("VLM_GROUNDING_TIMEOUT", "90")), max_retries=2)
+
+    def _create(with_schema: bool):
+        kw = dict(model=model or _GROUNDING_MODEL, max_tokens=500,
+                  messages=[{"role": "user", "content": content}])
+        if with_schema:
+            kw["response_format"] = {"type": "json_schema", "json_schema": {
+                "name": "grounding", "strict": True, "schema": _GROUNDING_SCHEMA}}
+        return cl.chat.completions.create(**kw)
+
+    _schema_on = os.getenv("STRUCT_OUT_OPENAI", "1") != "0"
     try:
-        r = cl.chat.completions.create(
-            model=model or _GROUNDING_MODEL, max_tokens=500,
-            messages=[{"role": "user", "content": content}])
+        r = _create(_schema_on)
     except Exception as e:  # noqa: BLE001
-        log.warning("grounding VLM call failed: %s", str(e)[:200])
-        return None
+        if _schema_on:  # schema unsupported by the model/snapshot → retry prompt-only
+            try:
+                r = _create(False)
+            except Exception as e2:  # noqa: BLE001
+                log.warning("grounding VLM call failed: %s", str(e2)[:200])
+                return None
+        else:
+            log.warning("grounding VLM call failed: %s", str(e)[:200])
+            return None
     txt = (r.choices[0].message.content or "").strip()
     txt = re.sub(r"^```(?:json)?\s*", "", txt)
     txt = re.sub(r"\s*```$", "", txt)
