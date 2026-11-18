@@ -139,24 +139,60 @@ def actions(local_path: str, *, model: str | None = None) -> list:
                 pass
 
 
+# Gemini responseSchema (notes/model_prompting_guides.md §VLM): constrained decoding guarantees
+# the action-moment array stays valid JSON even on long outputs, instead of the model drifting
+# into prose or truncating mid-array. Mirrors PROMPT's asked shape exactly. Kill-switch
+# STRUCT_OUT_GEMINI=0 reverts to prompt-only JSON mode; the bracket-extract parser below stays
+# as a fallback either way, and a schema-rejection (400) auto-retries without the schema.
+_ACTIONS_SCHEMA = {
+    "type": "ARRAY",
+    "items": {
+        "type": "OBJECT",
+        "properties": {
+            "start": {"type": "NUMBER"},
+            "end": {"type": "NUMBER"},
+            "actor": {"type": "STRING", "enum": ["leo", "ryani", "both"]},
+            "action": {"type": "STRING"},
+            "desc": {"type": "STRING"},
+        },
+        "required": ["start", "end", "actor", "action", "desc"],
+    },
+}
+
+
 def _actions_on(local_path: str, *, model: str | None = None) -> list:
     uri = _upload(local_path)
-    body = json.dumps({
-        "contents": [{"parts": [
-            {"file_data": {"mime_type": _mime(local_path), "file_uri": uri}},
-            {"text": PROMPT}]}],
+
+    def _post(with_schema: bool) -> dict:
         # thinkingBudget=0 — 2.5-flash thinking mode truncates JSON mid-stream (CLAUDE.md gotcha #4)
-        "generationConfig": {"temperature": 0.1, "responseMimeType": "application/json",
-                             "thinkingConfig": {"thinkingBudget": 0}},
-    }).encode()
-    req = urllib.request.Request(
-        f"{BASE}/v1beta/models/{model or MODEL}:generateContent?key={_key()}",
-        data=body, headers={"Content-Type": "application/json"}, method="POST")
-    try:
+        gen_cfg = {"temperature": 0.1, "responseMimeType": "application/json",
+                   "thinkingConfig": {"thinkingBudget": 0}}
+        if with_schema:
+            gen_cfg["responseSchema"] = _ACTIONS_SCHEMA
+        body = json.dumps({
+            "contents": [{"parts": [
+                {"file_data": {"mime_type": _mime(local_path), "file_uri": uri}},
+                {"text": PROMPT}]}],
+            "generationConfig": gen_cfg,
+        }).encode()
+        req = urllib.request.Request(
+            f"{BASE}/v1beta/models/{model or MODEL}:generateContent?key={_key()}",
+            data=body, headers={"Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(req, timeout=240, context=_CTX) as r:
-            out = json.loads(r.read())
+            return json.loads(r.read())
+
+    use_schema = os.getenv("STRUCT_OUT_GEMINI", "1") != "0"
+    try:
+        out = _post(use_schema)
     except urllib.error.HTTPError as e:
-        raise RuntimeError(f"Gemini video HTTP {e.code}: {e.read().decode(errors='replace')[:400]}")
+        detail = e.read().decode(errors="replace")[:400]
+        if use_schema:  # schema may be rejected → fall back to prompt-only JSON mode
+            try:
+                out = _post(False)
+            except urllib.error.HTTPError as e2:
+                raise RuntimeError(f"Gemini video HTTP {e2.code}: {e2.read().decode(errors='replace')[:400]}")
+        else:
+            raise RuntimeError(f"Gemini video HTTP {e.code}: {detail}")
     try:
         txt = out["candidates"][0]["content"]["parts"][0]["text"]
     except (KeyError, IndexError):
@@ -187,6 +223,65 @@ CK_SCHEMA = (
     '"context_kept":"<감정·사연 등 영상 밖 맥락 중 살릴 것>"}}'
 )
 
+# Gemini responseSchema mirroring CK_SCHEMA — constrained decoding so the large nested
+# clip_knowledge object stays valid even when long (the truncation case schema fixes). `conflicts`
+# is intentionally NOT required (prompt allows omitting it). Kill-switch STRUCT_OUT_GEMINI=0.
+_who = {"type": "ARRAY", "items": {"type": "STRING", "enum": ["ryani", "leo"]}}
+_CK_RESPONSE_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "summary": {"type": "STRING"},
+        "subjects_in_video": _who,
+        "location": {
+            "type": "OBJECT",
+            "properties": {
+                "indoor_outdoor": {"type": "STRING", "enum": ["indoor", "outdoor", "unknown"]},
+                "specific": {"type": "STRING"},
+            },
+            "required": ["indoor_outdoor", "specific"],
+        },
+        "beats": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "t0": {"type": "NUMBER"}, "t1": {"type": "NUMBER"}, "who": _who,
+                    "action": {"type": "STRING"},
+                    "material_type": {"type": "STRING", "enum": [
+                        "mischief", "interaction", "funny_face", "emotion",
+                        "vocalization", "quirk", "hook"]},
+                    "note": {"type": "STRING"},
+                },
+                "required": ["t0", "t1", "who", "action", "material_type", "note"],
+            },
+        },
+        "audio_events": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "t0": {"type": "NUMBER"}, "t1": {"type": "NUMBER"},
+                    "who": {"type": "STRING", "enum": ["ryani", "leo", "unknown"]},
+                    "sound": {"type": "STRING"},
+                    "type": {"type": "STRING", "enum": ["vocalization", "other"]},
+                    "on_screen": {"type": "BOOLEAN"},
+                },
+                "required": ["t0", "t1", "who", "sound", "type", "on_screen"],
+            },
+        },
+        "pd_verified": {
+            "type": "OBJECT",
+            "properties": {
+                "subjects_claimed": {"type": "ARRAY", "items": {"type": "STRING"}},
+                "conflicts": {"type": "ARRAY", "items": {"type": "STRING"}},
+                "context_kept": {"type": "STRING"},
+            },
+            "required": ["subjects_claimed", "context_kept"],
+        },
+    },
+    "required": ["summary", "subjects_in_video", "location", "beats", "audio_events", "pd_verified"],
+}
+
 
 def clip_knowledge(local_path: str, *, pd_notes: str | None = None,
                    captured_iso: str | None = None, model: str | None = None) -> dict:
@@ -214,21 +309,32 @@ def clip_knowledge(local_path: str, *, pd_notes: str | None = None,
         "한국어로 써라." + iso_block + pd_block +
         "\n\nReturn ONLY this JSON object, no prose:\n" + CK_SCHEMA
     )
-    body = json.dumps({
-        "contents": [{"parts": [
-            {"file_data": {"mime_type": _mime(local_path), "file_uri": uri}},
-            {"text": prompt}]}],
-        "generationConfig": {"temperature": 0.2, "responseMimeType": "application/json",
-                             "thinkingConfig": {"thinkingBudget": 0}},
-    }).encode()
-    req = urllib.request.Request(
-        f"{BASE}/v1beta/models/{model or MODEL}:generateContent?key={_key()}",
-        data=body, headers={"Content-Type": "application/json"}, method="POST")
-    try:
+    def _post(with_schema: bool) -> dict:
+        gen_cfg = {"temperature": 0.2, "responseMimeType": "application/json",
+                   "thinkingConfig": {"thinkingBudget": 0}}
+        if with_schema:
+            gen_cfg["responseSchema"] = _CK_RESPONSE_SCHEMA
+        body = json.dumps({
+            "contents": [{"parts": [
+                {"file_data": {"mime_type": _mime(local_path), "file_uri": uri}},
+                {"text": prompt}]}],
+            "generationConfig": gen_cfg,
+        }).encode()
+        req = urllib.request.Request(
+            f"{BASE}/v1beta/models/{model or MODEL}:generateContent?key={_key()}",
+            data=body, headers={"Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(req, timeout=240, context=_CTX) as r:
-            out = json.loads(r.read())
+            return json.loads(r.read())
+
+    use_schema = os.getenv("STRUCT_OUT_GEMINI", "1") != "0"
+    try:
+        out = _post(use_schema)
     except urllib.error.HTTPError as e:
-        raise RuntimeError(f"Gemini video HTTP {e.code}: {e.read().decode(errors='replace')[:400]}")
+        detail = e.read().decode(errors="replace")[:400]
+        if use_schema:  # schema rejected → fall back to prompt-only JSON mode
+            out = _post(False)
+        else:
+            raise RuntimeError(f"Gemini video HTTP {e.code}: {detail}")
     txt = out["candidates"][0]["content"]["parts"][0]["text"]
     try:
         k = json.loads(txt)
