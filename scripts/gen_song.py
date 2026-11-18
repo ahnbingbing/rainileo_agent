@@ -6,6 +6,14 @@ go through a third-party gateway (default sunoapi.org / apibox). Bearer-token au
 POST a job → poll record-info by taskId → download the mp3(s). Every song is archived with a
 manifest (lyrics/style/model recoverable), mirroring gen_music.py ("만든 음악은 계속 저장").
 
+Prompt spec (Suno) — see notes/model_prompting_guides.md §Suno:
+  - `--style` = short descriptor string: tempo + genre/sub-genre + instrumentation + mood +
+    explicit vocal type ("soft female lead vocal"). Short concrete phrases beat long prose.
+  - Structure LYRICS with meta-tags: [Intro]/[Verse]/[Chorus]/[Bridge]/[Outro] + vocal tags
+    like [Spoken Word]/[Narrator] right before the lines they govern.
+  - ⚠ FOOTGUN: no real artist names or copyrighted/trademarked terms in style or lyrics — Suno
+    moderation blocks them (generation fails). Describe the SOUND, not "sounds like <artist>".
+
 Setup (PD): get an API key from a Suno gateway (https://sunoapi.org) → put in .env:
     SUNO_API_KEY=...
     # optional: SUNO_API_BASE=https://api.sunoapi.org   SUNO_MODEL=V6

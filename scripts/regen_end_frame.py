@@ -3,6 +3,13 @@ scripts/regen_end_frame.py
 --------------------------
 Generate an END frame for Veo 3.1's first+last frame interpolation mode.
 
+⚠ STATUS: ABANDONED (CLAUDE.md pipeline table "(off)"). Veo `lastFrame` is NOT
+available to us on any endpoint we can call (gotcha #5), so this script is dead.
+Kept as a worked nano-banana prompt example. If ever revived, the END_FRAME_PROMPTS
+below follow the nano-banana prompting rules — see `notes/model_prompting_guides.md`
+§nano-banana: positive phrasing over "NO/NOT" (nano has no negative field and
+renders the negated noun), short and specific, one change at a time.
+
 Why this exists
 ---------------
 Veo 3.1 lite (default) and even standard tier produce conservative motion on
@@ -77,46 +84,47 @@ except ImportError:
 ROOT = Path(__file__).resolve().parent.parent
 REGEN_DIR = ROOT / "data" / "tmp" / "episode_02_regen"
 
-MODEL = "gemini-2.5-flash-image"
+# gemini-2.5-flash-image is LEGACY; default to non-legacy Nano Banana Pro (shares the
+# IMAGE_GEN_MODEL knob with agents/models.py). Script is abandoned — see module docstring.
+MODEL = os.getenv("IMAGE_GEN_MODEL", "gemini-3-pro-image-preview")
 ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
 
-# Pose-change prompts per cut. Each prompt MUST:
-#   - explicitly preserve background, decorations, lighting, framing
-#   - lock down character identity (Ryani's no-tail Frenchie + white markings)
-#   - describe ONLY the pose change clearly so Gemini knows what to vary.
+# Pose-change prompts per cut. nano-banana rules (model_prompting_guides.md §nano-banana):
+#   - change ONE thing (the pose); keep the rest by naming it to preserve
+#   - POSITIVE phrasing, not "NO/NOT": nano has no negative field and tends to
+#     render the negated noun (e.g. "NO TAIL" can summon a tail). Describe the
+#     wanted state instead ("a smooth, rounded, tailless rear").
+#   - short and specific; name each pet's markings to keep, don't dump sheets.
 END_FRAME_PROMPTS: dict[str, str] = {
     "cut3_dance_party": (
-        "Modify ONLY the pose of the two pets in this image. Keep everything "
-        "else exactly the same — same background, same camera angle, same "
-        "framing, same confetti, same paper lanterns, same neon glow, same "
-        "party hats, same music notes, same lighting, same color palette.\n\n"
-        "Character identity (CRITICAL — do not alter these traits):\n"
-        " - Orange tabby cat (Leo) — preserve all tabby stripes, amber eyes, "
-        "pink nose, white whiskers, exact body proportions.\n"
-        " - Small French bulldog (Ryani) — brachycephalic flat-faced breed, "
-        "NO TAIL, mostly black BUT WITH DISTINCTIVE WHITE MARKINGS that you "
-        "MUST PRESERVE: white blaze on chin/muzzle, white chest patch, white "
-        "toes/paws. Do NOT paint over the white markings.\n\n"
+        "Change only the pose of the two pets. Keep the rest of the image exactly "
+        "as it is — same background, camera angle, framing, confetti, paper "
+        "lanterns, neon glow, party hats, music notes, lighting and color palette.\n\n"
+        "Keep each pet exactly true to itself:\n"
+        " - Orange tabby cat (Leo) — same tabby stripes, amber eyes, pink nose, "
+        "white whiskers and body proportions.\n"
+        " - Small black French bulldog (Ryani) — brachycephalic flat face, a "
+        "smooth rounded tailless rear, and her white markings right where they "
+        "are: white blaze on chin/muzzle, white chest patch, white toes/paws.\n\n"
         "New pose — both pets at the peak of a joyful dance:\n"
-        " - Orange tabby cat (Leo) is now sitting up tall on its haunches "
-        "with both front paws raised high in the air, head tilted back in "
-        "happy expression, mouth slightly open.\n"
-        " - French bulldog (Ryani) is now standing on her hind legs, body "
-        "upright, mouth open in joyful expression, ears bouncing upward.\n"
+        " - The orange tabby cat sits up tall on its haunches, both front paws "
+        "raised high, head tilted back, mouth slightly open in a happy look.\n"
+        " - The French bulldog stands upright on her hind legs, mouth open in a "
+        "joyful look, ears bouncing upward.\n"
         " - Both pets look full of energy, mid-bounce, celebrating together.\n\n"
         "9:16 vertical composition. Same vtuber kawaii art style as input."
     ),
     "cut4_cuddle_peace": (
-        "Modify ONLY the pose of the two pets in this image. Keep everything "
-        "else exactly the same — same background, same camera angle, same "
-        "paper lanterns, same lotus petals, same lighting.\n\n"
-        "Character identity (CRITICAL):\n"
-        " - Orange tabby cat (Leo) — preserve all tabby markings, body shape.\n"
-        " - French bulldog (Ryani) — NO TAIL, preserve white face blaze, "
-        "white chest patch, white paws.\n\n"
-        "New pose — small natural shift, both still cuddled but the cat's "
-        "head turns slightly toward the camera, the dog's ear flicks. Subtle "
-        "movement appropriate for peaceful sleep.\n\n"
+        "Change only the pose of the two pets. Keep the rest of the image exactly "
+        "as it is — same background, camera angle, paper lanterns, lotus petals "
+        "and lighting.\n\n"
+        "Keep each pet exactly true to itself:\n"
+        " - Orange tabby cat (Leo) — same tabby markings and body shape.\n"
+        " - Black French bulldog (Ryani) — a smooth tailless rear, white face "
+        "blaze, white chest patch and white paws, all kept where they are.\n\n"
+        "New pose — a small natural shift: both stay cuddled, but the cat's head "
+        "turns slightly toward the camera and the dog's ear flicks. Subtle "
+        "movement fitting peaceful sleep.\n\n"
         "9:16 vertical composition. Same vtuber kawaii art style."
     ),
 }

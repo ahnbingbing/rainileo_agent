@@ -58,12 +58,14 @@ from agents import canon as _canon  # central character canon (single source)
 CHARACTER_SHEET = ROOT / "agents" / "prompts" / "character_sheets.md"
 log = logging.getLogger("generate_character_scene")
 
-# NOTE: the PRIMARY image engine is OpenAI gpt-image (see generate_scene / PD 2026-06-02
-# "openAI가 안될땐 gemini API"); Gemini is only the fallback (_generate_scene_gemini, which
-# builds its own endpoint). REGEN_MODEL / the constants below are LEGACY and unused — kept
-# only so old callers importing them don't break. Setting REGEN_MODEL does NOT switch the
-# engine; it never did. To change the engine, edit generate_scene, not this env var.
-MODEL = os.getenv("REGEN_MODEL", "gemini-2.5-flash-image")  # unused (legacy)
+# NOTE: the PRIMARY image engine is OpenAI gpt-image-2 (photoreal; see generate_scene /
+# PD 2026-06-02 "openAI가 안될땐 gemini API"). Gemini is only the FALLBACK
+# (_generate_scene_gemini → regen_vtuber_style.regen_one, which builds its own endpoint
+# from the IMAGE_GEN_MODEL knob, now the non-legacy Nano Banana Pro). REGEN_MODEL / the
+# constants below are LEGACY and unused — kept only so old callers importing them don't
+# break. Setting REGEN_MODEL does NOT switch the engine; use IMAGE_GEN_MODEL for the
+# Gemini fallback or OPENAI_IMAGE_MODEL for the primary.
+MODEL = os.getenv("REGEN_MODEL", "gemini-3-pro-image-preview")  # unused (legacy)
 ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"  # unused
 
 
@@ -169,12 +171,21 @@ def _get_reference_image(subjects: str = "both", segment: str = "S4") -> Path | 
 
 def generate_scene(prompt: str, reference_image: Path | None = None,
                    subjects: str = "both", segment: str = "S4") -> bytes:
-    """Generate a character scene via OpenAI gpt-image-1 with Gemini fallback.
+    """Generate a character scene via OpenAI gpt-image (default gpt-image-2) with
+    Gemini nano-banana fallback.
 
     PD 2026-06-02: "openAI가 안될땐 gemini API 중 하나를 쓰도록." Whenever
     OpenAI fails (rate limit, content policy reject, network), transparently
     retry with Gemini 2.5 Flash Image. Gemini path needs a reference image —
     text-only fallback would lose marking fidelity.
+
+    ⚠ The SAME `prompt` is served to BOTH models, which have OPPOSITE negation
+    preferences (notes/model_prompting_guides.md §0.1): gpt-image welcomes
+    explicit "no X" exclusions, but nano-banana has no negative field and
+    renders the negated noun. So the upstream prompt author (cameraman) must
+    write it in the POSITIVE / nano-safe style — the common-safe denominator
+    that gpt-image also handles well: describe wanted states ("a smooth tailless
+    rear", "pets alone on a clean set"), not "no tail" / "no humans".
     """
     if reference_image is None:
         reference_image = _get_reference_image(subjects, segment)

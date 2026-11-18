@@ -13,6 +13,16 @@ CHARACTER refs (pose / markings). The prompt says how to compose them.
      --ref assets/character_ref/leo_solo.png \
      --prompt "..." --out data/tmp/kitchen_stills/cut3.png
 
+The `--prompt` is caller-supplied and NOT guarded here, so the CALLER must write
+it to nano-banana spec — see `notes/model_prompting_guides.md` §nano-banana:
+  - natural-language sentences (Style · Subject · Setting · Action · Composition
+    + camera/lighting), NOT comma-separated tags or quality spam ("4k/masterpiece").
+  - POSITIVE phrasing, never "NO/NOT X" (nano has no negative field and renders
+    the negated noun): "a smooth tailless rear", "pets alone on a clean set".
+  - NAME each character/ref so consistency locks; stay within the reference cap
+    (Flash: 14 total / 4 characters). Keep it short and specific, not a wall.
+Reusable positive guards: `scripts/mv_prompt_guards.py` (SOLO_POS / NO_HUMANS_POS).
+
 Cost ≈ $0.04/image. No Seedance.
 """
 import argparse
@@ -31,7 +41,9 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 _SSL = ssl.create_default_context(cafile=certifi.where())
-MODEL = "gemini-2.5-flash-image"
+# gemini-2.5-flash-image is LEGACY; default to non-legacy Nano Banana Pro. Shares the
+# IMAGE_GEN_MODEL knob with agents/models.py. (See notes/model_prompting_guides.md.)
+MODEL = os.getenv("IMAGE_GEN_MODEL", "gemini-3-pro-image-preview")
 ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
 
 
@@ -79,7 +91,7 @@ def _log_still() -> None:
             _sys.path.insert(0, _root)
         from agents import api_ledger as _led
         _led.log_call("google", "image", price_key="gemini_image",
-                      model="gemini-2.5-flash-image", stage="still",
+                      model=MODEL, stage="still",
                       card_id=os.getenv("CURRENT_CARD_ID") or None)
     except Exception:
         pass

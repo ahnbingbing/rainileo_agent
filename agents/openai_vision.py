@@ -241,6 +241,11 @@ def ground_frames(frames: list[Path], pd_notes: str | None = None,
     max_imgs = int(os.getenv("VLM_GROUNDING_MAX_FRAMES", "10"))  # match the duration-aware sample ceiling
     # PD 2026-10-06: 'high' detail tiles each frame so gpt-4o can resolve a SMALL / occluded
     # subject (Leo the orange cat behind the black dog) instead of averaging it away at low-res.
+    # This matches the official VLM best practice (notes/model_prompting_guides.md §VLM:
+    # resolution is the binding constraint for small subjects — never ground off 'low'/thumbnails).
+    # ☐ FUTURE improvement (flag, not forced): switch the JSON contract from prompt+regex-strip
+    #   to OpenAI Structured Outputs (response_format json_schema strict) for guaranteed valid
+    #   JSON. Deferred — this is a load-bearing grounding gate; change needs its own test pass.
     _detail = os.getenv("VLM_GROUNDING_IMG_DETAIL", "high")
     for f in frames[:max_imgs]:
         b64 = base64.b64encode(f.read_bytes()).decode()

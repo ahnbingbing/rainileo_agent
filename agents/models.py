@@ -59,8 +59,16 @@ VLM_CAPTION = _m("VLM_CAPTION_MODEL", GEMINI_PRO)
 VLM_GROUNDING = _m("VLM_GROUNDING_MODEL", "gpt-4o")
 
 # ── Image generation ───────────────────────────────────────────────────────
-IMAGE_GEN = _m("IMAGE_GEN_MODEL", "gemini-2.5-flash-image")  # regen / scene stills
-OPENAI_IMAGE = _m("OPENAI_IMAGE_MODEL", "gpt-image-2")        # PD: character image gen
+# PD 2026-11-18: gpt-image-2 is the PHOTOREAL primary (OPENAI_IMAGE below). Gemini
+# image is kept FALLBACK-ONLY (cross-provider resilience when OpenAI rate-limits /
+# content-rejects, + the intentionally-stylized vtuber lane). `gemini-2.5-flash-image`
+# is now officially LEGACY, so the fallback is pinned to the non-legacy Nano Banana Pro
+# tier (already trusted in _gen_overlay_gemini). Env-overridable: set IMAGE_GEN_MODEL=
+# gemini-3.1-flash-image-preview for a cheaper/faster fallback. See notes/model_prompting_guides.md.
+# NOTE: the Pro image tier runs with thinking; our image calls set only responseModalities
+# (no thinkingBudget), so there is no thinking_budget=0 → 400 risk here.
+IMAGE_GEN = _m("IMAGE_GEN_MODEL", "gemini-3-pro-image-preview")  # Gemini FALLBACK stills (non-legacy)
+OPENAI_IMAGE = _m("OPENAI_IMAGE_MODEL", "gpt-image-2")        # PD: photoreal character image gen (PRIMARY)
 
 # Models that must NEVER be used as a text-completion model here (guarded).
 BANNED_TEXT_MODELS = ("gpt-5", "gpt-5-mini", "o1", "o3")

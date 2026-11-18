@@ -7,6 +7,13 @@ rode a chill-house default that read too calm (PD 2026-09-20). Rather than sourc
 runs on the same Vertex project already used for Veo (no new key), returns a ~32s 48kHz stereo
 WAV per call.
 
+Prompt spec (Lyria lyria-002) — see notes/model_prompting_guides.md §Suno-Lyria:
+  - Prompt order: genre+style, mood, instrumentation, tempo/BPM. US English only.
+  - Steer exclusions with negative_prompt (e.g. "vocals, fast tempo"), not in-prompt negation.
+  - ⚠ FOOTGUN: lyria-002 is INSTRUMENTAL-ONLY. Do NOT request vocals/lyrics (that's the newer
+    Lyria 3 family) — if stray vocal textures appear, put "vocals" in negative_prompt. `seed`
+    and `sample_count` are mutually exclusive; output is a fixed ~30s clip (can't prompt longer).
+
 Output flows through the drop-in convention wired in scripts/impact_edit._grammar_music:
 a file at assets/bgm/<grammar>_music.mp3 overrides that grammar's default music with no code
 or env change. So:

@@ -26,6 +26,18 @@ only). Gemini 2.5 Flash Image natively accepts an image input + text prompt,
 which is what we need for "take this photo, restyle it like X" tasks. Same
 GOOGLE_API_KEY works.
 
+Prompt rules (nano-banana) — the prompt comes from the JSON manifest
+(`_base_style` + `_preserve_subjects` + per-cut), so the manifest author must
+follow `notes/model_prompting_guides.md` §nano-banana:
+  - POSITIVE phrasing, not "NO/NOT". nano has no negative field and renders the
+    negated noun — write "a smooth tailless rear" / "pets alone on a clean set",
+    not "no tail" / "no humans". (Same reason the overlay/12-cut hallucinations
+    happened.)
+  - Short and specific: name the one or two markings that matter, don't paste
+    full character sheets; richer detail = more control but keep it purposeful.
+  - One change at a time for edits; `gemini-2.5-flash-image` is officially
+    legacy (see guide) — newer Flash/Pro tiers listed in MODEL comment below.
+
 Usage
 -----
     # one cut (test/iterate)
@@ -88,18 +100,22 @@ DEFAULT_IN_DIR = ROOT / "data" / "tmp" / "episode_02_input"
 DEFAULT_OUT_DIR = ROOT / "data" / "tmp" / "episode_02_regen"
 DEFAULT_PROMPTS = ROOT / "scripts" / "prompts" / "episode_02_regen_prompts.json"
 
-# Gemini 2.5 Flash Image — the "nano-banana" model family. Returns image
-# inline in `parts[].inline_data.data` (base64).
+# Gemini image ("nano-banana" family). Returns image inline in
+# `parts[].inline_data.data` (base64). This is the FALLBACK engine for photoreal
+# stills (gpt-image-2 is primary) + the stylized vtuber lane — see models.py IMAGE_GEN.
 #
-# Available image-capable generateContent models (as of 2026-05):
-#   gemini-2.5-flash-image           ← default. Flash tier, cheap+fast.
-#   gemini-3.1-flash-image-preview   ← newer Flash, slightly better quality.
-#   gemini-3-pro-image-preview       ← Pro tier, best quality, slower+pricier.
+# Image-capable generateContent models:
+#   gemini-2.5-flash-image           ← LEGACY (officially deprecated). Do not pin.
+#   gemini-3.1-flash-image-preview   ← newer Flash, cheaper/faster fallback option.
+#   gemini-3-pro-image-preview       ← Nano Banana Pro, best quality. ← DEFAULT.
 #   nano-banana-pro-preview          ← alias of gemini-3-pro-image-preview.
+# Shares the IMAGE_GEN_MODEL env knob with agents/models.py so one override moves both.
+# (generationConfig sets only responseModalities — no thinkingBudget — so the Pro
+# tier is safe here; thinking_budget=0 would 400 on Pro but we never send it.)
 #
-# Imagen 4 (imagen-4.0-*) is also available but uses `predict` (not
-# generateContent) and is text-to-image only — incompatible with this script.
-MODEL = "gemini-2.5-flash-image"
+# Imagen 4 (imagen-4.0-*) uses `predict` (not generateContent) and is text-to-image
+# only — incompatible with this script.
+MODEL = os.getenv("IMAGE_GEN_MODEL", "gemini-3-pro-image-preview")
 ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
 
 

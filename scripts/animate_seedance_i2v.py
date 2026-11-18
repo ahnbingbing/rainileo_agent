@@ -214,6 +214,11 @@ def submit_job(api_key: str, model: str, *,
     # pipeline is burned by drawtext downstream, and Seedance cannot spell Hangul anyway. So
     # deterministically append a clean-frame negative to EVERY call (all lanes/modes) — this is
     # the single chokepoint through which i2v/interp/ref prompts reach the API.
+    # notes/model_prompting_guides.md §Seedance: Seedance has no negative-prompt field, so
+    # constraints are written into the prompt as instructions. This NO-list is working (PD
+    # 2026-09-22 fixed the doubled-caption bug) — leave it. If on-screen text ever leaks again,
+    # the official phrasing ("keep it subtitle-free, do not generate any text or watermark") is
+    # the lever to try; don't churn a working guard on theory.
     _NO_TEXT_GUARD = (
         " The frame is clean with NO on-screen text, NO captions, NO subtitles, "
         "NO letters, NO words, NO Korean or Hangul characters, NO numbers, NO logos, "

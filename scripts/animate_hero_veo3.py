@@ -209,7 +209,11 @@ def main() -> int:
     p.add_argument("--seconds", type=int, default=4)
     p.add_argument("--aspect", default="9:16")
     p.add_argument("--negative", default=None,
-                   help="negative prompt (optional)")
+                   help="negativePrompt: exclusions as comma-separated NOUNS "
+                        "('wall, frame, text, watermark') — NOT 'no/don't' sentences. "
+                        "Per Veo spec (notes/model_prompting_guides.md §Veo), keep 'no/don't X' "
+                        "OUT of the main --prompt and put exclusions here instead. i2v --prompt "
+                        "should describe MOTION/camera only, not re-describe the input still.")
     p.add_argument("--model", default="veo-3.0-generate-001",
                    help="Veo model id. Override to veo-3.0-fast-generate-001 "
                         "for the cheap/fast variant. VERIFY current model strings.")

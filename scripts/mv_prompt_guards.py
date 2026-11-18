@@ -12,6 +12,20 @@ MV 결함의 근본은 i2v 클립이 아니라 스틸 생성 프롬프트의 전
     # 깨끗한 스튜디오 댄스:  scene + NO_HUMANS
     # 소품 등장 컷:        scene + prop_lock("감꼭지 calyx", "...reference...") + ANTI_PIP
     # 두 펫 캐릭터 락:      scene + character_sheet("ryani") + character_sheet("leo")
+
+★★ 모델별 프롬프팅 — 공식 가이드는 `notes/model_prompting_guides.md`를 보라(1차 출처 영속).
+  이 모듈의 가드는 **모델에 따라 형태가 달라야 한다.** 핵심 갈림길 = 부정(negation) 처리:
+
+  • NANO-BANANA / FLUX / Seedance = 부정을 싫어함(전용 negative 필드 없음). "NO dog/NO humans/no tail"는
+    dog·tail 단어에 반응해 **오히려 그린다**(12컷 엔싱크 사람 유입·랴니 꼬리 환각이 이 증상). → 아래
+    **긍정형 변주(`*_POS`)**를 써라. 원칙(가이드 §nano-banana): ①짧게(주체+행동+배경+스타일, character_sheets
+    전문 때려넣지 말고 꼭 필요한 마킹 한두 개) ②부정 대신 **원하는 상태를 긍정 묘사**("bare head"/"Leo alone"/
+    "empty set") ③한 샷에 다 X — 배경→메인→요소 단계적.
+  • GPT-IMAGE(OpenAI) / Claude = 부정이 **1급 지원**("state exclusions explicitly"). 아래 원래 부정형
+    상수(ANTI_PIP/SOLO/NO_HUMANS)를 그대로 써도 강인하다. PD가 "애니틱" 싫어하면 gpt-image 실사 edit이 기본.
+
+  한 줄: **nano/flux/seedance 경로 → `*_POS` 긍정형 / gpt-image·claude 경로 → 원래 부정형.**
+  [[mv_generator_prompt_footguns]]
 """
 from pathlib import Path
 
@@ -34,6 +48,21 @@ NO_HUMANS = ("NO humans anywhere in the frame — NO hands, NO arms, NO fingers,
 
 # 손을 꼭 넣어야 하는 컷만: 얼굴/머리 없이 가장자리 손만 (하지만 소품 상호작용이면 §8.14대로 손 제거가 낫다).
 HANDS_EDGE = ("Humans appear ONLY as hands/arms at the frame edge — NEVER any human face, head, hair or body. ")
+
+
+# ── nano-banana / FLUX / Seedance 긍정형 변주 (notes/model_prompting_guides.md §0.1) ─────
+# 부정 싫어하는 모델엔 위 ANTI_PIP/SOLO/NO_HUMANS 대신 이 긍정형을 써라 — 원하는 '상태'를 직접 묘사.
+ANTI_PIP_POS = ("This is one single full-frame photograph that fills the frame edge to edge — "
+                "a clean, straight-on photo of the scene itself. ")
+
+
+def SOLO_POS(animal: str = "orange tabby cat") -> str:
+    return (f"The frame holds exactly one animal: a single {animal}, alone on a clean backdrop "
+            "with open, empty space all around it. ")
+
+
+NO_HUMANS_POS = ("The scene shows only the pets on a clean, empty backdrop — just the animals, "
+                 "with open space where no one else stands. ")
 
 
 def prop_lock(prop: str, ref_desc: str = "", not_this: str = "a whole round fruit") -> str:
@@ -66,4 +95,5 @@ def character_sheet(_pet: str = "") -> str:
 
 
 __all__ = ["ANTI_PIP", "SOLO", "NO_HUMANS", "HANDS_EDGE", "CHEST_UP",
+           "ANTI_PIP_POS", "SOLO_POS", "NO_HUMANS_POS",
            "prop_lock", "bg_float", "character_sheet"]

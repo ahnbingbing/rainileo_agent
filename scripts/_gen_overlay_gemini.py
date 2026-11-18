@@ -1,7 +1,11 @@
 """Generate a HIGH-QUALITY Halloween overlay source image via Google's image model (nano-banana /
-gemini-3-pro-image-preview) — the local OpenAI key lacks image access; Gemini (GOOGLE_API_KEY) works
-and is high quality. Solid green chroma background + atmospheric bats / cobwebs / corner pumpkins,
-center + bottom-center kept empty green (caption-safe). Then Seedance i2v animates it, colorkey, composite."""
+gemini-3-pro-image-preview). Solid green chroma background + atmospheric bats / cobwebs / corner pumpkins,
+center + bottom-center kept empty green (caption-safe). Then Seedance i2v animates it, colorkey, composite.
+
+Prompt = nano-banana style (notes/model_prompting_guides.md §nano-banana): positive phrasing over
+"NO/NOT" (nano renders the negated noun — "no text" can summon text; assert "one pure uniform flat green"
+instead), and lean on positive quality descriptors rather than spam. 3-pro tolerates length but the
+negation rule still holds."""
 import base64, json, os, ssl, sys, urllib.request
 from pathlib import Path
 try:
@@ -18,21 +22,18 @@ except Exception:
 KEY = os.getenv("GOOGLE_API_KEY")
 MODEL = os.getenv("OVERLAY_GEMINI_MODEL", "gemini-3-pro-image-preview")
 PROMPT = (
-    "Ultra high-quality, PREMIUM cinematic Halloween video-FILTER overlay graphic, 9:16 vertical, the "
-    "quality level of a top TikTok / CapCut paid Halloween filter — rich, polished, atmospheric, "
-    "professionally designed, absolutely NOT flat clipart. Render it on a COMPLETELY SOLID, FLAT, "
-    "UNIFORM bright chroma-key GREEN background (pure #00FF00) so it can be keyed out. Compose the "
-    "Halloween elements ONLY around the EDGES; keep the whole CENTER and BOTTOM-CENTER as clean empty "
-    "flat solid green (reserved for subtitles — nothing there). Elements, all photorealistic and "
-    "cinematic with real depth of field, soft atmospheric glow and subtle motion blur: "
-    "(1) TOP: a dramatic swarm of PHOTOREALISTIC bats with detailed membrane wings, varied sizes and "
-    "true depth — a few large crisp bats in the foreground, a cloud of smaller soft-focus bats behind, "
-    "mid-flight, dynamic. (2) FOUR CORNERS: finely detailed realistic wispy spider cobwebs with thin "
-    "silk threads catching light. (3) BOTTOM-LEFT and BOTTOM-RIGHT corners ONLY: a beautifully carved, "
-    "richly GLOWING jack-o-lantern pumpkin with warm volumetric candlelight and realistic texture in "
-    "each corner — nothing in the bottom center between them. Scatter a few tasteful glowing embers "
-    "and golden sparkle particles near the edges. Moody, premium, magazine-grade Halloween art. No "
-    "text, no ground line, no background gradient; the keyable area stays pure solid green."
+    "A premium cinematic Halloween video-filter overlay, 9:16 vertical, at the quality of a top paid "
+    "CapCut filter — rich, atmospheric, photorealistic with real depth of field, soft glow and subtle "
+    "motion blur. Render it on one pure, uniform, flat chroma-key green background (#00FF00) so it keys "
+    "out cleanly, and place every Halloween element ONLY around the edges, leaving the whole center and "
+    "bottom-center as clean bare flat green (the subtitle-safe zone). Elements: "
+    "(1) TOP: a dramatic swarm of photorealistic bats with detailed membrane wings and true depth — a "
+    "few large crisp bats in front, a cloud of smaller soft-focus bats behind, mid-flight. "
+    "(2) FOUR CORNERS: finely detailed wispy spider cobwebs with thin silk threads catching light. "
+    "(3) BOTTOM-LEFT and BOTTOM-RIGHT corners only: a beautifully carved, glowing jack-o-lantern with "
+    "warm volumetric candlelight, with clean bare green between them in the bottom center. Scatter a few "
+    "glowing embers and golden sparkle particles near the edges. Moody, magazine-grade Halloween art. "
+    "The entire keyable area stays one pure uniform flat green, free of lettering, ground line or gradient."
 )
 
 
