@@ -388,6 +388,31 @@ def _outing_expand(asset_ids) -> set:
     return ids
 
 
+# ── Scene-motif signature (PD 2026-11-18) ───────────────────────────────────
+# Coarse "what scene is this" key so a MOTIF (e.g. both pets resting on the home
+# couch) can be de-duplicated across DIFFERENT clips — asset_id/vis_phash only catch
+# the same file, but the 11-18 triple-nap repeated the scene with distinct clips.
+_REST_ACTS = {"cuddling", "sleeping", "resting", "napping", "dozing", "snoozing",
+              "lying", "snuggling", "relaxing", "sleep", "nap", "rest"}
+_HOME_LOCS = {"home", "indoor", "living_room", "livingroom", "bedroom", "couch", "sofa"}
+
+
+def _scene_sig(location_type, activity, focus_subject, subjects_csv) -> str | None:
+    """'<place>|<action>|<cast>' — groups e.g. all 'both pets resting on the home
+    couch' clips regardless of the exact file. None when too thin to signify."""
+    act = (activity or "").strip().lower()
+    loc = (location_type or "").strip().lower()
+    subj = (subjects_csv or "").strip().lower()
+    focus = (focus_subject or "").strip().lower()
+    if not act and not loc:
+        return None
+    place = "home" if loc in _HOME_LOCS else (loc or "any")
+    action = "rest" if any(a in act for a in _REST_ACTS) else (act or "any")
+    both = focus == "both" or ("ryani" in subj and "leo" in subj)
+    cast = "both" if both else (focus or subj or "solo")
+    return f"{place}|{action}|{cast}"
+
+
 def launch_pipeline(target: dt.date, *,
                     progress_cb: Callable[[str], None] | None = None,
                     slot_log_cb: Callable[[str], None] | None = None,
@@ -535,17 +560,26 @@ def launch_pipeline(target: dt.date, *,
     # OTHER slots in THIS run — so a single-slot re-render (no siblings) had an empty set
     # and could re-pick a clip that's already live in a recently-published episode (the
     # 7/7 root: an RF re-render grabbed a clip from that day's public video). Seed from the
-    # clips used by recently-published/scheduled episodes (last 7d) so no render re-uses a
-    # currently-live clip. Truly old memory-lane clips are unaffected — only recently-USED
-    # ones are blocked; log the count so the constraint is never a silent over-cap.
+    # clips used by recently-published/scheduled episodes so no render re-uses a currently-
+    # live clip. Truly old memory-lane clips are unaffected — only recently-USED ones are
+    # blocked; log the count so the constraint is never a silent over-cap.
+    #
+    # PD 2026-11-18: the 18:00/21:00 pair ENDED on the EXACT same clip. Root = the seed only
+    # saw cards with a youtube_video_id, but a sibling slot RENDERED minutes earlier in a
+    # SEPARATE invocation (self-heal / per-slot run) has no video_id yet (it's assigned at
+    # upload) → it was invisible and the second slot re-picked its clip. Widen to any sibling
+    # already RENDERED (output_video_path set) for the target window (±2d), not just uploaded
+    # ones, so near-simultaneous separate renders of the same day see each other's clips.
     try:
         import json as _json
         _seeded = 0
         with _db() as _con:
             for _r in _con.execute(
-                "SELECT payload_json FROM cards WHERE date >= ? AND youtube_video_id IS NOT NULL "
-                "AND state!='archived' ORDER BY date DESC LIMIT 120",
-                ((target - dt.timedelta(days=_RECENT_PUBLISH_COOLDOWN_DAYS)).isoformat(),)).fetchall():
+                "SELECT payload_json FROM cards WHERE date >= ? AND date <= ? "
+                "AND (youtube_video_id IS NOT NULL OR output_video_path IS NOT NULL) "
+                "AND state!='archived' ORDER BY date DESC LIMIT 160",
+                ((target - dt.timedelta(days=_RECENT_PUBLISH_COOLDOWN_DAYS)).isoformat(),
+                 (target + dt.timedelta(days=2)).isoformat())).fetchall():
                 try:
                     for _cut in (_json.loads(_r[0] or "{}").get("cuts") or []):
                         _aid = _cut.get("asset_id")
@@ -554,9 +588,62 @@ def launch_pipeline(target: dt.date, *,
                 except Exception:
                     continue
         if _seeded:
-            log.info("clip cooldown: seeded %d recently-published clips into exclude set", _seeded)
+            log.info("clip cooldown: seeded %d recently-used clips into exclude set", _seeded)
     except Exception as e:
-        log.warning("recent-published clip cooldown seed failed: %s", e)
+        log.warning("recent-used clip cooldown seed failed: %s", e)
+
+    # PD 2026-11-18: scene-MOTIF cooldown (PD asked for "클립+장면 둘 다"). The 18:00/21:00/
+    # next-09:00 run all ENDED on "both pets resting on the home couch" — DIFFERENT clips each
+    # time, so asset_id + vis_phash cooldown were blind (a motif repeats across distinct files).
+    # When the last N produced/scheduled RF episodes END on the same coarse scene-signature
+    # (_scene_sig: place|action|cast), block that signature's clips from THIS run so the next
+    # episode can't be the (N+1)th same-motif ending → it's forced to close on a different
+    # scene. Triggers ONLY on a streak, affects only this run, self-clears once a different
+    # ending ships. RF_SCENE_MOTIF_COOLDOWN=0 reverts; RF_SCENE_MOTIF_REPEAT (2) = streak len.
+    if os.getenv("RF_SCENE_MOTIF_COOLDOWN", "1") != "0":
+        try:
+            import json as _json
+            _need = max(1, int(os.getenv("RF_SCENE_MOTIF_REPEAT", "2")))
+            with _db() as _con:
+                _rows = _con.execute(
+                    "SELECT payload_json FROM cards WHERE date >= ? AND date <= ? "
+                    "AND (youtube_video_id IS NOT NULL OR output_video_path IS NOT NULL) "
+                    "AND render_style='real_footage' AND state!='archived' "
+                    "ORDER BY youtube_publish_at DESC, date DESC LIMIT 12",
+                    ((target - dt.timedelta(days=5)).isoformat(),
+                     (target + dt.timedelta(days=2)).isoformat())).fetchall()
+                _end_sigs = []
+                for _r in _rows:
+                    try:
+                        _cuts = _json.loads(_r[0] or "{}").get("cuts") or []
+                        _aid = (_cuts[-1] or {}).get("asset_id") if _cuts else None
+                    except Exception:
+                        _aid = None
+                    if not _aid:
+                        continue
+                    _a = _con.execute(
+                        "SELECT location_type, activity, focus_subject, subjects_csv "
+                        "FROM assets WHERE asset_id=?", (_aid,)).fetchone()
+                    _end_sigs.append(_scene_sig(*_a) if _a else None)
+                _streak = _end_sigs[:_need]
+                _streak_sig = (_streak[0] if _streak and _streak[0]
+                               and len(_streak) >= _need
+                               and all(s == _streak[0] for s in _streak) else None)
+                if _streak_sig:
+                    _blocked = 0
+                    for (_aid2, _lt, _ac, _fs, _sc) in _con.execute(
+                        "SELECT asset_id, location_type, activity, focus_subject, subjects_csv "
+                        "FROM assets WHERE kind IN ('video','photo')").fetchall():
+                        if _aid2 not in batch_used_assets and \
+                                _scene_sig(_lt, _ac, _fs, _sc) == _streak_sig:
+                            batch_used_assets.add(_aid2); _blocked += 1
+                    log.info("scene-motif cooldown: ending motif %r repeated %dx → blocked %d clips",
+                             _streak_sig, _need, _blocked)
+                    if progress_cb:
+                        progress_cb(f":no_entry: 장면-모티프 쿨다운 — 최근 엔딩 '{_streak_sig}' "
+                                    f"{_need}연속 → {_blocked}개 클립 차단(다른 엔딩 유도)")
+        except Exception as e:
+            log.warning("scene-motif cooldown skipped: %s", e)
 
     # PD 2026-06-18: same-batch CONCEPT dedup (not just clip dedup). Two AV slots on
     # 6/19 shipped near-identical concepts (both "꼬리" theme, same set, same wink) —
