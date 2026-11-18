@@ -593,17 +593,21 @@ def launch_pipeline(target: dt.date, *,
         log.warning("recent-used clip cooldown seed failed: %s", e)
 
     # PD 2026-11-18: scene-MOTIF cooldown (PD asked for "클립+장면 둘 다"). The 18:00/21:00/
-    # next-09:00 run all ENDED on "both pets resting on the home couch" — DIFFERENT clips each
+    # next-18:00 run all ENDED on "both pets resting on the home couch" — DIFFERENT clips each
     # time, so asset_id + vis_phash cooldown were blind (a motif repeats across distinct files).
-    # When the last N produced/scheduled RF episodes END on the same coarse scene-signature
-    # (_scene_sig: place|action|cast), block that signature's clips from THIS run so the next
-    # episode can't be the (N+1)th same-motif ending → it's forced to close on a different
-    # scene. Triggers ONLY on a streak, affects only this run, self-clears once a different
-    # ending ships. RF_SCENE_MOTIF_COOLDOWN=0 reverts; RF_SCENE_MOTIF_REPEAT (2) = streak len.
+    # When the same coarse ending scene-signature (_scene_sig: place|action|cast) dominates the
+    # recent RF endings, block that signature's clips from THIS run so the next episode is forced
+    # to close on a DIFFERENT scene. Frequency-based, not strict-consecutive: a non-couch episode
+    # can publish-time-interleave the couch run (the 21:00 tree ending sat after the 18:00 couch),
+    # so "N of the last WINDOW endings share a sig" catches it where "N in a row" would miss it.
+    # Affects only this run, self-clears once endings diversify. RF_SCENE_MOTIF_COOLDOWN=0 reverts;
+    # RF_SCENE_MOTIF_REPEAT (2) = count, RF_SCENE_MOTIF_WINDOW (3) = how many recent endings.
     if os.getenv("RF_SCENE_MOTIF_COOLDOWN", "1") != "0":
         try:
             import json as _json
-            _need = max(1, int(os.getenv("RF_SCENE_MOTIF_REPEAT", "2")))
+            from collections import Counter as _Counter
+            _need = max(2, int(os.getenv("RF_SCENE_MOTIF_REPEAT", "2")))
+            _win = max(_need, int(os.getenv("RF_SCENE_MOTIF_WINDOW", "3")))
             with _db() as _con:
                 _rows = _con.execute(
                     "SELECT payload_json FROM cards WHERE date >= ? AND date <= ? "
@@ -625,23 +629,21 @@ def launch_pipeline(target: dt.date, *,
                         "SELECT location_type, activity, focus_subject, subjects_csv "
                         "FROM assets WHERE asset_id=?", (_aid,)).fetchone()
                     _end_sigs.append(_scene_sig(*_a) if _a else None)
-                _streak = _end_sigs[:_need]
-                _streak_sig = (_streak[0] if _streak and _streak[0]
-                               and len(_streak) >= _need
-                               and all(s == _streak[0] for s in _streak) else None)
-                if _streak_sig:
+                _counts = _Counter(s for s in _end_sigs[:_win] if s)
+                _over = {sig for sig, c in _counts.items() if c >= _need}
+                if _over:
                     _blocked = 0
                     for (_aid2, _lt, _ac, _fs, _sc) in _con.execute(
                         "SELECT asset_id, location_type, activity, focus_subject, subjects_csv "
                         "FROM assets WHERE kind IN ('video','photo')").fetchall():
                         if _aid2 not in batch_used_assets and \
-                                _scene_sig(_lt, _ac, _fs, _sc) == _streak_sig:
+                                _scene_sig(_lt, _ac, _fs, _sc) in _over:
                             batch_used_assets.add(_aid2); _blocked += 1
-                    log.info("scene-motif cooldown: ending motif %r repeated %dx → blocked %d clips",
-                             _streak_sig, _need, _blocked)
+                    log.info("scene-motif cooldown: ending motif(s) %s over-used (%d/%d recent) "
+                             "→ blocked %d clips", sorted(_over), _need, _win, _blocked)
                     if progress_cb:
-                        progress_cb(f":no_entry: 장면-모티프 쿨다운 — 최근 엔딩 '{_streak_sig}' "
-                                    f"{_need}연속 → {_blocked}개 클립 차단(다른 엔딩 유도)")
+                        progress_cb(f":no_entry: 장면-모티프 쿨다운 — 최근 엔딩 {sorted(_over)} "
+                                    f"과다({_need}/{_win}) → {_blocked}개 클립 차단(다른 엔딩 유도)")
         except Exception as e:
             log.warning("scene-motif cooldown skipped: %s", e)
 
