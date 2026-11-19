@@ -3643,8 +3643,21 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
                         _vis_pool_ids.add(_id)
             _visual_cool = _rf_visual_cooldown_ids(_con, _vis_pool_ids, _recent_vph)
         before = len(avail_videos)
-        filtered = [v for v in avail_videos
-                    if not _rf_is_cooled(v, cooldown, _cool_sessions, _visual_cool)]
+        # PD 2026-11-19: the VISUAL cooldown must NOT drop NEVER-USED clips. A clip we've never
+        # aired is fresh content to viewers even if it LOOKS like something we aired; dropping all
+        # its look-alikes (measured: 72 in one slot) starved the fresh pool to 0 and forced the
+        # pre-Leo 2016 archive fallback while 100+ fresh never-used clips (incl. recent Leo) sat
+        # look-alike-blocked. So the visual gate applies only to clips we've actually USED (avoid
+        # re-airing a near-dup of aired footage); never-used clips pass it (id/session cooldown
+        # still apply = none, since they're never-used). RF_VISUAL_COOLDOWN_NEVERUSED_EXEMPT=0 reverts.
+        _vu_exempt = os.getenv("RF_VISUAL_COOLDOWN_NEVERUSED_EXEMPT", "1") != "0"
+
+        def _pool_cooled(v):
+            _id = v.get("id") or v.get("asset_id")
+            if _vu_exempt and _id not in cooldown and _id not in _cool_sessions:
+                return False  # never-used → exempt from the visual-lookalike gate
+            return _rf_is_cooled(v, cooldown, _cool_sessions, _visual_cool)
+        filtered = [v for v in avail_videos if not _pool_cooled(v)]
         # PD 2026-09-11: recency-aware relax (the "쿨다운 얇으면 자동완화"). The all-time
         # cooldown (RF_USED_CLIP_ALLTIME) excludes recently-USED clips — which are exactly the
         # FRESHEST ones (just shipped). The pool overall stays large (archive is years deep), so
