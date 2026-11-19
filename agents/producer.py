@@ -3461,6 +3461,38 @@ def _rf_caption_voice(target: dt.date) -> str:
     return _RF_CAPTION_VOICES[target.toordinal() % len(_RF_CAPTION_VOICES)]
 
 
+def _directive_wants_both_pets(directive: "str | None") -> bool:
+    """True when the active showrunner/PD directive calls for a BOTH-PET episode —
+    both pets named, or an explicit together/contrast/split cue.
+
+    PD 2026-11-19 (B #1): a both-pet directive is unexecutable if the clip pool handed
+    to the Writer has been stripped of both-pet footage (the cooldown + over-used-location
+    cap removes the 'home' clips where both pets cluster), so the Writer drifts to a
+    single-pet memory-lane and Giri rubber-stamps it. Detecting the intent here lets us
+    guarantee a both-pet clip floor before the pool reaches the Writer.
+    """
+    d = (directive or "").lower()
+    if not d:
+        return False
+    has_leo = ("레오" in d) or ("leo" in d)
+    has_ry = ("랴니" in d) or ("ryani" in d) or ("라니" in d)
+    if has_leo and has_ry:
+        return True
+    cues = ("둘 다", "두 펫", "두 마리", "두 캐릭터", "both", "split", "함께")
+    return any(c in d for c in cues)
+
+
+def _v_shows_both(v: dict) -> bool:
+    """Whether a pool clip genuinely shows BOTH pets. Prefers the time-grounded `sub`
+    (which drops a pet that didn't exist yet at capture, e.g. Leo in a 2015 clip
+    mis-tagged 'leo,ryani') over the raw `both` flag so the both-pet floor can't be
+    filled by archive clips that only show one pet."""
+    sub = (v.get("sub") or "").lower()
+    if sub:
+        return ("leo" in sub) and (("ryani" in sub) or ("라니" in sub))
+    return bool(v.get("both"))
+
+
 def _propose_realfootage_singlepass(target: dt.date, context: dict,
                                      progress_cb: ProgressCb = None,
                                      prior_feedback: str = "") -> list[dict]:
@@ -3849,6 +3881,17 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     # (home/resting) stratum. REORDER so UNDER-represented footage leads, and hand the
     # Writer an explicit avoid-list of over-shot (location, activity) setups. Together
     # these stop the "집-휴식으로 회귀" churn at the source instead of via reviewer reject.
+    # PD 2026-11-19 (B #1): fetch the showrunner/PD directive ONCE here — it drives the
+    # both-pet clip floor below AND the prompt injection further down. next_directive() is
+    # the showrunner LLM, so it must not be called twice (cost + non-determinism).
+    _rf_directive = ""
+    try:
+        from agents import arc as _arc_bp
+        _rf_directive = _arc_bp.next_directive(
+            _db(), today=target.isoformat(), render_style="real_footage") or ""
+    except Exception as _e:  # noqa: BLE001
+        log.warning("early arc directive fetch failed: %s", _e)
+    _want_both = _directive_wants_both_pets(_rf_directive)
     try:
         _la_freq, _la_over, _loc_over = _recent_la_usage(_db())
         # PD 2026-06-17 (outing-unit freshness): protect clips that form a RICH coherent
@@ -3884,6 +3927,30 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
             _capmsg = (f", 풀 {_before_cap}→{len(avail_videos)} 캡"
                        if len(avail_videos) < _before_cap else "")
             progress_cb(f":compass: 과대표집 회피 — 장소 {sorted(_loc_over)} 신선 우선{_capmsg}")
+        # PD 2026-11-19 (B #1): both-pet directive → guarantee a both-pet clip FLOOR at the
+        # front of the pool. The over-used-location cap above strips 'home' clips — which is
+        # exactly where BOTH pets cluster — so a "둘 다 대비" directive is handed a solo/archive
+        # pool and the Writer drifts to a single-pet memory-lane. Surface both-pet clips first,
+        # topping up from the archive pool if the usable count is short. RF_BOTHPET_FLOOR=0 off.
+        _bp_floor = int(os.getenv("RF_BOTHPET_FLOOR", "12"))
+        if _bp_floor and _want_both:
+            _have_ids = {v.get("id") for v in avail_videos}
+            _have_both = [v for v in avail_videos if _v_shows_both(v)]
+            _readd = []
+            if len(_have_both) < _bp_floor:
+                _readd = sorted(
+                    (v for v in _arch_field
+                     if _v_shows_both(v) and v.get("id") not in _have_ids),
+                    key=lambda v: (v.get("date") or ""), reverse=True
+                )[: _bp_floor - len(_have_both)]
+            _both_front = _readd + _have_both
+            if _both_front:
+                _rest = [v for v in avail_videos if not _v_shows_both(v)]
+                avail_videos = _both_front + _rest
+                if progress_cb:
+                    progress_cb(
+                        f":busts_in_silhouette: both-pet 디렉티브 — both-pet 클립 "
+                        f"{len(_both_front)}개 선두 보장(+{len(_readd)} 아카이브 재admit)")
     except Exception as e:
         log.warning("writer-side underused reorder failed: %s", e)
         _avoid_overused = {}
@@ -4008,8 +4075,9 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     try:
         from agents import arc as _arc
         _series = _arc.series_so_far(_db(), n=10)
-        _dir = _arc.next_directive(_db(), today=target.isoformat(),
-                                   render_style="real_footage") or ""
+        # PD 2026-11-19 (B #1): reuse the directive already fetched for the both-pet floor
+        # — next_directive() is the showrunner LLM and must not be called twice per proposal.
+        _dir = _rf_directive
         if _series or _dir:
             user += "\n\n" + _series
             if _dir:
@@ -4152,7 +4220,30 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
                     "[split] 두 펫 대비가 훅인데 split을 안 썼다 — 레오/랴니 대비 beat를 번갈아 자르지 말고 "
                     "한 컷을 edit_effect=split_vertical + secondary_asset_id로 두 클립을 동시에 보여줘라 "
                     "(대비는 '동시에 보일 때' 터진다; 비슷한 샷 크기끼리 짝지어라)."]
-        if _issues and prior_feedback.count("[구조검증]") < int(os.getenv("RF_STRUCTURE_MAX_TRIES", "1")):
+        # PD 2026-11-19 (B #2): the directive asked for BOTH pets but the concept came out
+        # single-pet — the exact drift the pool floor (#1) targets, caught here post-write as
+        # the backstop. The split-nudge above only fires when the concept is ALREADY both-pet;
+        # this catches the solo-memory-lane drift the nudge misses. Re-propose demanding both
+        # pets, with extra tries so a both-pet directive actually lands. RF_BOTHPET_ENFORCE=0 off.
+        _bp_violation = False
+        if os.getenv("RF_BOTHPET_ENFORCE", "1") == "1" and _want_both:
+            _c0 = concepts[0] if concepts else {}
+            _cuts0 = _c0.get("cuts") or []
+            _whos = {(cut.get("who") or "").lower() for cut in _cuts0}
+            _subj = {str(s).lower() for s in (_c0.get("subjects") or [])}
+            _shows_both = (("leo" in _whos and "ryani" in _whos) or "both" in _whos
+                           or ("leo" in _subj and "ryani" in _subj) or "both" in _subj)
+            if not _shows_both:
+                _bp_violation = True
+                _issues = list(_issues) + [
+                    "[both-pet] 디렉티브가 두 펫(레오+랴니) 대조를 지시했는데 한 마리만 나오는 솔로로 "
+                    "썼다 — 풀 선두에 신선한 both-pet 클립이 있다. 레오와 랴니가 둘 다 실제로 등장하는 "
+                    "클립으로 다시 쓰고, 대비 beat는 split_vertical로 동시에 보여줘라 (과거 솔로 "
+                    "메모리레인으로 빠지지 말 것)."]
+        _struct_max = int(os.getenv("RF_STRUCTURE_MAX_TRIES", "1"))
+        if _bp_violation:
+            _struct_max = max(_struct_max, int(os.getenv("RF_BOTHPET_MAX_TRIES", "3")))
+        if _issues and prior_feedback.count("[구조검증]") < _struct_max:
             if progress_cb:
                 progress_cb(f":triangular_ruler: 구조검증 — {len(_issues)}건 (클립 재사용/길이 예산) → 재작성")
             log.info("RF structure gate: %s", _issues)
@@ -4168,6 +4259,10 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
     for c in concepts:
         c["render_style"] = "real_footage"
         c["author"] = "realfootage_singlepass"
+        # PD 2026-11-19 (B #2): stamp whether the active directive demanded a both-pet
+        # episode, so Giri (post-render) can deterministically cap a solo that slipped past
+        # the pool floor + structure gate — without re-invoking the showrunner LLM.
+        c["_directive_wants_both"] = bool(_want_both)
         # PD 2026-06-12: ROOT FIX for the cafe-loop. The writer sometimes takes ONE
         # clip and slices it into N "segment" cuts (different trim_start of the SAME
         # asset_id) — on a near-static clip that reads as "동일 구간 무한 반복". RF cuts

@@ -1704,15 +1704,44 @@ def _subject_location_grounding_gate(concept: "dict | None", report: dict) -> No
     if not blob.strip():
         return
     reasons = []
+    # PD 2026-11-19 (B #2, checker side): the active directive demanded a both-pet episode
+    # (producer stamps concept["_directive_wants_both"] when the showrunner/PD directive asked
+    # for a 레오+랴니 contrast) but the rendered episode shows only ONE pet — the Writer drifted
+    # to a solo memory-lane and the pool floor + structure gate didn't catch it. Giri used to
+    # rubber-stamp this 9/10. Deterministic cap so a slipped-through solo fails instead of
+    # shipping. The both-pet episode itself has subj={ryani,leo} and is NOT flagged.
+    # GIRI_BOTHPET_GATE=0 reverts.
+    if (os.getenv("GIRI_BOTHPET_GATE", "1") == "1"
+            and concept.get("_directive_wants_both")
+            and not ({"ryani", "leo"} <= subj)):
+        reasons.append("디렉티브 위반 — 두 펫(레오+랴니) 대조를 지시했는데 한 마리만 나오는 "
+                       "솔로로 만들었다 (과거 솔로 메모리레인 drift)")
     if {"ryani", "leo"} <= subj:
         has_leo = ("레오" in blob) or ("leo" in blob)
         has_ry = ("랴니" in blob) or ("ryani" in blob) or ("라니" in blob)
         if has_leo != has_ry:  # names exactly one pet while both are in the footage
             reasons.append("주체 소거 — 둘 다 나오는데 제목·캡션이 한 마리만 부른다(다른 하나 삭제)")
-    if any_outdoor:
+    # PD 2026-11-19 (B #3): a DELIBERATE multi-location cross-cut — the both-pet contrast
+    # hook (Ryani outdoor vs Leo indoor), shown as a split or alternating beats — legitimately
+    # has an outdoor cut AND an indoor ('거실') cut, each caption matching its OWN cut's place.
+    # The gate assumes ONE location per episode, so it reads the '거실' caption as a mislabel of
+    # the outdoor footage and fires a false positive (this was the 6/10 on iaFDwAUBuys). Exempt
+    # the LOCATION check (NOT the subject-erasure check) when the concept reads as an intentional
+    # contrast/split. A plain single-location outdoor outing mislabeled '집' has no such signal and
+    # is still caught. GIRI_CROSSCUT_EXEMPT=0 reverts.
+    _crosscut = False
+    if os.getenv("GIRI_CROSSCUT_EXEMPT", "1") == "1":
+        _has_split = any((c.get("edit_effect") or "").startswith("split")
+                         for c in (concept.get("cuts") or []))
+        _contrast_signal = any(k in blob for k in
+                               ("동시", "각자", "다른 세계", "vs", "대비", "반면", "한쪽", "따로", "는데"))
+        _crosscut = _has_split or ({"ryani", "leo"} <= subj and _contrast_signal)
+    if any_outdoor and not _crosscut:
         says_home = any(w in blob for w in ("집에서", "우리 집", "우리집", "실내", "방 안", "거실"))
         says_out = any(w in blob for w in ("밖", "실외", "야외", "카페", "공원", "산책", "테라스",
-                                           "마당", "놀이터", "outdoor", "outside", "cafe", "park", "walk"))
+                                           "마당", "놀이터", "운동장", "경기장", "축구장", "들판",
+                                           "잔디", "필드", "outdoor", "outside", "cafe", "park",
+                                           "walk", "field"))
         if says_home and not says_out:
             reasons.append("장소 오표기 — 실외 나들이인데 '집/실내'로 서술")
     if not reasons:
