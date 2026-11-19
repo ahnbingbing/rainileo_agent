@@ -6813,6 +6813,11 @@ def _drop_unavailable_av_cuts(manifests: dict, progress_cb: ProgressCb = None) -
                 entry["source"] = restored
                 sources[tag] = entry
             continue
+        # PD 2026-11-19: log WHY each cut is unavailable (not just the tag) — the all-photo
+        # 0-cut collapse that empties slots was undiagnosable because only tags were logged.
+        aid_dbg = (item.get("asset") or {}).get("asset_id") or item.get("asset_id")
+        log.warning("DROP-UNAVAIL tag=%s asset=%s uuid=%s src=%r restored=%r",
+                    tag, aid_dbg, bool(uuid), src, restored)
         drop.append(tag)
     if not drop:
         return
