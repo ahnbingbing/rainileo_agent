@@ -501,8 +501,20 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
             log.warning("RF pool duration probe skipped: %s", _e)
     _recent_ids = {v["id"] for v in best_videos}
     ARCHIVE_PER_YEAR = int(os.getenv("ARCHIVE_PER_YEAR", "8"))  # PD 2026-06-11: more old footage in the pool
+    # PD 2026-11-19: "신선 = 최신뿐 아니라 '한번도 안 쓴 것'도 포함". The archive sample filled each
+    # year's quota by quality/recency, so it surfaced mostly ALREADY-USED clips — leaving a fresh-
+    # exhausted slot with ~9 usable clips while 3000+ NEVER-USED clips sat unseen in the deep
+    # archive. Prioritize NEVER-USED clips within each year's quota (they ARE fresh to viewers →
+    # repeat_ratio 0 → pass) so a depleted-recent slot has real material instead of grinding on
+    # re-used footage. RF_ARCHIVE_NEVERUSED_FIRST=0 restores the plain quality/recency order.
+    try:
+        _ever_used_arch = (_recently_used_rf_assets(con)
+                           if os.getenv("RF_ARCHIVE_NEVERUSED_FIRST", "1") != "0" else set())
+    except Exception:
+        _ever_used_arch = set()
     archive_videos: list[dict] = []
     _per_year: dict[str, int] = {}
+    _arch_rows_by_year: dict[str, list] = {}
     for r in con.execute(
         """
         SELECT asset_id, activity, subjects_csv, mood, scene_description, pd_notes,
@@ -518,6 +530,12 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
         yr = (r["captured_iso"] or "")[:4]
         if not yr:
             continue
+        _arch_rows_by_year.setdefault(yr, []).append(r)
+    # never-used lead each year's quota (stable → keeps the quality/recency order within a group)
+    for yr, _rows in _arch_rows_by_year.items():
+        _rows.sort(key=lambda rr: rr["asset_id"] in _ever_used_arch)
+    for yr, _rows in _arch_rows_by_year.items():
+      for r in _rows:
         if _per_year.get(yr, 0) >= ARCHIVE_PER_YEAR:
             continue
         _per_year[yr] = _per_year.get(yr, 0) + 1
