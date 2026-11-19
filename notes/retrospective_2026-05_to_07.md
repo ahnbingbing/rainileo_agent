@@ -2849,3 +2849,45 @@ repeat_ratio, grounding gate 과잉특정)였지 풀 측정이 아니었다.** �
 트림(segment), vis_phash는 diversity 분산용으로만. 일반 원칙: **near-dup을 appearance(vis_phash)로 막지 마라 —
 재사용은 파일·트림의 identity로 정의된다**(그래야 비슷해 보이는 신선 콘텐츠가 안 죽는다). + diversity 샘플은
 신선 tier를 floor로 보장해야(순수 분산은 소수-장소 신선 풀을 굶긴다).
+
+## §4.10 C_bothpetlayers — 희소성 플로어는 "모든 선택 레이어"에 있어야 한다 (both-pet 디렉티브, 2026-11-19)
+
+**증상:** PD "왜 자꾸 기존이랑 다르게 퀄 낮게?" both-pet 대조를 지시한 슬롯(11/20 arc·11/21 PD컨셉)이
+반복 재생산에서 셋 중 하나로 샌다 — ①디렉티브 무시하고 **한 마리 솔로 메모리레인**(Giri 9/10 러버스탬프),
+②양펫 cross-cut을 만들면 **location 게이트가 6/10으로 반려**, ③split 강제하면 distinct-clip+14s floor를
+못 맞춰 **빈 슬롯**. 신선 2026 both-pet 클립이 437개(플레이보우 65·발라당 90) 멀쩡히 있는데도.
+
+**근본(원칙) — §4.9의 일반화:** §4.9는 *fresh never-used* 희소성이 `_diversity_sample`·visual-cooldown
+두 레이어에서 깎인 걸 고쳤다. **같은 덫이 *both-pet*에서 반복된다 — 선택 파이프라인은 pool-build(diversity)
+→ 쿨다운 → 과대표집-장소 캡 → 프로포저로 이어지는데, both-pet 클립은 과대표집된 'home'에 군집하므로
+`RF_OVERUSED_LOC_CAP`이 바로 그걸 깎는다.** 디렉티브는 Writer까지 닿지만(프롬프트 주입 OK) 쓸 재료가 이미
+풀에서 빠져서 Writer가 솔로로 샌다. **일반화: "지시가 닿는 것"과 "지시를 실행할 재료가 풀에 있는 것"은 다르다 —
+희소 카테고리(신선/both-pet/장소)의 플로어는 그것을 깎는 *모든* 레이어에 있거나, 더 앞 레이어를 건너뛰어
+직접 보장해야 한다. 한 레이어만 고치면 굶긴 풀을 다음 레이어에 넘길 뿐이다.**
+
+- **생성기(`producer._propose_realfootage_singlepass`, 전 killswitch):** `RF_BOTHPET_FLOOR`(12) — 디렉티브가
+  both-pet이면 `avail_videos` 선두에 both-pet 보장(cap이 깎은 **pre-cap 신선**을 아카이브보다 우선 재admit,
+  `b779b7b`). `RF_BOTHPET_ENFORCE`+`_MAX_TRIES`(3) — 솔로로 나오면 구조게이트 재제안. 디렉티브는 `next_directive()`
+  1회만 fetch(showrunner LLM 이중호출 제거).
+- **cross-cut 게이트 오판(§4.3 계열):** 단일-장소 가정 게이트는 **의도적 다중-장소 cross-cut**(랴니 실외 vs 레오
+  실내 = 양펫 대조 훅)을 "장소 오표기"로 오판한다. **일반화: "회차당 X 하나" 가정 게이트는 의도적 다중-X 컨셉에서
+  깨진다** → split/대조 신호가 있으면 장소 체크 면제(`GIRI_CROSSCUT_EXEMPT`), + 야외 어휘 보강(운동장/경기장…이
+  says_out에 없어 '거실'만 잡혀 발화했던 직접 원인).
+- **Giri lockstep 누락(§4.3):** 디렉티브-무시 솔로를 Giri가 9/10으로 통과 — 생성기엔 both-pet을 가르쳤지만
+  **검수기엔 안 가르쳤다**(review-learning↔giri-update 짝의 전형적 누락). `GIRI_BOTHPET_GATE`: `concept
+  ["_directive_wants_both"]`(propose 때 스탬프)인데 피사체가 한 마리면 결정론 cap ≤6. 회귀: known-bad 솔로=캡,
+  known-good cross-cut=통과.
+
+**검증/상태:** 11/20은 재생산 중 유일하게 제대로 나온 양펫편 `iaFDwAUBuys`로 교체(6/10은 cross-cut 오판이었음).
+메커니즘 작동 확인(floor 발화·enforce 재제안·**Giri가 솔로/era-mix/주체소거를 4/10으로 반려=러버스탬프 끝**).
+
+**★미해결(다음 세션, PD 지시로 defer):** floor는 프로포저 레벨이라 **풀에 이미 있는 것만** 재admit 가능 —
+신선 2026 both-pet이 **pool-build(diversity-sample/쿨다운)에서 이미 빠지면** floor엔 아카이브 both-pet(아기 레오)
+밖에 안 남아 **era-mix**가 난다(그래서 11/21은 Giri 미통과→기존 유지). **진짜 최종 근본 = pool-build 레벨
+both-pet 플로어**(§4.9 fresh floor와 같은 자리) 또는 프로포저가 DB 직접 쿼리. 이게 §4.10의 원칙 그대로 —
+플로어가 아직 "모든 레이어"에 없다.
+
+**★프로세스 교훈:** ①병렬 재렌더 3개가 VM load 2.3까지 올려 SSH 핸드셰이크를 죽였다 → RF 렌더는 **순차**.
+②`gcloud compute ssh`는 매 호출 새 IAP 터널이라 **빠른 재시도 루프가 IAP rate-limit을 유발**(255, 재시도가
+쿨다운을 악화) → **ControlMaster 멀티플렉싱**(단일 터널 재사용)으로 고정, 거대 base64는 `--command`에 박지 말고
+`scp`. (메모리 `vm_ssh_controlmaster`.)
