@@ -2839,3 +2839,13 @@ never-used 3223"으로 멀쩡)하느라 몇 시간을 날렸다 — C_nulldur가
 repeat_ratio, grounding gate 과잉특정)였지 풀 측정이 아니었다.** 일반화: 슬롯이 비면 **실 self-heal을 전체 로깅으로
 1회 돌려 반려 사유부터 읽어라** — 풀/가용성 측정으로 추측하지 마라. "junk 금지"로 비우는 게이트는 정상 작동이고,
 비는 이유는 게이트가 아니라 **게이트가 반려하는 입력(재사용·과잉특정)**에 있다.
+
+**★후속(같은 날, PD가 최종 축을 잡아줌) — "신선 소진"은 애초에 거짓이었다.** 로컬 "Ryani & Leo" 앨범엔
+최근 never-used 104개(레오 86·둘다 27, 11-13/14 포함)가 멀쩡히 인입돼 있었는데, **두 선택 레이어가 그걸 깎아**
+슬롯이 2016 pre-Leo를 팠다(그래서 채운 편이 레오 없는 랴니 솔로). (a) `_diversity_sample`(loc×act,100)이 104개
+중 12개만 surface(최근 footage가 소수 장소에 몰림) → fresh never-used floor(`e6d9a2d`). (b) **visual 쿨다운
+(vis_phash)이 72개 드롭** — 신선 never-used까지. ★PD: **"쿨다운은 파일 및 트림 단위로 해야지 왜 visual로."
+다른 파일=다른 콘텐츠다** → `RF_VISUAL_COOLDOWN` 기본 OFF(`c8d1f31`), 쿨다운 축 = 파일(all-time asset_id) +
+트림(segment), vis_phash는 diversity 분산용으로만. 일반 원칙: **near-dup을 appearance(vis_phash)로 막지 마라 —
+재사용은 파일·트림의 identity로 정의된다**(그래야 비슷해 보이는 신선 콘텐츠가 안 죽는다). + diversity 샘플은
+신선 tier를 floor로 보장해야(순수 분산은 소수-장소 신선 풀을 굶긴다).
