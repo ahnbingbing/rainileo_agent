@@ -3629,14 +3629,30 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
                 return False
         _fresh_surviving = [v for v in filtered if _is_fresh(v)]
         if len(_fresh_surviving) < _fresh_min:
-            _readmit = [v for v in avail_videos
-                        if _is_fresh(v)
-                        and _rf_is_cooled(v, cooldown, _cool_sessions, _visual_cool)]
-            if _readmit:
-                filtered = filtered + _readmit  # disjoint: _readmit = cooled, filtered = non-cooled
+            # PD 2026-11-19: when FRESH is exhausted, go to the PAST — do NOT re-surface
+            # recently-USED clips. The old re-admit pulled cooled (recently-shipped) FRESH clips
+            # back to the head of the fresh-first pool, so the Writer anchored on them and the
+            # macro-reviewer rejected the episode as same-footage reuse (repeat_ratio 0.5–1.0) —
+            # 8 retry rounds, then timeout → EMPTY slot. The channel has a deep archive of OLD
+            # UNUSED clips, ALREADY in `filtered` (not cooled, repeat_ratio 0 → reviewer passes).
+            # So prefer fresh, then degrade to old-unused; re-admit recently-used clips ONLY as a
+            # last resort, when even the archive can't fill an episode. RF_STALE_FALLBACK=0 restores
+            # the old "re-admit recent" behavior.
+            _stale_unused = len(filtered) - len(_fresh_surviving)  # old + not cooled, already kept
+            if os.getenv("RF_STALE_FALLBACK", "1") != "0" and len(filtered) >= 6:
                 if progress_cb:
-                    progress_cb(f":ocean: 신선 클립 부족({len(_fresh_surviving)}<{_fresh_min}) — "
-                                f"쿨다운 자동완화: 최근 {_fresh_days}일 사용클립 {len(_readmit)}개 재-admit")
+                    progress_cb(f":hourglass_flowing_sand: 신선 클립 소진({len(_fresh_surviving)}<"
+                                f"{_fresh_min}) → 과거 미사용 클립 {_stale_unused}개로 폴백 "
+                                f"(최근 사용분 재사용 안 함 — 중복 반려·빈 슬롯 회피)")
+            else:
+                _readmit = [v for v in avail_videos
+                            if _is_fresh(v)
+                            and _rf_is_cooled(v, cooldown, _cool_sessions, _visual_cool)]
+                if _readmit:
+                    filtered = filtered + _readmit  # last resort: recent reuse beats an empty slot
+                    if progress_cb:
+                        progress_cb(f":ocean: 신선·아카이브 모두 부족({len(filtered)}) — 최근 "
+                                    f"{_fresh_days}일 사용클립 {len(_readmit)}개 재-admit(최후수단)")
         # Safety: don't starve the writer. If the cooldown leaves too few clips
         # for a full episode, relax it (still prefer fresh, but allow reuse).
         if len(filtered) >= 6:
