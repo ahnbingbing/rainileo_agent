@@ -1659,12 +1659,16 @@ def _scheduled_window_rf_assets(con: sqlite3.Connection, target: dt.date,
 # near-identical footage two ways the id/date keys can't catch: (1) once a clip's
 # id-cooldown expires it returns looking identical to a twin still inside the
 # window, and (2) a DIFFERENT asset_id from a different day that happens to look
-# the same (same couch nap, same window sill) was never cooled at all. PD: "쿨타임
-# 지난 동영상 자꾸 비슷하게 뽑는다." Fix: cool any pool clip whose perceptual look
-# (vis_phash — the SAME signal _diversity_sample already dedups intra-pool on) is
-# within NEAR_DUP Hamming of a clip shipped in the recent RF window. Appearance-
-# based, so it catches both leaks. RF_VISUAL_COOLDOWN=0 reverts.
-RF_VISUAL_COOLDOWN = os.getenv("RF_VISUAL_COOLDOWN", "1") == "1"
+# PD 2026-11-19: DEFAULT OFF. Cooldown is a FILE + TRIM concept, not a visual one — "무조건
+# 쿨다운은 파일 및 트림 단위로 해야지 왜 visual 단위로". A DIFFERENT file is DIFFERENT content
+# even if it looks similar, so a vis_phash gate wrongly blocks genuinely-unused footage: it
+# dropped 72 fresh NEVER-USED clips (incl. recent Leo) in one slot, starving the fresh pool to
+# 0 and forcing a pre-Leo 2016 archive fallback. The real dedup axes stay active and sufficient:
+# the all-time FILE cooldown (_recently_used_rf_assets, RF_USED_CLIP_ALLTIME) never re-airs the
+# same clip, and the TRIM/segment cooldown (_recently_used_rf_segments) stops re-using the same
+# window of a clip. Visual dedup remains only INSIDE _diversity_sample (intra-pool spread), not as
+# a reuse gate. Set RF_VISUAL_COOLDOWN=1 to restore the appearance-based gate.
+RF_VISUAL_COOLDOWN = os.getenv("RF_VISUAL_COOLDOWN", "0") == "1"
 
 
 def _recently_used_rf_vphashes(con: sqlite3.Connection,
