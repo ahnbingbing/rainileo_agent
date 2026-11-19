@@ -282,17 +282,21 @@ def build_cmd(clips: list[Path], cut_durations: list[float],
         else:
             speed = per_cut_speeds.get(i, cut_speed)
         setpts_filter = f"setpts=PTS/{speed}," if speed != 1.0 else ""
-        # PD 2026-06-04: brightness normalization DISABLED. PD wants original
-        # footage preserved as-is — "갑자기 루미넌스 체인지 있는데 그냥
-        # 되도록이면 원본 그대로 가도록할래?". The per-cut eq=brightness was
-        # creating visible luminance jumps between cuts. Keeping source
-        # exposure untouched. Re-enable via ASSEMBLE_LUMA_NORMALIZE=1 only
-        # if a future episode genuinely needs cross-cut exposure matching.
+        # PD 2026-11-19: smooth cross-cut brightness swings (the "요즘 일부 컷만 밝다" — e.g.
+        # a backlit car-window cut measured at luma 124 sitting next to 106-luma cuts, a ~18pt
+        # jump; worse lately as more iPhone clips are HLG and get tone-mapped while SDR cuts
+        # don't). Correct ONLY outliers — cuts far from the episode's own median — and pull them
+        # PARTWAY toward it, so already-consistent cuts stay '원본 그대로' (PD's standing
+        # preference). The earlier version was disabled for creating visible JUMPS, but the real
+        # bug was the SCALE: eq=brightness is a [0,1] offset, yet delta used /100, so a 16pt gap
+        # became -0.16 (≈41pt) and over-corrected into the opposite jump. Scale by /255 (correct
+        # pt→offset) so a 16pt gap pulls ~16pt, not 41. ASSEMBLE_LUMA_NORMALIZE=0 reverts.
         eq_filter = ""
-        if os.getenv("ASSEMBLE_LUMA_NORMALIZE", "0") == "1" and i in cut_lumas:
-            delta = (target_luma - cut_lumas[i]) / 100.0
-            delta = max(-0.5, min(0.5, delta))
-            if abs(delta) > 0.05:  # only correct large exposure gaps
+        if os.getenv("ASSEMBLE_LUMA_NORMALIZE", "1") != "0" and i in cut_lumas:
+            _gap = target_luma - cut_lumas[i]
+            if abs(_gap) > float(os.getenv("ASSEMBLE_LUMA_OUTLIER", "12")):  # outliers only
+                _strength = float(os.getenv("ASSEMBLE_LUMA_STRENGTH", "0.7"))  # partial pull
+                delta = max(-0.12, min(0.12, _strength * _gap / 255.0))
                 eq_filter = f"eq=brightness={delta:.3f},"
         # HLG/HDR cuts are tone-mapped to SDR here (SDR cuts & the bumper pass
         # through) so the concat output can't inherit an HDR tag — see _color_prefix.

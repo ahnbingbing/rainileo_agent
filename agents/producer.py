@@ -439,6 +439,24 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
     # memory-lane footage, so the fresh pool must stay recency-weighted.
     _video_rows = _diversity_sample(_video_rows, 100, loc_col="location_type",
                                     act_col="activity", year_col=None)
+    # PD 2026-11-19: GUARANTEE fresh never-used clips survive the diversity sample. The loc×act
+    # spread took only ~12 of 100+ recent never-used clips (recent footage clusters in a few
+    # locations, so the sample fills mostly with older/archive buckets) → the slot read 'fresh
+    # 0<8' and fell back to pre-Leo 2016 archive while 100+ fresh clips (incl. recent Leo) sat
+    # unused in the pool. Re-add the top recent never-used clips the sample dropped, up to a
+    # floor, so the fresh well is actually surfaced BEFORE the never-used-archive fallback fires.
+    # (_A = fresh never-used, already hook-sorted above.) RF_FRESH_NEVERUSED_FLOOR=0 reverts.
+    try:
+        _floor = int(os.getenv("RF_FRESH_NEVERUSED_FLOOR", "30"))
+        if _floor and _A:
+            _have = {r["asset_id"] for r in _video_rows}
+            _readd = [r for r in _A if r["asset_id"] not in _have][:_floor]
+            if _readd:
+                _video_rows = _readd + _video_rows
+                log.info("RF pool: +%d fresh never-used clips guaranteed past diversity sample "
+                         "(floor=%d)", len(_readd), _floor)
+    except Exception as _e:  # noqa: BLE001
+        log.warning("fresh never-used floor skipped: %s", _e)
     best_videos = [
         {"id": r["asset_id"], "act": r["activity"] or "", "sub": _ground_subjects(r["subjects_csv"], r["captured_iso"]),
          "mood": r["mood"] or "", "sc": _ground_truth_sc(r),
