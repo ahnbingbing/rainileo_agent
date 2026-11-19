@@ -3912,6 +3912,11 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         # pool to fall back on; the floor keeps ≥6 usable. Rich unused outings are exempt.
         _cap = float(os.getenv("RF_OVERUSED_LOC_CAP", "0.34"))
         _before_cap = len(avail_videos)
+        # PD 2026-11-19 (B #1): keep the PRE-CAP pool so the both-pet floor can re-admit the
+        # FRESH both-pet clips the over-used-location cap just removed (both pets cluster in the
+        # over-shot 'home', so the cap strips exactly them) — preferring fresh over the archive
+        # top-up, which otherwise pulls OLD both-pet (baby-Leo) clips and causes an era-mix.
+        _avail_precap = list(avail_videos)
         avail_videos = _cap_overused_locations(avail_videos, _loc_over, cap_frac=_cap,
                                                protect_ids=_protect_ids)
         _avoid_overused = {
@@ -3938,10 +3943,18 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
             _have_both = [v for v in avail_videos if _v_shows_both(v)]
             _readd = []
             if len(_have_both) < _bp_floor:
+                # Re-admit source = FRESH both-pet dropped by the cap (pre-cap avail) FIRST,
+                # then the archive. Dedup, newest first — so recent 2026 both-pet leads and the
+                # floor only reaches old baby-Leo archive clips when no fresh both-pet exists.
+                _seen_readd = set(_have_ids)
+                _cands = []
+                for v in (_avail_precap + _arch_field):
+                    _vid = v.get("id")
+                    if _vid and _vid not in _seen_readd and _v_shows_both(v):
+                        _seen_readd.add(_vid)
+                        _cands.append(v)
                 _readd = sorted(
-                    (v for v in _arch_field
-                     if _v_shows_both(v) and v.get("id") not in _have_ids),
-                    key=lambda v: (v.get("date") or ""), reverse=True
+                    _cands, key=lambda v: (v.get("date") or ""), reverse=True
                 )[: _bp_floor - len(_have_both)]
             _both_front = _readd + _have_both
             if _both_front:
