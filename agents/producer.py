@@ -466,10 +466,12 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
     # — it only makes fresh both-pet AVAILABLE in the pool (does NOT force their use), so the
     # directive-gated both-pet floor in _propose_realfootage_singlepass has real, time-consistent
     # fresh material to lead with instead of archive. Mirrors the never-used floor above.
-    # RF_FRESH_BOTHPET_FLOOR default OFF until VM-verified; re-enable together with the
-    # RF_BOTHPET_FLOOR / RF_BOTHPET_ENFORCE / GIRI_BOTHPET_GATE switches (the 11/20 stopgap).
+    # PD 2026-11-20 (VERIFIED, re-enabled): floor ON adds fresh 2026 both-pet to the pool
+    # linearly (floor 0→12→24 : both_in_pool 28→39→51, all fresh, zero archive baby-Leo) and an
+    # 11/22 proposal with the full both-pet stack ON yielded a clean both-pet episode citing 4
+    # fresh 2026 both-pet clips + split_vertical — no era-mix. Default 12.
     try:
-        _bpf = int(os.getenv("RF_FRESH_BOTHPET_FLOOR", "0"))
+        _bpf = int(os.getenv("RF_FRESH_BOTHPET_FLOOR", "12"))
         if _bpf and _A:
             _have = {r["asset_id"] for r in _video_rows}
             # _A/_B are the fresh tiers, already hook-sorted; keep the both-pet the sample dropped.
@@ -3962,13 +3964,12 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         # exactly where BOTH pets cluster — so a "둘 다 대비" directive is handed a solo/archive
         # pool and the Writer drifts to a single-pet memory-lane. Surface both-pet clips first,
         # topping up from the archive pool if the usable count is short. RF_BOTHPET_FLOOR=0 off.
-        # PD 2026-11-20 (STOPGAP): default OFF. The both-pet floor + enforce + Giri gate (B,
-        # 2026-11-19) left EVERY RF slot empty for 11/22 because (a) the arc season directive
-        # names BOTH pets in nearly every episode → _want_both is ~always True, and (b) the
-        # fresh 2026 both-pet clips never enter the candidate pool, so the floor re-admits only
-        # archive baby-Leo → era-mix → Giri rejects → nothing ships. Disabled until the pool-build
-        # root (fresh both-pet surfaced via direct DB query) lands; then RE-ENABLE (set default 12).
-        _bp_floor = int(os.getenv("RF_BOTHPET_FLOOR", "0"))
+        # PD 2026-11-20: RE-ENABLED (default 12) now the pool-build root (RF_FRESH_BOTHPET_FLOOR,
+        # context stage) guarantees fresh 2026 both-pet in the pool — so this floor's re-admit
+        # source (_avail_precap, b779b7b fresh-first) leads with FRESH both-pet, not archive
+        # baby-Leo. Briefly OFF (11/20 stopgap) when the gate shipped WITHOUT the pool and emptied
+        # every 11/22 slot; VM-verified clean both-pet proposal before re-enabling.
+        _bp_floor = int(os.getenv("RF_BOTHPET_FLOOR", "12"))
         if _bp_floor and _want_both:
             _have_ids = {v.get("id") for v in avail_videos}
             _have_both = [v for v in avail_videos if _v_shows_both(v)]
@@ -4269,10 +4270,10 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         # the backstop. The split-nudge above only fires when the concept is ALREADY both-pet;
         # this catches the solo-memory-lane drift the nudge misses. Re-propose demanding both
         # pets, with extra tries so a both-pet directive actually lands. RF_BOTHPET_ENFORCE=0 off.
-        # PD 2026-11-20 (STOPGAP): default OFF (see RF_BOTHPET_FLOOR note). The enforce re-propose
-        # ground 3× against an unsatisfiable both-pet directive every slot; re-enable with the pool fix.
+        # PD 2026-11-20: RE-ENABLED with the pool-build root — the enforce re-propose is now
+        # satisfiable (fresh both-pet in the pool), not the unsatisfiable grind that emptied slots.
         _bp_violation = False
-        if os.getenv("RF_BOTHPET_ENFORCE", "0") == "1" and _want_both:
+        if os.getenv("RF_BOTHPET_ENFORCE", "1") == "1" and _want_both:
             _c0 = concepts[0] if concepts else {}
             _cuts0 = _c0.get("cuts") or []
             _whos = {(cut.get("who") or "").lower() for cut in _cuts0}

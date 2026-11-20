@@ -1711,11 +1711,11 @@ def _subject_location_grounding_gate(concept: "dict | None", report: dict) -> No
     # rubber-stamp this 9/10. Deterministic cap so a slipped-through solo fails instead of
     # shipping. The both-pet episode itself has subj={ryani,leo} and is NOT flagged.
     # GIRI_BOTHPET_GATE=0 reverts.
-    # PD 2026-11-20 (STOPGAP): default OFF. Paired with producer RF_BOTHPET_ENFORCE/FLOOR off —
-    # the arc season directive names both pets nearly every episode, so this capped EVERY solo RF
-    # while the pool couldn't supply a both-pet alternative → all 11/22 slots empty. Re-enable
-    # (default "1") once fresh both-pet clips reliably reach the Writer (pool-build root).
-    if (os.getenv("GIRI_BOTHPET_GATE", "0") == "1"
+    # PD 2026-11-20: RE-ENABLED with the producer pool-build root (RF_FRESH_BOTHPET_FLOOR) —
+    # the Writer can now satisfy a both-pet directive with fresh clips, so this cap rejects a
+    # genuine solo DRIFT instead of (briefly, 11/20 stopgap) capping every RF while the pool
+    # couldn't supply an alternative → empty slots.
+    if (os.getenv("GIRI_BOTHPET_GATE", "1") == "1"
             and concept.get("_directive_wants_both")
             and not ({"ryani", "leo"} <= subj)):
         reasons.append("디렉티브 위반 — 두 펫(레오+랴니) 대조를 지시했는데 한 마리만 나오는 "
