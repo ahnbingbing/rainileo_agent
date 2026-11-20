@@ -2900,11 +2900,24 @@ repeat_ratio, grounding gate 과잉특정)였지 풀 측정이 아니었다.** �
   플로어가 같은 배포에 함께 들어오기 전엔 켜지 마라.** 거부는 풀이 채울 수 있을 때만 레버고, 아니면 차단기다.
   (§4.9·§4.10의 "모든 레이어에 플로어"를 *시간축*으로 확장: 거부-레이어와 공급-레이어는 **동시 배포**해야 한다.)
 
-**★복구 규율(끄고·고치고·검증하고·같이 켠다):** killswitch 기본값이 즉시 롤백을 가능케 했다 — stopgap으로
+**★가장 깊은 교훈 — 선호를 요구로 게이트한 범주 오류(PD 2026-11-20 교정):** 위 "동시 배포"조차 half-right였다.
+both-pet 스택을 공급-floor와 함께 켠 뒤에도(E2E로 both-pet 1편 Giri 9/10 shipping 확인) 백필이 **5400s 월클락
+캡**에 걸려 슬롯 대부분을 못 채웠다 — enforce 재제안이 매 슬롯 시간을 먹어서다. PD: **"펫은 하나만 나와도 돼.
+둘 다 나오는 건 *우선순위*야."** 즉 both-pet은 **선호(preference)지 요구(requirement)가 아니다** — 그런데
+`RF_BOTHPET_ENFORCE`(both 강제 재제안)와 `GIRI_BOTHPET_GATE`(솔로 cap≤6 거부)는 선호를 **요구로 집행**했다.
+**일반화: 선호는 *공급 쪽*(풀을 그쪽으로 bias)에서 표현하라 — *거부 쪽*(체커가 '아니면 반려')에서 집행하지 마라.
+거부로 집행된 선호는 공급이 완벽해도 '못 맞추면 빔'을 만든다. "슬롯을 채운다"가 "both-pet이다"를 이긴다.** 최종
+상태: 공급 floor(`RF_FRESH_BOTHPET_FLOOR`+`RF_BOTHPET_FLOOR`)는 **ON(우선순위)**, 요구 게이트(`RF_BOTHPET_ENFORCE`
++`GIRI_BOTHPET_GATE`)는 **OFF** — Writer는 both-pet으로 bias되되 솔로로 나오면 그대로 shipping(`3351f59`).
+
+**★복구 규율(끄고·고치고·검증하고·올바른 레이어만 켠다):** killswitch 기본값이 즉시 롤백을 가능케 했다 — stopgap으로
 세 스위치 기본값 OFF(`git push`→deploy.timer 2분 폴, VM env는 하드훅이 막아 **코드 기본값 우회**가 확립 경로)로
 생산 즉시 복구 → pool-build 근본 빌드(OFF) → **VM 제안-레벨 검증**(렌더 전 싼 게이트: 풀 내 both-pet 증가 +
-제안이 신선 both-pet 쓰는지) → 네 스위치 동시 재가동. 이미 공개된 빈 날(11/22; `LAUNCH_LEAD_DAYS=2`라 정규
-크론이 재시도 안 함)은 `launch_selfheal --date`로 백필(빈 슬롯만 채움).
+제안이 신선 both-pet 쓰는지) → 재가동. ★단 "네 스위치 다 켜기"는 과했다: PD 교정으로 **공급 floor만 ON, 요구
+게이트는 OFF**가 정답(위 범주 오류). 이미 공개된 빈 날(11/22; `LAUNCH_LEAD_DAYS=2`라 정규 크론이 재시도 안 함)은
+`launch_selfheal --date`로 백필(빈 슬롯만 채움). **프로세스 함정:** 수동 백필 stdout을 `gcloud ssh | grep`으로
+받으면 grep 블록-버퍼링이라 완료까지 실시간 Giri 점수가 안 보인다 → DB 카드/렌더 mp4로 진행 확인하거나 파이프에
+grep을 걸지 마라. selfheal 월클락 캡(5400s)은 패스당 소수 슬롯만 → 전체 채우려면 재실행.
 
 **★프로세스 교훈:** ①병렬 재렌더 3개가 VM load 2.3까지 올려 SSH 핸드셰이크를 죽였다 → RF 렌더는 **순차**.
 ②`gcloud compute ssh`는 매 호출 새 IAP 터널이라 **빠른 재시도 루프가 IAP rate-limit을 유발**(255, 재시도가
