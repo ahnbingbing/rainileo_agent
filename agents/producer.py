@@ -457,6 +457,31 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
                          "(floor=%d)", len(_readd), _floor)
     except Exception as _e:  # noqa: BLE001
         log.warning("fresh never-used floor skipped: %s", _e)
+    # PD 2026-11-20 (pool-build ROOT for both-pet directives): GUARANTEE fresh both-pet clips
+    # survive the diversity sample. 392 fresh 2026 both-pet clips exist on the VM, but ~68%
+    # cluster in the over-shot 'home' location — so the loc×act diversity sample undersamples
+    # them AND the downstream over-used-location cap (_cap_overused_locations) strips 'home'
+    # again. A both-pet directive then reaches the Writer with only archive baby-Leo to pull
+    # (era-mix → Giri reject → empty slot: the 11/22 failure). This floor is directive-AGNOSTIC
+    # — it only makes fresh both-pet AVAILABLE in the pool (does NOT force their use), so the
+    # directive-gated both-pet floor in _propose_realfootage_singlepass has real, time-consistent
+    # fresh material to lead with instead of archive. Mirrors the never-used floor above.
+    # RF_FRESH_BOTHPET_FLOOR default OFF until VM-verified; re-enable together with the
+    # RF_BOTHPET_FLOOR / RF_BOTHPET_ENFORCE / GIRI_BOTHPET_GATE switches (the 11/20 stopgap).
+    try:
+        _bpf = int(os.getenv("RF_FRESH_BOTHPET_FLOOR", "0"))
+        if _bpf and _A:
+            _have = {r["asset_id"] for r in _video_rows}
+            # _A/_B are the fresh tiers, already hook-sorted; keep the both-pet the sample dropped.
+            _fresh_both = [r for r in (_A + _B)
+                           if _is_both(r["subjects_csv"]) and r["asset_id"] not in _have]
+            _readd_bp = _fresh_both[:_bpf]
+            if _readd_bp:
+                _video_rows = _readd_bp + _video_rows
+                log.info("RF pool: +%d fresh both-pet clips guaranteed past diversity sample "
+                         "(floor=%d)", len(_readd_bp), _bpf)
+    except Exception as _e:  # noqa: BLE001
+        log.warning("fresh both-pet floor skipped: %s", _e)
     best_videos = [
         {"id": r["asset_id"], "act": r["activity"] or "", "sub": _ground_subjects(r["subjects_csv"], r["captured_iso"]),
          "mood": r["mood"] or "", "sc": _ground_truth_sc(r),
