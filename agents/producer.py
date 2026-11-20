@@ -4270,10 +4270,14 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         # the backstop. The split-nudge above only fires when the concept is ALREADY both-pet;
         # this catches the solo-memory-lane drift the nudge misses. Re-propose demanding both
         # pets, with extra tries so a both-pet directive actually lands. RF_BOTHPET_ENFORCE=0 off.
-        # PD 2026-11-20: RE-ENABLED with the pool-build root — the enforce re-propose is now
-        # satisfiable (fresh both-pet in the pool), not the unsatisfiable grind that emptied slots.
+        # PD 2026-11-20 (clarification): both-pet is a PRIORITY, NOT a requirement — a solo
+        # episode is perfectly acceptable. So the priority lives in the pool floor alone
+        # (RF_FRESH_BOTHPET_FLOOR supplies + RF_BOTHPET_FLOOR surfaces both-pet so the Writer is
+        # BIASED toward it), and this hard enforce re-propose is OFF: forcing both-pet re-writes
+        # per slot caused the 90-min grind/timeout that left slots empty, and "must fill the slot"
+        # outranks "must be both-pet." If the concept lands solo, ship it. RF_BOTHPET_ENFORCE=1 re-arms.
         _bp_violation = False
-        if os.getenv("RF_BOTHPET_ENFORCE", "1") == "1" and _want_both:
+        if os.getenv("RF_BOTHPET_ENFORCE", "0") == "1" and _want_both:
             _c0 = concepts[0] if concepts else {}
             _cuts0 = _c0.get("cuts") or []
             _whos = {(cut.get("who") or "").lower() for cut in _cuts0}

@@ -1704,18 +1704,16 @@ def _subject_location_grounding_gate(concept: "dict | None", report: dict) -> No
     if not blob.strip():
         return
     reasons = []
-    # PD 2026-11-19 (B #2, checker side): the active directive demanded a both-pet episode
-    # (producer stamps concept["_directive_wants_both"] when the showrunner/PD directive asked
-    # for a 레오+랴니 contrast) but the rendered episode shows only ONE pet — the Writer drifted
-    # to a solo memory-lane and the pool floor + structure gate didn't catch it. Giri used to
-    # rubber-stamp this 9/10. Deterministic cap so a slipped-through solo fails instead of
-    # shipping. The both-pet episode itself has subj={ryani,leo} and is NOT flagged.
-    # GIRI_BOTHPET_GATE=0 reverts.
-    # PD 2026-11-20: RE-ENABLED with the producer pool-build root (RF_FRESH_BOTHPET_FLOOR) —
-    # the Writer can now satisfy a both-pet directive with fresh clips, so this cap rejects a
-    # genuine solo DRIFT instead of (briefly, 11/20 stopgap) capping every RF while the pool
-    # couldn't supply an alternative → empty slots.
-    if (os.getenv("GIRI_BOTHPET_GATE", "1") == "1"
+    # PD 2026-11-20 (clarification — DEFAULT OFF): both-pet is a PRIORITY, NOT a requirement.
+    # A solo (one-pet) episode is perfectly acceptable; both pets in frame is merely preferred.
+    # So Giri must NOT reject a solo just because the directive named both pets — that reject
+    # turns "solo (fine)" into "empty slot (bad)", and "fill the slot" outranks "be both-pet".
+    # The both-pet PRIORITY lives entirely upstream in the producer pool floor
+    # (RF_FRESH_BOTHPET_FLOOR supplies fresh both-pet + RF_BOTHPET_FLOOR surfaces it so the Writer
+    # is biased toward it); there is no checker-side hard cap. GIRI_BOTHPET_GATE=1 re-arms the cap
+    # (only do so if PD reclassifies both-pet from priority to requirement). The subject-erasure
+    # and location/cross-cut checks below are unaffected — they catch real mismatches, not solo-ness.
+    if (os.getenv("GIRI_BOTHPET_GATE", "0") == "1"
             and concept.get("_directive_wants_both")
             and not ({"ryani", "leo"} <= subj)):
         reasons.append("디렉티브 위반 — 두 펫(레오+랴니) 대조를 지시했는데 한 마리만 나오는 "
