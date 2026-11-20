@@ -3937,7 +3937,13 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         # exactly where BOTH pets cluster — so a "둘 다 대비" directive is handed a solo/archive
         # pool and the Writer drifts to a single-pet memory-lane. Surface both-pet clips first,
         # topping up from the archive pool if the usable count is short. RF_BOTHPET_FLOOR=0 off.
-        _bp_floor = int(os.getenv("RF_BOTHPET_FLOOR", "12"))
+        # PD 2026-11-20 (STOPGAP): default OFF. The both-pet floor + enforce + Giri gate (B,
+        # 2026-11-19) left EVERY RF slot empty for 11/22 because (a) the arc season directive
+        # names BOTH pets in nearly every episode → _want_both is ~always True, and (b) the
+        # fresh 2026 both-pet clips never enter the candidate pool, so the floor re-admits only
+        # archive baby-Leo → era-mix → Giri rejects → nothing ships. Disabled until the pool-build
+        # root (fresh both-pet surfaced via direct DB query) lands; then RE-ENABLE (set default 12).
+        _bp_floor = int(os.getenv("RF_BOTHPET_FLOOR", "0"))
         if _bp_floor and _want_both:
             _have_ids = {v.get("id") for v in avail_videos}
             _have_both = [v for v in avail_videos if _v_shows_both(v)]
@@ -4238,8 +4244,10 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         # the backstop. The split-nudge above only fires when the concept is ALREADY both-pet;
         # this catches the solo-memory-lane drift the nudge misses. Re-propose demanding both
         # pets, with extra tries so a both-pet directive actually lands. RF_BOTHPET_ENFORCE=0 off.
+        # PD 2026-11-20 (STOPGAP): default OFF (see RF_BOTHPET_FLOOR note). The enforce re-propose
+        # ground 3× against an unsatisfiable both-pet directive every slot; re-enable with the pool fix.
         _bp_violation = False
-        if os.getenv("RF_BOTHPET_ENFORCE", "1") == "1" and _want_both:
+        if os.getenv("RF_BOTHPET_ENFORCE", "0") == "1" and _want_both:
             _c0 = concepts[0] if concepts else {}
             _cuts0 = _c0.get("cuts") or []
             _whos = {(cut.get("who") or "").lower() for cut in _cuts0}
