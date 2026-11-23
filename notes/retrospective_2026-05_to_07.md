@@ -2546,6 +2546,16 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   "빌드"가 아니라 "가동+측정"이 끝이다 — 크론/배선 없는 기능은 투자해 둔 자본이 조용히 0으로 감가**한다(스냅샷으로
   cron·테이블 신선도·적용여부를 주기 점검). Shorts는 썸네일 편집 불가라 CTR 레버 無 → 트렌드-라이딩+훅+타임슬롯이
   실질 레버. cf [[view_data_concrete_hook_title]].
+  - **★재발+기계적 근인(11/23, 댓글 에이전트).** 시청자 댓글 답글 에이전트(`agents/comment_agent.py`)도
+    11/13 빌드 후 **crontab 미등록**으로 10일간 잠들어, PD가 "유툽 댓글이 다 안 달린 것 같다"로 체감했다 —
+    C_dormant의 정확한 재발(빌드≠가동). **이 패턴을 자꾸 밟게 만드는 기계적 원인 = `deploy/pull_deploy.sh`는
+    crontab을 재설치하지 않는다(설치는 `bootstrap.sh`만).** 그래서 `crontab.vm`에 줄을 추가하고 `git push`해도
+    cron은 *조용히* 안 돈다(코드·파일은 pull되지만 rianileo crontab은 옛 상태). **교훈: `crontab.vm` 수정은
+    VM에서 `crontab -u rianileo deploy/crontab.vm` 1회 재설치까지가 "배포"다** — push만으로 끝이 아니다. 실제
+    가동 스위치(SAFE 자동게시)는 `deploy.env`의 `COMMENT_AGENT_AUTOPOST_SAFE`에 둬서 crontab 재설치 없이도
+    플립 가능하게 했다(.env 하드훅 우회=코드/크론 기본값 경로, §4.5 확립 패턴과 동형). 멱등은 `handled_comments`
+    테이블(두 번 답 안 함·승인큐 재스팸 안 함)로. ★점검 리플렉스=새 주기 기능을 빌드하면 "crontab 줄 + VM 재설치 +
+    kill-switch env"까지가 체크리스트.
 - **C_overlayvsv2v. 실사 위 "할로윈 필터/오버레이"는 합성이 아니라 video-to-video다 — 요소를 오려붙이면 무조건
   싸구려(11/3~4, 할로윈 MV `Kl8x-c-y3X0`)** — 실사 컷을 할로윈답게 만드는 대장정. ★스파인=**합성(composite)으로는
   천장을 못 넘는다.** 시도 순서대로 전부 PD 반려: ①ffmpeg/PIL 수제 파티클·박쥐(플랫 클립아트) ②Pixabay 스톡 글리터
