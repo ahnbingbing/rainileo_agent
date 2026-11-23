@@ -2957,7 +2957,7 @@ def _rf_grounded_truth(manifests: dict, anim_dir: Path,
                     "SELECT pd_notes, captured_iso FROM assets WHERE asset_id=?",
                     (str(aid),)).fetchone()
                 if row:
-                    pdn = (row[0] or "").strip()
+                    pdn = canon.clean_pd_notes(row[0])   # strip appended '[맥락]' Q&A noise
                     cap_iso = row[1]
             except Exception:
                 pass
@@ -3080,7 +3080,7 @@ def _rf_action_grounded_captions(work_dir: Path, manifests: dict, anim_dir: Path
                 con.close()
         except Exception:
             return ""
-        pdn = (row[0] or "").strip() if row and row[0] else ""
+        pdn = canon.clean_pd_notes(row[0]) if row and row[0] else ""   # strip '[맥락]' Q&A noise
         # drop pipeline markers; keep the human story
         for _mk in ("[BRANDING]", "[EXCLUDE]"):
             pdn = pdn.replace(_mk, "")

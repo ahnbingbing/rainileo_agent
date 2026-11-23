@@ -188,6 +188,14 @@ def _clip_reuse_counts(con: sqlite3.Connection) -> dict:
     return counts
 
 
+def _clean_pd_notes(s: "str | None") -> str:
+    """Strip the appended '  [맥락] …' Q&A so only the owner's authoritative direct description
+    reaches the Writer. Shared impl in canon.clean_pd_notes (also used by cameraman + reviewer so
+    all three grounding surfaces agree)."""
+    from agents import canon as _c
+    return _c.clean_pd_notes(s)
+
+
 def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
     # Recent tone history
     tones = [dict(r) for r in con.execute(
@@ -218,7 +226,7 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
     # take precedence over VLM scene_description when present. Marked [PD] so
     # Writer knows this is authoritative ground truth.
     def _ground_truth_sc(r) -> str:
-        pd_n = (r["pd_notes"] or "").strip() if "pd_notes" in r.keys() else ""
+        pd_n = _clean_pd_notes(r["pd_notes"]) if "pd_notes" in r.keys() else ""
         if pd_n:
             return f"[PD] {pd_n[:280]}"
         return (r["scene_description"] or "")[:280]
@@ -243,7 +251,7 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
         #      This is ground truth; the VLM can't see it's grandpa-tug and mis-guessed
         #      "강아지가 돌아다니는 중" → wrong caption. The human description WINS.
         #   2) suggested_caption_ko — the VLM's guess, used only when no human note exists.
-        human = (r["pd_notes"] or "").strip() if "pd_notes" in r.keys() else ""
+        human = _clean_pd_notes(r["pd_notes"]) if "pd_notes" in r.keys() else ""
         if human:
             out["content_desc"] = human
             out["content_desc_source"] = "owner"
@@ -2917,7 +2925,17 @@ def _recent_la_usage(con, days: int = 7):
     overused = {k for k, n in freq.items() if n / tot >= 0.15}
     locf = Counter(loc for loc, _ in la)
     overused_loc = {loc for loc, n in locf.items() if n / tot >= 0.40}
-    return freq, overused, overused_loc
+    # PD 2026-11-23: track ACTIVITY alone too, independent of location. The (loc,act) pair
+    # above silently DROPS any clip whose location_type is NULL (`if r[0] and r[1]`), so a
+    # recently-aired activity on null-location clips (e.g. a "담요 꿀잠"/sleeping clip with no
+    # location_type) was invisible to the freshness gate and re-aired freely — the exact
+    # "same activity category reprised" defect Giri rejects post-render. Counting activity on
+    # its own (ANY location, incl. null) surfaces it so the Writer steers off a reprised nap/
+    # walk/cafe from the first draft. Threshold mirrors the pair rule.
+    actf = Counter(r[1] for r in q if r[1])
+    act_tot = sum(actf.values()) or 1
+    overused_act = {a for a, n in actf.items() if n / act_tot >= 0.25}
+    return freq, overused, overused_loc, overused_act
 
 
 def _lead_with_underused(rows: list, freq, overused_loc,
@@ -3920,7 +3938,7 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         log.warning("early arc directive fetch failed: %s", _e)
     _want_both = _directive_wants_both_pets(_rf_directive)
     try:
-        _la_freq, _la_over, _loc_over = _recent_la_usage(_db())
+        _la_freq, _la_over, _loc_over, _act_over = _recent_la_usage(_db())
         # PD 2026-06-17 (outing-unit freshness): protect clips that form a RICH coherent
         # outing (same day+place, already past cooldown = never shipped as an event) from the
         # over-used-location demotion/cap. Variety comes from picking a DIFFERENT outing each
@@ -3949,11 +3967,14 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         _avoid_overused = {
             "over_used_locations": sorted(_loc_over),
             "over_used_location_activity": sorted(f"{l}/{a}" for (l, a) in _la_over),
+            "over_used_activity": sorted(_act_over),
             "note": ("최근 real_footage 업로드가 위 장소/활동에 과도하게 쏠려 있다. 단, "
                      "candidate_outings의 풍부한 묶음(같은 날·장소의 안 써본 사건)은 그 장소가 "
                      "과대표집이어도 우선 골라라 — 반복의 단위는 *장소*가 아니라 *이벤트*다. "
                      "고를 만한 풍부한 나들이가 없을 때만 다른 장소/활동(야외/카페/옛 영상)으로 "
-                     "분산하라. 풀은 신선한 것부터 정렬돼 있다."),
+                     "분산하라. 풀은 신선한 것부터 정렬돼 있다. 특히 over_used_activity의 활동"
+                     "(예: 낮잠·산책)은 최근 회차가 이미 그걸로 나갔으니, 그 활동을 *회차의 중심*으로 "
+                     "삼지 마라 — 다른 활동/사건을 주연으로."),
         }
         if progress_cb and (_loc_over or _la_over):
             _capmsg = (f", 풀 {_before_cap}→{len(avail_videos)} 캡"
@@ -4201,12 +4222,15 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
                  "avoid_overused_setups에 있어도 우선해도 된다 — 반복의 단위는 *장소*가 아니라 "
                  "*이벤트*다(같은 home이라도 안 써본 다른 날의 사건이면 새 콘텐츠). 여러 날을 "
                  "섞는 건 명시적 '그때 vs 지금' 비교일 때만 하고, 그때는 각 컷의 시점을 캡션에 라벨하라.")
-    if _avoid_overused.get("over_used_locations") or _avoid_overused.get("over_used_location_activity"):
+    if (_avoid_overused.get("over_used_locations") or _avoid_overused.get("over_used_location_activity")
+            or _avoid_overused.get("over_used_activity")):
         user += ("\n\n⚠️ 신선도: available_videos는 신선한(덜 쓴) 클립부터 정렬돼 있다. "
                  "avoid_overused_setups의 장소/활동은 최근 과도하게 반복됐으니, 고를 만한 풍부한 "
                  "나들이가 없을 때는 컷의 과반을 그쪽으로 채우지 말고 야외/카페/옛 영상 등 다른 "
                  "장소·활동을 우선 골라라. (단 위 ⭐나들이 우선이 상위 규칙 — 풍부한 안 써본 "
-                 "나들이가 있으면 그 장소가 과대표집이어도 그걸 골라라.)")
+                 "나들이가 있으면 그 장소가 과대표집이어도 그걸 골라라.) ★over_used_activity의 활동"
+                 "(낮잠·산책 등)은 최근 회차가 이미 그 활동으로 나갔다 — 그 활동을 이번 회차의 "
+                 "*중심 컨셉/제목*으로 삼지 말고, 쓰더라도 조연 한 컷 이하로.")
     if _reuse_segs:
         user += ("\n\n⚠️ 구간 재사용: recently_used_segments는 최근 에피소드가 이미 쓴 "
                  "(클립별) 구간이다. 같은 클립을 다시 쓰려면 그 구간과 겹치지 않는 다른 "

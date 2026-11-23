@@ -1353,8 +1353,9 @@ def _pd_groundtruth_block(concept: dict | None) -> str:
             qs = ",".join("?" * len(aids))
             for aid, pdn in con.execute(
                     f"SELECT asset_id, pd_notes FROM assets WHERE asset_id IN ({qs})", aids):
-                if pdn and str(pdn).strip():
-                    notes[aid] = str(pdn).strip()
+                _clean = canon.clean_pd_notes(pdn)   # strip appended '[맥락]' Q&A noise
+                if _clean:
+                    notes[aid] = _clean
         finally:
             con.close()
     except Exception as e:

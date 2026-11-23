@@ -294,6 +294,19 @@ _RYANI_TOKEN_KO = _re_canon.compile(r"랴니")
 _RYANI_TOKEN_EN = _re_canon.compile(r"\bRyani\b")
 
 
+def clean_pd_notes(s: "str | None") -> str:
+    """Return only the owner's DIRECT clip description — authoritative ground truth — stripping
+    the '  [맥락] a / b / …' context a backfill (scripts/_remap_grandma_desc) appended. That
+    appended follow-up Q&A is low-quality chatter that often CONTRADICTS the direct description
+    ('하크니농장에서 랴니 자는모습  [맥락] 집에 있어요 / 몰라요') and misleads both the Writer (invents a
+    home/blanket scene) and Giri (flags the location mismatch). Apply at every pd_notes GROUNDING
+    surface — Writer pool, render-time caption author, reviewer — so all three ground on the same
+    clean description. Raw DB data is untouched; this strips only on read."""
+    s = (s or "").strip()
+    i = s.find("[맥락]")
+    return s[:i].strip() if i != -1 else s
+
+
 def correct_preleo_pet_names_text(text: str, captured_iso: "str | None") -> str:
     """If `captured_iso` predates a pet's existence, neutralize that pet's name in `text`.
     레오/Leo → 고양이/the cat; 랴니/Ryani → 강아지/the dog (pre-2015, essentially never).
