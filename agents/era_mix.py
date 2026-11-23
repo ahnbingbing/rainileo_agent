@@ -134,10 +134,14 @@ def era_span_fire(cuts: list, db_path) -> dict | None:
     if not (general_fire or leo_fire):
         return None
     span_years = round(span_days / 365.25, 1)
+    # Phrase the span in NATURAL Korean, never a decimal year — the Writer reads this reason as
+    # feedback and parrots it into a caption ("6.4년 차이" → a burned "6.4년 전"). PD 2026-11-23:
+    # "6년 반 전" or "6년 N개월 전", not "6.4년". (span_years stays numeric in the return dict.)
+    from agents import canon as _canon
     if leo_fire:
-        reason = (f"아기 레오({youngest_leo_age / 30.4:.1f}개월) 클립과 "
-                  f"{round(leo_span / 30.4, 1)}개월 뒤 다 큰 레오 클립이 한 회차에 섞였습니다")
+        reason = (f"아기 레오({round(youngest_leo_age / 30.44)}개월) 클립과 "
+                  f"{round(leo_span / 30.44)}개월 뒤 다 큰 레오 클립이 한 회차에 섞였습니다")
     else:
-        reason = f"클립 촬영일이 {span_years}년 차이로 벌어졌습니다"
+        reason = f"클립 촬영일이 약 {_canon.human_span_phrase(span_days)} 벌어졌습니다"
     return {"span_days": span_days, "span_years": span_years, "leo_fire": leo_fire,
             "youngest_leo_age": youngest_leo_age, "leo_span": leo_span, "reason": reason}

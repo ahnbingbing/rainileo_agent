@@ -199,6 +199,7 @@ def correct_canon_age_text(text: str) -> str:
     text = _BIRTH_YEAR_EN.sub(lambda m: f"{m.group(1)} {_snap_birth_year(int(m.group(2)))}", text)
     text = correct_canon_names_text(text)
     text = _scrub_geuhae(text)
+    text = scrub_decimal_years(text)   # '6.4년' → '6년 반' (no decimal years on screen)
     return text
 
 
@@ -214,6 +215,53 @@ def _scrub_geuhae(text: str) -> str:
     if not text or "그" not in text:
         return text
     return _GEUHAE_KO.sub(lambda m: "몇 년 전" + (m.group(1) or ""), text)
+
+
+# ── Natural-language elapsed/span phrasing (PD 2026-11-23) ────────────────────
+# A decimal year ("6.4년") is never natural Korean and leaks into captions as the nonsensical
+# "6.4년 전" (cf the earlier "0.6년 전" leak). PD: say "6년 반 전" or "6년 N개월 전". These build the
+# human phrase from a day/month count; use human_span_phrase for a gate's "N 벌어졌습니다" reason
+# (no "전") and human_elapsed_phrase for an ago-marker. scrub_decimal_years is the burn-chokepoint
+# backstop that rewrites any "N.N년" that still slips into a caption.
+def human_span_phrase(days: "int | float | None") -> str:
+    """'6년 반' / '6년 5개월' / '6년' / '8개월' — natural duration, never a decimal year."""
+    d = max(0, int(days or 0))
+    total_months = round(d / 30.44)
+    yrs, mos = divmod(total_months, 12)
+    if yrs == 0:
+        return f"{mos}개월" if mos else "얼마 안"
+    if mos == 0:
+        return f"{yrs}년"
+    if 5 <= mos <= 7:
+        return f"{yrs}년 반"
+    return f"{yrs}년 {mos}개월"
+
+
+def human_elapsed_phrase(days: "int | float | None") -> str:
+    """Ago-marker form of human_span_phrase: '6년 반 전' / '6년 5개월 전'."""
+    sp = human_span_phrase(days)
+    return "얼마 전" if sp == "얼마 안" else f"{sp} 전"
+
+
+_DECIMAL_YEAR_KO = _re_canon.compile(r"(\d+)\.(\d+)\s*년")
+
+
+def scrub_decimal_years(text: str) -> str:
+    """'6.4년' → '6년 반' / '6년 5개월' (decimal → natural). Idempotent backstop at the burn
+    chokepoint so a decimal year never reaches the screen, even if a caption slipped one in."""
+    if not text or "." not in text:
+        return text
+    def _rep(m):
+        yrs = int(m.group(1)); fr = m.group(2)
+        mos = round(int(fr) / (10 ** len(fr)) * 12)
+        if mos >= 12:
+            return f"{yrs + 1}년"
+        if mos == 0:
+            return f"{yrs}년"
+        if 5 <= mos <= 7:
+            return f"{yrs}년 반"
+        return f"{yrs}년 {mos}개월"
+    return _DECIMAL_YEAR_KO.sub(_rep, text)
 
 
 # ── Capture-date-aware memory-lane timeframe (PD 2026-08-31) ──────────────────
