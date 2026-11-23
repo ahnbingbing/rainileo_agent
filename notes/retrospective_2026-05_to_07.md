@@ -2875,6 +2875,21 @@ self-heal**로 grind. both-pet과 같은 패턴으로 `RF_ERA_MAX_TRIES=3` — *
 신선전용화가 era-mix **발생 빈도** 자체를 줄인다(신선 풀이 두터우면 Writer가 과거로 안 쏠림). reviewer temporal
 게이트는 그대로 사후 백스톱. `7de84ae`. cf C_captionpathsplit(규칙↔실행경로)·C_ingestexportfreeze(상류 freshness).
 
+**★C_trimlevelreconcile — fresh-exhaustion은 공급 아니라 "선택의 단위·대사"가 틀린 것(2026-11-23, PD):** 슬롯이
+콜라주(3/10)→빔으로 가서 "신선 고갈"처럼 보였지만, DB엔 신선 비디오 866·신선 both-pet 333·리치 미사용 아웃팅
+多가 멀쩡했다. 선택이 두 축으로 **과도 제외**: ①**whole-file all-time 쿨다운** — 클립의 한 창이라도 방영되면
+파일을 *통째* 영구 제외. 그런데 reviewer `_clip_reuse_gate`는 **이미 segment-aware**(non-overlap 재사용은 위반
+아님) → **선택기만 검수기보다 과격해 롱클립을 태웠다**. ②**attempt 오염** — `_clip_reuse_counts`·`_recent_la_usage`가
+*전* 카드(실패·재시도·junk 포함)를 세어, grind가 **자기오염**(실패 시도의 클립이 "최근 사용"을 부풀려 다음 슬롯을
+굶김→더 grind). **PD 두 원칙**: **(a) "used"는 파일 flag가 아니라 트림 단위**(한 번 쓴 롱클립도 안 쓴 non-overlap
+창이 남으면 신선) + **(b) "used"=유튜브에 올라간 것(uploaded=1)으로 대사**("결제사후 대사" — 실패/미발행 시도는
+미사용으로 롤백). Fix(`c705151`): `_pool_cooled`가 all-time-cooled라도 free window(≥`RF_REUSE_MIN_WINDOW`, uploaded
+세그먼트 기준)가 있으면 유지(Writer는 `recently_used_segments` 가이드로 신선 창 선택; outing-session·visual·live<7d는
+불변)·`_clip_reuse_counts`/`_recent_la_usage`에 `uploaded=1`. **일반화: 희소자원 제외의 *단위*(파일 vs 트림)와
+*출처*(시도 vs 커밋/방영)를 검수기와 일치시켜라 — 선택이 검수보다 과격하면 통과 가능한 재료를 스스로 버리고,
+시도를 "사용"으로 세면 실패가 풀을 잠식한다.** cf §4.9(신선=never-used)·§4.10(floor는 모든 레이어)의 완결판 —
+"모든 레이어"에 더해 *단위*와 *대사*까지 정렬.
+
 ## §4.10 C_bothpetlayers — 희소성 플로어는 "모든 선택 레이어"에 있어야 한다 (both-pet 디렉티브, 2026-11-19)
 
 **증상:** PD "왜 자꾸 기존이랑 다르게 퀄 낮게?" both-pet 대조를 지시한 슬롯(11/20 arc·11/21 PD컨셉)이
