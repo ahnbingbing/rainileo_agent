@@ -40,6 +40,32 @@ def classify(text: str) -> str:
     return "approval"
 
 
+# ── idempotency state (PD 2026-11-23 — cron wiring) ───────────────────────────
+# Every comment we ACT ON is recorded here so (a) we never post the same reply twice even if a
+# fresh post hasn't propagated into the YouTube reply list yet, and (b) the approval queue surfaces
+# each PD-needing comment to Slack exactly ONCE, not re-spammed every cron run.
+def _ensure_handled(con) -> None:
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS handled_comments ("
+        "  comment_id TEXT PRIMARY KEY,"
+        "  video_id   TEXT,"
+        "  action     TEXT,"          # 'posted' (we replied) | 'queued' (sent to PD for approval)
+        "  handled_at TEXT)")
+    con.commit()
+
+
+def _seen(con, comment_id: str) -> str | None:
+    r = con.execute("SELECT action FROM handled_comments WHERE comment_id=?", (comment_id,)).fetchone()
+    return r[0] if r else None
+
+
+def _mark(con, comment_id: str, video_id: str, action: str) -> None:
+    con.execute(
+        "INSERT OR REPLACE INTO handled_comments(comment_id, video_id, action, handled_at) "
+        "VALUES (?,?,?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))", (comment_id, video_id, action))
+    con.commit()
+
+
 # ── fetch ───────────────────────────────────────────────────────────────────
 def _channel_id(yt) -> str:
     return yt.channels().list(part="id", mine=True).execute()["items"][0]["id"]
@@ -158,12 +184,33 @@ def draft_reply(comment: dict) -> str:
 
 
 # ── orchestrate ───────────────────────────────────────────────────────────────
-def run(max_videos: int = 8, max_replies: int = 20, dry_run: bool = True) -> dict:
+def _post_approval_queue(queue: list[dict]) -> None:
+    """Batch the PD-approval drafts into ONE Slack digest on the board channel (PD reviews +
+    approves in bulk — don't ping per comment). Best-effort via notify."""
+    if not queue:
+        return
+    from agents import notify
+    lines = [f":speech_balloon: *댓글 승인 대기 {len(queue)}건* — 아래 초안 확인 후 직접 게시/수정해 주세요."]
+    for c in queue:
+        lines.append(
+            f"\n• 「{c['video_title'][:28]}」 ♥{c['likes']}\n"
+            f"  💬 {c['author']}: {c['text'][:140]}\n"
+            f"  ↳ 초안: {c.get('draft','(초안 생성 실패)')}")
+    notify.post("\n".join(lines))
+
+
+def run(max_videos: int = 8, max_replies: int = 20, dry_run: bool = True,
+        slack: bool = False) -> dict:
     from agents.producer import _db
     from youtube.oauth import get_youtube
     con = _db()
+    _ensure_handled(con)
     yt = get_youtube()
     backlog = fetch_unreplied(con, yt, max_videos=max_videos)
+    # Drop anything we've already acted on (posted a reply OR already queued to PD) so neither the
+    # reply nor the approval digest repeats. fetch already skips comments we visibly replied to;
+    # this also covers fresh posts that haven't propagated into the reply list yet.
+    backlog = [c for c in backlog if not _seen(con, c["comment_id"])]
     backlog.sort(key=lambda c: (c["category"] != "safe", -c["likes"]))
     picked = backlog[:max_replies]
     for c in picked:
@@ -177,11 +224,19 @@ def run(max_videos: int = 8, max_replies: int = 20, dry_run: bool = True) -> dic
                 yt.comments().insert(part="snippet", body={"snippet": {
                     "parentId": c["comment_id"], "textOriginal": c["draft"]}}).execute()
                 posted.append(c)
+                _mark(con, c["comment_id"], c["video_id"], "posted")
             except Exception as e:  # noqa: BLE001
                 log.warning("post failed for %s: %s", c["comment_id"], e)
                 queued.append(c)
         else:
             queued.append(c)
+    # Surface the PD-approval drafts to Slack ONCE, then remember them so the next run doesn't
+    # re-post the same queue. Only when running for real (cron passes --slack) — a local dry-run
+    # must not spam the channel.
+    if slack and not dry_run and queued:
+        _post_approval_queue(queued)
+        for c in queued:
+            _mark(con, c["comment_id"], c["video_id"], "queued")
     return {"backlog_total": len(backlog), "drafted": len(picked),
             "posted": len(posted), "queued": len(queued), "items": picked}
 
@@ -195,11 +250,15 @@ def main() -> int:
     p.add_argument("--post", action="store_true",
                    help="actually POST (default: dry-run). Safe categories post when "
                         "COMMENT_AGENT_AUTOPOST_SAFE=1; the rest stay queued.")
+    p.add_argument("--slack", action="store_true",
+                   help="post the PD-approval drafts as one batched digest to the board channel "
+                        "(used by the cron job; omit for a silent local run).")
     p.add_argument("--json", action="store_true")
     a = p.parse_args()
     if a.post:
         os.environ["COMMENT_AGENT_POST"] = "1"
-    r = run(max_videos=a.max_videos, max_replies=a.max_replies, dry_run=not a.post)
+    r = run(max_videos=a.max_videos, max_replies=a.max_replies, dry_run=not a.post,
+            slack=a.slack)
     if a.json:
         print(json.dumps(r, ensure_ascii=False, indent=2))
         return 0

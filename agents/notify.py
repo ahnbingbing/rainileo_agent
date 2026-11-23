@@ -28,14 +28,20 @@ def _warn_channel() -> str | None:
 
 def warn(text: str, *, thread_ts: str | None = None) -> None:
     """Post one warning line to the warnings channel. No-op (logs) if Slack unconfigured."""
+    post(f":warning: {text}", thread_ts=thread_ts)
+
+
+def post(text: str, *, thread_ts: str | None = None) -> None:
+    """Post one plain line to the board/warnings channel (no :warning: prefix). Same channel
+    resolution as warn — for ops digests (e.g. the comment-agent approval queue) that aren't
+    warnings. No-op (logs) if Slack unconfigured. Best-effort: never raises."""
     ch = _warn_channel()
     tok = (os.environ.get("SLACK_BOT_TOKEN") or "").strip()
     if not ch or not tok:
-        log.info("notify.warn (no slack): %s", text)
+        log.info("notify.post (no slack): %s", text)
         return
     try:
         from slack_sdk import WebClient
-        WebClient(token=tok).chat_postMessage(
-            channel=ch, thread_ts=thread_ts, text=(f":warning: {text}")[:2000])
+        WebClient(token=tok).chat_postMessage(channel=ch, thread_ts=thread_ts, text=text[:3900])
     except Exception as e:
-        log.warning("notify.warn failed: %s", str(e)[:120])
+        log.warning("notify.post failed: %s", str(e)[:120])

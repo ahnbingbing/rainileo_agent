@@ -57,5 +57,19 @@ channel's pet-parent / 함미하비 character voice, grounded in the video the c
 
 ## Status
 
-Spec only — NOT built. Next focused effort. cf [[harness_pairing_and_fantasy_gate]] (anti-
-fabrication), pd_reviewer (approval-queue pattern), youtube/upload.py + youtube/oauth.py (API/scope).
+BUILT + cron-wired (PD 2026-11-23). `agents/comment_agent.py` finds the un-replied backlog on recent
+PUBLIC uploads (orphans included), auto-posts the SAFE category, and batches the rest into ONE board-
+channel approval digest. Idempotent via the `handled_comments` table (never replies twice, never re-
+spams the same queue). Ran manually once 2026-11-13 (4 posted); now on crontab.vm at 11:30 & 20:30 KST
+(`--post --slack`).
+
+- **Kill-switch**: auto-posting the SAFE category is gated on `COMMENT_AGENT_AUTOPOST_SAFE=1` in
+  `/etc/rianileo/deploy.env` (see config.env.example). Absent → nothing posts, everything just queues to
+  Slack. OFF by default (enable after a dry-run spot-check — v2-rollback discipline).
+- **Deploy gotcha**: `pull_deploy.sh` does NOT reinstall the crontab (only `bootstrap.sh` does). After a
+  crontab.vm edit, run `crontab -u rianileo deploy/crontab.vm` once on the VM for new lines to take effect.
+- Still TODO: pinned first-comment on our own uploads (PD: "아직은 필요 없을 듯"); an interactive
+  approve/edit affordance in Slack (v1 digest is read-only — PD acts out-of-band).
+
+cf [[harness_pairing_and_fantasy_gate]] (anti-fabrication), pd_reviewer (approval-queue pattern),
+youtube/upload.py + youtube/oauth.py (API/scope).

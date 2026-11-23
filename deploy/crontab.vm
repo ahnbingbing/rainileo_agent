@@ -73,6 +73,16 @@ LAUNCH_LEAD_DAYS=2
 # 0   6,12,18 * * *  $J -m agents.producer --remind                >> $LOG/cron.remind.log 2>&1
 0  18 * * *   $J -m agents.writer                                >> $LOG/cron.writer.log 2>&1
 0  19 * * *   $J scripts/grandmompapa_nudge.py evening           >> $LOG/cron.gmp_evening.log 2>&1
+# PD 2026-11-23: viewer-comment reply agent — BATCH (not real-time), ~2×/day so fans aren't left
+# waiting but we dodge spam/rate-limit. Each run finds the un-replied backlog on recent PUBLIC
+# uploads (orphan uploads included), auto-posts the SAFE category (short praise/emoji), and posts
+# the rest to the board channel as ONE approval digest for PD. Idempotent (handled_comments table)
+# → never replies twice, never re-spams the same queue. KILL-SWITCH: auto-posting is gated on
+# COMMENT_AGENT_AUTOPOST_SAFE=1 in /etc/rianileo/deploy.env — remove it and nothing posts (every
+# comment just queues to Slack for manual handling); the --slack digest still runs. See
+# notes/comment_agent_spec.md.
+30 11 * * *   $J -m agents.comment_agent --post --slack --max-videos 30 >> $LOG/cron.comment.log 2>&1
+30 20 * * *   $J -m agents.comment_agent --post --slack --max-videos 30 >> $LOG/cron.comment.log 2>&1
 
 # ── weekly / multi-day ───────────────────────────────────────────
 0  10 * * 1   $J -m agents.bandit --collect --slack              >> $LOG/cron.bandit_report.log 2>&1   # Mon
