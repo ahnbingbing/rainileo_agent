@@ -173,7 +173,7 @@ def _clip_reuse_counts(con: sqlite3.Connection) -> dict:
     counts: "collections.Counter" = collections.Counter()
     try:
         for (pj,) in con.execute("SELECT payload_json FROM cards WHERE payload_json IS NOT NULL "
-                                 "AND render_style='real_footage'"):
+                                 "AND render_style='real_footage' AND uploaded=1"):
             try:
                 p = json.loads(pj or "{}")
             except Exception:
@@ -2899,7 +2899,7 @@ def _recent_la_usage(con, days: int = 7):
     try:
         rows = con.execute(
             "SELECT payload_json FROM cards WHERE created_at >= datetime('now', ?) "
-            "AND render_style='real_footage' ORDER BY created_at DESC LIMIT 40",
+            "AND render_style='real_footage' AND uploaded=1 ORDER BY created_at DESC LIMIT 40",
             (f"-{days} days",)).fetchall()
         for r in rows:
             try:
@@ -3733,11 +3733,49 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         # still apply = none, since they're never-used). RF_VISUAL_COOLDOWN_NEVERUSED_EXEMPT=0 reverts.
         _vu_exempt = os.getenv("RF_VISUAL_COOLDOWN_NEVERUSED_EXEMPT", "1") != "0"
 
+        # PD 2026-11-23: TRIM-LEVEL file cooldown. The all-time FILE cooldown above burns a clip
+        # WHOLE once any window aired — but a long clip's UNUSED windows are still fresh, and the
+        # reviewer is ALREADY segment-aware (a non-overlapping reuse is NOT a violation,
+        # reviewer._clip_reuse_gate), so selection over-excluded vs the reviewer. Don't flag a whole
+        # file as used — keep an aired clip if it still has a FREE (non-overlapping) window ≥ min;
+        # the Writer is handed its used windows (recently_used_segments) and picks a fresh one.
+        # "used" = UPLOADED windows only (reconcile to YouTube reality, not failed attempts — the
+        # days=0 path filters uploaded=1). Only the FILE cooldown is overridden; the outing-session
+        # and visual cooldowns (separate axes) still hold. RF_TRIM_LEVEL_COOLDOWN=0 → whole-file.
+        _trim_cool = os.getenv("RF_TRIM_LEVEL_COOLDOWN", "1") != "0"
+        _cool_min_win = float(os.getenv("RF_REUSE_MIN_WINDOW", "6"))
+        _cool_segs: dict = {}
+        if _trim_cool:
+            try:
+                _cool_segs = _recently_used_rf_segments(_con, n=100000, days=0)
+            except Exception as _e:  # noqa: BLE001
+                log.warning("trim-level cooldown segs failed: %s", _e)
+                _trim_cool = False
+
+        def _has_free_window(v):
+            try:
+                _d = float(v.get("dur") or 0)
+            except (TypeError, ValueError):
+                _d = 0.0
+            if _d < _cool_min_win:
+                return False  # too short / unknown dur → can't carve a guaranteed-fresh window
+            _wins = _cool_segs.get(v.get("id") or v.get("asset_id")) or []
+            return _free_trim_start(_d, _wins, _cool_min_win, seed=target.toordinal()) is not None
+
         def _pool_cooled(v):
             _id = v.get("id") or v.get("asset_id")
             if _vu_exempt and _id not in cooldown and _id not in _cool_sessions:
                 return False  # never-used → exempt from the visual-lookalike gate
-            return _rf_is_cooled(v, cooldown, _cool_sessions, _visual_cool)
+            if not _rf_is_cooled(v, cooldown, _cool_sessions, _visual_cool):
+                return False
+            # aired FILE with a free window → re-airable (trim-level), UNLESS also visual- or
+            # outing-session-cooled (those axes aren't relaxed by trim-level).
+            if _trim_cool and _has_free_window(v):
+                _vis = bool(_visual_cool) and _id in _visual_cool
+                _sess = _rf_is_cooled(v, set(), _cool_sessions, None)  # True iff session-cooled
+                if not _vis and not _sess:
+                    return False
+            return True
         filtered = [v for v in avail_videos if not _pool_cooled(v)]
         # PD 2026-09-11: recency-aware relax (the "쿨다운 얇으면 자동완화"). The all-time
         # cooldown (RF_USED_CLIP_ALLTIME) excludes recently-USED clips — which are exactly the
