@@ -19,13 +19,25 @@ import re
 log = logging.getLogger("agents.comment_agent")
 
 # ── classification ──────────────────────────────────────────────────────────
-# SAFE = short affectionate / emoji / simple praise → low risk of a wrong reply.
-# Everything else (questions, sensitive, long, ambiguous, real-people mentions) → PD approval.
+# SAFE = a SHORT, clearly-positive comment (praise / affection / emoji / laughter) → a warm
+# thanks can't go wrong. Everything with any risk of a wrong reply stays PD approval: questions
+# (could hallucinate a pet fact), anything sensitive (health/death/money/real people), anything
+# negative (a complaint must never get a cheery auto-reply), long/ambiguous. PD 2026-11-23: widen
+# SAFE beyond emoji-only — simple praise like "Super", "best", "멋져요", "👏" is fine to auto-answer;
+# the win is engagement, and these carry no factual/tone risk. Still err to approval when unsure.
 _AFFECTION = re.compile(
-    r"(귀여|너무.?이뻐|예뻐|사랑|최고|좋아요|잘.?생|천사|복슬|말랑|♥|❤|😍|🥰|😻|🐾|👍|cute|adorable|love(ly)?|precious|sweet)",
+    r"(귀여|이뻐|예뻐|이쁘|예쁘|사랑|최고|좋아|좋다|좋네|좋은|잘.?생|천사|복슬|말랑|보들|깜찍|멋지|멋있|"
+    r"짱|대박|심쿵|힐링|행복|소중|웃기|넘나|넘.?귀|너무.?좋|응원|축복|건강|오래.?살|"
+    r"♥|❤|💕|💖|💗|😍|🥰|😻|😺|🐾|👍|💯|🔥|👏|😂|🤣|✨|🥹|😊|"
+    r"cute|adorable|love( it| them)?|lovely|precious|sweet|super|best|awesome|amazing|wonderful|"
+    r"nice|good|great|cool|wow+|perfect|beautiful|pretty|happy|haha+|hehe+|lol|lmao)",
     re.I)
 _QUESTION = re.compile(r"[?？]|어떻|언제|어디|왜|뭐|무슨|몇|나요\b|까요\b|how |what |why |where |when |is it|does ")
 _SENSITIVE = re.compile(r"(아프|병원|죽|무지개|슬프|사료|가격|분양|사고|싸움|학대|엄마|아빠|함미|하비|주인)")
+# A short comment can be negative without tripping _SENSITIVE ("별로", "안 귀여워"). A complaint must
+# NEVER get an auto cheery reply → route any negation/criticism to approval before the SAFE check.
+_NEGATIVE = re.compile(r"(별로|실망|노잼|재미없|싫|그닥|최악|아쉽|안\s?좋|안\s?귀|안\s?예|"
+                       r"not |n['’]?t\b|hate|worst|boring|\bbad\b|ugly|dislike)", re.I)
 
 
 def classify(text: str) -> str:
@@ -33,7 +45,7 @@ def classify(text: str) -> str:
     t = (text or "").strip()
     if not t or len(t) > 40:
         return "approval"
-    if _QUESTION.search(t) or _SENSITIVE.search(t):
+    if _QUESTION.search(t) or _SENSITIVE.search(t) or _NEGATIVE.search(t):
         return "approval"
     if _AFFECTION.search(t) or re.fullmatch(r"[\W\sㅋㅎㅠㅜ]+", t):
         return "safe"

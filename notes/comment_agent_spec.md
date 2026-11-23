@@ -63,6 +63,10 @@ channel approval digest. Idempotent via the `handled_comments` table (never repl
 spams the same queue). Ran manually once 2026-11-13 (4 posted); now on crontab.vm at 11:30 & 20:30 KST
 (`--post --slack`).
 
+- **SAFE scope** (PD 2026-11-23): a SHORT, clearly-positive comment auto-posts — not just emoji but
+  simple praise in any language ("Super", "best", "멋져요", "짱", "👏", "💯"). Guarded both ways: a
+  `_NEGATIVE` gate routes any complaint/negation ("별로", "안 귀여워", "boring", "not …") to approval so
+  a cheery reply never lands on criticism, and questions/sensitive still queue. Err to approval when unsure.
 - **Kill-switch**: auto-posting the SAFE category is gated on `COMMENT_AGENT_AUTOPOST_SAFE=1` in
   `/etc/rianileo/deploy.env` (see config.env.example). Absent → nothing posts, everything just queues to
   Slack. OFF by default (enable after a dry-run spot-check — v2-rollback discipline).
