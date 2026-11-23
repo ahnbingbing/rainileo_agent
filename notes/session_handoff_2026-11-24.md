@@ -62,6 +62,17 @@ board↔CLI 공용 루프, 내 RF 작업과 무관하게 공존. 현재 HEAD=87f
   18:00(wUviVlJ_6Q0) 등 E2E 산출물은 공개 예약됨.
 - **era auto-label 다듬기(여유시):** 번-side persistence 확인 후 필요하면 cameraman 번 chokepoint에도 결정론 라벨
   재적용(캡션 author가 덮어쓰면). `지금은 지금` 같은 중복 lead-word는 드물지만 refine 여지.
+- **★TODO (PD 2026-11-24): 요즘 찍은 동영상이 렌더 결과에서 화면이 밝다(HLG 노출/톤매핑).** 반복 지적. RF 어셈블
+  (`scripts/assemble_episode.py:143·166` HLG_TONEMAP)은 per-input transfer 감지로 HLG→SDR 톤매핑을 *하고 있는데도*
+  최근 클립이 밝게 나온다. **유력 용의자(진단 필요, 미수정):** ⓐ 트림↔어셈블 사이 **`scripts/burn_captions.py`는 색
+  관리가 전무** — 캡션 번 재인코드가 HLG 태그(arib-std-b67/bt2020)를 바꾸거나 떨어뜨리면, 어셈블의 per-input 감지가
+  "SDR"로 오판→톤매핑 누락→HLG 픽셀이 그대로 밝게. ⓑ "노출-보존" gentle mobius(PD "원본 그대로", assemble line 139)가
+  이미 밝은 HLG 하이라이트를 안 눌러 밝게 남음(npl=203). ⓒ C_trimproxyscale의 1080 프록시 재인코드가 transfer 태그를
+  변형. **다음 액션:** 최근-HLG RF 1편 렌더하고 **각 스테이지(trim→burn→assemble) 산출물을 `ffprobe
+  -show_entries stream=color_transfer,color_primaries`로 추적** — 어디서 HLG 태그가 사라지는지/톤매핑이 드롭되는지
+  확정. 번이 태그를 깨면 burn_captions에 `_color_vf`(assemble과 동일 HLG_TONEMAP+bt709 스탬프) 포팅, 아니면 mobius
+  파라미터/노출 하향. cf CLAUDE.md "Colour gotchas"(HLG 태그누수=요즘 색빨개 root)·`_mv_assemble_av.py`(검증된 톤매핑).
+
 - **board 댓글 에이전트:** board가 이번에 viewer-comment 답변 에이전트를 cron 배선(2×/day, Slack 승인큐). 내 작업과
   독립 — board 쪽 핸드오프 참조.
 
