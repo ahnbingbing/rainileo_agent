@@ -3538,6 +3538,80 @@ def _v_shows_both(v: dict) -> bool:
     return bool(v.get("both"))
 
 
+def _prepend_cut_ko(cut: dict, prefix: str) -> bool:
+    """Prepend a short KO marker to a cut's FIRST caption (captions/scenes array ko, or flat ko).
+    No-op (returns True) if the marker's lead word is already present. Returns False if the cut
+    has no caption field to mark."""
+    prefix = (prefix or "").strip()
+    if not prefix:
+        return False
+    _lead = prefix.split()[0].rstrip(",")
+    for key in ("captions", "scenes"):
+        arr = cut.get(key)
+        if isinstance(arr, list) and arr and isinstance(arr[0], dict):
+            ko = str(arr[0].get("ko") or "")
+            if _lead and _lead in ko:
+                return True
+            arr[0]["ko"] = f"{prefix} {ko}".strip()
+            return True
+    if cut.get("ko") is not None:
+        ko = str(cut.get("ko") or "")
+        if _lead and _lead in ko:
+            return True
+        cut["ko"] = f"{prefix} {ko}".strip()
+        return True
+    return False
+
+
+def _autolabel_era_mix(concept: dict, db_path) -> bool:
+    """Deterministically turn an un-narrated era-mix into a LABELED memory-lane: prepend a time
+    marker to the OLDEST cut's first caption ('아기 레오 시절,' when the oldest is a Leo kitten clip,
+    else 'N개월 전,' / 'N년 반 전,' from canon.human_elapsed_phrase — guaranteed to carry a temporal
+    token) and '지금은' to the NEWEST. PD 2026-11-23: Leo (born 2025-09) grew fast, so his fresh
+    both-pet footage spans baby→grown — a both-pet episode is ALMOST ALWAYS an era-mix, and the
+    Writer can't reliably self-label it, so the era structure gate ground forever. Enforce the
+    label deterministically (no LLM reliance) → captions_narrate_era passes, the episode reads as
+    an honest '그때 vs 지금' instead of fusing two ages into one moment. Mutates the concept in place;
+    returns True if a marker was added."""
+    import sqlite3 as _sql
+    from agents import canon as _c
+    cuts = concept.get("cuts") or []
+    dated: list = []
+    try:
+        con = _sql.connect(str(db_path))
+        try:
+            for i, cut in enumerate(cuts):
+                aid = cut.get("asset_id") or cut.get("secondary_asset_id")
+                if not aid:
+                    continue
+                r = con.execute("SELECT captured_iso FROM assets WHERE asset_id=?", (aid,)).fetchone()
+                if r and r[0]:
+                    try:
+                        dated.append((i, dt.date.fromisoformat(str(r[0])[:10])))
+                    except ValueError:
+                        pass
+        finally:
+            con.close()
+    except Exception:
+        return False
+    if len(dated) < 2:
+        return False
+    dated.sort(key=lambda x: x[1])
+    _oi, _od = dated[0]
+    _ni, _nd = dated[-1]
+    if _oi == _ni:
+        return False
+    _leo_born = dt.date(2025, 9, 25)
+    _age = (_od - _leo_born).days
+    if 0 <= _age < 183:
+        _mark = "아기 레오 시절,"                       # a Leo-kitten clip reads best this way
+    else:
+        _mark = f"{_c.human_elapsed_phrase((dt.date.today() - _od).days)},"
+    _added = _prepend_cut_ko(cuts[_oi], _mark)
+    _prepend_cut_ko(cuts[_ni], "지금은")
+    return _added
+
+
 def _propose_realfootage_singlepass(target: dt.date, context: dict,
                                      progress_cb: ProgressCb = None,
                                      prior_feedback: str = "") -> list[dict]:
@@ -4308,11 +4382,28 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         if os.getenv("RF_ERA_GATE", "1") == "1":
             _fire = era_mix.era_span_fire(concepts[0].get("cuts") or [], DB_PATH)
             if _fire and not era_mix.captions_narrate_era(concepts[0].get("cuts") or []):
-                _era_violation = True
-                _issues = list(_issues) + [
-                    f"[시대혼합] {_fire['reason']} — 그런데 캡션이 시점(그때/N년 전/아기 시절)을 "
-                    "전혀 안 밝혀 다른 시기 footage를 한 순간처럼 이었다. 같은 시기 클립으로 통일하거나, "
-                    "과거↔현재를 캡션에 명시해 memory-lane으로 narration하라 (아기 레오+지금을 섞으려면 시점 명시 필수)"]
+                # PD 2026-11-23: ENFORCE the era label deterministically instead of only
+                # re-proposing. Leo's fresh both-pet footage spans baby→grown, so a both-pet
+                # episode is almost always an era-mix the Writer can't self-label → the gate
+                # ground forever. Auto-insert the time marker (아기 레오 시절 / N개월 전 … 지금은) so it
+                # reads as an honest memory-lane; only fall back to a re-propose if that fails.
+                # RF_ERA_AUTOLABEL=0 reverts to re-propose-only.
+                _labeled = False
+                if os.getenv("RF_ERA_AUTOLABEL", "1") == "1":
+                    try:
+                        _autolabel_era_mix(concepts[0], DB_PATH)
+                        _labeled = era_mix.captions_narrate_era(concepts[0].get("cuts") or [])
+                    except Exception as _e:  # noqa: BLE001
+                        log.warning("era autolabel failed: %s", _e)
+                if _labeled:
+                    if progress_cb:
+                        progress_cb(":label: era-mix 자동 시점 라벨 삽입 → 메모리레인 전환(재제안 생략)")
+                else:
+                    _era_violation = True
+                    _issues = list(_issues) + [
+                        f"[시대혼합] {_fire['reason']} — 그런데 캡션이 시점(그때/N년 전/아기 시절)을 "
+                        "전혀 안 밝혀 다른 시기 footage를 한 순간처럼 이었다. 같은 시기 클립으로 통일하거나, "
+                        "과거↔현재를 캡션에 명시해 memory-lane으로 narration하라 (아기 레오+지금을 섞으려면 시점 명시 필수)"]
         # PD 2026-11-17 split nudge: two-pet contrast is split-screen's home, but the Writer
         # defaults to cross-cutting the two pets (허용≠행동 — permission alone didn't move it:
         # "랴니는 뛰고 레오는 버팅기고" shipped as sequential cuts, 0 splits). When the concept
