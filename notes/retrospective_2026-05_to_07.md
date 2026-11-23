@@ -2910,6 +2910,16 @@ both-pet 스택을 공급-floor와 함께 켠 뒤에도(E2E로 both-pet 1편 Gir
 상태: 공급 floor(`RF_FRESH_BOTHPET_FLOOR`+`RF_BOTHPET_FLOOR`)는 **ON(우선순위)**, 요구 게이트(`RF_BOTHPET_ENFORCE`
 +`GIRI_BOTHPET_GATE`)는 **OFF** — Writer는 both-pet으로 bias되되 솔로로 나오면 그대로 shipping(`3351f59`).
 
+**★공급 floor도 '신선 전용'이어야 한다 — 아카이브 재admit = era-mix 증폭기(`9c27d49`):** PD 교정 후 백필을 돌리니
+슬롯 대부분이 Giri **2/10(컨셉 재작업, caption mismatch 2건)**에 막혔다. 근본 = 디렉티브-레벨 `RF_BOTHPET_FLOOR`가
+슬롯 풀에 신선 both-pet이 부족하면 **아카이브(`_arch_field`)에서 다년 전 both-pet을 끌어와** 수를 채우고 **풀 선두에
+강제**했다 — 3.8~5.6년 era 갭(선대 흑백 고양이 '원두'를 Leo로 오라벨한 클립 포함)이 프런트에 오니 Writer가 앵커 →
+temporal 게이트(시점마커 없는 era-mix) 발화 + 제목이 약속한 펫/소품 증발(정체성 상실) → 2/10. **일반화: 공급 쪽
+bias도 '못 채우면 억지로 긁어오기'를 하면 안 된다 — 신선이 부족하면 *적게/솔로로* 내보내라(PD의 priority≠requirement
+원칙은 공급 floor의 fallback에도 적용된다). 아카이브 era-mix가 빈 both-pet보다 나쁘다.** Fix = floor 재admit 소스를
+`_avail_precap`(pre-cap 신선)만으로, `_arch_field` 제거. **별개 잔존:** Writer가 memory-lane으로 *신선 범위 내*
+과거↔현재를 시점마커 없이 섞는 일반 era-mix churn(§4.9)은 남아 있다 — RF throughput의 다음 레버.
+
 **★복구 규율(끄고·고치고·검증하고·올바른 레이어만 켠다):** killswitch 기본값이 즉시 롤백을 가능케 했다 — stopgap으로
 세 스위치 기본값 OFF(`git push`→deploy.timer 2분 폴, VM env는 하드훅이 막아 **코드 기본값 우회**가 확립 경로)로
 생산 즉시 복구 → pool-build 근본 빌드(OFF) → **VM 제안-레벨 검증**(렌더 전 싼 게이트: 풀 내 both-pet 증가 +
