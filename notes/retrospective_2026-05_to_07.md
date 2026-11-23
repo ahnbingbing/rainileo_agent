@@ -1788,6 +1788,8 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   PD가 실렌더를 리뷰하며 캡션 결함을 연속으로 짚었고(코툭·분리식사·파란천·가족·질질·뜬금·파도·"오늘은 아예 풍덩"), 나는 매번 `_RF_ACTION_SYS`(action-grounding 경로)에 규칙을 넣었다. 그런데 **같은 카드를 재렌더하면 결함이 재발**했다. 근본=RF 캡션 생성 경로가 **둘**이었다: single-pass author면 action-grounded(규칙 보유), else면 **레거시 AV Caption-Agent rewrite**(`_vlm_post_render_caption_rewrite` — PD 2026-06-06 주석이 이미 "upstream 수정을 조용히 덮어써서 PD 피드백이 며칠 안 먹힌 원인"이라 자백해 둔 경로). 분기 키가 `concept.author == "realfootage_singlepass"`인데 **재렌더는 카드에서 manifests를 재구성하며 그 태그를 잃어** → 레거시 경로로 빠지고, 내 수정은 전부 action-grounding 쪽이라 **안 탔다**. 즉 "며칠 안 먹힌" 그 버그가 태그 유실로 재발. Fix(de7a046)=PD 지시대로 **한 경로로 통일** — RF는 항상 action-grounded, 레거시 rewrite는 `RF_FORCE_VLM_REWRITE=1` 디버그로만(author 분기 제거). ★교훈: **"둘을 똑같이 만들 거면 한 조건으로 태워라"(PD)** — 같은 작업에 분기 경로가 둘이면 수정을 양쪽에 **포팅**하지 말고 경로를 **합쳐라**. 포팅은 드리프트의 씨앗이고(한쪽만 갱신됨), 분기 키가 재구성에서 유실되면 "고쳤는데 안 고쳐진" 유령이 된다. 증상(개별 캡션)을 아무리 패치해도 입력이 다른 경로로 새면 소용없다. cf C_captionrewritechain(검수가 번인 아닌 초안을 봐서 못 잡던 같은 "소비처 불일치"의 검수판)·D_streamguard(작동하는 폴백이 죽은 주력을 가림 — 여기선 작동하는 레거시 경로가 수정된 경로를 가림).
 - **C_ingestclobber. 소비처 배선이 끝나도 쓰기 경로가 안 지켜주면 무의미하다 — ingest의 INSERT OR REPLACE가 VM-계산 컬럼을 매 import마다 NULL로 지웠다(11/5)** —
   Gemini 액션레이어(`action_moments`)를 RF 선택+캡션에 배선(C_actionlayer)하고 VM 백필을 돌렸더니 로그는 `done=262`인데 DB엔 **70개만** 남았다. 근본=`ingest_register.import_`의 `INSERT OR REPLACE INTO assets`가 **행 전체를 재삽입** → Mac export가 싣지 않는 **VM-계산 컬럼(`action_moments`·`duration_sec`·`vis_phash`·`has_human`)을 매번 통째로 NULL**로 만든다. 3.9h 백필 동안 운영 봇의 ingest가 계속 덮어써, 마지막 ingest 이후에 쓴 70개만 살아남았다. 이건 C_nulldur에서 duration을 **일회성 prev-보존 가드**로만 막았던 바로 그 패턴이 새 컬럼에서 재발한 것 — 증상(duration)만 막고 메커니즘(REPLACE가 미기재 컬럼을 민다)을 안 고쳤기 때문. Fix(ad08281)=`ON CONFLICT(asset_id) DO UPDATE` 업서트(미기재 컬럼은 건드리지 않아 보존)+빈 VM-owned 키 드롭(NULL export가 실값을 못 덮게) → `_VM_OWNED` 집합으로 **일반화**(일회성 가드 supersede). ★교훈 2겹: ①**결정→소비처 배선→내구성이 한 세트다** — 선택/캡션을 꽂아도 그 데이터가 동시-쓰기(24/7 운영 봇)에서 살아남지 못하면 갭은 그대로이고, **재런으로 메우는 건 무의미**(다음 ingest가 또 wipe한다). 운영 DB의 모든 쓰기는 멱등+보존(upsert)이어야 한다. ②**일회성 가드는 다음 컬럼에서 재발한다** — 한 증상을 패치하지 말고 메커니즘을 일반화하라. cf C_nulldur(같은 ingest 경로의 duration 일회성 가드 — 이번에 일반 upsert로 흡수), C_actionlayer(이 백필이 점등하려던 소비처 배선), D_streamguard(작동하는 폴백이 죽은 주력을 가리듯, 작동하는 백필이 지워지는 쓰기를 가렸다).
+- **C_ingestexportfreeze. 전체-스냅샷 단일 PUT은 자라다가 조용히 끊긴다 — Mac→VM 자산 전파가 60MB 넘자 타임아웃으로 동결, VM 풀이 신선 사진을 못 봤다(11/23)** —
+  PD "iCloud 최신이 싱크 안 됨". 로컬 인입은 멀쩡했다(11-23 클립까지, DB 신선). 근본=`ingest_register.export_`가 **전체 assets(~26k행)을 한 번에** `upload_from_string` PUT으로 올리는데, 스냅샷이 **~60MB로 자라자 Mac 업링크에서 120s 재시도 데드라인을 초과**(`RetryError: Timeout of 120.0s exceeded`) → GCS `db_sync/assets.jsonl`이 11-20 상태로 **동결**(newest photo 11-14) → VM import는 멀쩡히 돌지만 stale 스냅샷을 먹어 VM 최신 사진이 11-14에 멈췄다(비디오는 별도 경로라 신선해서 "사진만 늦는" 혼란스러운 증상). Fix(79a3627)=**resumable 청크 업로드**(`blob.chunk_size=8MB`→upload_from_string이 resumable로 전환)+`INGEST_EXPORT_TIMEOUT=600` → 49.9MB를 71s에 완료, VM import 트리거로 11-14→11-22 복구. ★교훈 2겹: ①**무한정 자라는 페이로드를 단일 요청으로 올리지 마라** — 처음엔 "작은 전체 스냅샷"이라 단순 PUT이 맞았지만 데이터가 임계를 넘으면 조용히 깨진다(크기 의존 실패는 코드가 안 변해도 어느 날 터진다). 전량 전송은 resumable/청크로. ②**stale 생산 풀은 콘텐츠 문제로 위장한다** — "왜 자꾸 과거 메모리레인/era-mix"의 상류 원인이 실은 전파 freeze였다(신선이 안 와서 Writer가 과거로 쏠림). C_photozerosec·D_slotdownweight의 "집계가 가림"과 같은 과(科): **증상 레이어(생성 품질)만 보면 근본 레이어(데이터 freshness)를 놓친다.** cf C_ingestclobber(같은 ingest의 import 측 쌍둥이 버그), C_emptyslotfresh(신선 고갈의 선택-레이어 버전).
 - **C_visiblelever. PD가 '보이는' 미감 변경을 원하면 파라메트릭 미세조정은 틀린 고도다 — 전환을 '길이'로 축소했다가 "장난?"을 들었다(11/13)** —
   PD는 iOS 포토앱 Memories의 **화면 분할 + 전환 방식**을 RF에 빌리고 싶어했다. 나는 "전환 방식(종류/레이아웃)"을
   **"전환 길이"**(크로스디졸브 0.4→0.7s, 시대점프에 길게)로 구현했다 — 가장 안 보이는 해석. 유닛 테스트는 통과했고
@@ -2849,6 +2851,19 @@ repeat_ratio, grounding gate 과잉특정)였지 풀 측정이 아니었다.** �
 트림(segment), vis_phash는 diversity 분산용으로만. 일반 원칙: **near-dup을 appearance(vis_phash)로 막지 마라 —
 재사용은 파일·트림의 identity로 정의된다**(그래야 비슷해 보이는 신선 콘텐츠가 안 죽는다). + diversity 샘플은
 신선 tier를 floor로 보장해야(순수 분산은 소수-장소 신선 풀을 굶긴다).
+
+**★era-mix churn 레버 — 규칙을 '쓰는 프롬프트'가 아니라 '실제 타는 경로'에 넣어라 + 사전-렌더 수렴이 사후-렌더
+반려를 이긴다(2026-11-23):** RF throughput을 가장 많이 깎는 반려는 **un-narrated era-mix**(다른 시기 클립을
+시점마커 없이 한 순간처럼 봉합 → `era_mix.era_span_fire`가 producer 구조게이트·Giri temporal게이트 양쪽을 발화,
+2/10 "컨셉 재작업"). 두 근본 갭: ①**프롬프트 갭이 '안 쓰는 경로'에 있었다** — 시점-마커 규칙은 `realfootage_concept.md`
+엔 있었지만 **실제 생산에 타는 `realfootage_singlepass.md`엔 없었다**(규칙은 쓴 곳이 아니라 *실행 경로*에 있어야
+작동 — C_captionpathsplit의 "둘이면 한쪽만 갱신됨"과 같은 과). → singlepass 그라운딩 섹션에 시간 축으로 통합(한
+회차 시간구조 셋: 전부-현재/라벨된 메모리레인/동시대 테마). ②**사전-렌더 수렴이 싸다** — era-mix 구조이슈가
+`RF_STRUCTURE_MAX_TRIES=1`만 받아 **아직 섞인 컨셉이 렌더까지 가서** Giri에 2/10으로 떨어지고 **whole-slot
+self-heal**로 grind. both-pet과 같은 패턴으로 `RF_ERA_MAX_TRIES=3` — **재제안 ~30s가 렌더+Giri+self-heal ~12분을
+이긴다**(결함은 가장 싼 레이어에서 잡아라). 상류 완화 = C_ingestexportfreeze(신선 전파 복구)·both-pet floor
+신선전용화가 era-mix **발생 빈도** 자체를 줄인다(신선 풀이 두터우면 Writer가 과거로 안 쏠림). reviewer temporal
+게이트는 그대로 사후 백스톱. `7de84ae`. cf C_captionpathsplit(규칙↔실행경로)·C_ingestexportfreeze(상류 freshness).
 
 ## §4.10 C_bothpetlayers — 희소성 플로어는 "모든 선택 레이어"에 있어야 한다 (both-pet 디렉티브, 2026-11-19)
 
