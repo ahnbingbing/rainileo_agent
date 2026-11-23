@@ -16,6 +16,7 @@ the source-of-truth superset, VM-only rows are left intact.
 """
 import argparse
 import json
+import os
 
 from agents.producer import _db
 from icloud import gcs
@@ -41,8 +42,19 @@ def export_() -> None:
     cols = _cols(con)
     rows = con.execute(f"SELECT {', '.join(cols)} FROM assets").fetchall()
     payload = "\n".join(json.dumps(dict(zip(cols, r)), ensure_ascii=False) for r in rows)
-    _blob().upload_from_string(payload, content_type="application/x-ndjson")
-    print(f"exported {len(rows)} asset rows → gs://{gcs.BUCKET}/{BLOB}", flush=True)
+    blob = _blob()
+    # PD 2026-11-23: the snapshot grew past ~60 MB and a single-shot upload_from_string PUT
+    # started timing out on the Mac uplink (RetryError: Timeout of 120.0s exceeded), FREEZING
+    # the GCS snapshot — and with it the VM Writer pool — at a stale 11-14 state while fresh
+    # photos piled up locally. Use a RESUMABLE chunked upload (setting chunk_size switches
+    # upload_from_string to resumable) with a generous per-request timeout, so a large/slow
+    # upload completes chunk-by-chunk instead of as one fragile all-or-nothing PUT.
+    blob.chunk_size = 8 * 1024 * 1024  # 8 MB → resumable upload
+    blob.upload_from_string(
+        payload, content_type="application/x-ndjson",
+        timeout=int(os.getenv("INGEST_EXPORT_TIMEOUT", "600")))
+    print(f"exported {len(rows)} asset rows ({len(payload)/1e6:.1f} MB) "
+          f"→ gs://{gcs.BUCKET}/{BLOB}", flush=True)
 
 
 def import_() -> None:
