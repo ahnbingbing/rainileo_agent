@@ -3964,23 +3964,26 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         # exactly where BOTH pets cluster — so a "둘 다 대비" directive is handed a solo/archive
         # pool and the Writer drifts to a single-pet memory-lane. Surface both-pet clips first,
         # topping up from the archive pool if the usable count is short. RF_BOTHPET_FLOOR=0 off.
-        # PD 2026-11-20: RE-ENABLED (default 12) now the pool-build root (RF_FRESH_BOTHPET_FLOOR,
-        # context stage) guarantees fresh 2026 both-pet in the pool — so this floor's re-admit
-        # source (_avail_precap, b779b7b fresh-first) leads with FRESH both-pet, not archive
-        # baby-Leo. Briefly OFF (11/20 stopgap) when the gate shipped WITHOUT the pool and emptied
-        # every 11/22 slot; VM-verified clean both-pet proposal before re-enabling.
+        # PD 2026-11-20 (priority, FRESH-ONLY): surface fresh both-pet to the front when the
+        # directive wants both. Re-admit source is the PRE-CAP FRESH pool ONLY (_avail_precap) —
+        # NOT the archive. Topping up from _arch_field (multi-year-old clips, incl. the predecessor
+        # black-white cat '원두' mislabeled as Leo) was forcing 3.8–5.6yr era-mix to the FRONT →
+        # the Writer anchored on it → Giri temporal gate 2/10 (era-mix w/o time markers) + identity
+        # loss. Per "both-pet is a PRIORITY not a requirement", if fresh both-pet is short for this
+        # slot we simply surface fewer (or none) and let the concept go solo — we do NOT reach into
+        # the archive to hit a count. The context-stage RF_FRESH_BOTHPET_FLOOR already seeds fresh
+        # both-pet into the pool. RF_BOTHPET_FLOOR=0 disables this front-surfacing entirely.
         _bp_floor = int(os.getenv("RF_BOTHPET_FLOOR", "12"))
         if _bp_floor and _want_both:
             _have_ids = {v.get("id") for v in avail_videos}
             _have_both = [v for v in avail_videos if _v_shows_both(v)]
             _readd = []
             if len(_have_both) < _bp_floor:
-                # Re-admit source = FRESH both-pet dropped by the cap (pre-cap avail) FIRST,
-                # then the archive. Dedup, newest first — so recent 2026 both-pet leads and the
-                # floor only reaches old baby-Leo archive clips when no fresh both-pet exists.
+                # FRESH-ONLY re-admit: both-pet the location-cap dropped from the pre-cap pool.
+                # Never the archive — era-mix is worse than fewer both-pet. Newest first.
                 _seen_readd = set(_have_ids)
                 _cands = []
-                for v in (_avail_precap + _arch_field):
+                for v in _avail_precap:
                     _vid = v.get("id")
                     if _vid and _vid not in _seen_readd and _v_shows_both(v):
                         _seen_readd.add(_vid)
@@ -3994,8 +3997,8 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
                 avail_videos = _both_front + _rest
                 if progress_cb:
                     progress_cb(
-                        f":busts_in_silhouette: both-pet 디렉티브 — both-pet 클립 "
-                        f"{len(_both_front)}개 선두 보장(+{len(_readd)} 아카이브 재admit)")
+                        f":busts_in_silhouette: both-pet 디렉티브 — 신선 both-pet 클립 "
+                        f"{len(_both_front)}개 선두 보장(+{len(_readd)} 신선 재admit, 아카이브 미사용)")
     except Exception as e:
         log.warning("writer-side underused reorder failed: %s", e)
         _avoid_overused = {}
