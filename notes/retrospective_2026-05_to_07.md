@@ -2874,6 +2874,11 @@ self-heal**로 grind. both-pet과 같은 패턴으로 `RF_ERA_MAX_TRIES=3` — *
 이긴다**(결함은 가장 싼 레이어에서 잡아라). 상류 완화 = C_ingestexportfreeze(신선 전파 복구)·both-pet floor
 신선전용화가 era-mix **발생 빈도** 자체를 줄인다(신선 풀이 두터우면 Writer가 과거로 안 쏠림). reviewer temporal
 게이트는 그대로 사후 백스톱. `7de84ae`. cf C_captionpathsplit(규칙↔실행경로)·C_ingestexportfreeze(상류 freshness).
+  ★후속(`19e673e`, PD "강제를 더 세게"): 프롬프트·재시도로도 안 되면 **결정론적으로 라벨을 삽입**하라. 레오(2025-09생)가
+  빨리 자라 신선 both-pet이 아기→성체에 걸쳐 **both-pet=거의 항상 era-mix**인데 Writer가 자가라벨 못 해 게이트가 무한
+  재제안. `_autolabel_era_mix`가 가장 오래된 컷에 '아기 레오 시절,'(또는 'N개월 전,'·`human_elapsed_phrase`=보장토큰)+
+  최신 컷에 '지금은'을 넣어 captions_narrate_era를 통과시켜 **정직한 '그때 vs 지금' 메모리레인으로 전환**(재제안 생략).
+  일반화: LLM이 못 맞추는 소프트 규칙은 **결정론 삽입으로 집행**하라(era-mix를 금지하지 말고 라벨해 합법화). RF_ERA_AUTOLABEL killsw.
 
 **★C_trimlevelreconcile — fresh-exhaustion은 공급 아니라 "선택의 단위·대사"가 틀린 것(2026-11-23, PD):** 슬롯이
 콜라주(3/10)→빔으로 가서 "신선 고갈"처럼 보였지만, DB엔 신선 비디오 866·신선 both-pet 333·리치 미사용 아웃팅
