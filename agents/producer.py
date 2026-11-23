@@ -4242,9 +4242,11 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         # Giri already caps this POST-render (reviewer._temporal_grounding_gate), but the Writer
         # never learned so rerolls didn't converge. Catch it here, pre-render, with the SAME shared
         # rule (agents.era_mix): either unify the era or narrate the time-distance. RF_ERA_GATE=0 reverts.
+        _era_violation = False
         if os.getenv("RF_ERA_GATE", "1") == "1":
             _fire = era_mix.era_span_fire(concepts[0].get("cuts") or [], DB_PATH)
             if _fire and not era_mix.captions_narrate_era(concepts[0].get("cuts") or []):
+                _era_violation = True
                 _issues = list(_issues) + [
                     f"[시대혼합] {_fire['reason']} — 그런데 캡션이 시점(그때/N년 전/아기 시절)을 "
                     "전혀 안 밝혀 다른 시기 footage를 한 순간처럼 이었다. 같은 시기 클립으로 통일하거나, "
@@ -4297,6 +4299,13 @@ def _propose_realfootage_singlepass(target: dt.date, context: dict,
         _struct_max = int(os.getenv("RF_STRUCTURE_MAX_TRIES", "1"))
         if _bp_violation:
             _struct_max = max(_struct_max, int(os.getenv("RF_BOTHPET_MAX_TRIES", "3")))
+        # PD 2026-11-23: an un-narrated era-mix is the single biggest RF render→Giri reject
+        # (temporal gate 2/10) and the cheapest to fix PRE-render — a re-propose (~30s) beats a
+        # wasted render + Giri + whole-slot self-heal (~12min). The default 1 try let a still-mixed
+        # concept through to render; give the era case the same extra pre-render tries as both-pet
+        # so the Writer (now prompted on the 3 era structures) converges before we pay for a render.
+        if _era_violation:
+            _struct_max = max(_struct_max, int(os.getenv("RF_ERA_MAX_TRIES", "3")))
         if _issues and prior_feedback.count("[구조검증]") < _struct_max:
             if progress_cb:
                 progress_cb(f":triangular_ruler: 구조검증 — {len(_issues)}건 (클립 재사용/길이 예산) → 재작성")
