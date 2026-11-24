@@ -15,7 +15,7 @@ pop/dance=블랙 네온, halloween=보라/주황.
 """
 import math
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 _FONTS = Path.home() / "Library/Fonts"
 _SYS = Path("/System/Library/Fonts/Supplemental")
@@ -444,6 +444,91 @@ def make_snow_title_anim(title, out_mov, *, kicker="", credit="", W=1080, H=1920
     return out_mov
 
 
+def make_synthwave_card(title, out, *, kicker="", credit="", W=1080, H=1920, vpos=0.26):
+    """★80s synthwave / citypop / outrun 네온 나이트드라이브 EMBLEM (PD: 레퍼런스 비디오 컨셉이 묻어나야 한다).
+    레퍼런스(Blinding Lights 류 네온 나이트드라이브)의 미감을 박은 디자인 타이틀 — sunset 그라데이션 chrome
+    레터(시안→마젠타→오렌지) + 수평 슬릿(80s 크롬) + 네온 글로우(bloom) + 아웃런 sun + 퍼스펙티브 그리드.
+    맨글자 금지 — 디자인된 엠블럼."""
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0)); d = ImageDraw.Draw(img)
+    f_title = _load(_FONTS / "Pretendard-Black.otf", 168)
+    f_kick = _load(_FONTS / "Pretendard-ExtraBold.otf", 44)
+    f_cred = _load(_FONTS / "Pretendard-SemiBold.otf", 38)
+    px = 168
+    while px > 90 and d.textlength(title, font=f_title) > W * 0.86:
+        px -= 4; f_title = _load(_FONTS / "Pretendard-Black.otf", px)
+    cx = W / 2; cy = int(H * vpos)
+    tb = d.textbbox((0, 0), title, font=f_title, stroke_width=0)
+    tw, th = tb[2] - tb[0], tb[3] - tb[1]
+    tx = cx - tw / 2 - tb[0]; ty = cy - th / 2 - tb[1]
+
+    # outrun SUN disc behind the title (gradient + horizontal slits)
+    sun = Image.new("RGBA", (W, H), (0, 0, 0, 0)); sd = ImageDraw.Draw(sun)
+    R = int(tw * 0.42); scx, scy = int(cx), int(cy + 10)
+    for i in range(R, 0, -1):
+        f = i / R
+        sd.ellipse([scx - i, scy - i, scx + i, scy + i],
+                   fill=(255, int(70 + 150 * (1 - f)), int(150 * f + 40), 255))
+    for yy in range(scy, scy + R, 14):
+        w = max(0, int((R ** 2 - (yy - scy) ** 2) ** 0.5))
+        sd.rectangle([scx - w, yy, scx + w, yy + 6], fill=(0, 0, 0, 0))
+    img.alpha_composite(Image.composite(sun, Image.new("RGBA", (W, H), (0, 0, 0, 0)),
+                                        sun.split()[3].point(lambda a: int(a * 0.55))))
+
+    # perspective GRID at the bottom (receding neon lines)
+    grid = Image.new("RGBA", (W, H), (0, 0, 0, 0)); gd = ImageDraw.Draw(grid)
+    horizon = int(cy + th * 0.75); vp = cx
+    for gx in range(-10, 11):
+        gd.line([(vp + gx * 26, horizon), (vp + gx * 150, horizon + 330)], fill=(0, 220, 255, 150), width=2)
+    yy, step = horizon, 16
+    while yy < horizon + 330:
+        gd.line([(0, yy), (W, yy)], fill=(255, 60, 180, 120), width=2); step = int(step * 1.35); yy += step
+    img.alpha_composite(grid.filter(ImageFilter.GaussianBlur(1)))
+
+    # TITLE — sunset-gradient chrome letters w/ horizontal slits + neon glow
+    y0, y1 = int(ty), int(ty + th)
+    mask = Image.new("L", (W, H), 0)
+    ImageDraw.Draw(mask).text((tx, ty), title, font=f_title, fill=255, stroke_width=3, stroke_fill=255)
+    grad = Image.new("RGBA", (W, H), (0, 0, 0, 0)); gp = grad.load()
+
+    def _lerp(a, b, t):
+        return tuple(int(a[i] + (b[i] - a[i]) * max(0.0, min(1.0, t))) for i in range(3))
+    C_top, C_mid, C_bot = (120, 245, 255), (255, 120, 230), (255, 180, 70)
+    for yy in range(max(0, y0), min(H, y1 + 8)):
+        t = (yy - y0) / max(1, th)
+        col = _lerp(C_top, C_mid, t * 2) if t < 0.5 else _lerp(C_mid, C_bot, (t - 0.5) * 2)
+        for xx in range(W):
+            gp[xx, yy] = (col[0], col[1], col[2], 255)
+    letters = Image.new("RGBA", (W, H), (0, 0, 0, 0)); letters.paste(grad, (0, 0), mask)
+    slit = Image.new("L", (W, H), 0); sld = ImageDraw.Draw(slit)
+    for yy in range(y0, y0 + int(th * 0.46), 10):
+        sld.rectangle([0, yy, W, yy + 3], fill=255)
+    letters.putalpha(Image.composite(Image.new("L", (W, H), 0), letters.split()[3], slit))
+    glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(glow).text((tx, ty), title, font=f_title, fill=(255, 60, 200, 230), stroke_width=7, stroke_fill=(255, 60, 200, 230))
+    img.alpha_composite(glow.filter(ImageFilter.GaussianBlur(26)))
+    glow2 = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(glow2).text((tx, ty), title, font=f_title, fill=(0, 220, 255, 210), stroke_width=5, stroke_fill=(0, 220, 255, 210))
+    img.alpha_composite(glow2.filter(ImageFilter.GaussianBlur(14)))
+    d.text((tx, ty), title, font=f_title, fill=(8, 6, 24, 255), stroke_width=10, stroke_fill=(8, 6, 24, 255))
+    d.text((tx, ty), title, font=f_title, fill=(8, 6, 24, 0), stroke_width=6, stroke_fill=(240, 240, 255, 255))
+    img.alpha_composite(letters)
+
+    if kicker:
+        kb = d.textbbox((0, 0), kicker, font=f_kick); kw2, kh = kb[2] - kb[0], kb[3] - kb[1]
+        kx = cx - kw2 / 2 - kb[0]; ky = ty - kh - 56
+        kg = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        ImageDraw.Draw(kg).text((kx, ky), kicker, font=f_kick, fill=(0, 220, 255, 230))
+        img.alpha_composite(kg.filter(ImageFilter.GaussianBlur(10)))
+        d.text((kx, ky), kicker, font=f_kick, fill=(230, 250, 255, 255), stroke_width=2, stroke_fill=(0, 110, 150, 255))
+    if credit:
+        cb = d.textbbox((0, 0), credit, font=f_cred); cw = cb[2] - cb[0]
+        d.text((cx - cw / 2 - cb[0], ty + th + 40), credit, font=f_cred, fill=(255, 190, 120, 255), stroke_width=2, stroke_fill=(40, 16, 8, 255))
+    img.save(out); return out
+
+
+_SYNTHWAVE_KW = ("synthwave", "citypop", "city pop", "outrun", "neon", "night drive", "nightdrive",
+                 "midnight", "retrowave", "vaporwave", "시티팝", "신스웨이브", "네온", "아웃런", "레트로웨이브")
+
 _SNOW_KW = ("snow", "christmas", "carol", "winter", "xmas", "snowman", "holiday",
             "캐롤", "크리스마스", "눈", "겨울", "첫눈", "눈사람", "셔플 캐롤")
 
@@ -467,6 +552,9 @@ def auto_card(title, out, *, style="", kicker="", credit="", **kw):
     if any(k in s for k in _Y2K_KW):
         return make_y2k_card(title, out, kicker=kicker, credit=credit,
                              **{k: v for k, v in kw.items() if k in ("vpos", "W", "H")})
+    if any(k in s for k in _SYNTHWAVE_KW):
+        return make_synthwave_card(title, out, kicker=kicker, credit=credit,
+                                   **{k: v for k, v in kw.items() if k in ("vpos", "W", "H")})
     mood = auto_mood(style)
     return make_title_card(title, out, kicker=kicker, credit=credit, mood=mood, **kw)
 
