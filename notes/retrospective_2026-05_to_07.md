@@ -1432,6 +1432,23 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   안 됨. 검증: sample recent 26→35. 전-기간 쿨다운은 1463 중 384만 제외=주범 아님. ★교훈: 풀이 작아 보이면 **완화
   노브를 두들기기 전에 베이스 쿼리부터 funnel을 실측**하라 — 2000→26 붕괴는 후보-샘플 구조에 있었고, 완화(cooldown
   relax)로 두들기면 옛 정크만 올라온다(PD "옛날 RF lane 느낌"이 정확한 진단). cf C_cooldownrelax(같은 증상·다른 근본).
+- **C_gpsground. 파일에 이미 있는 권위 신호(GPS/맵)를 입구에서 버리고 픽셀을 추측하면, 생성기는 '근거 없음'이 아니라
+  '틀린 근거에 충실'해진다 — 더 고약하다(11/25)** — RF `cvufJY0xteQ`가 양양·용인 신갈천·문경 **내륙 하천 3클립**을
+  "겁 없는 꼬마 랴니, **첫 바닷가** 수영 / 바다를 처음 만났습니다"로 발행(PD가 직접 "개울"로 제목 교정). 근본 연쇄:
+  ①ingest가 소스 GPS(ISO6709+고도)를 DB로 **미추출** → 장소 신호는 오직 VLM 픽셀추측 ②VLM이 2016클립 scene을
+  "바닷가…얕은 바닷물"로 환각 ③`realfootage_singlepass` Writer가 그 **틀린 VLM 태그에 충실히 grounded**(ungrounded보다
+  나쁨)+"첫" 단정 얹음 ④Giri `_false_first_water_gate`(2026-06-28 랴니 물매니아 사건으로 추가)가 키워드리스트("첫 수영/
+  첫 풍덩/물에 처음")가 좁아 "첫 **바닷가**/**바다를** 처음 만났"을 못 잡음(brittle enumerate 게이트를 Writer가 단어만
+  비켜 우회). **fix(4875067)**: `agents/geo.py`가 osxphotos **Apple 오프라인 역지오코딩**(네트워크0)에서 실지명+구조화
+  수역분류 `place.names.ocean/inland_water/body_of_water` 추출 → `geo_water∈{ocean,inland_water,none}`+gps_lat/lon/alt
+  (영상 ISO6709). Apple은 `ocean`을 실해안에서만 채우므로 "바다 여부"가 거의 결정론. `icloud/sync` 인입 배선+VM 전파
+  (`ingest_register` 양측 컬럼보장)+백필 **17,377자산**(ocean 5=터키 보스포루스 등 실해안 정확, 문제 3클립 전부
+  none=바다아님). ★교훈=[[C_grounding]]("사람이 준 ground truth 버리지 마라")의 확장 — **맵이 준 ground truth도 파일에
+  있으면 입구에서 추출해 저장하라, VLM 환각을 맵이 override한다**. geo_* 소비자(생성기·Giri)가 아직 없어 단독으로 안전
+  배포. 미완(병행): (3a) 생성기 결정론 그라운딩 — `_ground_truth_sc`(producer.py) chokepoint에서 geo가 바다 반박시 VLM
+  "바닷가" 원문 교정+바다 캡션은 geo_water=ocean일 때만 (3b) 매시간 PD 슬랙 ask-drip로 **GPS-없는 물 클립** 백로그 소진
+  (PD 2026-11-25 안; GPS-있는 17k는 맵이 답해 질문 불필요) (4) "첫" 일반 단정어 Giri 캡은 1·2·3 후 결정.
+  cf [[C_grounding]]·[[grammar_rf_caption_grounding_gap]]·[[giri_title_defect_class]]·[[C_clipknowledgebackfill]].
 - **C_grounding. 캡션/제목이 실재를 배신한다 — 서브젝트 소거·위치 오도, 그 답은 "주인의 설명"(9/18)** — PD: 둘 다 나온
   나들이인데 "레오만"으로 랴니를 지우고, 실외(카페 테라스)를 "집에서"로 서술, Giri 통과. 근본 3겹: ①생성기(특히
   grammar-copy Writer)가 서브젝트-존재/위치를 그라운딩 안 함 ②**grammar 렌더 경로가 표준 RF의 per-cut VLM 그라운딩
@@ -1440,7 +1457,9 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   실내도 실외도 아니라 최상위 VLM(opus/gpt-4.1)조차 단일 프레임서 전멸(모두 indoor로 오답). 진짜 그라운드 트루스는
   **함미하비가 클립과 함께 Slack에 적는 설명**(`assets.pd_notes`, 이미 저장·slack 47%) — clip5 pd_notes="카페에서 레오랑
   랴니…밖에 나가서 레오는 나무도 타고"가 모든 모델이 틀린 사실(둘 다·outdoor)을 사람이 정답으로 이미 제공했는데
-  파이프라인이 버리고 픽셀을 추측하고 있었다. GPS는 slack이 EXIF를 벗겨 커버 5%뿐(대안 아님). flash가 병목(같은
+  파이프라인이 버리고 픽셀을 추측하고 있었다. GPS는 slack이 EXIF를 벗겨 커버 5%뿐(대안 아님 — ★[[C_gpsground]]이 범위
+  한정 교정: 그건 Slack-stripped 자산 얘기고 iCloud/osxphotos 주력 풀은 GPS+Apple 지오코딩을 보존해 69% 커버→장소의 1차
+  ground truth가 됐다). flash가 병목(같은
   프레임서 레오 놓침, gpt-4o-mini는 잡음). ★확정 설계(미구현): ①기존 slack 자산을 pd_notes 넣어 재태깅 → VLM 결과
   업그레이드 ②그다음 **렌더/편집 시점**(에피 쓰는 클립만)에 pd_notes+gpt-4o-mini **다중프레임**으로 피사체 유니온+위치
   확정 → 자막 그라운딩 + grammar 경로도 이 게이트 타게. **전수 재태깅 아님**(비용). Slack→Discord 장기전환(원본/GPS
