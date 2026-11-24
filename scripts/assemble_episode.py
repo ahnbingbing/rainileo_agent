@@ -136,11 +136,24 @@ EPISODE_H = 1920
 # scripts/make_mv.py, CLAUDE.md "orange cast" gotcha): tone-map each HLG/PQ input
 # to SDR *pixels* here, leave SDR inputs (incl. the finished bumper) untouched,
 # and stamp bt709 SDR tags on the final output so no HDR tag can leak.
-# Gentle, exposure-PRESERVING tonemap (PD "원본 그대로"): plain mobius + a mild
-# saturation/contrast touch to counter tonemap flatness. NOT make_mv.py's heavy
-# artistic eq (brightness -0.28 etc.) — that halved documentary-footage luma
-# (measured ~137→63). Production RF must stay naturally exposed.
-HLG_TONEMAP = ("zscale=t=linear:npl=203,format=gbrpf32le,zscale=p=bt709,"
+# Exposure is set by npl (nominal peak luminance), NOT by an eq brightness crush.
+# npl tells zscale how bright the HLG scene peak is relative to the SDR reference,
+# so mobius knows how much to compress the highlights. Too LOW and the highlights
+# aren't pulled down → the whole frame reads over-bright (npl=203 measured YAVG ~139,
+# PD "요즘 찍은 동영상이 밝다" 2026-11-24 — the recent-HLG-too-bright bug); too HIGH
+# over-compresses into muddy midtones. npl=400 lands recent HLG clips at a natural
+# YAVG ~118-120 — bright sunny scenes stay bright, indoor scenes stop blowing out —
+# which is also near typical SDR documentary luma, so HLG and SDR cuts match and the
+# per-cut ASSEMBLE_LUMA_NORMALIZE (below) barely has to fire. This is the ROOT fix for
+# the HLG-exposure half of the cross-cut brightness swing that normalizer band-aided.
+# Do NOT reach for make_mv.py's artistic eq (brightness -0.28 etc.) to darken — that
+# halved documentary luma (~137→63) and reads as graded, not naturally exposed (PD
+# "원본 그대로"); the mild saturation/contrast touch here only counters tonemap
+# flatness. Only HLG/PQ clips hit this (SDR incl. the bumper passes through untouched),
+# so it changes recent iPhone footage ONLY — exactly PD's "최근 동영상만". Reversible:
+# RF_HLG_NPL overrides (e.g. =203 restores the pre-2026-11-24 exposure).
+_HLG_NPL = os.getenv("RF_HLG_NPL", "400")
+HLG_TONEMAP = (f"zscale=t=linear:npl={_HLG_NPL},format=gbrpf32le,zscale=p=bt709,"
                "tonemap=mobius,zscale=t=bt709:m=bt709:r=tv,"
                "eq=saturation=1.05:contrast=1.03,format=yuv420p")
 BT709_TAGS = ["-colorspace", "bt709", "-color_primaries", "bt709",
