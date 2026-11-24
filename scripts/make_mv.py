@@ -269,29 +269,46 @@ def make_mv(song, clips, lines, out, *, bumper=BUMPER_DEFAULT, work=None,
     #   None/legacy → single KO line at the bottom.
     #   "lyric"     → lyric-video treatment: KO hero (big) + EN below, lower-third, prominent.
     #   "cover"     → cover/subtitle treatment: KO + EN stacked at the very bottom, understated box.
+    # Word-wrap a caption to fit the frame: drawtext does NOT wrap, so a long Hangul line renders
+    # on one line and, centered via x=(w-text_w)/2, overflows BOTH edges off-screen. Use the PROVEN
+    # caption pipeline (scripts.burn_captions.wrap_for_render) — PIL-measures each line at the real
+    # render font/size and breaks on 어절 (char-level fallback for space-less Korean), the same logic
+    # the daily lane hardened over months. Do NOT reinvent a char-count wrapper here (it diverges).
+    from scripts.burn_captions import wrap_for_render
+    CAP_MAXW = W - 140  # usable width on the 1080 canvas (70px margin each side)
+
+    def _wrap(text: str, size: int) -> str:
+        return wrap_for_render(str(text), FONT, size, CAP_MAXW)
+
     def _cap(tf_path, size, color, yexpr, bw, box, a, s, e):
         return (f"drawtext=fontfile='{FONT}':textfile='{tf_path}':fontsize={size}:fontcolor={color}:"
-                f"borderw={bw}:bordercolor=black:shadowcolor=black@0.5:shadowx=3:shadowy=3:"
+                f"borderw={bw}:bordercolor=black:shadowcolor=black@0.5:shadowx=3:shadowy=3:line_spacing=10:"
                 + (f"box=1:boxcolor=black@0.45:boxborderw=14:" if box else "")
                 + f"x=(w-text_w)/2:y={yexpr}:enable='between(t,{s},{e})':alpha='{a}'")
+
+    def _write(path, text, size):  # wrap at this font size, then persist
+        path.write_text(_wrap(text, size), encoding="utf-8")
+        return path
+
     for j, ln in enumerate(lines):
         s, e = float(ln["start"]), float(ln["end"])
         if s >= total:
             continue
         e = min(e, total)
         a = f"if(lt(t,{s+0.2}),(t-{s})/0.2,if(gt(t,{e-0.25}),max(0,({e}-t)/0.25),1))"
-        ko = work / f"cap{j}.txt"; ko.write_text(ln["text"], encoding="utf-8")
         en_txt = (ln.get("en") or "").strip()
-        en = None
-        if en_txt:
-            en = work / f"capen{j}.txt"; en.write_text(en_txt, encoding="utf-8")
+        ko = work / f"cap{j}.txt"
+        en = work / f"capen{j}.txt" if en_txt else None
         if caption_style == "lyric" and en:
-            draws.append(_cap(ko, 66, "white",     "h*0.620",     7, False, a, s, e))
-            draws.append(_cap(en, 42, "0xFFF0D8",  "h*0.620+92",  5, False, a, s, e))
+            _write(ko, ln["text"], 66); _write(en, en_txt, 42)
+            draws.append(_cap(ko, 66, "white",     "h*0.600",     7, False, a, s, e))
+            draws.append(_cap(en, 42, "0xFFF0D8",  "h*0.600+h/14", 5, False, a, s, e))
         elif caption_style == "cover" and en:
+            _write(ko, ln["text"], 54); _write(en, en_txt, 36)
             draws.append(_cap(ko, 54, "white",     "h-316",       6, caption_box, a, s, e))
             draws.append(_cap(en, 36, "0xEAEAEA",  "h-236",       5, caption_box, a, s, e))
         else:
+            _write(ko, ln["text"], fontsize)
             draws.append(_cap(ko, fontsize, "white", "h-text_h-205", 6, caption_box, a, s, e))
     # mv VIDEO only (captions + title), no audio yet, no end fade-to-black — the song carries
     # continuity straight into the bumper so there is no abrupt cut.

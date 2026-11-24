@@ -553,6 +553,28 @@ def stage_director(m: dict, progress_cb: ProgressCb, dry_run: bool) -> dict:
     n_rf = sum(1 for c in m["cuts"] if c.get("cut_type") == "rf")
     if progress_cb:
         progress_cb(f":white_check_mark: [director] {len(m['cuts'])}컷 (RF {n_rf} / AV {len(m['cuts'])-n_rf})")
+    # ★Title is a 1급 STORYBOARD element (§4.8 C_mvtitle) — designed HERE from concept + song mood
+    # via the established generator (scripts.mv_title_card.auto_card), NOT bolted on at assemble.
+    # auto_card picks the card style from the music genre; PD refines at the title gate later
+    # (reuse_body = cheap retitle). Idempotent: skip if a title card already exists.
+    if not (m.get("title") or {}).get("png"):
+        try:
+            from scripts.mv_title_card import auto_card
+            ld_title = ((m.get("song") or {}).get("lyrics_data") or {}).get("title")
+            title_text = concept.get("title") or ld_title or m["slug"]
+            style = (m.get("music_genre") or concept.get("music_genre")
+                     or concept.get("genre_lane") or "")
+            credit = "작곡 라레수 · 작사 함미하비"
+            out_png = mv_dir(m["slug"]) / "title.png"
+            # Upper third (vpos ~0.22) so the title lockup never covers the pets' faces
+            # (mv_character_consistency_lock: 펫 얼굴을 가리지 마라).
+            auto_card(title_text, str(out_png), style=style, credit=credit, vpos=0.22)
+            m["title"] = {"text": title_text, "png": str(out_png.relative_to(ROOT)),
+                          "style": style, "credit": credit}
+            if progress_cb:
+                progress_cb(f":art: [director] 타이틀 카드 '{title_text}' (무드={style or 'auto'})")
+        except Exception as e:  # noqa: BLE001 — title is refinable at its gate, never block storyboard
+            log.warning("title card generation skipped (%s)", e)
     return m
 
 
