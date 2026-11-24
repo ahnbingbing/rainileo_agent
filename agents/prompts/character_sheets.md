@@ -60,7 +60,7 @@ Pick the segment matching the story's time setting:
 | **S2 junior** | 2026-01 ~ 2026-02 | 4-5 months | ~50-55% | lanky kitten | Growing fast, legs getting longer, still kittenish face but body stretching out. Playful and clumsy. |
 | **S3 teen** | 2026-03 ~ 2026-04 | 6-7 months | ~60-65% | adolescent | Almost adult proportions but still lean. Face maturing, losing baby roundness. Confident and athletic. |
 | **S4 young adult** | 2026-05 ~ 2026-06 | 8-9 months | ~80-85% | young adult | Muscular, sleek coat, adult face shape, still youthful energy. Almost caught up to Ryani. |
-| **S5 grown (now)** | 2026-07 ~ present | 10+ months | ~95-100% (comparable) | full-grown cat | Grown to roughly Ryani's size — the two now read as COMPARABLE in a two-shot. Leo is leaner/lither, Ryani stockier/broader, but he is NOT dramatically smaller and NEVER a tiny kitten. |
+| **S5 grown (now)** | 2026-07 ~ present | 10+ months | ~95-100% (comparable) | full-grown cat | Grown to roughly Ryani's size — the two now read as COMPARABLE in a two-shot. Both are lean: Leo lithe and agile, Ryani slender and fine-boned (not stocky/broad); he is NOT dramatically smaller and NEVER a tiny kitten. |
 
 **Default for new content**: S5 (grown) — current appearance, Leo ≈ Ryani in size.
 **For Memory Lane / flashback**: Use S1-S4 depending on the date being referenced.
@@ -75,7 +75,7 @@ Pick the segment matching the story's time setting:
   - **Front legs are visibly slim** (much thinner than show-line Frenchie norm — almost surprising for the breed)
   - **Ribcage is narrower** than typical Frenchie — NOT barrel-chested
   - **BUT the midsection / waist / belly fills out naturally** — NOT pinched, NOT hourglass-shaped, NOT skeletal. Healthy senior female Frenchie belly with gentle natural fullness; ribs NOT visible. The slim bones (legs, ribcage) do NOT translate into a tucked-up waist.
-  - **Overall frame is refined and feminine**, but the body is still compact (not stretched/slender like a Chihuahua or terrier)
+  - **Overall frame is slender, refined and feminine** — a fine-boned Frenchie, clearly NOT the stocky, broad, chunky standard/show-line build — yet still a compact Frenchie, not stretched or lanky/whippet-thin like a Chihuahua or terrier. Her face too reads refined and feminine, not a broad stocky standard-Frenchie head.
   - The large white chest patch can create a "broader chest" optical illusion — don't overdo chest width.
   - Body has subtle wrinkles around shoulders/neck (Frenchie trait).
 - Keep classic Frenchie identity (compact body, short legs, broad short muzzle, bat ears) — only the **bone thickness and chest width** are refined down.
@@ -194,7 +194,7 @@ Pick the segment matching the story's time setting:
 
 ### Size relationship
 - Leo has grown to roughly Ryani's size — in present-day cuts they read as COMPARABLE, not kitten-vs-dog (render Leo full-grown, never tiny). Only in Memory-Lane/flashback cuts (S1–S4) is he noticeably smaller.
-- Leo is leaner and more agile; Ryani is stockier and grounded — so she can read a touch broader in build, but not dramatically larger
+- Leo is lithe and agile; Ryani's BUILD is slender and fine-boned (see Visual Design) — her calm, grounded presence is temperament, NOT bulk. Don't render her stocky or broader-built than Leo; they read comparable in size.
 - When cuddling, Leo often drapes over or curls against Ryani
 
 ### Interaction patterns (for cut composition)
