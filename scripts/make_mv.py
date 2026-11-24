@@ -69,12 +69,18 @@ W, H = 1080, 1920
 BUMPER_DEFAULT = ROOT / "assets/branding/outro_bumper.mp4"
 
 GEOM = f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps=30"
-HLG_TONEMAP = ("zscale=t=linear:npl=203,format=gbrpf32le,zscale=p=bt709,tonemap=mobius:param=0.3,"
-               "zscale=t=bt709:m=bt709:r=tv,eq=saturation=0.50:brightness=-0.28:contrast=1.3:gamma=0.82,format=yuv420p")
-# ^ strong moody darkening — bright daytime phone clips kept reading "too bright"; this pulls them
-#   down to match the dim live-bar performance mood (PD repeatedly: "실사 다 밝아").
-# ^ HLG→SDR, then pull saturation/brightness back toward the phone's natural look — mobius alone
-#   over-saturated real clips (PD: "실사에 채도 넣지 마"). AV cuts are SDR so never hit this path.
+# "실사가 밝다"(PD 반복)의 근본은 노출 평균이 아니라 '날아간 하이라이트'다 — HLG의 피크(눈/하늘/창)가
+# 안 눌려 흰 패치로 남으면, eq brightness로 전체를 깎아도(옛 -0.28) 미드톤만 머디해지고 밝은 패치는 그대로라
+# 여전히 '밝다'로 읽힌다(assemble_episode.py C11.5와 동일 교훈 — brightness crush는 틀린 지렛대). 올바른 노브는
+# zscale의 **npl**(nominal peak luminance): HLG 씬 피크가 SDR 레퍼 대비 얼마나 밝은지를 mobius에 알려줘
+# 하이라이트를 '압축'(디테일 복원)한다. npl=600이면 최근 HLG가 YAVG~100으로, 눈/흰차 같은 피크가 날아가지 않고
+# (YHIGH 255→~214) MV의 약간 가라앉은 무드에 맞게 착지한다. 무드는 brightness를 깎아서가 아니라 npl(하이라이트)
+# + 가벼운 gamma/contrast로 만든다. saturation은 mobius가 과포화시키니 1.0 아래로만 당겨 'natural'로(PD "실사에
+# 채도 넣지 마") — 더 올리지 않는다. AV 컷은 SDR이라 이 경로를 안 타고 SDR_NORM으로 간다(PD: AV 그레이드는 별도).
+# 되돌림: MV_HLG_NPL override(=203이 옛 노출). RF(assemble_episode.py RF_HLG_NPL=400)보다 높여 MV를 더 가라앉힘.
+_MV_HLG_NPL = os.getenv("MV_HLG_NPL", "600")
+HLG_TONEMAP = (f"zscale=t=linear:npl={_MV_HLG_NPL},format=gbrpf32le,zscale=p=bt709,tonemap=mobius:param=0.3,"
+               "zscale=t=bt709:m=bt709:r=tv,eq=saturation=0.72:contrast=1.08:gamma=0.90,format=yuv420p")
 SDR_NORM = "format=yuv420p"                                     # SDR clips: just 8-bit, tag bt709
 BT709 = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"]
 
@@ -87,9 +93,15 @@ def _run(cmd):
 
 
 def _probe(path, entry):
+    # NOTE: this ffmpeg (evermeet static) emits a TRAILING COMMA on csv=p=0 for a single
+    # stream field — "arib-std-b67," not "arib-std-b67". Without stripping it, _color_vf's
+    # `in ("arib-std-b67","smpte2084")` never matched → HLG real-footage cuts silently fell
+    # through to SDR_NORM (NO tone-map) → bright/washed + HLG-tag leak (the long-standing
+    # "실사가 밝다" that no amount of darkening eq fixed, because the tonemap never ran).
+    # assemble_episode.py:_probe_color_transfer already strips it; mirror that here.
     return subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
                            "-show_entries", f"stream={entry}", "-of", "csv=p=0", str(path)],
-                          capture_output=True, text=True).stdout.strip()
+                          capture_output=True, text=True).stdout.strip().strip(",")
 
 
 def _dur(path):
@@ -286,14 +298,17 @@ def make_mv(song, clips, lines, out, *, bumper=BUMPER_DEFAULT, work=None,
     mv = work / "mv_v.mp4"
     vchain = ",".join(draws) if draws else "null"
     if title_image and Path(title_image).exists():
-        # Overlay the PNG title card with a soft fade in/out over the intro (same envelope as the
-        # drawtext title would have had). -loop 1 makes the still a stream so the alpha fade has a
-        # timeline; overlay `enable` + output -t bound it.
+        # Overlay the title card with a soft fade in/out over the intro (same envelope as the drawtext
+        # title would have had). A VIDEO title (.mov/.webm with alpha — e.g. make_snow_title_anim's
+        # falling-snow card) is streamed as-is + looped so its animation plays; a STILL PNG is turned
+        # into a stream with -loop 1 so the alpha fade has a timeline. overlay `enable` + output -t bound it.
+        is_video = Path(title_image).suffix.lower() in (".mov", ".webm", ".mp4")
+        in_args = ["-stream_loop", "-1", "-i", str(title_image)] if is_video else ["-loop", "1", "-i", str(title_image)]
         fc = (f"[0:v]{vchain}[bg];"
               f"[1:v]format=rgba,fade=t=in:st=0.3:d=0.4:alpha=1,"
               f"fade=t=out:st=4.4:d=0.6:alpha=1[ttl];"
               f"[bg][ttl]overlay=0:0:enable='between(t,0.3,5.0)'[v]")
-        _run(["ffmpeg", "-y", "-i", body, "-loop", "1", "-i", str(title_image),
+        _run(["ffmpeg", "-y", "-i", body, *in_args,
               "-filter_complex", fc, "-map", "[v]", "-an",
               "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-r", "30",
               "-fps_mode", "cfr", *BT709, "-t", total, "-movflags", "+faststart", mv])
@@ -367,9 +382,13 @@ def make_mv(song, clips, lines, out, *, bumper=BUMPER_DEFAULT, work=None,
     # converts the PIXELS to SDR, the HDR colour *tags* can leak through to the output, so players
     # re-tonemap it → the whole video (and the bumper) shows an orange/red cast. Stamping bt709 here
     # makes players read it as plain SDR = correct colour. (CLAUDE.md "orange cast" gotcha, tag form.)
-    _run(["ffmpeg", "-y", "-i", full, "-stream_loop", "-1", "-i", song,
+    # Song plays ONCE then PADS WITH SILENCE to the video length (apad) — never -stream_loop.
+    # Looping replayed the song's FIRST VERSE over the end/bumper when the song was shorter than
+    # body+bumper (PD: "마지막에 첫소절로 돌아간다"); apad fills the gap with silence instead, and the
+    # afade-out already tapers the real tail gracefully into the bumper. No-op when song ≥ video.
+    _run(["ffmpeg", "-y", "-i", full, "-i", song,
           "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", *BT709,
-          "-af", f"afade=t=in:st=0:d=0.3,afade=t=out:st={fstart:.2f}:d={dur-fstart:.2f}",
+          "-af", f"apad,afade=t=in:st=0:d=0.3,afade=t=out:st={fstart:.2f}:d={dur-fstart:.2f}",
           "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2", "-t", f"{dur}",
           "-movflags", "+faststart", out])
     print(f"DONE → {out} ({total}s + bumper, {len(clips)} cuts, {len(lines)} caption lines)")

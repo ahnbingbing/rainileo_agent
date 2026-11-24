@@ -33,7 +33,7 @@ def _transfer(path) -> str:
     import subprocess as _sp
     return _sp.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
                     "-show_entries", "stream=color_transfer", "-of", "csv=p=0", str(path)],
-                   capture_output=True, text=True).stdout.strip()
+                   capture_output=True, text=True).stdout.strip().strip(",")  # ffmpeg csv trailing comma → else HLG never matched
 
 
 def _color_vf(path) -> str:
