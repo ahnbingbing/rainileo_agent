@@ -31,7 +31,8 @@ log = logging.getLogger("agents.mv_director")
 
 
 def direct_cuts(concept: dict, lyrics_data: dict, rf_weight: str = "rf_heavy",
-                *, music_genre: str = "dance", n_cuts: int = 14) -> list[dict]:
+                *, music_genre: str = "dance", n_cuts: int = 14,
+                homage: str | None = None) -> list[dict]:
     """Return a cut list. Each cut is routed RF or AV per `rf_weight` (PD content-origin rule):
       • RF cut  → cut_type='rf', with `clip_query` (search the real library for this moment).
       • AV cut  → cut_type='av', with `still_prompt`+`motion_prompt` (gpt-image-2 → Seedance).
@@ -58,6 +59,15 @@ def direct_cuts(concept: dict, lyrics_data: dict, rf_weight: str = "rf_heavy",
     energy = ("업템포 댄스/밈 — 따라할 반복 시그니처 무브, 타이트 컷."
               if music_genre in ("dance", "hiphop", "pop") else "잔잔·따뜻한 정서.")
 
+    # Reference-directing analysis (stage_reference → homage.doc): real reference MVs
+    # analyzed into a directing standard. When present it is the TASTE FLOOR — the cue-sheet
+    # must homage its palette / signature shots / mood, not invent a weaker look. Grounds the
+    # shotlist in a proven aesthetic instead of generic "pretty" cuts.
+    homage_block = (
+        f"★레퍼런스 디렉팅 기준(이 기준을 homage하라 — 팔레트·시그니처 샷·무드를 이 아래로 떨어뜨리지 마라):\n"
+        f"{homage.strip()}\n\n"
+        if homage and homage.strip() else "")
+
     system = (
         "너는 'Ryani & Leo' 오리지널 MV의 **감독(콘티)**이다. 컨셉과 가사를 받아 "
         f"컷별 큐시트 {n_cuts}개 내외를 짠다(가사 비트에 타이트 매핑).\n"
@@ -65,6 +75,7 @@ def direct_cuts(concept: dict, lyrics_data: dict, rf_weight: str = "rf_heavy",
         "랴니=검정 프렌치불독·무꼬리·흰 블레이즈/턱/가슴/발끝·슬림, 레오=오렌지 태비·샤르트뢰즈 눈·흰 턱. "
         "종/무꼬리/마킹 어기면 치명.\n\n"
         f"{route_rule}\n에너지: {energy}\n\n"
+        + homage_block
         + MV_PRINCIPLES + "\n\n"
         "★콘티 규칙(어기면 다시):\n"
         "- **의성어 → 보이는 동작**: 쭉쭉=기지개 스트레치, 실룩실룩=엉덩이 흔들, 뒹굴뒹굴=배 보이며 구르기, "

@@ -484,13 +484,38 @@ def stage_align(m: dict, progress_cb: ProgressCb, dry_run: bool) -> dict:
 
 
 def stage_reference(m: dict, progress_cb: ProgressCb, dry_run: bool) -> dict:
-    """Stage 3 — reference-directing analysis (homage shotlist + killpoint). OPTIONAL
-    enhancer: if no reference is configured, proceed (the Director still works from
-    concept + lyrics). Full yt→frame analysis = agents/mv_ref_director.py (not built)."""
+    """Stage 3 — reference-directing analysis. Finds a reference MV matching the chosen
+    concept, downloads it, and analyzes it SHOT-BY-SHOT at frame level (agents/mv_ref_director)
+    → a homage directing standard the Director must meet (stage_director passes homage.doc).
+    PD rule: ground the look in a real analyzed reference, not generic "pretty" cuts.
+
+    Idempotent (skips if homage.doc present). Kill-switch MV_REFERENCE=0. Best-effort: if the
+    download/analysis fails (no yt-dlp, network), the Director still proceeds from concept +
+    lyrics — reference is an enhancer, never a hard blocker. A concept may pin the reference
+    via `reference_url` / `reference_query`; `MV_REF_PALETTE` recolors the homage palette to
+    the concept's own intent (channel rule: no pink-dominant)."""
     if m["homage"].get("doc"):
         return m
-    if progress_cb:
-        progress_cb(":information_source: [reference] 레퍼런스 분석 생략(옵션) — Director가 컨셉+가사로 진행")
+    if dry_run or os.getenv("MV_REFERENCE", "1") == "0":
+        if progress_cb:
+            progress_cb(":information_source: [reference] 분석 생략 — Director가 컨셉+가사로 진행")
+        return m
+    concept = (m.get("concept") or {}).get("chosen") or {}
+    try:
+        from agents.mv_ref_director import fetch_and_analyze
+        homage = fetch_and_analyze(
+            slug=m["slug"], concept=concept,
+            ref_url=concept.get("reference_url") or os.getenv("MV_REF_URL"),
+            query=concept.get("reference_query"),
+            palette_override=concept.get("palette") or os.getenv("MV_REF_PALETTE"))
+        m["homage"] = homage
+        if progress_cb:
+            progress_cb(f":mag: [reference] {homage.get('reference')} "
+                        f"{homage.get('shots_n')}샷 프레임분석 → 연출기준 수립")
+    except Exception as e:  # noqa: BLE001 — enhancer, never block the pipeline
+        log.warning("reference analysis skipped (%s) — Director proceeds without homage", e)
+        if progress_cb:
+            progress_cb(":information_source: [reference] 분석 실패/생략 — Director가 컨셉+가사로 진행")
     return m
 
 
@@ -508,7 +533,8 @@ def stage_director(m: dict, progress_cb: ProgressCb, dry_run: bool) -> dict:
     if progress_cb:
         progress_cb(":clapper: [director] 컷 큐시트 생성 (RF/AV 라우팅)")
     cuts = direct_cuts(concept, ld, m.get("rf_weight", "rf_heavy"),
-                       music_genre=m.get("music_genre", "dance"))
+                       music_genre=m.get("music_genre", "dance"),
+                       homage=(m.get("homage") or {}).get("doc"))
     m["cuts"] = [_new_cut(
         c.get("tag", f"c{i+1:02d}"),
         subject=c.get("subject"), shot_size=c.get("shot_size"),
