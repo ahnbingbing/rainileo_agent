@@ -241,9 +241,30 @@ def _gate_mode(name: str) -> str:
     return "pd"
 
 
+def _mv_review(m: dict) -> dict:
+    """Run the MV Giri (agents.mv_reviewer) over the manifest — the deterministic defect gate.
+    Returns the report; callers surface its issues (PD mode) or gate on them (auto mode)."""
+    from agents import mv_reviewer
+    return mv_reviewer.review(m, past_themes=_past_mv_themes(m["slug"]))
+
+
+# Gates that are PD TASTE picks (choose among valid options) — the reviewer has no defect
+# verdict for these, so auto-mode trusts them. The QC gates below get the defect review.
+_REVIEW_GATES = {"still_qc", "final_qc"}
+
+
 def _auto_judge(name: str, payload: dict, m: dict) -> bool:
-    """Autonomous gate judge (Phase D: routes to mv_reviewer / pd_taste). Until then,
-    auto-mode passes — used only when MV_GATES=all_auto is explicitly set."""
+    """Autonomous gate judge. Taste-pick gates pass; the QC gates (still_qc/final_qc) run the
+    MV reviewer and only pass if it finds no defect — so an autonomous run self-rejects the same
+    classes PD used to catch by hand (repeated clip, indoor-as-snow, caption desync, foreign pet)."""
+    if name not in _REVIEW_GATES:
+        return True
+    from agents import mv_reviewer
+    report = _mv_review(m)
+    m.setdefault("qc", {})["review"] = report
+    if not mv_reviewer.passed(report):
+        log.warning("mv_reviewer gated %s: %s", name, mv_reviewer.summary(report))
+        return False
     return True
 
 
@@ -261,11 +282,21 @@ def run_gate(name: str, payload: dict, m: dict, progress_cb: ProgressCb) -> None
             save_manifest(m)
             raise GatePause(name, m["slug"])
         return
-    # mode == "pd": post the payload for review and pause until resolved.
+    # mode == "pd": post the payload for review and pause until resolved. For the QC gates, run the
+    # reviewer FIRST and surface its findings — so PD confirms a pre-screened draft instead of being
+    # the one who has to catch the repeat-class defects.
     m["gates"][name] = "pending"
+    review_line = ""
+    if name in _REVIEW_GATES:
+        from agents import mv_reviewer
+        report = _mv_review(m)
+        m.setdefault("qc", {})["review"] = report
+        if not mv_reviewer.passed(report):
+            review_line = "\n:rotating_light: " + mv_reviewer.summary(report)
     save_manifest(m)
     if progress_cb:
-        progress_cb(f":hourglass_flowing_sand: GATE [{name}] — PD 확인 대기: {json.dumps(payload, ensure_ascii=False)[:300]}")
+        progress_cb(f":hourglass_flowing_sand: GATE [{name}] — PD 확인 대기: "
+                    f"{json.dumps(payload, ensure_ascii=False)[:300]}{review_line}")
     raise GatePause(name, m["slug"])
 
 

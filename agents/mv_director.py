@@ -25,6 +25,7 @@ import re
 
 from agents.llm_cascade import call_text_cascade
 from agents.concept_brainstorm import _character_facts
+from agents.mv_principles import MV_PRINCIPLES
 
 log = logging.getLogger("agents.mv_director")
 
@@ -64,6 +65,7 @@ def direct_cuts(concept: dict, lyrics_data: dict, rf_weight: str = "rf_heavy",
         "랴니=검정 프렌치불독·무꼬리·흰 블레이즈/턱/가슴/발끝·슬림, 레오=오렌지 태비·샤르트뢰즈 눈·흰 턱. "
         "종/무꼬리/마킹 어기면 치명.\n\n"
         f"{route_rule}\n에너지: {energy}\n\n"
+        + MV_PRINCIPLES + "\n\n"
         "★콘티 규칙(어기면 다시):\n"
         "- **의성어 → 보이는 동작**: 쭉쭉=기지개 스트레치, 실룩실룩=엉덩이 흔들, 뒹굴뒹굴=배 보이며 구르기, "
         "빙글=제자리 회전, 톡=앞발 톡. 가사 그 순간에 그 동작 컷.\n"

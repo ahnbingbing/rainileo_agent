@@ -23,6 +23,7 @@ from datetime import datetime
 
 from agents.llm_cascade import call_text_cascade
 from agents.concept_brainstorm import _character_facts, _real_material
+from agents.mv_principles import MV_PRINCIPLES
 
 log = logging.getLogger("agents.mv_discovery")
 
@@ -99,6 +100,7 @@ def propose_mv_concepts(n: int = 4, *, theme: str | None = None,
         "랴니=물 마니아·무꼬리·의젓한 누나, 레오=2025-11-15 구조된 수컷 아기 고양이·장난꾸러기. "
         "종 혼동(개↔고양이)·무꼬리·물공포(랴니는 물매니아, 물공포 거짓) 금지.\n\n"
         + _mv_direction()
+        + "\n" + MV_PRINCIPLES
         + (f"\n★실제 재료(이걸 '조합·변주'해 컨셉을 짜라 — 함미하비가 직접 설명한 실제 클립/사건이 "
            f"가장 진짜 같고 공감된다. 아래에 없는 사건·주체·감정을 날조하지 마라):\n{material}\n"
            if material else "")

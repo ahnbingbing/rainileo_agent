@@ -23,6 +23,7 @@ import re
 
 from agents.llm_cascade import call_text_cascade
 from agents.concept_brainstorm import _character_facts
+from agents.mv_principles import MV_PRINCIPLES
 
 log = logging.getLogger("agents.mv_songwriter")
 
@@ -82,6 +83,7 @@ def write_lyrics(concept: dict, *, context: dict | None = None) -> dict:
         "- 길게 늘이지 마라(2~4분 금지). 간결·완결.\n"
         "- Suno 스타일 프롬프트 2개를 **서로 뚜렷이 다르게**(인트로·장르 뉘앙스 차이) 써라 — 둘이 비슷하면 Suno가 "
         "같은 스톡 인트로를 재탕한다. 아티스트명 금지, 사운드 특징으로만.\n\n"
+        + MV_PRINCIPLES + "\n\n"
         "출력(JSON 1개):\n"
         "{\n"
         '  "title": "곡 제목(한국어)",\n'
