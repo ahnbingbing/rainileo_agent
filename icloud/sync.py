@@ -902,7 +902,11 @@ def insert_asset(con: sqlite3.Connection, **kw) -> "str | None":
     (regardless of source/asset_id), skip the insert and return that existing asset_id so
     the same media never becomes two pool entries. Returns the asset_id actually in the DB."""
     kw.setdefault("source_uuid", None)
+    for _c in ("gps_lat", "gps_lon", "gps_alt", "geo_place", "geo_water"):
+        kw.setdefault(_c, None)
     _ensure_content_hash_col(con)
+    from agents.geo import ensure_geo_cols
+    ensure_geo_cols(con)
     chash = kw.get("content_hash")
     if chash is None:
         chash = content_hash(kw.get("file_path"))
@@ -916,11 +920,13 @@ def insert_asset(con: sqlite3.Connection, **kw) -> "str | None":
         INSERT OR IGNORE INTO assets
             (asset_id, source, kind, file_path, captured_iso, ingested_iso,
              duration_sec, width, height, phash, subjects_csv, age_tag,
-             location_tag, notes, source_uuid, content_hash)
+             location_tag, notes, source_uuid, content_hash,
+             gps_lat, gps_lon, gps_alt, geo_place, geo_water)
         VALUES (:asset_id, :source, :kind, :file_path, :captured_iso,
                 COALESCE(:ingested_iso, datetime('now')),
                 :duration_sec, :width, :height, :phash,
-                :subjects_csv, :age_tag, :location_tag, :notes, :source_uuid, :content_hash)
+                :subjects_csv, :age_tag, :location_tag, :notes, :source_uuid, :content_hash,
+                :gps_lat, :gps_lon, :gps_alt, :geo_place, :geo_water)
         """,
         kw,
     )
@@ -1220,6 +1226,13 @@ def sync_album(
 
         phash = None if is_video else (None if dry_run else compute_phash(dest_path))
 
+        # GPS grounding (PD 2026-11-25): ground location on Apple's offline reverse-geocode
+        # (real place + ocean/inland-water kind) instead of leaving it to the VLM's pixel
+        # guess — the root cause of the "첫 바닷가 수영" fabrication on an inland-stream clip.
+        from agents.geo import geo_from_photoinfo, altitude_from_file
+        _geo = geo_from_photoinfo(p) or {}
+        _alt = altitude_from_file(dest_path) if (is_video and not dry_run and _geo) else None
+
         if not dry_run:
             insert_asset(
                 con,
@@ -1239,6 +1252,11 @@ def sync_album(
                 age_tag=age_tag,
                 location_tag=None,
                 notes=f"uuid:{p.uuid}; title:{p.title or ''}",
+                gps_lat=_geo.get("lat"),
+                gps_lon=_geo.get("lon"),
+                gps_alt=_alt,
+                geo_place=_geo.get("place"),
+                geo_water=_geo.get("water") if _geo else None,
             )
 
         # Live Photo: paired .mov is its own asset
@@ -1270,6 +1288,11 @@ def sync_album(
                         age_tag=age_tag,
                         location_tag=None,
                         notes=f"uuid:{p.uuid}; live_photo_pair_of:{asset_id}",
+                        gps_lat=_geo.get("lat"),
+                        gps_lon=_geo.get("lon"),
+                        gps_alt=(altitude_from_file(live_dest) if _geo else None),
+                        geo_place=_geo.get("place"),
+                        geo_water=_geo.get("water") if _geo else None,
                     )
                 summary["imported_live_clips"] += 1
             except Exception as e:

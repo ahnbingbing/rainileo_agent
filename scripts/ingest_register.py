@@ -59,6 +59,10 @@ def export_() -> None:
 
 def import_() -> None:
     con = _db()
+    # Ensure GPS-grounding columns exist locally so the Mac export (which carries them) is
+    # not silently dropped by the local_cols intersection below (PD 2026-11-25).
+    from agents.geo import ensure_geo_cols
+    ensure_geo_cols(con)
     local_cols = set(_cols(con))
     try:
         text = _blob().download_as_text()
