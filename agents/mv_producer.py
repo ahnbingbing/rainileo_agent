@@ -532,9 +532,14 @@ def stage_director(m: dict, progress_cb: ProgressCb, dry_run: bool) -> dict:
     from agents.mv_director import direct_cuts
     if progress_cb:
         progress_cb(":clapper: [director] 컷 큐시트 생성 (RF/AV 라우팅)")
-    cuts = direct_cuts(concept, ld, m.get("rf_weight", "rf_heavy"),
-                       music_genre=m.get("music_genre", "dance"),
-                       homage=(m.get("homage") or {}).get("doc"))
+    cuts, art_direction = direct_cuts(concept, ld, m.get("rf_weight", "rf_heavy"),
+                                      music_genre=m.get("music_genre", "dance"),
+                                      homage=(m.get("homage") or {}).get("doc"))
+    # Shared continuity LOCK (one car, fixed seating/steering side, fixed time-of-day/palette)
+    # → every AV still gets it (scripts.mv_still reads m["art_direction"]). Kills cross-cut prop
+    # drift (open-car↔closed, wheel left↔right) the way character ref-lock kills identity drift.
+    if art_direction:
+        m["art_direction"] = art_direction
     m["cuts"] = [_new_cut(
         c.get("tag", f"c{i+1:02d}"),
         subject=c.get("subject"), shot_size=c.get("shot_size"),

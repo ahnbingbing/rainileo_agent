@@ -56,7 +56,7 @@ def set_cut_durations(m: dict) -> dict:
     # time across them evenly instead of indexing past kl.
     n = len(cuts)
     starts: list[float] = [0.0] * n
-    ptr, last = 0, 0.0
+    ptr, last, last_end = 0, 0.0, 0.0
     tail: list[int] = []
     for i, cut in enumerate(cuts):
         if ptr >= len(kl):
@@ -73,12 +73,17 @@ def set_cut_durations(m: dict) -> dict:
                 break
         starts[i] = float(kl[best_i].get("start") or last)
         last = starts[i]
+        last_end = max(last_end, float(kl[best_i].get("end") or last))
         ptr = best_i + 1
     if tail:
-        span = max(song_end - last, MIN_WINDOW * (len(tail) + 1))
-        step = span / (len(tail) + 1)
-        for pos, i in enumerate(tail, start=1):
-            starts[i] = last + step * pos
+        # The last SUNG cut must cover its karaoke line FULLY — so the trailing instrumental /
+        # outro cuts begin at the last line's END, not its start. (Spreading from `last` = the last
+        # line's START stole that line's remaining sung time, leaving the final lyric cut ~one step
+        # long while an outro cut already played under its still-singing caption → the sync gate.)
+        span = max(song_end - last_end, MIN_WINDOW * len(tail))
+        step = span / len(tail)
+        for pos, i in enumerate(tail):
+            starts[i] = last_end + step * pos
     # The body is CONCATENATED from video-0, so a cut's on-screen time = sum of prior durations,
     # not its absolute karaoke start. The first sung line begins AFTER the song's instrumental intro
     # (e.g. 3s in); if cut 0 also "starts" there, the whole sequence plays that intro-gap EARLY and

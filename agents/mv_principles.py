@@ -49,6 +49,17 @@ MV_PRINCIPLES = """\
 
 7. 디자인은 1급 요소: 타이틀은 곡 무드에 맞춰 설계하고(겨울=눈 아트), 펫 얼굴을 가리지 마라. 나중에 붙이는
    자막 취급 금지.
+
+8. 감정은 눈연기로, 미소 금지: 펫의 감정(특히 킬포·온기 컷)은 **눈연기**로 그려라 — 만족=부드럽게 가늘게
+   뜬 눈/고양이 slow-blink, 편안한 소프트 스퀸트. 실제 동물은 '미소'를 짓지 않는다 → still/motion 프롬프트에
+   "smile/웃음/미소"를 쓰면 생성기가 그걸 의인화된 만화체 얼굴로 렌더해 포토리얼이 깨진다(왜: c07 킬포가
+   'faint smile'로 혼자 CGI처럼 떴다). 예: "share a smile" ✗ → "warm content slow-blink squint, real candid
+   pet faces, not smiling" ✓.
+
+9. 그루브엔 비트 바운스: 댄스/시티팝 등 업템포 곡은 펫이 **비트에 맞춰 바운스**하는 시그니처 모션을 넣어라
+   (둠칙둠칙 — head-bob/shoulder-bounce/앞발 탭). 그루브 컷의 motion_prompt에 'bob/bounce to the beat'를
+   명시하고, 어셈블은 비트싱크로 그 바운스를 화면에 느끼게 한다. 정적인 '응시만' 컷으로 업템포를 채우면 곡이
+   죽는다. (솔로/디테일 컷까지 전부 바운스일 필요는 없다 — 그루브가 필요한 구간에.)
 """
 
 
@@ -155,20 +166,44 @@ def check_caption_sync(m: dict, report: dict, tol: float = 1.2) -> None:
 
 
 def check_solo_cut_foreign_pet(m: dict, report: dict) -> None:
-    """Principle 3. A solo cut (subject leo|ryani) whose prompt text names BOTH a dog and a cat will
-    hallucinate the absent pet. Deterministic prompt-text check (the generation-time root cause)."""
-    style = (m.get("art_direction") or "").lower()
+    """Principle 3. A solo cut (subject leo|ryani) whose OWN prompt text names BOTH a dog and a cat
+    will hallucinate the absent pet. Deterministic prompt-text check (the generation-time root cause).
+
+    NB: the shared art_direction (setting lock) legitimately names BOTH pets when the concept keeps
+    them together in-frame (e.g. both ride the same car, one driving / one passenger) — that is the
+    world, not a foreign-pet leak, so it is NOT folded into this check. Only the cut's own
+    still_prompt/action is scanned."""
     dog = ("dog", "bulldog", "강아지", "불독", "frenchie")
     cat = ("cat", "tabby", "고양이", "레오")
     for c in m.get("cuts", []):
         subj = (c.get("subject") or "").lower()
         if subj not in ("leo", "ryani"):
             continue
-        txt = (_tokens(c.get("still_prompt"), c.get("action")) + " " + style)
+        txt = _tokens(c.get("still_prompt"), c.get("action"))
         names_dog = any(k in txt for k in dog)
         names_cat = any(k in txt for k in cat)
         if names_dog and names_cat:
             _cap(report, 5, f"솔로 컷에 딴 펫 호출 — {c.get('tag')}(subject={subj})인데 프롬프트가 개+고양이 둘 다 지칭")
+
+
+def check_anthropomorphic_smile(m: dict, report: dict) -> None:
+    """Principle 8. A still/motion prompt that tells a pet to 'smile/웃/미소' makes gpt-image render
+    an anthropomorphic cartoon face → breaks photoreal (c07 killpoint drifted to CGI this way).
+    Deterministic prompt-text check: emotion should be written as eye-acting, never a smile."""
+    _smile = ("smile", "smiling", "grin", "웃음", "웃는", "미소")
+    # strip NEGATED smile phrases first ("not a smile", "no smiling", "미소 금지", "웃지 않") so an
+    # eye-acting prompt that explicitly forbids smiling doesn't trip the check — only POSITIVE
+    # smile instructions remain.
+    _neg = re.compile(r"(not\s+(a\s+)?smil\w*|no\s+smil\w*|without\s+smil\w*|미소\s*금지|웃지\s*않\w*)")
+    hits = []
+    for c in m.get("cuts", []):
+        if c.get("cut_type") == "rf":
+            continue
+        txt = _neg.sub(" ", _tokens(c.get("still_prompt"), c.get("motion_prompt"), c.get("action")))
+        if any(s in txt for s in _smile):
+            hits.append(c.get("tag", "?"))
+    if hits:
+        _cap(report, 5, f"의인화 미소 — {', '.join(hits)} 프롬프트가 펫에게 '미소/smile' 지시(눈연기로 바꿔라)")
 
 
 def check_concept_freshness(m: dict, past_themes: list[str] | None, report: dict) -> None:

@@ -85,12 +85,25 @@ def direct_cuts(concept: dict, lyrics_data: dict, rf_weight: str = "rf_heavy",
         "그대로 담아라 — 장소·사물·누가 어디에 있는지. 더 안전한 근사치로 바꾸지 마라(그러면 화면이 가사를 "
         "배신한다). 예: '레오는 식탁 위에서' → 레오가 **식탁 상판 위에** 올라가 있는 컷(옆 의자 위가 아님). "
         "'고구마' → 진짜 군고구마가 보이게(다른 간식 대체 금지).\n"
-        "- **샷·색 다양성**: WS/MS/CU/ECU/인서트 섞고, 컷마다 배경색 전환(한 색 반복 금지).\n"
+        "- **★연속성 LOCK(드리프트 방지)**: 모든 컷이 공유하는 하나의 물리 세계를 `art_direction`에 못박아라 — "
+        "반복 등장하는 소품/탈것은 **단 하나의 같은 개체**(같은 차종·같은 색·같은 핸들 방향 LEFT-HAND DRIVE, "
+        "오픈카면 전 컷 오픈카·클로즈면 전 컷 클로즈), **누가 어디 앉는지 고정**(예: 랴니=운전석 LEFT, 레오=조수석 "
+        "RIGHT를 전 컷 유지), **시간대·팔레트 고정**(네온 밤이면 전 컷 네온 밤 — 노을/낮/골드 지평선 금지). "
+        "각 컷 still_prompt는 이 lock과 모순되면 안 된다(핸들 좌→우, 오픈→클로즈, 밤→노을 금지). "
+        "샷·색 **다양성은 이 lock 안에서**(앵글·구도·네온 색조는 바꾸되 세계는 동일).\n"
+        "- **샷 다양성**: WS/MS/CU/ECU/인서트 섞되, 위 연속성 lock을 깨지 않는다.\n"
         "- **해부 안전**: 뒷다리/배를 세워 보이는 포즈는 **가슴 위(chest-up) 타이트 프레이밍**으로 하반신 프레임 밖.\n"
         "- **실제 네발 동물**(사람처럼 서서 물건 들기 금지), 깨끗한 댄스 컷엔 **사람 없음**.\n"
         "- 의상 = 자연 털 기본(이 컨셉은 코스튬 아님). 무대/배경만 스타일링.\n"
         "- 킬포인트(감정 정점) 컷 1개를 is_killpoint=true로 표시하고 더 공들인 샷으로.\n\n"
-        "각 컷 = {\n"
+        "출력 = JSON 오브젝트 {\"art_direction\": \"...\", \"cuts\": [ ... ]}.\n"
+        '"art_direction" = 전 컷 공유 연속성 LOCK을 영어 한 단락으로: 그 하나의 탈것/소품(차종·색·'
+        'LEFT-HAND DRIVE 핸들·오픈/클로즈)·좌석 배치(누가 LEFT, 누가 RIGHT)·시간대/팔레트를 명시('
+        'gpt-image가 매 컷 동일하게 유지하도록). 예: "The SAME single retro 1980s open-top convertible '
+        'in every shot — deep navy blue, chrome trim, LEFT-HAND DRIVE (steering wheel on the LEFT). '
+        'Ryani always in the driver seat (LEFT), Leo always in the passenger seat (RIGHT). Always deep '
+        'neon night — blue/violet/cyan city glow, never sunset/day/gold horizon."\n'
+        '"cuts" = 큐시트 배열. 각 컷 = {\n'
         '  "tag": "c01_...", "lyric": "이 컷이 받는 가사 줄(또는 비트)",\n'
         '  "subject": "ryani|leo|both",\n'
         '  "cut_type": "rf|av",   // RF=실제 클립, AV=gpt-image-2→Seedance (위 라우팅 규칙대로)\n'
@@ -102,11 +115,11 @@ def direct_cuts(concept: dict, lyrics_data: dict, rf_weight: str = "rf_heavy",
         '  "motion_prompt": "[cut_type=av일 때만] Seedance i2v용 — 무엇이 어떻게 움직이는지(영어, ONE short phrase)",\n'
         '  "is_killpoint": false\n'
         "}.\n"
-        "간결하게. JSON 배열만 출력.")
+        "간결하게. 위 {art_direction, cuts} JSON 오브젝트만 출력.")
     genre_lane = concept.get("genre_lane") or ("ballad_rf" if rf_weight == "rf_heavy" else "dance_av")
     user = (f"곡 제목: {lyrics_data.get('title')}\n컨셉: {concept.get('title')} — {concept.get('logline')}\n"
             f"레인: {genre_lane}\n킬포인트: {concept.get('killpoint')}\n\n가사(줄별 주인공·의성어):\n{lines_txt}\n\n"
-            f"큐시트 {n_cuts}개 내외를 JSON 배열로.")
+            f"큐시트 {n_cuts}개 내외 + art_direction 연속성 lock을 JSON 오브젝트로.")
 
     txt = call_text_cascade(system, user, max_tokens=8000).strip()
     txt = re.sub(r"^```(?:json)?\s*", "", txt)
@@ -114,16 +127,26 @@ def direct_cuts(concept: dict, lyrics_data: dict, rf_weight: str = "rf_heavy",
     try:
         data = json.loads(txt)
     except json.JSONDecodeError:
-        a, b = txt.find("["), txt.rfind("]")
-        data = json.loads(txt[a:b + 1]) if a != -1 and b != -1 else []
+        # object first ({art_direction, cuts}), fall back to a bare array
+        a, b = txt.find("{"), txt.rfind("}")
+        try:
+            data = json.loads(txt[a:b + 1]) if a != -1 and b != -1 else []
+        except json.JSONDecodeError:
+            a, b = txt.find("["), txt.rfind("]")
+            data = json.loads(txt[a:b + 1]) if a != -1 and b != -1 else []
+    if isinstance(data, dict):
+        art_direction = (data.get("art_direction") or "").strip()
+        raw_cuts = data.get("cuts") or []
+    else:  # legacy bare array
+        art_direction, raw_cuts = "", data
     cuts = []
-    for i, c in enumerate(data):
+    for i, c in enumerate(raw_cuts):
         if not isinstance(c, dict):
             continue
         c.setdefault("tag", f"c{i+1:02d}")
         cuts.append(c)
-    log.info("mv_director: %d cuts", len(cuts))
-    return cuts
+    log.info("mv_director: %d cuts, art_direction=%s", len(cuts), bool(art_direction))
+    return cuts, art_direction
 
 
 if __name__ == "__main__":
@@ -136,8 +159,10 @@ if __name__ == "__main__":
     m = load_manifest(args.slug)
     concept = m["concept"]["chosen"]
     ld = m["song"]["lyrics_data"]
-    for c in direct_cuts(concept, ld, m.get("rf_weight", "rf_heavy"),
-                         music_genre=m.get("music_genre", "dance"), n_cuts=args.n):
+    cuts, art_direction = direct_cuts(concept, ld, m.get("rf_weight", "rf_heavy"),
+                                      music_genre=m.get("music_genre", "dance"), n_cuts=args.n)
+    print(f"[art_direction] {art_direction}\n")
+    for c in cuts:
         kp = " ★KILLPOINT" if c.get("is_killpoint") else ""
         print(f"\n[{c['tag']}] {c.get('cut_type','av').upper()} / {c.get('shot_size')} / {c.get('subject')}{kp}")
         print(f"    lyric : {c.get('lyric')}")
