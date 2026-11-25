@@ -74,14 +74,35 @@ CANONICAL_LOCK = (
     "than the cat). Do NOT redesign the car, resize the wheel, or change the pets' build between shots.")
 
 
+# Shot-size must be REALIZED in the still, not just labeled — else every cut comes out a medium
+# two-shot (the canonical ref biases medium) and the i2v push-in makes them all feel the same (the
+# zoom sawtooth / "same composition" PD flagged). Reference grammar (Blinding Lights, real 151-shot
+# analysis) is WS/MS-dominant with CU/ECU inserts — so FORCE the framing. This leads the prompt so it
+# overrides the medium bias. Kill-switch MV_SHOTSIZE=0.
+_FRAMING = {
+    "ECU":    "EXTREME CLOSE-UP — fill the frame with one detail (an eye, a paw on the wheel, a nose); "
+              "the subject is huge, almost abstract, everything else out of frame.",
+    "CU":     "CLOSE-UP — one pet's face fills most of the frame, tight and intimate, shallow depth of field.",
+    "MS":     "MEDIUM SHOT — the two pets from the chest up in the car, balanced, some surroundings visible.",
+    "WS":     "WIDE SHOT — the WHOLE car is SMALL in a big neon cityscape, lots of environment around it; "
+              "the pets are tiny in the frame. A true wide, NOT a medium two-shot.",
+    "insert": "INSERT / detail shot — a close object detail (dashboard gauge, headlight, chrome wheel, "
+              "neon reflection on the hood); the pets may be absent or incidental.",
+    "aerial": "AERIAL / high crane — looking DOWN on the car from high above, the city spread below.",
+}
+
+
 def build_prompt(cut: dict, style: str | None = None, canonical: bool = False) -> str:
-    """Assemble the gpt-image-2 prompt: identity + scene + unifying art-direction + guards + realism.
-    `style` (manifest art_direction) sets the SHARED look (e.g. mid-century checkerboard carpet) and
-    comes AFTER the per-cut scene so it governs the floor/background palette across every cut.
-    `canonical` appends the verbatim consistency lock (used when a canonical reference image is fed)."""
+    """Assemble the gpt-image-2 prompt: shot-size framing + identity + scene + art-direction + guards.
+    `style` (manifest art_direction) sets the SHARED look and governs the floor/background palette.
+    `canonical` appends the verbatim consistency lock. The LEADING framing clause forces the cut's
+    shot_size (WS/MS/CU/ECU/insert/aerial) so angles actually vary (not all medium)."""
     _, identity = _refs_and_identity(cut.get("subject", "both"))
     scene = (cut.get("still_prompt") or cut.get("action") or "").strip()
-    parts = [identity, scene, (style or "").strip(),
+    framing = ""
+    if os.getenv("MV_SHOTSIZE", "1") != "0":
+        framing = _FRAMING.get((cut.get("shot_size") or "").strip(), "")
+    parts = [framing, identity, scene, (style or "").strip(),
              CANONICAL_LOCK if canonical else "", NO_HUMANS, PHOTO]
     return " ".join(p for p in parts if p)
 

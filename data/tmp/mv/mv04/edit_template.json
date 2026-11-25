@@ -1,0 +1,32 @@
+{
+  "main_ref": "The Weeknd — Blinding Lights (151 shots, real frame analysis)",
+  "supplementary": [],
+  "shot_size_mix": {
+    "ECU": 0.05,
+    "CU": 0.22,
+    "WS": 0.36,
+    "MS": 0.35,
+    "aerial": 0.01,
+    "insert": 0.01
+  },
+  "median_shot_s": 1,
+  "camera_moves": [
+    "lateral tracking",
+    "slow push-in",
+    "static hold",
+    "whip pan",
+    "crane shot",
+    "aerial"
+  ],
+  "size_progressions": [
+    "MS->MS",
+    "WS->WS",
+    "MS->WS",
+    "WS->MS",
+    "CU->WS",
+    "CU->CU",
+    "WS->CU",
+    "MS->CU"
+  ],
+  "cadence_note": "tight, hard cuts only; WS/MS lateral tracking holds + CU inserts; whip pan on speed"
+}
