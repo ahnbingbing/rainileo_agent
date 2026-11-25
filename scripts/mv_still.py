@@ -35,7 +35,9 @@ RYA = ("a real photorealistic small black FEMALE French bulldog with a SLENDER, 
        "feminine frame — visibly slim legs and a narrow (NOT barrel) chest. Her FACE is slim and refined: "
        "lean narrow cheeks and a delicate slim muzzle with NO heavy jowls and no chubby round puffed cheeks "
        "— a dainty whippet-slender face, NOT the broad, wide-cheeked, jowly round-faced stocky standard "
-       "show-Frenchie. Flat brachycephalic face, big upright bat ears, NO TAIL at all. Her white markings "
+       "show-Frenchie. Flat brachycephalic face, big upright SMOOTH bat ears with short sleek fur and "
+       "NO fur tufts/feathering/fluff on or inside the ears (a Frenchie's ears are smooth, not furry). "
+       "NO TAIL at all. Her white markings "
        "stay FINE and understated — a THIN pencil-width white blaze up the muzzle to the forehead (never a "
        "thick or wide stripe/splash), a small neat white chin and chest, white toe tips; nape and whole "
        "back SOLID BLACK with no white spot)")
