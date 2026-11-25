@@ -225,11 +225,46 @@ def _gather_context(con: sqlite3.Connection, target: dt.date) -> dict:
     # Also: pd_notes (manual override via agents/tools/pd_correct_asset.py)
     # take precedence over VLM scene_description when present. Marked [PD] so
     # Writer knows this is authoritative ground truth.
+    # GPS location grounding (PD 2026-11-25, root cause of the "첫 바닷가 수영" fabrication):
+    # the VLM guesses location from pixels and hallucinates "바닷가" from water + foam. Apple's
+    # offline reverse-geocode (agents/geo.py, ingested to geo_place/geo_water) is authoritative —
+    # it fills `ocean` only near a real coastline. When the map says this clip is NOT ocean but
+    # the VLM scene text calls it a beach/sea, SCRUB the fabricated locale so the Writer never
+    # inherits it, and PREFIX the real place so it can ground captions on the truth instead.
+    _geo_cache: dict = {}
+
+    def _asset_geo(aid: "str | None"):
+        if not aid:
+            return None
+        if aid not in _geo_cache:
+            try:
+                _geo_cache[aid] = con.execute(
+                    "SELECT geo_place, geo_water, gps_alt FROM assets WHERE asset_id=?", (aid,)
+                ).fetchone()
+            except Exception:
+                _geo_cache[aid] = None
+        return _geo_cache[aid]
+
+    # Detect an ocean/beach claim in free text (KO + a few EN) …
+    _OCEAN_WORDS = ("바닷가", "바닷물", "바다", "해변", "해안", "모래사장", "백사장", "파도",
+                    "beach", "ocean", "seaside", "seashore")
+    # … and neutralise the KO tokens to inland-safe words (longest first to avoid partials).
+    _OCEAN_SCRUB = (("바닷가", "물가"), ("바닷물", "물"), ("해안가", "물가"), ("해변", "물가"),
+                    ("해안", "물가"), ("모래사장", "물가"), ("백사장", "물가"), ("파도", "물결"),
+                    ("바다", "물가"))
+
     def _ground_truth_sc(r) -> str:
         pd_n = _clean_pd_notes(r["pd_notes"]) if "pd_notes" in r.keys() else ""
         if pd_n:
             return f"[PD] {pd_n[:280]}"
-        return (r["scene_description"] or "")[:280]
+        sc = (r["scene_description"] or "")[:280]
+        g = _asset_geo(r["asset_id"]) if "asset_id" in r.keys() else None
+        if g and (g["geo_water"] in ("none", "inland_water")) and any(w in sc for w in _OCEAN_WORDS):
+            for a, b in _OCEAN_SCRUB:
+                sc = sc.replace(a, b)
+            place = (g["geo_place"] or "").strip() or "내륙"
+            sc = f"[지오: {place} · 바다 아님(맵)] {sc}"
+        return sc[:300]
 
     def _extra_vlm(r) -> dict:
         """Pull the richer VLM fields (PD 2026-06-02 prompt rev) out of the
