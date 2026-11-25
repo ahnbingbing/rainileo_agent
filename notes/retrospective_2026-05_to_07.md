@@ -1444,10 +1444,14 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   (영상 ISO6709). Apple은 `ocean`을 실해안에서만 채우므로 "바다 여부"가 거의 결정론. `icloud/sync` 인입 배선+VM 전파
   (`ingest_register` 양측 컬럼보장)+백필 **17,377자산**(ocean 5=터키 보스포루스 등 실해안 정확, 문제 3클립 전부
   none=바다아님). ★교훈=[[C_grounding]]("사람이 준 ground truth 버리지 마라")의 확장 — **맵이 준 ground truth도 파일에
-  있으면 입구에서 추출해 저장하라, VLM 환각을 맵이 override한다**. geo_* 소비자(생성기·Giri)가 아직 없어 단독으로 안전
-  배포. 미완(병행): (3a) 생성기 결정론 그라운딩 — `_ground_truth_sc`(producer.py) chokepoint에서 geo가 바다 반박시 VLM
-  "바닷가" 원문 교정+바다 캡션은 geo_water=ocean일 때만 (3b) 매시간 PD 슬랙 ask-drip로 **GPS-없는 물 클립** 백로그 소진
-  (PD 2026-11-25 안; GPS-있는 17k는 맵이 답해 질문 불필요) (4) "첫" 일반 단정어 Giri 캡은 1·2·3 후 결정.
+  있으면 입구에서 추출해 저장하라, VLM 환각을 맵이 override한다**. **3a 완료(6b3ae1b·3a11781)**: ①생성기 결정론 그라운딩
+  — `_ground_truth_sc`(producer.py, _gather_context의 chokepoint라 singlepass+v2+AV 전부 커버) geo가 바다 반박시 VLM
+  "바닷가/파도/바닷물" 토큰 스크럽+`[지오: 지명·바다 아님(맵)]` 프리픽스(Writer가 더는 환각 상속 불가) ②Giri
+  `_geo_ocean_claim_gate`(바다 캡션인데 쓴 클립 geo_water∈none/inland_water면 cap≤5·수정필요; ★NULL geo_water는
+  미발화=unknown≠not-ocean, 8360개 GPS-없는 자산 오탐보호) ③프롬프트 3곳(singlepass·writer_realfootage·concept) geo
+  마커 obey+"첫=사실주장, 랴니 물엔 항상 거짓" 통합, concept의 "첫 수영 훅↔첫 날조금지" 모순 해소. **블래스트(양레인)**:
+  AV는 실장소 주장 없어 의도적 미변경·게이트 RF-scoped. 미완: (3b) 매시간 PD 슬랙 ask-drip로 **GPS-없는 물 클립** 백로그
+  소진(PD 2026-11-25 안; GPS-있는 17k는 맵이 답해 질문 불필요) (4) "첫" 일반 단정어(물 외) Giri 캡은 3b 후 결정.
   cf [[C_grounding]]·[[grammar_rf_caption_grounding_gap]]·[[giri_title_defect_class]]·[[C_clipknowledgebackfill]].
 - **C_grounding. 캡션/제목이 실재를 배신한다 — 서브젝트 소거·위치 오도, 그 답은 "주인의 설명"(9/18)** — PD: 둘 다 나온
   나들이인데 "레오만"으로 랴니를 지우고, 실외(카페 테라스)를 "집에서"로 서술, Giri 통과. 근본 3겹: ①생성기(특히
