@@ -11,6 +11,7 @@
     "insert": 0.12,
     "WS": 0.26
   },
+  "shot_change_rate": 0.79,
   "supplementary": [],
   "shots": [
     {

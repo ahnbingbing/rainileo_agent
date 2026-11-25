@@ -102,6 +102,8 @@ def new_manifest(slug: str, *, theme: str | None = None, genre_lane: str | None 
         "karaoke_lines": [],           # [{text, start, end}] song-relative (stage 2)
         "spliced_align": None,         # splice segment math if song was cut-and-joined (§8.5)
         "homage": {},                  # {doc, killpoint_cut}
+        "edit_template": {},           # main-ref editing grammar (shot-size mix / change rhythm / cadence)
+        "scenes": [],                  # [{scene_id, setting}] location/time blocks (Director, stage 4)
         "wardrobe_lock": {},           # {ryani, leo} canonical per-concept (§8.12)
         "cuts": [],                    # see _new_cut()
         "title": {},                   # {png, text, style, credit}
@@ -494,6 +496,21 @@ def stage_reference(m: dict, progress_cb: ProgressCb, dry_run: bool) -> dict:
     lyrics — reference is an enhancer, never a hard blocker. A concept may pin the reference
     via `reference_url` / `reference_query`; `MV_REF_PALETTE` recolors the homage palette to
     the concept's own intent (channel rule: no pink-dominant)."""
+    # Edit-grammar template load runs FIRST and independently of homage — it's a separate enhancer
+    # (the reliable frame-analysis distilled into a shot-size mix / change rhythm / cadence the
+    # Director maps our cuts onto). Idempotent (skips if already loaded) so it survives the homage
+    # early-return on re-runs. Kill-switch MV_EDIT_TEMPLATE=0.
+    if not m.get("edit_template") and os.getenv("MV_EDIT_TEMPLATE", "1") != "0":
+        try:
+            from agents.mv_ref_director import load_edit_template
+            tpl = load_edit_template(m["slug"])
+            if tpl:
+                m["edit_template"] = tpl
+                if progress_cb:
+                    progress_cb(f":scroll: [reference] edit_template 로드 "
+                                f"({tpl.get('n_shots')}샷 믹스 → 편집 문법 제약)")
+        except Exception as e:  # noqa: BLE001
+            log.warning("edit_template load skipped (%s)", e)
     if m["homage"].get("doc"):
         return m
     if dry_run or os.getenv("MV_REFERENCE", "1") == "0":
@@ -532,21 +549,27 @@ def stage_director(m: dict, progress_cb: ProgressCb, dry_run: bool) -> dict:
     from agents.mv_director import direct_cuts
     if progress_cb:
         progress_cb(":clapper: [director] 컷 큐시트 생성 (RF/AV 라우팅)")
-    cuts, art_direction = direct_cuts(concept, ld, m.get("rf_weight", "rf_heavy"),
-                                      music_genre=m.get("music_genre", "dance"),
-                                      homage=(m.get("homage") or {}).get("doc"))
+    cuts, art_direction, scenes = direct_cuts(
+        concept, ld, m.get("rf_weight", "rf_heavy"),
+        music_genre=m.get("music_genre", "dance"),
+        homage=(m.get("homage") or {}).get("doc"),
+        edit_template=m.get("edit_template") or None)
     # Shared continuity LOCK (one car, fixed seating/steering side, fixed time-of-day/palette)
     # → every AV still gets it (scripts.mv_still reads m["art_direction"]). Kills cross-cut prop
     # drift (open-car↔closed, wheel left↔right) the way character ref-lock kills identity drift.
     if art_direction:
         m["art_direction"] = art_direction
+    # Scenes = location/time blocks (same place + continuous time). The still board feeds each cut
+    # its scene's setting so a drive reads as ONE coherent scene across varied angles (handoff #3).
+    if scenes:
+        m["scenes"] = scenes
     m["cuts"] = [_new_cut(
         c.get("tag", f"c{i+1:02d}"),
         subject=c.get("subject"), shot_size=c.get("shot_size"),
         camera_move=c.get("camera_move"), motion_prompt=c.get("motion_prompt"),
         still_strategy=("real_footage" if c.get("cut_type") == "rf" else "av_ref_lock"),
         cut_type=c.get("cut_type", "av"), clip_query=c.get("clip_query"),
-        is_killpoint=bool(c.get("is_killpoint")),
+        is_killpoint=bool(c.get("is_killpoint")), scene_id=c.get("scene_id"),
         lyric=c.get("lyric"), action=c.get("action"), setting=c.get("setting"),
         still_prompt=c.get("still_prompt"),
     ) for i, c in enumerate(cuts)]

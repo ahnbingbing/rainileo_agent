@@ -263,6 +263,99 @@ def label_shot_sizes(shots: list[dict], *, model: str = "gpt-4o-mini", batch: in
     return out
 
 
+# ─────────────────────────── edit-grammar template ───────────────────────────
+# The reliable analysis (analyze_reference_frames + label_shot_sizes) is distilled into an
+# "edit_template": the editing GRAMMAR our Director maps our cuts onto. Three load-bearing numbers:
+#   • shot_size_mix     — the framing distribution (so we don't come out all-medium).
+#   • shot_change_rate  — fraction of adjacent shots that CHANGE size = the hard-cut variety rhythm.
+#   • median_shot_s     — the cadence floor (tight), with hero/wide/dance cuts held longer.
+# Camera-move is deliberately NOT asserted as a measured constraint here: the reliable frame
+# analyzer does not label camera moves, so claiming a tracking-vs-push-in ratio would be "analyzed-
+# pretend" (the one rule PD cares about most). Camera variety is a Director PRINCIPLE instead (§block).
+
+def build_edit_template(analysis: dict, *, main_ref: str,
+                        supplementary: list[dict] | None = None) -> dict:
+    """Distill a frame-level shot analysis into the Director's edit-grammar template. The MAIN ref
+    dominates the mix/cadence; `supplementary` labels only nudge accents (never flatten the concept
+    — a flat average of many refs blurs the look). Deterministic: same analysis → same template."""
+    from collections import Counter
+    shots = analysis.get("shots") or []
+    sizes = [s.get("shot_size") for s in shots if s.get("shot_size")]
+    durs = [s.get("dur") for s in shots if s.get("dur")]
+    n = len(sizes)
+    mix = {k: round(v / n, 2) for k, v in Counter(sizes).most_common()} if n else {}
+    changes = sum(1 for a, b in zip(sizes, sizes[1:]) if a != b)
+    change_rate = round(changes / max(1, len(sizes) - 1), 2) if len(sizes) > 1 else 0.0
+    med = analysis.get("median_shot_s")
+    if med is None and durs:
+        med = round(sorted(durs)[len(durs) // 2], 2)
+    return {
+        "main_ref": main_ref,
+        "method": "analyze_reference_frames + label_shot_sizes",
+        "n_shots": len(shots),
+        "median_shot_s": med,
+        "mean_shot_s": analysis.get("mean_shot_s"),
+        "shot_size_mix": mix,
+        "shot_change_rate": change_rate,
+        "supplementary": [s.get("main_ref") or s.get("label") for s in (supplementary or [])],
+        "shots": [{"start": s.get("start"), "end": s.get("end"), "dur": s.get("dur"),
+                   "shot_size": s.get("shot_size")} for s in shots],
+    }
+
+
+def load_edit_template(slug: str) -> dict | None:
+    """Load a prebuilt edit_template.json for this MV (data/tmp/mv/<slug>/edit_template.json), the
+    reliable main-ref grammar. Returns None if absent so the Director proceeds without it (enhancer,
+    never a blocker — same contract as homage)."""
+    p = ROOT / "data/tmp/mv" / slug / "edit_template.json"
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text())
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def edit_template_grammar_block(tpl: dict | None, *, n_cuts: int | None = None) -> str:
+    """Render the edit_template as the Director's PRODUCTION CONSTRAINT (Korean) — §3 analysis→
+    constraint. The numbers become per-cut rules (mix target, change rhythm, cadence), not a note
+    the model may ignore. When `n_cuts` is given, the mix becomes CONCRETE per-size cut counts (far
+    better honored than percentages). Returns '' when no template so callers concatenate freely."""
+    if not tpl or not tpl.get("shot_size_mix"):
+        return ""
+    mix = tpl["shot_size_mix"]
+    ordered = sorted(mix.items(), key=lambda kv: -kv[1])
+    mix_txt = ", ".join(f"{k} {int(round(v * 100))}%" for k, v in ordered)
+    # Concrete target counts (round to nearest, keep ≥1 for any present size) — the model honors
+    # "roughly 7 WS, 7 MS" far more than "26%". The failure mode is BOTH directions: not just the
+    # medium-skew (still-gen's default) but also a close-up/insert-skew (pet-face instinct) that
+    # drops the wide/medium shots the scene needs for its space and grandeur.
+    count_txt = ""
+    if n_cuts:
+        counts = {k: max(1, round(v * n_cuts)) for k, v in ordered}
+        count_txt = (f" {n_cuts}컷 기준 목표 개수 ≈ "
+                     + ", ".join(f"{k} {counts[k]}" for k, _ in ordered) + "개")
+    lines = [
+        f"★편집 문법 템플릿(메인 레퍼 {tpl.get('main_ref', '?')} — {tpl.get('n_shots', '?')}샷 "
+        "프레임단위 실분석 → 이 분포를 그대로 생산 제약으로 써라. 노트가 아니라 컷 지정이다):",
+        f"  - **샷사이즈 믹스 목표**: {mix_txt}.{count_txt} 이 비율을 **양방향으로 지켜라** — 미디엄으로도, "
+        "클로즈업/인서트로도 쏠리지 마라. 특히 **WS(와이드)와 MS(미디엄)를 이 비율만큼 꼭 넣어라**: 나이트드라이브의 "
+        "장대함은 네온 도시 속 작은 차를 보여주는 WS와 운전석 투샷 MS에서 나온다 — 펫 얼굴 CU/디테일 insert만 "
+        "쌓으면 공간감이 사라지고 답답해진다(CU/ECU/insert는 리듬 악센트지 뼈대가 아니다). 믹스를 이기는 건 네 지정이다.",
+    ]
+    chg = tpl.get("shot_change_rate")
+    if chg is not None:
+        lines.append(
+            f"  - **변주 리듬**: 메인 레퍼는 인접 컷의 약 {int(round(chg * 100))}%가 샷사이즈를 바꾼다 — "
+            "같은 샷사이즈를 **2컷 넘게 연달지 마라**. 이 끊어치기가 곧 편집의 하드컷 리듬이다.")
+    med = tpl.get("median_shot_s")
+    if med:
+        lines.append(
+            f"  - **케이던스**: 기본은 타이트(중앙값 샷 ≈ {med}s 느낌의 빠른 컷감), **단** 시그니처·와이드·"
+            "히어로·댄스 킬 컷은 **길게 홀드**하라(좋은 와이드를 0.8초로 끊지 마라 — 보여줄 컷은 보여줘라).")
+    return "\n".join(lines)
+
+
 def _derive_query(concept: dict) -> str:
     """Turn a chosen concept into a YouTube search for a matching reference MV."""
     genre = (concept.get("music_genre") or "").strip()

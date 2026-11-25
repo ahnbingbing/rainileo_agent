@@ -32,11 +32,14 @@ log = logging.getLogger("agents.mv_director")
 
 def direct_cuts(concept: dict, lyrics_data: dict, rf_weight: str = "rf_heavy",
                 *, music_genre: str = "dance", n_cuts: int = 24,
-                homage: str | None = None) -> list[dict]:
-    """Return a cut list. Each cut is routed RF or AV per `rf_weight` (PD content-origin rule):
+                homage: str | None = None, edit_template: dict | None = None):
+    """Return (cuts, art_direction, scenes). Each cut is routed RF or AV per `rf_weight`:
       • RF cut  → cut_type='rf', with `clip_query` (search the real library for this moment).
       • AV cut  → cut_type='av', with `still_prompt`+`motion_prompt` (gpt-image-2 → Seedance).
-    rf_heavy → most cuts RF (the real moments are the backbone), few AV for concept/stage/title."""
+    rf_heavy → most cuts RF (the real moments are the backbone), few AV for concept/stage/title.
+    `edit_template` (mv_ref_director.build_edit_template) injects the main reference's editing
+    grammar as a production constraint — shot-size mix, change rhythm, cadence (§block)."""
+    from agents.mv_ref_director import edit_template_grammar_block
     facts = _character_facts()
     lines = lyrics_data.get("lyric_lines", [])
     lines_txt = "\n".join(
@@ -68,6 +71,12 @@ def direct_cuts(concept: dict, lyrics_data: dict, rf_weight: str = "rf_heavy",
         f"{homage.strip()}\n\n"
         if homage and homage.strip() else "")
 
+    # Edit-grammar template (main-ref frame analysis → production constraint): shot-size mix,
+    # change rhythm, cadence. This is what turns "per-cut independent" framing into a sequence with
+    # a reference's editing rhythm instead of all-medium resets. Empty string when no template.
+    grammar = edit_template_grammar_block(edit_template, n_cuts=n_cuts)
+    grammar_block = (grammar + "\n\n") if grammar else ""
+
     system = (
         "너는 'Ryani & Leo' 오리지널 MV의 **감독(콘티)**이다. 컨셉과 가사를 받아 "
         f"컷별 큐시트 {n_cuts}개 내외를 짠다(가사 비트에 타이트 매핑).\n"
@@ -77,6 +86,7 @@ def direct_cuts(concept: dict, lyrics_data: dict, rf_weight: str = "rf_heavy",
         "눈·흰 턱. 종/무꼬리/마킹/귀털/체형 어기면 치명.\n\n"
         f"{route_rule}\n에너지: {energy}\n\n"
         + homage_block
+        + grammar_block
         + MV_PRINCIPLES + "\n\n"
         "★콘티 규칙(어기면 다시):\n"
         "- **★숏츠 페이싱(가장 중요 — 어기면 시청자가 바로 다음 숏츠로 넘어간다)**: 컷은 짧고 타이트하게, "
@@ -90,6 +100,13 @@ def direct_cuts(concept: dict, lyrics_data: dict, rf_weight: str = "rf_heavy",
         "- **★모션이 카메라를 대신하지 않는다**: 모든 컷에서 **펫이 실제로 뭔가를 한다**(고개 돌림/까딱, 눈 깜빡/슬로블링크, "
         "귀 쫑긋, 엉덩이 위글, 앞발 탭, 바람에 털·수염 흩날림). 카메라 무브(push-in/트래킹)만 있고 펫은 얼어있는 컷 금지 — "
         "'움직임 없이 앵글만'은 죽은 컷이다. motion_prompt에 펫의 동작을 반드시 명시.\n"
+        "- **★카메라 = 드라이브는 트래킹이 지배(한 쪽 무브로 쏠리지 마라)**: 드라이브/이동 씬의 연속감은 "
+        "**카메라가 차와 함께 흐르는 측면 트래킹**에서 나온다 — 그래서 측면 트래킹을 **드라이브 씬 카메라의 "
+        "과반(지배 무브)**으로 둬라. 거기에 orbit·tilt·crane·push-in·static hold를 **악센트로 소수** 섞어라. "
+        "두 실패를 **둘 다** 피하라: ①매 컷 똑같은 push-in(프레임 리셋+확대)= '줌 톱니'(연속성 깨짐) — push-in은 "
+        "강조 컷에만 소수. ②그 반대로 **static hold를 남발**(절반이 고정샷)= 순항감이 죽어 드라이브가 멈춰 보인다 "
+        "— static hold는 '카메라 고정, 차가 프레임을 가로지름' 류 소수 컷에만(대략 ≤1/4). 즉 어느 한 무브로도 "
+        "쏠리지 말고 트래킹을 뼈대로, 나머지를 악센트로. 히어로/와이드/댄스 킬 컷은 **길게 홀드**.\n"
         "- **★장면 다양성 + 에너지 분산(반복 몰아주기 금지)**: 비슷한 장면(특히 운전/드라이브 샷)을 **앞에 "
         "연속으로 몰지 마라** — '운전→운전→운전'처럼 군집되면 반복으로 읽혀 바로 스와이프다. 인접 컷은 서로 다른 "
         "종류의 샷·액션이어야 한다. **그루브/시그니처 무브**(비트 타는 춤·head-bob·shoulder-bounce·앞발 탭)를 "
@@ -106,29 +123,40 @@ def direct_cuts(concept: dict, lyrics_data: dict, rf_weight: str = "rf_heavy",
         "그대로 담아라 — 장소·사물·누가 어디에 있는지. 더 안전한 근사치로 바꾸지 마라(그러면 화면이 가사를 "
         "배신한다). 예: '레오는 식탁 위에서' → 레오가 **식탁 상판 위에** 올라가 있는 컷(옆 의자 위가 아님). "
         "'고구마' → 진짜 군고구마가 보이게(다른 간식 대체 금지).\n"
-        "- **★연속성 LOCK(드리프트 방지)**: 모든 컷이 공유하는 하나의 물리 세계를 `art_direction`에 못박아라 — "
-        "반복 등장하는 소품/탈것은 **단 하나의 같은 개체**(같은 차종·같은 색·같은 핸들 방향 LEFT-HAND DRIVE, "
-        "오픈카면 전 컷 오픈카·클로즈면 전 컷 클로즈), **누가 어디 앉는지 고정**(예: 랴니=운전석 LEFT, 레오=조수석 "
-        "RIGHT를 전 컷 유지), **시간대·팔레트 고정**(네온 밤이면 전 컷 네온 밤 — 노을/낮/골드 지평선 금지). "
-        "각 컷 still_prompt는 이 lock과 모순되면 안 된다(핸들 좌→우, 오픈→클로즈, 밤→노을 금지). "
-        "샷·색 **다양성은 이 lock 안에서**(앵글·구도·네온 색조는 바꾸되 세계는 동일).\n"
+        "- **★연속성 = 씬(장소/시간) 코히런스**: 연속성은 카메라가 매끄럽게 이어지는 게 아니라 **같은 장소·"
+        "같은 시간대가 그 씬 내내 유지**되는 것이다(드라이브 = 대개 한 씬: 같은 거리·같은 밤·같은 차·한 여정). "
+        "먼저 컷들을 **씬으로 묶어라** — 각 컷에 `scene_id`를 주고, 한 씬 = 같은 장소 + 연속 시간. "
+        "**씬 안에서는 앵글/샷사이즈를 과감히 다양하게** 써라(완전 다른 각도·하드컷 환영 — 오히려 변주). "
+        "**씬 브레이크 = 진짜 장소/시간 변경**(드라이브→도착지 등)일 때만 새 scene_id. 최종본이 '연결성 "
+        "없다'로 읽힌 근본은 컷들이 한 드라이브(같은 곳·같은 밤)로 안 묶이고 전부 같은 미디엄이었기 때문이다.\n"
+        "- **★그 씬의 물리 세계 LOCK(드리프트 방지)**: 전역 공유 월드를 `art_direction`에, 씬별 장소/시간은 "
+        "`scenes[].setting`에 못박아라 — 반복 등장 소품/탈것은 **단 하나의 같은 개체**(같은 차종·색·핸들 "
+        "LEFT-HAND DRIVE, 오픈카면 전 컷 오픈·클로즈면 전 컷 클로즈), **좌석 고정**(랴니=운전석 LEFT, "
+        "레오=조수석 RIGHT), **시간대·팔레트 고정**(네온 밤이면 그 씬 전 컷 네온 밤 — 노을/낮/골드 금지). "
+        "각 컷 still_prompt는 이 lock·그 컷의 scene과 모순되면 안 된다(핸들 좌→우, 오픈→클로즈, 밤→노을 금지). "
+        "샷·색 **다양성은 이 lock 안에서**(앵글·구도·네온 색조는 바꾸되 씬의 세계는 동일).\n"
         "- **샷 다양성**: WS/MS/CU/ECU/인서트 섞되, 위 연속성 lock을 깨지 않는다.\n"
         "- **해부 안전**: 뒷다리/배를 세워 보이는 포즈는 **가슴 위(chest-up) 타이트 프레이밍**으로 하반신 프레임 밖.\n"
         "- **실제 네발 동물**(사람처럼 서서 물건 들기 금지), 깨끗한 댄스 컷엔 **사람 없음**.\n"
         "- 의상 = 자연 털 기본(이 컨셉은 코스튬 아님). 무대/배경만 스타일링.\n"
         "- 킬포인트(감정 정점) 컷 1개를 is_killpoint=true로 표시하고 더 공들인 샷으로.\n\n"
-        "출력 = JSON 오브젝트 {\"art_direction\": \"...\", \"cuts\": [ ... ]}.\n"
+        "출력 = JSON 오브젝트 {\"art_direction\": \"...\", \"scenes\": [ ... ], \"cuts\": [ ... ]}.\n"
         '"art_direction" = 전 컷 공유 연속성 LOCK을 영어 한 단락으로: 그 하나의 탈것/소품(차종·색·'
         'LEFT-HAND DRIVE 핸들·오픈/클로즈)·좌석 배치(누가 LEFT, 누가 RIGHT)·시간대/팔레트를 명시('
         'gpt-image가 매 컷 동일하게 유지하도록). 예: "The SAME single retro 1980s open-top convertible '
         'in every shot — deep navy blue, chrome trim, LEFT-HAND DRIVE (steering wheel on the LEFT). '
         'Ryani always in the driver seat (LEFT), Leo always in the passenger seat (RIGHT). Always deep '
         'neon night — blue/violet/cyan city glow, never sunset/day/gold horizon."\n'
+        '"scenes" = 씬 배열(장소/시간 블록). 각 씬 = {"scene_id": "s1_citydrive", '
+        '"setting": "영어로 그 씬의 장소+시간대+조명(그 씬 모든 컷이 공유 — gpt-image에 그대로 주입됨). '
+        '예: a wide neon-lit downtown avenue at deep night, cyan/magenta signage glow"}. '
+        '한 여정/장소면 씬 하나여도 좋다(억지 분할 금지) — 진짜 장소/시간이 바뀔 때만 새 씬.\n'
         '"cuts" = 큐시트 배열. 각 컷 = {\n'
         '  "tag": "c01_...", "lyric": "이 컷이 받는 가사 줄(또는 비트)",\n'
+        '  "scene_id": "s1_citydrive",   // 이 컷이 속한 scenes[].scene_id (같은 씬=같은 장소/시간)\n'
         '  "subject": "ryani|leo|both",\n'
         '  "cut_type": "rf|av",   // RF=실제 클립, AV=gpt-image-2→Seedance (위 라우팅 규칙대로)\n'
-        '  "shot_size": "WS|MS|CU|ECU|insert", "camera_move": "slow push-in|orbit|tilt-up|static|...",\n'
+        '  "shot_size": "WS|MS|CU|ECU|insert", "camera_move": "lateral tracking|orbit|tilt-up|static hold|push-in(강조만)|...",\n'
         '  "action": "화면에서 일어나는 동작(의성어→동작)",\n'
         '  "setting": "배경/무대/색",\n'
         '  "clip_query": "[cut_type=rf일 때만] 라이브러리에서 이 순간을 찾을 영어 검색어(구체 동작+주인공, 예: \\"black French bulldog lying with legs splayed in a frog stretch\\")",\n'
@@ -136,11 +164,11 @@ def direct_cuts(concept: dict, lyrics_data: dict, rf_weight: str = "rf_heavy",
         '  "motion_prompt": "[cut_type=av일 때만] Seedance i2v용 — 무엇이 어떻게 움직이는지(영어, ONE short phrase)",\n'
         '  "is_killpoint": false\n'
         "}.\n"
-        "간결하게. 위 {art_direction, cuts} JSON 오브젝트만 출력.")
+        "간결하게. 위 {art_direction, scenes, cuts} JSON 오브젝트만 출력.")
     genre_lane = concept.get("genre_lane") or ("ballad_rf" if rf_weight == "rf_heavy" else "dance_av")
     user = (f"곡 제목: {lyrics_data.get('title')}\n컨셉: {concept.get('title')} — {concept.get('logline')}\n"
             f"레인: {genre_lane}\n킬포인트: {concept.get('killpoint')}\n\n가사(줄별 주인공·의성어):\n{lines_txt}\n\n"
-            f"큐시트 {n_cuts}개 내외 + art_direction 연속성 lock을 JSON 오브젝트로.")
+            f"큐시트 {n_cuts}개 내외 + scenes(장소/시간 블록) + art_direction 연속성 lock을 JSON 오브젝트로.")
 
     txt = call_text_cascade(system, user, max_tokens=8000).strip()
     txt = re.sub(r"^```(?:json)?\s*", "", txt)
@@ -148,7 +176,7 @@ def direct_cuts(concept: dict, lyrics_data: dict, rf_weight: str = "rf_heavy",
     try:
         data = json.loads(txt)
     except json.JSONDecodeError:
-        # object first ({art_direction, cuts}), fall back to a bare array
+        # object first ({art_direction, scenes, cuts}), fall back to a bare array
         a, b = txt.find("{"), txt.rfind("}")
         try:
             data = json.loads(txt[a:b + 1]) if a != -1 and b != -1 else []
@@ -157,22 +185,31 @@ def direct_cuts(concept: dict, lyrics_data: dict, rf_weight: str = "rf_heavy",
             data = json.loads(txt[a:b + 1]) if a != -1 and b != -1 else []
     if isinstance(data, dict):
         art_direction = (data.get("art_direction") or "").strip()
+        raw_scenes = data.get("scenes") or []
         raw_cuts = data.get("cuts") or []
     else:  # legacy bare array
-        art_direction, raw_cuts = "", data
+        art_direction, raw_scenes, raw_cuts = "", [], data
+    scenes = [s for s in raw_scenes if isinstance(s, dict) and s.get("scene_id")]
+    scene_ids = {s["scene_id"] for s in scenes}
     cuts = []
     for i, c in enumerate(raw_cuts):
         if not isinstance(c, dict):
             continue
         c.setdefault("tag", f"c{i+1:02d}")
+        # Fall back any unknown/missing scene_id to the first scene so scene-coherence still applies
+        # (a cut with no valid scene would otherwise lose its location/time token in the still).
+        if scenes and c.get("scene_id") not in scene_ids:
+            c["scene_id"] = scenes[0]["scene_id"]
         cuts.append(c)
-    log.info("mv_director: %d cuts, art_direction=%s", len(cuts), bool(art_direction))
-    return cuts, art_direction
+    log.info("mv_director: %d cuts / %d scenes, art_direction=%s",
+             len(cuts), len(scenes), bool(art_direction))
+    return cuts, art_direction, scenes
 
 
 if __name__ == "__main__":
     import argparse
     from agents.mv_producer import load_manifest
+    from agents.mv_ref_director import load_edit_template
     ap = argparse.ArgumentParser()
     ap.add_argument("--slug", required=True)
     ap.add_argument("-n", type=int, default=14)
@@ -180,12 +217,18 @@ if __name__ == "__main__":
     m = load_manifest(args.slug)
     concept = m["concept"]["chosen"]
     ld = m["song"]["lyrics_data"]
-    cuts, art_direction = direct_cuts(concept, ld, m.get("rf_weight", "rf_heavy"),
-                                      music_genre=m.get("music_genre", "dance"), n_cuts=args.n)
+    cuts, art_direction, scenes = direct_cuts(
+        concept, ld, m.get("rf_weight", "rf_heavy"),
+        music_genre=m.get("music_genre", "dance"), n_cuts=args.n,
+        homage=(m.get("homage") or {}).get("doc"),
+        edit_template=m.get("edit_template") or load_edit_template(args.slug))
     print(f"[art_direction] {art_direction}\n")
+    for s in scenes:
+        print(f"[scene {s.get('scene_id')}] {s.get('setting')}")
     for c in cuts:
         kp = " ★KILLPOINT" if c.get("is_killpoint") else ""
-        print(f"\n[{c['tag']}] {c.get('cut_type','av').upper()} / {c.get('shot_size')} / {c.get('subject')}{kp}")
+        print(f"\n[{c['tag']}] {c.get('cut_type','av').upper()} / {c.get('shot_size')} / "
+              f"{c.get('camera_move')} / {c.get('subject')} / scene={c.get('scene_id')}{kp}")
         print(f"    lyric : {c.get('lyric')}")
         print(f"    action: {c.get('action')}")
         if c.get("cut_type") == "rf":

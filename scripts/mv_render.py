@@ -30,24 +30,44 @@ SEEDANCE = ROOT / "scripts" / "animate_seedance_i2v.py"
 LOCK_RYANI = ("Keep the small black French bulldog exactly — flat bat-eared face, thin white blaze, "
               "white chin and chest, white toe tips, slim build; she stays TAILLESS with a short smooth "
               "rounded rear.")
+# Cat-tail continuity (i2v): Seedance can detach Leo's orange tail into a separate floating shape
+# behind the car as it animates. His tail stays physically attached to his own body — one whole cat,
+# no stray floating orange tail/shape.
+_LEO_TAIL_I2V = ("his long orange tail stays attached to his own body and sways gently, never a "
+                 "separate or floating orange shape")
 LOCK_LEO = ("Keep the orange tabby cat exactly — dark M-forehead stripes, pale chest, chartreuse eyes, "
-            "and his long orange cat tail that sways gently.")
-LOCK_BOTH = ("Keep the orange tabby cat (with his long swaying tail) and the small black French bulldog "
+            f"and {_LEO_TAIL_I2V}.")
+LOCK_BOTH = ("Keep the orange tabby cat (" + _LEO_TAIL_I2V + ") and the small black French bulldog "
              "(bat ears, white blaze and chest, slim, TAILLESS with a short smooth rear) exactly — the "
              "dog never has a tail, and both stay comparable in size.")
 
-_CAM = {
-    "orbit": "Camera slowly orbits around them.",
-    "slow orbit": "Camera slowly orbits around them.",
-    "static": "Camera holds still.",
-    "slow push-in": "Camera slowly pushes in.",
-    "push-in": "Camera slowly pushes in.",
-    "slow zoom-out": "Camera slowly pulls back.",
-    "zoom-out": "Camera slowly pulls back.",
-    "tilt-up": "Camera slowly tilts up.",
-    "tilt-down": "Camera slowly tilts down.",
-    "crane": "Camera slowly cranes.",
-}
+# Camera-move → Seedance phrasing. The conti-Director emits an OPEN vocabulary (lateral tracking,
+# static hold, crane-down orbit, low side tracking, whip pan …), so resolve by KEYWORD rather than
+# exact match — else a new move silently falls back to generic "gently" and the drive's lateral
+# tracking (the move that carries the cruise continuity) never reaches i2v. Order = most motion-rich
+# first so a compound like "crane-down orbit" keeps its motion and "static"/"hold" only win when
+# nothing else matches.
+_CAM_RULES = [
+    (("lateral track", "side track", "tracking"), "Camera tracks smoothly alongside them, moving laterally with the motion."),
+    (("orbit",), "Camera slowly orbits around them."),
+    (("push-in", "push in", "zoom-in", "zoom in"), "Camera slowly pushes in."),
+    (("zoom-out", "zoom out", "pull back", "pullback"), "Camera slowly pulls back."),
+    (("crane up", "crane-up"), "Camera slowly cranes up."),
+    (("crane down", "crane-down"), "Camera slowly cranes down."),
+    (("crane", "aerial"), "Camera slowly cranes over them."),
+    (("tilt-up", "tilt up"), "Camera slowly tilts up."),
+    (("tilt-down", "tilt down", "tilt"), "Camera slowly tilts down."),
+    (("whip", "pan"), "Camera whips quickly across to them."),
+    (("static", "hold", "lock"), "Camera holds still."),
+]
+
+
+def _cam_phrase(cam: str | None) -> str:
+    c = (cam or "").lower().strip()
+    for keys, phrase in _CAM_RULES:
+        if any(k in c for k in keys):
+            return phrase
+    return "Camera moves slowly and gently."
 
 
 def _lock(subject: str) -> str:
@@ -71,7 +91,13 @@ def _sanitize(motion: str) -> str:
 def motion_prompt(cut: dict) -> str:
     """Compose the Seedance motion prompt: sanitized motion + camera pacing + positive char lock."""
     motion = _sanitize(cut.get("motion_prompt") or cut.get("action") or "gentle idle motion")
-    cam = _CAM.get((cut.get("camera_move") or "").lower().strip(), "Camera moves slowly and gently.")
+    cam = _cam_phrase(cut.get("camera_move"))
+    # Anti zoom-sawtooth (PD: "또 만들면 줌인 줌아웃 또 생길 것 같은데"). Seedance's default drift is to
+    # push in on EVERY cut; independently generated, those internal zooms concatenate into the zoom
+    # sawtooth at every cut boundary — the root PD flags, independent of still shot-size variety. So
+    # unless THIS cut intentionally zooms (push-in / pull-back emphasis), pin a constant focal length.
+    if "pushes in" not in cam and "pulls back" not in cam:
+        cam += " Hold a constant focal length — do not zoom in or out; only the stated camera move happens."
     if not motion.endswith((".", "!")):
         motion += "."
     return f"{motion} {cam} {_lock(cut.get('subject'))}"

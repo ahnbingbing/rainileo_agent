@@ -45,6 +45,15 @@ RYA = ("a real photorealistic small black FEMALE French bulldog with a NORMAL, c
 # Ryani anatomy guard (§6): she is spayed female — gpt-image must not add male anatomy on splay/belly poses.
 RYA_ANAT = ("Ryani's underbelly between her hind legs is completely smooth, flat, featureless black fur — "
             "no genitalia of any kind.")
+# Cat-tail continuity guard: gpt-image tends to render Leo's orange tail as a SEPARATE, floating
+# object detached from his body (seen hovering behind the car), or draped onto the car's rear deck.
+# His tail must be ONE continuous part of his body — physically joined to his rump, Leo rendered as a
+# single whole cat. No detached, floating, or free-standing orange tail/shape anywhere; the tail never
+# merges with the car body, trunk, or props.
+LEO_TAIL = ("Leo is ONE whole, anatomically connected cat: his long orange tail grows directly from his "
+            "own rump and stays physically attached to and continuous with his body. There is NO separate, "
+            "floating, detached, or free-standing orange tail or orange shape anywhere in the frame, and "
+            "his tail is never draped on or merged with the car body, trunk, rear deck, or any prop.")
 NO_HUMANS = "No humans anywhere in the frame — no hands, no arms, no people; only the pet(s)."
 PHOTO = ("Photorealistic cinematic DSLR photograph, real fur and real materials, natural photographic "
          "lighting, NOT cartoon, NOT CGI, NOT illustration. 9:16 vertical.")
@@ -58,9 +67,10 @@ def _refs_and_identity(subject: str) -> tuple[list[str], str]:
     if subject == "ryani":
         return [RYAP], f"Ryani is {RYA}. {RYA_ANAT}"
     if subject == "leo":
-        return [LEOP], f"Leo is {LEO}."
+        return [LEOP], f"Leo is {LEO}. {LEO_TAIL}"
     # Size: Ryani (French bulldog) is SLIGHTLY BIGGER than Leo (cat) — PD 2026-11-19 refinement.
-    return [LEOP, RYAP], f"Leo is {LEO}. Ryani is {RYA}. {RYA_ANAT} Ryani the French bulldog is SLIGHTLY BIGGER / a bit larger than Leo the cat."
+    return [LEOP, RYAP], (f"Leo is {LEO}. {LEO_TAIL} Ryani is {RYA}. {RYA_ANAT} Ryani the French "
+                          "bulldog is SLIGHTLY BIGGER / a bit larger than Leo the cat.")
 
 
 # Verbatim constraint pasted into EVERY still when a canonical reference is set — the recurring
@@ -92,17 +102,23 @@ _FRAMING = {
 }
 
 
-def build_prompt(cut: dict, style: str | None = None, canonical: bool = False) -> str:
-    """Assemble the gpt-image-2 prompt: shot-size framing + identity + scene + art-direction + guards.
-    `style` (manifest art_direction) sets the SHARED look and governs the floor/background palette.
-    `canonical` appends the verbatim consistency lock. The LEADING framing clause forces the cut's
-    shot_size (WS/MS/CU/ECU/insert/aerial) so angles actually vary (not all medium)."""
+def build_prompt(cut: dict, style: str | None = None, canonical: bool = False,
+                 scene_setting: str | None = None) -> str:
+    """Assemble the gpt-image-2 prompt: shot-size framing + identity + scene-location + action +
+    art-direction + guards. `style` (manifest art_direction) sets the SHARED world look. `scene_setting`
+    is THIS cut's scene (its location + time-of-day) so every cut in a scene shares one place/time —
+    a drive reads as one coherent scene across varied angles (not cuts jumping location). `canonical`
+    appends the verbatim consistency lock. The LEADING framing clause forces the cut's shot_size so
+    angles actually vary (not all medium). Kill-switch MV_SCENE_SETTING=0 drops the scene token."""
     _, identity = _refs_and_identity(cut.get("subject", "both"))
-    scene = (cut.get("still_prompt") or cut.get("action") or "").strip()
+    action = (cut.get("still_prompt") or cut.get("action") or "").strip()
     framing = ""
     if os.getenv("MV_SHOTSIZE", "1") != "0":
         framing = _FRAMING.get((cut.get("shot_size") or "").strip(), "")
-    parts = [framing, identity, scene, (style or "").strip(),
+    setting = ""
+    if scene_setting and os.getenv("MV_SCENE_SETTING", "1") != "0":
+        setting = f"Scene (keep this location and time-of-day consistent across the shot): {scene_setting.strip()}"
+    parts = [framing, identity, setting, action, (style or "").strip(),
              CANONICAL_LOCK if canonical else "", NO_HUMANS, PHOTO]
     return " ".join(p for p in parts if p)
 
@@ -116,18 +132,19 @@ def _next_version(out_dir: Path, tag: str) -> int:
 
 
 def gen_still(cut: dict, out_dir: Path, *, size: str = "1024x1536", style: str | None = None,
-              canonical_ref: str | None = None) -> Path:
+              canonical_ref: str | None = None, scene_setting: str | None = None) -> Path:
     """Generate one still for a cut via gpt-image-2 ref-lock. Version-managed (no overwrite).
     `canonical_ref` = a per-MV canonical asset reference image (the recurring car + pets at correct
     relative size). Added to the ref-lock so the CAR/wheel/pet-size are anchored by IMAGE, not just
-    text — the fix for cross-shot drift (research: canonical reference per recurring entity)."""
+    text — the fix for cross-shot drift (research: canonical reference per recurring entity).
+    `scene_setting` = this cut's scene location/time-of-day (kept coherent across the scene)."""
     from openai import OpenAI
     client = OpenAI()
     refs, _ = _refs_and_identity(cut.get("subject", "both"))
     use_canon = bool(canonical_ref) and Path(canonical_ref).exists()
     if use_canon:
         refs = list(refs) + [canonical_ref]
-    prompt = build_prompt(cut, style=style, canonical=use_canon)
+    prompt = build_prompt(cut, style=style, canonical=use_canon, scene_setting=scene_setting)
     out_dir.mkdir(parents=True, exist_ok=True)
     tag = cut["tag"]
     ver = _next_version(out_dir, tag)
@@ -233,6 +250,9 @@ def main() -> int:
         return 0
 
     style = m.get("art_direction")  # shared look (mid-century checkerboard carpet etc.)
+    # Scene settings (location/time per scene) — each cut's scene_id resolves to its setting so a
+    # scene stays coherent across varied angles (handoff #3 scene coherence). Kill-switch MV_SCENE_SETTING=0.
+    scene_by_id = {s.get("scene_id"): s.get("setting") for s in (m.get("scenes") or []) if s.get("scene_id")}
     # per-MV canonical asset reference (recurring car + pets at correct size) — image anchor against
     # cross-shot drift. Kill-switch MV_CANONICAL_REF=0. Resolve relative to repo root.
     canonical_ref = m.get("canonical_ref")
@@ -249,7 +269,8 @@ def main() -> int:
     done = []
     for c in todo:
         try:
-            p = gen_still(c, out_dir, style=style, canonical_ref=canonical_ref)
+            p = gen_still(c, out_dir, style=style, canonical_ref=canonical_ref,
+                          scene_setting=scene_by_id.get(c.get("scene_id")))
             print("OK", p.name)
             done.append(p)
         except Exception as e:  # noqa: BLE001
