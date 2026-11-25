@@ -51,6 +51,8 @@ def review(m: dict, *, past_themes: list[str] | None = None) -> dict:
         P.check_anthropomorphic_smile(m, report)
     if _on("PACING"):
         P.check_pacing(m, report)
+    if _on("VARIETY"):
+        P.check_scene_variety(m, report)
     if _on("FRESHNESS"):
         P.check_concept_freshness(m, past_themes, report)
 

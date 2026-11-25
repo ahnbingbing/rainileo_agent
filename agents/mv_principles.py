@@ -63,8 +63,14 @@ MV_PRINCIPLES = """\
 
 10. 숏츠 페이싱: 한 컷을 6초 넘게 끌지 마라 — 길면 느리고 반복돼 보여 시청자가 바로 다음 숏츠로 넘어간다.
     길게 불리는 가사줄은 **2~3컷으로 쪼개**(같은 lyric, 다른 순간·앵글·액션). 오프닝은 느린 와이드 글라이드 말고
-    즉시 훅(타이트 CU·빠른 모션). 컷당 2~4초가 기본, 디테일/인서트로 리듬을 끊어라. (왜: c01이 12.5초 단일
-    글라이드라 '다들 다음 숏츠로 넘어가겠다'. 되는 컷 = c02 같은 타이트 CU+명확한 단일 액션.)
+    즉시 훅(타이트 CU·빠른 모션). 컷당 2~4초가 기본, 디테일/인서트로 리듬을 끊어라. 지루한/밋밋한 장면(가만히
+    운전·응시)을 앞에 몰지 말고 그루브/시그니처 무브를 전곡에 분산하라. (왜: c01이 12.5초 단일 글라이드라 '다들
+    다음 숏츠로 넘어가겠다'. 되는 컷 = c02 같은 타이트 CU+명확한 단일 액션.)
+
+11. 훅 무브는 반복해서 각인시켜라(meme처럼): 지루한 장면은 반복하면 안 되지만 **재미있는 시그니처 훅 무브**
+    (그루브/댄스/특징 동작)는 **여러 번 반복하거나 조금 길게** 보여 머리에 박아라 — 실제 MV 훅 안무가 그렇다.
+    ★**반복되는 가사/탑라인(1절·2절)은 같은 컷을 재사용해도 좋다**(효율 + 각인, 새로 렌더 말 것). 훅을 더 세게
+    박으려면 여러 재미 컷을 **분할 화면(파티 MV 랴니리안나식 몽타주)**으로 모아 한 프레임에 터뜨려라(기존 렌더 재사용).
 """
 
 
@@ -237,6 +243,36 @@ def check_pacing(m: dict, report: dict, max_cut_s: float = 6.0) -> None:
         tag, d = max(longs, key=lambda x: x[1])
         _cap(report, 6, f"페이싱 — {tag} 컷이 {d:.1f}s로 너무 길다(≤{max_cut_s:.0f}s 권장, "
                         f"긴 가사줄은 2~3컷으로 쪼개라 — 안 그러면 스와이프)")
+
+
+def check_scene_variety(m: dict, report: dict) -> None:
+    """Principle 2/10 (energy). Similar scenes clustered — esp. several 'driving' shots in a row at
+    the front — read repetitive → swipe; and the groove/beat energy must not be back-loaded (nobody
+    waits a minute for the fun part). Flags a run of ≥3 drive-only cuts, or no groove cut in the first
+    third."""
+    cuts = m.get("cuts", [])
+    if len(cuts) < 6:
+        return
+    drive = ("driv", "wheel", "cruis", "운전", "주행", "도로", "road", "질주", "속도")
+    groove = ("bounce", "bob", "groove", "beat", "dance", "tap", "바운스", "비트", "춤", "흔들", "위글", "탭")
+
+    def _act(c):
+        return _tokens(c.get("action"), c.get("still_prompt"), c.get("motion_prompt"))
+    run = 0
+    for c in cuts:
+        a = _act(c)
+        if any(k in a for k in drive) and not any(k in a for k in groove):
+            run += 1
+            if run >= 3:
+                _cap(report, 6, "장면 반복 — 운전/드라이브 샷이 3컷+ 연속(장면 다양성·그루브를 분산하라)")
+                break
+        else:
+            run = 0
+    third = max(1, len(cuts) // 3)
+    any_groove = any(any(k in _act(c) for k in groove) for c in cuts)
+    front_groove = any(any(k in _act(c) for k in groove) for c in cuts[:third])
+    if any_groove and not front_groove:
+        _cap(report, 6, "에너지 분산 — 그루브/비트 컷이 초반 1/3에 없다(앞쪽에 에너지를 배치하라)")
 
 
 def check_concept_freshness(m: dict, past_themes: list[str] | None, report: dict) -> None:

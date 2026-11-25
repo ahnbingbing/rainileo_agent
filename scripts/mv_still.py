@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import base64
 import logging
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -31,16 +32,16 @@ log = logging.getLogger("scripts.mv_still")
 # photo) carries the fine detail; this text reinforces the load-bearing markings.
 LEO = ("a real photorealistic orange tabby cat (warm orange tabby, dark M-shape forehead stripes, "
        "pale cream cheeks and chest, large pale chartreuse yellow-green eyes, pink nose, white whiskers, cat tail)")
-RYA = ("a real photorealistic small black FEMALE French bulldog with a SLENDER, fine-boned, refined "
-       "feminine frame — visibly slim legs and a narrow (NOT barrel) chest. Her FACE is slim and refined: "
-       "lean narrow cheeks and a delicate slim muzzle with NO heavy jowls and no chubby round puffed cheeks "
-       "— a dainty whippet-slender face, NOT the broad, wide-cheeked, jowly round-faced stocky standard "
-       "show-Frenchie. Flat brachycephalic face, big upright SMOOTH bat ears with short sleek fur and "
-       "NO fur tufts/feathering/fluff on or inside the ears (a Frenchie's ears are smooth, not furry). "
-       "NO TAIL at all. Her white markings "
-       "stay FINE and understated — a THIN pencil-width white blaze up the muzzle to the forehead (never a "
-       "thick or wide stripe/splash), a small neat white chin and chest, white toe tips; nape and whole "
-       "back SOLID BLACK with no white spot)")
+RYA = ("a real photorealistic small black FEMALE French bulldog with a NORMAL, compact, healthy build — a "
+       "fine-boned-for-a-Frenchie frame (slim legs, a slightly narrower-than-typical chest) BUT a natural "
+       "medium body with gentle belly fullness: NOT skinny/thin/whippet-lean AND NOT an overweight broad "
+       "stocky show-Frenchie. Her FACE is a normal flat-faced French bulldog face, gently refined and "
+       "feminine with a short flat brachycephalic muzzle — do NOT broaden it into wide jowly puffed cheeks "
+       "and do NOT thin it into a narrow gaunt face; keep natural Frenchie proportions. Big upright SMOOTH "
+       "bat ears with short sleek fur and NO fur tufts/feathering/fluff on or inside the ears (a Frenchie's "
+       "ears are smooth). NO TAIL at all. Her white markings stay FINE and clear — a THIN pencil-width white "
+       "blaze up the muzzle to the forehead (never a thick or wide stripe/splash), a neat white chin and a "
+       "big white chest patch, white toe tips; nape and whole back SOLID BLACK with no white spot)")
 # Ryani anatomy guard (§6): she is spayed female — gpt-image must not add male anatomy on splay/belly poses.
 RYA_ANAT = ("Ryani's underbelly between her hind legs is completely smooth, flat, featureless black fur — "
             "no genitalia of any kind.")
@@ -62,13 +63,26 @@ def _refs_and_identity(subject: str) -> tuple[list[str], str]:
     return [LEOP, RYAP], f"Leo is {LEO}. Ryani is {RYA}. {RYA_ANAT} Ryani the French bulldog is SLIGHTLY BIGGER / a bit larger than Leo the cat."
 
 
-def build_prompt(cut: dict, style: str | None = None) -> str:
+# Verbatim constraint pasted into EVERY still when a canonical reference is set — the recurring
+# car/setting + the pets' relative size must be IDENTICAL to the canonical reference, because text
+# alone can't lock an object's geometry (the cross-shot drift root: car body / wheel size / pet size).
+# "Boring consistency in the prompt → consistency in the output" (Seedance drama workflow).
+CANONICAL_LOCK = (
+    "★CANONICAL CONSISTENCY: the car and its setting are ONE fixed thing, IDENTICAL in every shot — "
+    "match the canonical reference image exactly for the car body, the chrome wire wheels, the "
+    "normal-size LEFT-side steering wheel, and the pets' relative size (the dog is slightly bigger "
+    "than the cat). Do NOT redesign the car, resize the wheel, or change the pets' build between shots.")
+
+
+def build_prompt(cut: dict, style: str | None = None, canonical: bool = False) -> str:
     """Assemble the gpt-image-2 prompt: identity + scene + unifying art-direction + guards + realism.
     `style` (manifest art_direction) sets the SHARED look (e.g. mid-century checkerboard carpet) and
-    comes AFTER the per-cut scene so it governs the floor/background palette across every cut."""
+    comes AFTER the per-cut scene so it governs the floor/background palette across every cut.
+    `canonical` appends the verbatim consistency lock (used when a canonical reference image is fed)."""
     _, identity = _refs_and_identity(cut.get("subject", "both"))
     scene = (cut.get("still_prompt") or cut.get("action") or "").strip()
-    parts = [identity, scene, (style or "").strip(), NO_HUMANS, PHOTO]
+    parts = [identity, scene, (style or "").strip(),
+             CANONICAL_LOCK if canonical else "", NO_HUMANS, PHOTO]
     return " ".join(p for p in parts if p)
 
 
@@ -80,12 +94,19 @@ def _next_version(out_dir: Path, tag: str) -> int:
     return (max(nums) + 1) if nums else 1
 
 
-def gen_still(cut: dict, out_dir: Path, *, size: str = "1024x1536", style: str | None = None) -> Path:
-    """Generate one still for a cut via gpt-image-2 ref-lock. Version-managed (no overwrite)."""
+def gen_still(cut: dict, out_dir: Path, *, size: str = "1024x1536", style: str | None = None,
+              canonical_ref: str | None = None) -> Path:
+    """Generate one still for a cut via gpt-image-2 ref-lock. Version-managed (no overwrite).
+    `canonical_ref` = a per-MV canonical asset reference image (the recurring car + pets at correct
+    relative size). Added to the ref-lock so the CAR/wheel/pet-size are anchored by IMAGE, not just
+    text — the fix for cross-shot drift (research: canonical reference per recurring entity)."""
     from openai import OpenAI
     client = OpenAI()
     refs, _ = _refs_and_identity(cut.get("subject", "both"))
-    prompt = build_prompt(cut, style=style)
+    use_canon = bool(canonical_ref) and Path(canonical_ref).exists()
+    if use_canon:
+        refs = list(refs) + [canonical_ref]
+    prompt = build_prompt(cut, style=style, canonical=use_canon)
     out_dir.mkdir(parents=True, exist_ok=True)
     tag = cut["tag"]
     ver = _next_version(out_dir, tag)
@@ -191,6 +212,13 @@ def main() -> int:
         return 0
 
     style = m.get("art_direction")  # shared look (mid-century checkerboard carpet etc.)
+    # per-MV canonical asset reference (recurring car + pets at correct size) — image anchor against
+    # cross-shot drift. Kill-switch MV_CANONICAL_REF=0. Resolve relative to repo root.
+    canonical_ref = m.get("canonical_ref")
+    if canonical_ref and not os.path.isabs(canonical_ref):
+        canonical_ref = str(ROOT / canonical_ref)
+    if os.getenv("MV_CANONICAL_REF", "1") == "0":
+        canonical_ref = None
     want = set((a.only or "").split(",")) if a.only else None
     # never generate stills for RF cuts — those ride real footage, not gpt-image
     todo = [c for c in cuts if (a.all or (want and c["tag"] in want))
@@ -200,7 +228,7 @@ def main() -> int:
     done = []
     for c in todo:
         try:
-            p = gen_still(c, out_dir, style=style)
+            p = gen_still(c, out_dir, style=style, canonical_ref=canonical_ref)
             print("OK", p.name)
             done.append(p)
         except Exception as e:  # noqa: BLE001
