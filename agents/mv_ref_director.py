@@ -99,7 +99,8 @@ def analyze_reference(local_path: str, *, concept_hint: str = "neon night drive"
     """Upload the reference video → Gemini shot-by-shot breakdown + directing standard."""
     uri = _upload(local_path)
     gen_cfg = {"temperature": 0.2, "responseMimeType": "application/json",
-               "thinkingConfig": {"thinkingBudget": 0}}
+               "thinkingConfig": {"thinkingBudget": 0},
+               "maxOutputTokens": 65535}  # a fast-cut MV has 100+ shots → large JSON; default truncates
     use_schema = os.getenv("STRUCT_OUT_GEMINI", "1") != "0"
     if use_schema:
         gen_cfg["responseSchema"] = _SHOTS_SCHEMA
@@ -113,14 +114,116 @@ def analyze_reference(local_path: str, *, concept_hint: str = "neon night drive"
     req = urllib.request.Request(
         f"{BASE}/v1beta/models/{model or MODEL}:generateContent?key={_key()}",
         data=body, headers={"Content-Type": "application/json"}, method="POST")
-    with urllib.request.urlopen(req, timeout=300, context=_CTX) as r:
+    # Larger maxOutputTokens → a fast-cut MV (100+ shots) can take minutes to generate; 300s read
+    # timed out. 600s + the lenient parser (salvages a truncated array) covers long shot lists.
+    with urllib.request.urlopen(req, timeout=600, context=_CTX) as r:
         out = json.loads(r.read())
     txt = out["candidates"][0]["content"]["parts"][0]["text"]
     try:
         return json.loads(txt)
     except json.JSONDecodeError:
-        a, b = txt.find("{"), txt.rfind("}")
-        return json.loads(txt[a:b + 1]) if a != -1 and b != -1 else {"shots": [], "directing_standard": {}}
+        return _lenient_parse(txt)
+
+
+def _lenient_parse(txt: str) -> dict:
+    """Recover a shot analysis from a TRUNCATED JSON response (a fast-cut MV yields 100+ shots →
+    the model can hit the output-token cap mid-array). Salvage every COMPLETE `{...}` object inside
+    the shots array by brace-matching, plus directing_standard if it closed."""
+    try:
+        return json.loads(txt[txt.find("{"):txt.rfind("}") + 1])
+    except Exception:  # noqa: BLE001
+        pass
+    shots, i, n = [], 0, len(txt)
+    key = txt.find('"shots"')
+    if key != -1:
+        i = txt.find("[", key)
+    while 0 <= i < n:
+        start = txt.find("{", i)
+        if start == -1:
+            break
+        depth, j, instr, esc = 0, start, False, False
+        while j < n:
+            c = txt[j]
+            if instr:
+                if esc:
+                    esc = False
+                elif c == "\\":
+                    esc = True
+                elif c == '"':
+                    instr = False
+            elif c == '"':
+                instr = True
+            elif c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        if depth != 0 or j >= n:
+            break  # truncated object — stop
+        try:
+            shots.append(json.loads(txt[start:j + 1]))
+        except json.JSONDecodeError:
+            break
+        i = j + 1
+        if txt[i:].lstrip()[:1] == "]":
+            break
+    ds = {}
+    dkey = txt.find('"directing_standard"')
+    if dkey != -1:
+        dstart = txt.find("{", dkey)
+        try:
+            ds = json.loads(txt[dstart:txt.rfind("}") + 1])
+        except Exception:  # noqa: BLE001
+            ds = {}
+    return {"shots": shots, "directing_standard": ds}
+
+
+def analyze_reference_frames(local_path: str, *, fps: int = 24, k: float = 3.0,
+                             min_shot_s: float = 0.25, thumb: str = "160:90") -> dict:
+    """★Reliable reference analysis the way PD specified: UNIFORM frame extraction at `fps` (24),
+    then DETERMINISTIC cut detection by consecutive-frame difference — NOT a model guessing the
+    segmentation (which was unreliable: one ref came back 9 shots, another 627 uniform-MS). A cut =
+    a frame-diff spike (> mean + k·std); micro-flashes shorter than `min_shot_s` are merged into the
+    neighbouring shot. Returns shots[{start,end,dur,mid_frame}] = the editing grammar (cut count,
+    durations, cadence) from uniform frames. Shot-size labeling is a separate VLM pass on mid_frame.
+
+    No network, no model — ffmpeg + numpy only."""
+    import glob
+    import subprocess
+    import tempfile
+    import numpy as np
+    from PIL import Image
+    work = Path(tempfile.mkdtemp(prefix="refframes_"))
+    subprocess.run(["ffmpeg", "-y", "-i", str(local_path), "-vf", f"fps={fps},scale={thumb}",
+                    str(work / "f%06d.png")], check=True, capture_output=True)
+    fs = sorted(glob.glob(str(work / "*.png")))
+    if len(fs) < 3:
+        return {"shots": [], "fps": fps, "n_frames": len(fs)}
+    arr = np.stack([np.asarray(Image.open(f).convert("L"), dtype=np.float32) for f in fs])
+    diffs = np.abs(np.diff(arr, axis=0)).mean(axis=(1, 2))
+    thr = diffs.mean() + k * diffs.std()
+    cut_frames = [i for i, v in enumerate(diffs, start=1) if v > thr]
+    bounds = [0] + cut_frames + [len(fs)]
+    # merge shots shorter than min_shot_s (strobe/flash false cuts) into the previous shot
+    merged = [bounds[0]]
+    for b in bounds[1:]:
+        if (b - merged[-1]) / fps < min_shot_s and len(merged) > 1:
+            merged[-1] = b
+        else:
+            merged.append(b)
+    shots = []
+    for i in range(len(merged) - 1):
+        s, e = merged[i], merged[i + 1]
+        shots.append({"start": round(s / fps, 2), "end": round(e / fps, 2),
+                      "dur": round((e - s) / fps, 2), "mid_frame": fs[(s + e) // 2]})
+    durs = [sh["dur"] for sh in shots]
+    return {"shots": shots, "fps": fps, "n_frames": len(fs),
+            "n_cuts": len(shots) - 1,
+            "median_shot_s": round(float(np.median(durs)), 2) if durs else 0.0,
+            "mean_shot_s": round(float(np.mean(durs)), 2) if durs else 0.0,
+            "frame_dir": str(work)}
 
 
 def _derive_query(concept: dict) -> str:
