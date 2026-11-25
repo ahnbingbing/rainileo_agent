@@ -226,6 +226,43 @@ def analyze_reference_frames(local_path: str, *, fps: int = 24, k: float = 3.0,
             "frame_dir": str(work)}
 
 
+def label_shot_sizes(shots: list[dict], *, model: str = "gpt-4o-mini", batch: int = 16) -> list[dict]:
+    """VLM-label each deterministic shot's mid_frame with a shot_size (WS/MS/CU/ECU/insert/aerial).
+    The CUTS are already fixed (analyze_reference_frames); this only classifies framing per shot —
+    the reliable split PD wanted (deterministic segmentation + per-frame labeling, not model guessing
+    the whole segmentation). Batches mid-frames into one call each (tiny thumbnails)."""
+    import base64
+    from openai import OpenAI
+    client = OpenAI()
+    out = [dict(s) for s in shots]
+    for b0 in range(0, len(out), batch):
+        grp = out[b0:b0 + batch]
+        content = [{"type": "text", "text":
+            "Classify the SHOT SIZE of each numbered film frame. Reply ONLY a JSON array like "
+            '[{"i":0,"shot_size":"WS"}...]. shot_size ∈ WS (wide, subject small in a big scene), '
+            "MS (medium, subject chest-up), CU (close-up, a face fills frame), ECU (extreme close-up, "
+            "one detail), insert (an object detail, subject absent/incidental), aerial (top-down)."}]
+        for i, s in enumerate(grp):
+            with open(s["mid_frame"], "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+            content.append({"type": "text", "text": f"frame {i}:"})
+            content.append({"type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{b64}"}})
+        try:
+            r = client.chat.completions.create(model=model, messages=[{"role": "user", "content": content}],
+                                               temperature=0)
+            txt = r.choices[0].message.content
+            a, z = txt.find("["), txt.rfind("]")
+            labels = json.loads(txt[a:z + 1]) if a != -1 else []
+            for lab in labels:
+                idx = lab.get("i")
+                if isinstance(idx, int) and 0 <= idx < len(grp):
+                    grp[idx]["shot_size"] = lab.get("shot_size")
+        except Exception:  # noqa: BLE001 — leave shot_size unset on failure
+            pass
+    return out
+
+
 def _derive_query(concept: dict) -> str:
     """Turn a chosen concept into a YouTube search for a matching reference MV."""
     genre = (concept.get("music_genre") or "").strip()

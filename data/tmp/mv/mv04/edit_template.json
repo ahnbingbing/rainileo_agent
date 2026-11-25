@@ -1,32 +1,359 @@
 {
-  "main_ref": "The Weeknd — Blinding Lights (151 shots, real frame analysis)",
-  "supplementary": [],
+  "main_ref": "The Weeknd — Blinding Lights (uniform 24fps + deterministic cuts, REAL)",
+  "method": "analyze_reference_frames k=3.0 + label_shot_sizes",
+  "n_shots": 57,
+  "median_shot_s": 1.54,
+  "mean_shot_s": 4.61,
   "shot_size_mix": {
-    "ECU": 0.05,
-    "CU": 0.22,
-    "WS": 0.36,
-    "MS": 0.35,
-    "aerial": 0.01,
-    "insert": 0.01
+    "CU": 0.25,
+    "MS": 0.28,
+    "ECU": 0.09,
+    "insert": 0.12,
+    "WS": 0.26
   },
-  "median_shot_s": 1,
-  "camera_moves": [
-    "lateral tracking",
-    "slow push-in",
-    "static hold",
-    "whip pan",
-    "crane shot",
-    "aerial"
-  ],
-  "size_progressions": [
-    "MS->MS",
-    "WS->WS",
-    "MS->WS",
-    "WS->MS",
-    "CU->WS",
-    "CU->CU",
-    "WS->CU",
-    "MS->CU"
-  ],
-  "cadence_note": "tight, hard cuts only; WS/MS lateral tracking holds + CU inserts; whip pan on speed"
+  "supplementary": [],
+  "shots": [
+    {
+      "start": 0.0,
+      "end": 23.54,
+      "dur": 23.54,
+      "shot_size": "CU"
+    },
+    {
+      "start": 23.54,
+      "end": 25.33,
+      "dur": 1.79,
+      "shot_size": "MS"
+    },
+    {
+      "start": 25.33,
+      "end": 26.38,
+      "dur": 1.04,
+      "shot_size": "MS"
+    },
+    {
+      "start": 26.38,
+      "end": 31.38,
+      "dur": 5.0,
+      "shot_size": "MS"
+    },
+    {
+      "start": 31.38,
+      "end": 32.67,
+      "dur": 1.29,
+      "shot_size": "MS"
+    },
+    {
+      "start": 32.67,
+      "end": 39.5,
+      "dur": 6.83,
+      "shot_size": "ECU"
+    },
+    {
+      "start": 39.5,
+      "end": 40.08,
+      "dur": 0.58,
+      "shot_size": "insert"
+    },
+    {
+      "start": 40.08,
+      "end": 41.25,
+      "dur": 1.17,
+      "shot_size": "ECU"
+    },
+    {
+      "start": 41.25,
+      "end": 42.58,
+      "dur": 1.33,
+      "shot_size": "WS"
+    },
+    {
+      "start": 42.58,
+      "end": 43.46,
+      "dur": 0.88,
+      "shot_size": "WS"
+    },
+    {
+      "start": 43.46,
+      "end": 53.58,
+      "dur": 10.12,
+      "shot_size": "CU"
+    },
+    {
+      "start": 53.58,
+      "end": 62.46,
+      "dur": 8.88,
+      "shot_size": "WS"
+    },
+    {
+      "start": 62.46,
+      "end": 72.67,
+      "dur": 10.21,
+      "shot_size": "MS"
+    },
+    {
+      "start": 72.67,
+      "end": 73.04,
+      "dur": 0.38,
+      "shot_size": "CU"
+    },
+    {
+      "start": 73.04,
+      "end": 80.96,
+      "dur": 7.92,
+      "shot_size": "MS"
+    },
+    {
+      "start": 80.96,
+      "end": 86.42,
+      "dur": 5.46,
+      "shot_size": "ECU"
+    },
+    {
+      "start": 86.42,
+      "end": 94.38,
+      "dur": 7.96,
+      "shot_size": "MS"
+    },
+    {
+      "start": 94.38,
+      "end": 94.71,
+      "dur": 0.33,
+      "shot_size": "WS"
+    },
+    {
+      "start": 94.71,
+      "end": 95.71,
+      "dur": 1.0,
+      "shot_size": "MS"
+    },
+    {
+      "start": 95.71,
+      "end": 96.21,
+      "dur": 0.5,
+      "shot_size": "WS"
+    },
+    {
+      "start": 96.21,
+      "end": 96.96,
+      "dur": 0.75,
+      "shot_size": "WS"
+    },
+    {
+      "start": 96.96,
+      "end": 106.92,
+      "dur": 9.96,
+      "shot_size": "MS"
+    },
+    {
+      "start": 106.92,
+      "end": 109.42,
+      "dur": 2.5,
+      "shot_size": "CU"
+    },
+    {
+      "start": 109.42,
+      "end": 117.12,
+      "dur": 7.71,
+      "shot_size": "MS"
+    },
+    {
+      "start": 117.12,
+      "end": 129.83,
+      "dur": 12.71,
+      "shot_size": "CU"
+    },
+    {
+      "start": 129.83,
+      "end": 131.0,
+      "dur": 1.17,
+      "shot_size": "MS"
+    },
+    {
+      "start": 131.0,
+      "end": 132.0,
+      "dur": 1.0,
+      "shot_size": "WS"
+    },
+    {
+      "start": 132.0,
+      "end": 133.42,
+      "dur": 1.42,
+      "shot_size": "CU"
+    },
+    {
+      "start": 133.42,
+      "end": 139.75,
+      "dur": 6.33,
+      "shot_size": "insert"
+    },
+    {
+      "start": 139.75,
+      "end": 140.38,
+      "dur": 0.62,
+      "shot_size": "CU"
+    },
+    {
+      "start": 140.38,
+      "end": 141.33,
+      "dur": 0.96,
+      "shot_size": "ECU"
+    },
+    {
+      "start": 141.33,
+      "end": 143.33,
+      "dur": 2.0,
+      "shot_size": "CU"
+    },
+    {
+      "start": 143.33,
+      "end": 146.54,
+      "dur": 3.21,
+      "shot_size": "WS"
+    },
+    {
+      "start": 146.54,
+      "end": 148.25,
+      "dur": 1.71,
+      "shot_size": "CU"
+    },
+    {
+      "start": 148.25,
+      "end": 148.62,
+      "dur": 0.38,
+      "shot_size": "insert"
+    },
+    {
+      "start": 148.62,
+      "end": 150.17,
+      "dur": 1.54,
+      "shot_size": "insert"
+    },
+    {
+      "start": 150.17,
+      "end": 152.04,
+      "dur": 1.88,
+      "shot_size": "insert"
+    },
+    {
+      "start": 152.04,
+      "end": 153.12,
+      "dur": 1.08,
+      "shot_size": "WS"
+    },
+    {
+      "start": 153.12,
+      "end": 160.92,
+      "dur": 7.79,
+      "shot_size": "WS"
+    },
+    {
+      "start": 160.92,
+      "end": 161.58,
+      "dur": 0.67,
+      "shot_size": "CU"
+    },
+    {
+      "start": 161.58,
+      "end": 163.46,
+      "dur": 1.88,
+      "shot_size": "WS"
+    },
+    {
+      "start": 163.46,
+      "end": 164.12,
+      "dur": 0.67,
+      "shot_size": "MS"
+    },
+    {
+      "start": 164.12,
+      "end": 173.46,
+      "dur": 9.33,
+      "shot_size": "WS"
+    },
+    {
+      "start": 173.46,
+      "end": 173.71,
+      "dur": 0.25,
+      "shot_size": "WS"
+    },
+    {
+      "start": 173.71,
+      "end": 179.83,
+      "dur": 6.12,
+      "shot_size": "CU"
+    },
+    {
+      "start": 179.83,
+      "end": 180.25,
+      "dur": 0.42,
+      "shot_size": "CU"
+    },
+    {
+      "start": 180.25,
+      "end": 188.54,
+      "dur": 8.29,
+      "shot_size": "MS"
+    },
+    {
+      "start": 188.54,
+      "end": 198.29,
+      "dur": 9.75,
+      "shot_size": "CU"
+    },
+    {
+      "start": 198.29,
+      "end": 198.83,
+      "dur": 0.54,
+      "shot_size": "MS"
+    },
+    {
+      "start": 198.83,
+      "end": 202.58,
+      "dur": 3.75,
+      "shot_size": "insert"
+    },
+    {
+      "start": 202.58,
+      "end": 203.12,
+      "dur": 0.54,
+      "shot_size": "insert"
+    },
+    {
+      "start": 203.12,
+      "end": 203.75,
+      "dur": 0.62,
+      "shot_size": "MS"
+    },
+    {
+      "start": 203.75,
+      "end": 204.29,
+      "dur": 0.54,
+      "shot_size": "CU"
+    },
+    {
+      "start": 204.29,
+      "end": 205.21,
+      "dur": 0.92,
+      "shot_size": "WS"
+    },
+    {
+      "start": 205.21,
+      "end": 210.04,
+      "dur": 4.83,
+      "shot_size": "WS"
+    },
+    {
+      "start": 210.04,
+      "end": 210.33,
+      "dur": 0.29,
+      "shot_size": "ECU"
+    },
+    {
+      "start": 210.33,
+      "end": 262.5,
+      "dur": 52.17,
+      "shot_size": "MS"
+    }
+  ]
 }
