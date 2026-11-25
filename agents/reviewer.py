@@ -1324,6 +1324,137 @@ def _false_first_water_gate(concept: dict | None, report: dict) -> None:
              report.get("판정"), report.get("점수"))
 
 
+# Ocean-claim tokens (high precision). EN matched against a lowercased blob.
+_GEO_OCEAN_TOKENS = (
+    "바닷가", "바닷물", "바다", "해변", "해안", "모래사장", "백사장", "파도",
+    "beach", "ocean", "seaside", "seashore",
+)
+
+
+def _geo_ocean_claim_gate(concept: dict | None, report: dict) -> None:
+    """Deterministic LOCATION-LIE cap: RF caption/title must not claim OCEAN on footage the
+    GPS map says is NOT ocean (PD 2026-11-25).
+
+    An RF short shipped titled '겁 없는 꼬마 랴니, 첫 바닷가 수영 도전' with '바다를 처음 만났습니다'
+    over INLAND-STREAM clips (양양/용인 신갈천/문경) — the frame-VLM hallucinated '바닷가' from
+    water pixels and Giri rubber-stamped it. We now have authoritative GPS grounding: assets.geo_water
+    ∈ {'ocean','inland_water','none'} (NULL = no GPS), derived from Apple offline reverse-geocode;
+    'ocean' is set ONLY near a real coastline. So a caption/title claiming ocean on a cut whose asset
+    is positively mapped as 'none'/'inland_water' is a deterministic location lie → cap ≤5, 수정 필요.
+
+    CRITICAL false-positive guard: NEVER fire on geo_water IS NULL (no GPS = UNKNOWN, not
+    'not ocean'). Only POSITIVE map evidence (none/inland_water) fires. RF-scoped; high-precision
+    ocean tokens only. GIRI_GEO_OCEAN_GATE=0 reverts."""
+    if not concept:
+        return
+    if (concept.get("render_style") or "") != "real_footage":
+        return
+    if os.getenv("GIRI_GEO_OCEAN_GATE", "1") == "0":
+        return
+    cuts = concept.get("cuts") or []
+
+    # Batched DB lookup: positive map evidence only (NULL stays unknown → never fires).
+    aids = []
+    for c in cuts:
+        aid = c.get("asset_id") or c.get("secondary_asset_id")
+        if aid:
+            aids.append(aid)
+    if not aids:
+        return
+    geo: dict[str, str | None] = {}
+    try:
+        con = sqlite3.connect(str(ROOT / "data" / "agent.db"))
+        try:
+            qs = ",".join("?" * len(aids))
+            for aid, gw in con.execute(
+                    f"SELECT asset_id, geo_water FROM assets WHERE asset_id IN ({qs})", aids):
+                geo[aid] = gw
+        finally:
+            con.close()
+    except sqlite3.OperationalError:
+        # geo_water column missing on an old DB — can't ground, stay silent.
+        return
+    except Exception as e:
+        log.warning("geo-ocean gate DB read failed: %s", e)
+        return
+
+    def _cut_text(c: dict) -> str:
+        blob = []
+        caps = c.get("captions") or []
+        if isinstance(caps, list):
+            for sc in caps:
+                if isinstance(sc, dict):
+                    blob.append(str(sc.get("ko", "")))
+                    blob.append(str(sc.get("en", "")))
+                else:
+                    blob.append(str(sc))
+        for k in ("ko", "en", "caption"):
+            if c.get(k):
+                blob.append(str(c[k]))
+        return " ".join(blob)
+
+    def _ocean_hits(text: str) -> list[str]:
+        low = text.lower()
+        return [t for t in _GEO_OCEAN_TOKENS if (t.lower() if t.isascii() else t) in low]
+
+    hits: list[str] = []          # offending (label, token) summaries
+    bad_cuts: list[dict] = []     # for caption_vs_clip_mismatches
+
+    # PER-CUT: a cut whose OWN caption claims ocean but whose OWN asset is mapped none/inland_water.
+    for i, c in enumerate(cuts, 1):
+        aid = c.get("asset_id") or c.get("secondary_asset_id")
+        gw = geo.get(aid) if aid else None
+        if gw not in ("none", "inland_water"):
+            continue  # ocean or NULL/unknown → not a positive lie on this cut
+        toks = _ocean_hits(_cut_text(c))
+        if toks:
+            label = c.get("beat") or c.get("tag") or f"cut{i}"
+            hits.append(f"{label}:{'/'.join(sorted(set(toks)))}(geo={gw})")
+            bad_cuts.append({
+                "cut_number": i,
+                "caption_text": _cut_text(c).strip()[:120],
+                "what_clip_actually_shows": f"GPS map says geo_water={gw} (NOT ocean) — "
+                                            f"inland/stream, no coastline",
+                "severity": "critical",
+            })
+
+    # TITLE / narrative_oneliner ocean claim: fire ONLY when we POSITIVELY know the used locations
+    # (≥1 non-NULL geo_water) and NONE of them is ocean. NULL-only sets stay unknown → no fire.
+    title_blob = " ".join(str(concept.get(k, "")) for k in ("title", "narrative_oneliner"))
+    title_toks = _ocean_hits(title_blob)
+    if title_toks:
+        vals = [geo.get(a) for a in aids]
+        any_ocean = any(v == "ocean" for v in vals)
+        any_known = any(v is not None for v in vals)
+        if any_known and not any_ocean:
+            hits.append(f"title:{'/'.join(sorted(set(title_toks)))}(used geo={sorted({v for v in vals if v})})")
+
+    if not hits:
+        return
+
+    geo_known = sorted({v for v in geo.values() if v})
+    note = (f"장소 날조 — 맵은 바다 아님인데 캡션/제목이 바다·해변 주장(결정론 게이트): {', '.join(hits)} "
+            f"— 실제 geo_water={geo_known}. 실지명(개울·개천·강·호수)·물가로 다시 써라.")
+    prev = report.get("가장_큰_문제", "") or ""
+    report["가장_큰_문제"] = note if (not prev or "없" in prev[:6]) else f"{note} / {prev}"
+    try:
+        report["점수"] = min(int(report.get("점수", 10)), 5)
+    except Exception:
+        report["점수"] = 5
+    if report.get("판정", "") in ("업로드", "즉시 업로드", "소폭 수정 후 업로드", ""):
+        report["판정"] = "수정 필요"
+    report["최종_결정"] = report.get("판정", "수정 필요")
+    report["_geo_ocean_override"] = note
+    if bad_cuts:
+        ms = report.get("caption_vs_clip_mismatches")
+        if not isinstance(ms, list):
+            ms = []
+        ms.extend(bad_cuts)
+        report["caption_vs_clip_mismatches"] = ms
+    log.info("geo-ocean-claim gate FIRED: %s → 판정=%s 점수=%s", hits,
+             report.get("판정"), report.get("점수"))
+
+
 def _pd_groundtruth_block(concept: dict | None) -> str:
     """PD per-clip ground-truth → Giri (PD 2026-06-23).
 
@@ -2180,6 +2311,14 @@ def review(video: Path, storyboard: list[dict] | None = None,
         _false_first_water_gate(concept, report)
     except Exception as e:
         log.warning("False-first-water gate failed: %s", e)
+
+    # GPS location grounding (PD 2026-11-25): the map (assets.geo_water) says NOT ocean but a
+    # caption/title claims 바다/해변 — a deterministic location lie ('바닷가 수영' over inland-stream
+    # footage the VLM hallucinated from water pixels). Positive map evidence only; NULL = unknown.
+    try:
+        _geo_ocean_claim_gate(concept, report)
+    except Exception as e:
+        log.warning("Geo-ocean-claim gate failed: %s", e)
 
     # Off-brand grandiose register (PD 2026-07-05): "웅장" 류 pompous diction over everyday
     # footage — Giri rubber-stamped it. Deterministic register gate (like 도사체), RF-scoped;
