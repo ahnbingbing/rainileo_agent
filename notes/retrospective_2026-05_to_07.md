@@ -3107,3 +3107,19 @@ PD가 매번 **컷-간 연속성(차·핸들)**과 **정체성(블레이즈·체
 MV3의 Giri(§4.11)에 이어, 사람이 유일 게이트인 **모든 축**(레퍼런스·소품락·표정·타이밍)을 하나씩 코드로 옮겨 PD를 뺀다.
 
 세션 전말·라이브: 「네온 미드나잇 크루즈」(av_heavy 시티팝, 작업 중). 신규 `agents/mv_ref_director.py`.
+
+## §4.13 C_crossshotdrift — 컷 간 drift의 근본은 "텍스트로 모양을 못 잠근다", 답은 엔티티별 캐노니컬 레퍼런스(star-shaped) (2026-11-25, 네온 미드나잇 크루즈 + AV 회고)
+
+**증상:** MV를 돌리면 컷마다 **차체 디테일·운전대 크기·랴니/레오 크기**가 조금씩 어긋난다. 그리고 PD가 짚은 과거 사실 — AV를 만들 때 **집안 사진을 에셋으로 줬는데도 결국 나중에 드리프트**했다.
+
+**근본(PD + arXiv 리서치):** 각 컷을 **독립 생성**하고, 차/운전대/크기 같은 **개체의 '모양'을 `art_direction` 텍스트로만** 잠갔다. 텍스트는 정체성 톤은 주지만 **지오메트리(차체·휠 크기·체형)를 못 잠근다** — 그건 **이미지 앵커**가 필요하다. arXiv 합의(GroundShot·InfinityStory·EntityBench·EM-Vid·A2RD, 전부 training-free·black-box 적용):
+- **엔티티별 protected 캐노니컬 레퍼런스 뱅크** — 캐릭터뿐 아니라 **소품(차)·장소/세트(집)** 각각 고정 캐노니컬 1장(+보조 몇 장). 장소는 **전경 제거+인페인팅한 clean 배경**.
+- **star-shaped 앵커링(핵심)** — 모든 등장이 **같은 캐노니컬에 직접** 참조. **체인 금지**(앞 컷을 이어받으면 drift가 **누적**). 
+- **배경+캐릭터를 미리 합성한 키프레임을 black-box에 투입**(InfinityStory) — ★우리의 gpt-image 스틸→Seedance i2v가 **정확히 이 SOTA 방법**. 즉 A(캐노니컬 레퍼→합성 스틸→i2v)는 타협이 아니라 black-box 정답. multi-shot은 *한 콜 안* 보너스지 크로스-씬/장소 일관성의 답이 아니다.
+- **VLM 검증+re-anchor** — 각 샷을 캐노니컬과 대조해 drift를 잡고 재앵커.
+
+**"집 사진 줬는데 왜 드리프트했나"의 코드 근거(AV 레인):** 올바른 메커니즘은 이미 있었다 — `scene_ref`(세트 캐노니컬 빈 방, 전 에피 공유)·`_scene_ref_is_clean`(살아있는 동물 있으면 "매 컷 bleed" 경고). **집행이 샜다:** ①주석(2026-06-14) 그대로 *set_anchor가 매니페스트에 안 꿰여서 매 렌더가 fresh GPT 방 생성 → 벤치/벽난로 drift* = **캐노니컬이 star-shaped로 강제되지 않고 중간에 fresh 폴백** ②`chain_from_prev`(Tier 3)가 **앞 컷 이어받기=체인** ③캐노니컬 대조 **검증 루프 없음**. → 레퍼를 *가진 것* ≠ *방법*. 뱅크를 **매 컷에 샐틈없이 star-shaped 투입 + 체인 제거 + VLM 재앵커**가 빠졌다.
+
+**Fix(이번 커밋 cbaf0e4·ca425b3, MV판):** `mv_still`에 per-MV `canonical_ref`(차+펫 앵커를 매 스틸 ref-lock에 포함)+verbatim CANONICAL_LOCK(killsw MV_CANONICAL_REF). RYA 식별 교정(whippet-slender 과잉→정상 컴팩트, PD 실물 ryani_real2.png). 검증: 차체·크롬휠 3컷 일관·랴니 정상 빌드. **미완(다음 빌드):** 엔티티 뱅크를 **장소 포함**으로 일반화 + **AV의 set_anchor 스레딩 누수 fix + chain_from_prev 폐기/star-shaped 전환 + VLM 게이트(MV_REVIEW_VLM) 배선** = 양 레인 통합 일관성 아키텍처.
+
+**교훈:** 생성 일관성은 "레퍼를 주면 된다"가 아니라 **엔티티별 protected 캐노니컬을 star-shaped로 매 샷에 강제 + 검증-재앵커**다. 체인은 drift를 누적한다. 우리 스틸-우선 i2v는 이미 black-box SOTA 경로 — 빠진 건 뱅크(장소 포함)·집행·검증이다.
