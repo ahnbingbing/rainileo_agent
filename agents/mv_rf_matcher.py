@@ -41,26 +41,32 @@ MIN_WINDOW = 1.2             # never trim an RF cut shorter than this (sync slac
 # ─────────────────────────── beat timing (cut ← karaoke) ───────────────────────────
 
 def set_cut_durations(m: dict) -> dict:
-    """Set each cut's duration from the karaoke line its lyric lands on, so the body
-    tiles the song. Cuts are in lyric order; karaoke may have more lines (a lyric split
-    across two sung windows) — align monotonically by fuzzy text match."""
+    """Set each cut's duration so the body tiles the song, SHORTS-PACED.
+
+    Each cut carries the `lyric` (karaoke line) it belongs to. MULTIPLE cuts may share one
+    line — the Director splits a long sung line into 2-3 cuts (different moment/angle/action)
+    so no single cut holds 8-12s and reads slow (the swipe-away failure). We:
+      1. assign each cut to a karaoke line (monotonic; consecutive cuts with the same lyric
+         share a line),
+      2. give each line the time block [line.start, next assigned line.start] (last sung line
+         → its own end; trailing instrumental/outro cuts → [last line end, song end]),
+      3. split each block EVENLY among the cuts assigned to it → a long line auto-caps to
+         block/N seconds per cut.
+    cut 0 is anchored at 0 so it absorbs the song's instrumental intro (visual ↔ caption align)."""
     kl = m.get("karaoke_lines") or []
     cuts = m.get("cuts") or []
     if not kl or not cuts:
         return m
     song_end = float((m.get("song") or {}).get("duration") or (kl[-1].get("end") or 0.0))
-
-    # Cuts legitimately outnumber karaoke lines — the Director adds instrumental /
-    # ad-lib / ending cuts beyond the sung lines. Those trailing cuts have no line to
-    # land on (ptr runs off the end), so collect them and spread the remaining song
-    # time across them evenly instead of indexing past kl.
     n = len(cuts)
-    starts: list[float] = [0.0] * n
-    ptr, last, last_end = 0, 0.0, 0.0
-    tail: list[int] = []
-    for i, cut in enumerate(cuts):
+
+    # 1) assign each cut to a karaoke line (monotonic non-decreasing; ptr is NOT forced past the
+    #    match so a following cut with the SAME lyric lands on the same line = a split).
+    assigns: list[int | None] = []
+    ptr = 0
+    for cut in cuts:
         if ptr >= len(kl):
-            tail.append(i)
+            assigns.append(None)   # trailing instrumental / outro cut — no sung line
             continue
         lyric = (cut.get("lyric") or "").strip()
         best_i, best_r = ptr, -1.0
@@ -68,37 +74,56 @@ def set_cut_durations(m: dict) -> dict:
             r = difflib.SequenceMatcher(None, lyric, (kl[j].get("text") or "").strip()).ratio()
             if r > best_r:
                 best_r, best_i = r, j
-            # a near-exact hit ends the search (monotonic)
             if r > 0.85:
                 break
-        starts[i] = float(kl[best_i].get("start") or last)
-        last = starts[i]
-        last_end = max(last_end, float(kl[best_i].get("end") or last))
-        ptr = best_i + 1
+        assigns.append(best_i)
+        ptr = best_i   # share-friendly: next same-lyric cut re-lands here; a new lyric moves forward
+
+    # 2) time block per assigned line
+    assigned = sorted({a for a in assigns if a is not None})
+    starts: list[float] = [0.0] * n
+    last_end = 0.0
+    tail = [i for i, a in enumerate(assigns) if a is None]
+    if assigned:
+        from collections import defaultdict
+        members: dict[int, list[int]] = defaultdict(list)
+        for i, a in enumerate(assigns):
+            if a is not None:
+                members[a].append(i)
+        for idx, j in enumerate(assigned):
+            b0 = float(kl[j].get("start") or 0.0)
+            if idx + 1 < len(assigned):
+                b1 = float(kl[assigned[idx + 1]].get("start") or kl[j].get("end") or b0)
+            elif tail:
+                b1 = float(kl[j].get("end") or song_end)   # last sung line ends at its end; tail cuts cover the outro
+            else:
+                # no dedicated outro cuts → the last sung line's cuts must tile the instrumental
+                # outro too, else the final cut stretches to song_end (a 15s slow tail).
+                b1 = song_end
+            grp = members[j]
+            span = max(b1 - b0, MIN_WINDOW * len(grp))
+            step = span / len(grp)
+            for k, i in enumerate(grp):   # 3) even split within the block
+                starts[i] = b0 + step * k
+            last_end = max(last_end, b1)
+
+    # trailing cuts (no sung line) fill [last sung line end, song end]
     if tail:
-        # The last SUNG cut must cover its karaoke line FULLY — so the trailing instrumental /
-        # outro cuts begin at the last line's END, not its start. (Spreading from `last` = the last
-        # line's START stole that line's remaining sung time, leaving the final lyric cut ~one step
-        # long while an outro cut already played under its still-singing caption → the sync gate.)
         span = max(song_end - last_end, MIN_WINDOW * len(tail))
         step = span / len(tail)
-        for pos, i in enumerate(tail):
-            starts[i] = last_end + step * pos
-    # The body is CONCATENATED from video-0, so a cut's on-screen time = sum of prior durations,
-    # not its absolute karaoke start. The first sung line begins AFTER the song's instrumental intro
-    # (e.g. 3s in); if cut 0 also "starts" there, the whole sequence plays that intro-gap EARLY and
-    # every visual leads its caption by the intro length. Anchor cut 0 at 0 so it absorbs the intro —
-    # then each later cut telescopes to start exactly at its karaoke line (visual ↔ caption aligned).
+        for k, i in enumerate(tail):
+            starts[i] = last_end + step * k
+
     if starts:
-        starts[0] = 0.0
-    # duration = gap to the next cut's start (last cut runs to song end)
+        starts[0] = 0.0   # cut 0 absorbs the instrumental intro
     for i, cut in enumerate(cuts):
-        nxt = starts[i + 1] if i + 1 < len(starts) else song_end
-        dur = max(MIN_WINDOW, round(nxt - starts[i], 2))
-        cut["duration"] = dur
+        nxt = starts[i + 1] if i + 1 < n else song_end
+        cut["duration"] = max(MIN_WINDOW, round(nxt - starts[i], 2))
         cut["beat_start"] = starts[i]
-    log.info("set_cut_durations: %d cuts, body=%.1fs (song=%.1fs)",
-             len(cuts), sum(c["duration"] for c in cuts), song_end)
+        cut["beat_line"] = assigns[i]   # which karaoke line this cut serves (None = outro)
+    longest = max(cuts, key=lambda c: c["duration"])
+    log.info("set_cut_durations: %d cuts, body=%.1fs (song=%.1fs), longest cut=%.1fs",
+             n, sum(c["duration"] for c in cuts), song_end, longest["duration"])
     return m
 
 

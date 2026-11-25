@@ -60,6 +60,11 @@ MV_PRINCIPLES = """\
    (둠칙둠칙 — head-bob/shoulder-bounce/앞발 탭). 그루브 컷의 motion_prompt에 'bob/bounce to the beat'를
    명시하고, 어셈블은 비트싱크로 그 바운스를 화면에 느끼게 한다. 정적인 '응시만' 컷으로 업템포를 채우면 곡이
    죽는다. (솔로/디테일 컷까지 전부 바운스일 필요는 없다 — 그루브가 필요한 구간에.)
+
+10. 숏츠 페이싱: 한 컷을 6초 넘게 끌지 마라 — 길면 느리고 반복돼 보여 시청자가 바로 다음 숏츠로 넘어간다.
+    길게 불리는 가사줄은 **2~3컷으로 쪼개**(같은 lyric, 다른 순간·앵글·액션). 오프닝은 느린 와이드 글라이드 말고
+    즉시 훅(타이트 CU·빠른 모션). 컷당 2~4초가 기본, 디테일/인서트로 리듬을 끊어라. (왜: c01이 12.5초 단일
+    글라이드라 '다들 다음 숏츠로 넘어가겠다'. 되는 컷 = c02 같은 타이트 CU+명확한 단일 액션.)
 """
 
 
@@ -146,20 +151,35 @@ def check_caption_sync(m: dict, report: dict, tol: float = 1.2) -> None:
     cuts = m.get("cuts", [])
     if not kl:
         return
+    # Cumulative video span of each cut (body is concatenated from video-0).
+    spans = []  # (vstart, vend, beat_line)
     vstart = 0.0
-    worst = None
-    for i, c in enumerate(cuts):
+    for c in cuts:
         dur = float(c.get("duration") or 0.0)
-        vend = vstart + dur
-        if i < len(kl):
-            kstart = float(kl[i].get("start") or 0.0)
-            kend = float(kl[i].get("end") or kstart)
-            # uncovered sung time = parts of [kstart,kend] outside [vstart,vend]. A cut starting
-            # BEFORE its caption is fine (already on screen); only starting LATE or ending EARLY hurts.
-            gap = max(0.0, vstart - kstart - tol) + max(0.0, kend - vend - tol)
-            if gap > tol and (worst is None or gap > worst[1]):
-                worst = (c.get("tag", "?"), gap, vstart, vend, kstart, kend)
-        vstart = vend
+        spans.append((vstart, vstart + dur, c.get("beat_line")))
+        vstart += dur
+    # A karaoke line may be served by a GROUP of cuts (the Director splits a long line into
+    # several cuts for Shorts pacing). Coverage is checked per LINE: the union of the line's
+    # cuts' video spans must cover its sung window [start,end]. beat_line is set by
+    # set_cut_durations; if absent (pre-timing) fall back to the 1:1 cut↔line index.
+    has_bl = any(bl is not None for (_, _, bl) in spans)
+    worst = None
+    for L, line in enumerate(kl):
+        kstart = float(line.get("start") or 0.0)
+        kend = float(line.get("end") or kstart)
+        if has_bl:
+            grp = [(vs, ve) for (vs, ve, bl) in spans if bl == L]
+        else:
+            grp = [(spans[L][0], spans[L][1])] if L < len(spans) else []
+        if not grp:
+            continue
+        cov_start = min(vs for vs, ve in grp)
+        cov_end = max(ve for vs, ve in grp)
+        # uncovered sung time: starting LATE (after the line begins) or ending EARLY both hurt;
+        # starting before the line is fine (already on screen, absorbing the intro).
+        gap = max(0.0, cov_start - kstart - tol) + max(0.0, kend - cov_end - tol)
+        if gap > tol and (worst is None or gap > worst[1]):
+            worst = (f"line{L + 1}", gap, cov_start, cov_end, kstart, kend)
     if worst:
         _cap(report, 6, f"캡션↔영상 싱크 — {worst[0]} 영상[{worst[2]:.1f}~{worst[3]:.1f}]가 "
                         f"가사[{worst[4]:.1f}~{worst[5]:.1f}]를 {worst[1]:.1f}s 못 덮음")
@@ -204,6 +224,19 @@ def check_anthropomorphic_smile(m: dict, report: dict) -> None:
             hits.append(c.get("tag", "?"))
     if hits:
         _cap(report, 5, f"의인화 미소 — {', '.join(hits)} 프롬프트가 펫에게 '미소/smile' 지시(눈연기로 바꿔라)")
+
+
+def check_pacing(m: dict, report: dict, max_cut_s: float = 6.0) -> None:
+    """Principle 10. A cut held longer than ~max_cut_s reads slow/repetitive → viewers swipe.
+    Flags the longest offender (the Director should split that long sung line into 2-3 cuts).
+    Only meaningful after set_cut_durations has timed the cuts."""
+    timed = [(c.get("tag", "?"), float(c.get("duration") or 0.0)) for c in m.get("cuts", [])
+             if c.get("duration")]
+    longs = [(t, d) for t, d in timed if d > max_cut_s]
+    if longs:
+        tag, d = max(longs, key=lambda x: x[1])
+        _cap(report, 6, f"페이싱 — {tag} 컷이 {d:.1f}s로 너무 길다(≤{max_cut_s:.0f}s 권장, "
+                        f"긴 가사줄은 2~3컷으로 쪼개라 — 안 그러면 스와이프)")
 
 
 def check_concept_freshness(m: dict, past_themes: list[str] | None, report: dict) -> None:

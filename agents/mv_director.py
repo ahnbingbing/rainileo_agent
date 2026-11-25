@@ -31,7 +31,7 @@ log = logging.getLogger("agents.mv_director")
 
 
 def direct_cuts(concept: dict, lyrics_data: dict, rf_weight: str = "rf_heavy",
-                *, music_genre: str = "dance", n_cuts: int = 14,
+                *, music_genre: str = "dance", n_cuts: int = 24,
                 homage: str | None = None) -> list[dict]:
     """Return a cut list. Each cut is routed RF or AV per `rf_weight` (PD content-origin rule):
       • RF cut  → cut_type='rf', with `clip_query` (search the real library for this moment).
@@ -78,6 +78,12 @@ def direct_cuts(concept: dict, lyrics_data: dict, rf_weight: str = "rf_heavy",
         + homage_block
         + MV_PRINCIPLES + "\n\n"
         "★콘티 규칙(어기면 다시):\n"
+        "- **★숏츠 페이싱(가장 중요 — 어기면 시청자가 바로 다음 숏츠로 넘어간다)**: 컷은 짧고 타이트하게, "
+        "대부분 2~4초 느낌. **한 가사줄을 한 컷으로 길게 늘이지 마라** — 길게 불리는 줄은 **2~3컷으로 쪼개라**: "
+        "같은 가사줄(lyric 필드를 **똑같이 복사**)에 서로 다른 순간·샷사이즈·앵글·액션을 줘라(그래야 타이밍 엔진이 "
+        "그 줄 시간을 여러 컷에 나눠 빠른 컷감을 만든다). **오프닝(첫 1~2컷)은 느린 와이드 글라이드 금지** — 즉시 훅: "
+        "타이트 CU·빠른 시그니처 모션·강한 비트 히트로 0.5초 만에 붙잡아라. 컷마다 **다른 액션**(같은 동작·같은 구도 "
+        "반복 금지 — 반복은 지루함으로 읽힌다). CU/인서트/디테일(발·눈·핸들·네온 반사)을 자주 끼워 리듬을 끊어라.\n"
         "- **의성어 → 보이는 동작**: 쭉쭉=기지개 스트레치, 실룩실룩=엉덩이 흔들, 뒹굴뒹굴=배 보이며 구르기, "
         "빙글=제자리 회전, 톡=앞발 톡. 가사 그 순간에 그 동작 컷.\n"
         "- **주인공 매칭**: 컷의 화면 펫 = 그 가사 줄 subject(ryani/leo/both). 랴니 줄엔 랴니, 레오 줄엔 레오.\n"
