@@ -204,9 +204,12 @@ def make_mv(song, clips, lines, out, *, bumper=BUMPER_DEFAULT, work=None,
         for i, c in enumerate(clips):
             src, dur = Path(c["src"]), float(c["dur"])
             is_fill = bool(c.get("fill"))
-            # AV/Seedance (`fill`) cuts start PAST the static i2v head so they open already in motion;
-            # real clips land on the action at 0.1. An explicit per-clip `ss` always wins.
-            ss = float(c.get("ss", AV_HEAD_SKIP if is_fill else 0.1))
+            # Any AV/Seedance i2v cut (`av`, or `fill` when its slot is long) carries the static i2v
+            # head, so it starts reading PAST that head to open already in motion; real footage lands
+            # on the action at 0.1. An explicit per-clip `ss` always wins. Short AV cuts (no fill) skip
+            # the head in the natural-trim branch below; long ones (fill) skip it in the setpts branch.
+            is_av = is_fill or bool(c.get("av"))
+            ss = float(c.get("ss", AV_HEAD_SKIP if is_av else 0.1))
             seg = work / f"seg{i:02d}.mp4"
             # `fill`: slow a SHORT fixed-length source (e.g. a 5s Seedance cut) to exactly `dur` so it
             # fills its slot — same path as the finale. Long real clips omit it and get trimmed instead.

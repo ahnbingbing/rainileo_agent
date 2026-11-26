@@ -690,9 +690,14 @@ def stage_assemble(m: dict, progress_cb: ProgressCb, dry_run: bool) -> dict:
             raise StageNotBuilt(f"stage 7 (assemble): cut {c['tag']} has no rendered clip")
         dur = float(c.get("duration", 5.0))
         clip = {"src": _abs(mp4), "dur": dur}
+        is_av = c.get("still_strategy") != "real_footage"
+        # `av` marks a Seedance i2v cut so make_mv skips its static head (opens in motion); set on
+        # ALL AV cuts, not just fill ones, so short slots get the head-skip too.
+        if is_av:
+            clip["av"] = True
         # fill (time-scale to the slot) ONLY when the slot is longer than the ~4.9s Seedance clip;
         # shorter slots just trim the clip's first `dur` seconds at natural speed (no speed-warp).
-        if c.get("still_strategy") != "real_footage" and dur > 4.8:
+        if is_av and dur > 4.8:
             clip["fill"] = True
         if c.get("ss") is not None:
             clip["ss"] = float(c["ss"])

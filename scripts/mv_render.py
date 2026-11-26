@@ -18,13 +18,16 @@ RF cuts are skipped (they ride real footage — make_mv trims them at assemble).
 from __future__ import annotations
 
 import argparse
+import logging
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SEEDANCE = ROOT / "scripts" / "animate_seedance_i2v.py"
+log = logging.getLogger("scripts.mv_render")
 
 # Positive-phrased character locks (Seedance negation-averse). Keep load-bearing markings.
 LOCK_RYANI = ("Keep the small black French bulldog exactly — flat bat-eared face, thin white blaze, "
@@ -127,7 +130,7 @@ def render_cut(cut: dict, out_dir: Path, *, seconds: int = 5, fast: bool = True)
 
 
 def render_manifest(m: dict, *, only: set | None = None, progress_cb=None, fast: bool = True) -> dict:
-    from agents.mv_producer import ROOT as PROOT, mv_dir, cut_needs_render
+    from agents.mv_producer import ROOT as PROOT, mv_dir, cut_needs_render, save_manifest
     out_dir = mv_dir(m["slug"]) / "cuts"
     for c in m["cuts"]:
         if c.get("still_strategy") == "real_footage":
@@ -138,7 +141,20 @@ def render_manifest(m: dict, *, only: set | None = None, progress_cb=None, fast:
             continue  # up-to-date render exists
         if progress_cb:
             progress_cb(f":clapper: [render] Seedance i2v {c['tag']} ({c.get('subject')})")
-        out = render_cut(c, out_dir, fast=fast)
+        # Resilient per-cut: Seedance FAST fails transiently (API/network). Retry a few times and,
+        # on persistent failure, SKIP this cut rather than crash the whole batch — a 23-cut MV render
+        # must not die on one bad call. stage_render's post-check reports any cut left unrendered.
+        out = None
+        for attempt in range(3):
+            try:
+                out = render_cut(c, out_dir, fast=fast)
+                if out and Path(out).exists():
+                    break
+                out = None
+            except Exception as e:  # noqa: BLE001
+                log.warning("render_cut %s attempt %d failed: %s", c["tag"], attempt + 1, str(e)[:120])
+                out = None
+                time.sleep(8)
         if out:
             try:
                 rel = str(out.relative_to(PROOT))
@@ -147,6 +163,15 @@ def render_manifest(m: dict, *, only: set | None = None, progress_cb=None, fast:
             c["render"]["mp4"] = rel
             c["render"]["still_hash_at_render"] = c["still"].get("hash")
             c["change_flags"]["render_dirty"] = False
+            # Persist progress after EACH cut: a long i2v batch can die mid-way (network blip), and
+            # without an incremental save the done cuts' render paths are lost → the resume re-renders
+            # everything. Saving here makes cut_needs_render skip the finished cuts on re-run.
+            try:
+                save_manifest(m)
+            except Exception:  # noqa: BLE001 — never let a save hiccup abort the render
+                pass
+        elif progress_cb:
+            progress_cb(f":warning: [render] {c['tag']} failed after retries — skipped (re-run to fill)")
     return m
 
 
