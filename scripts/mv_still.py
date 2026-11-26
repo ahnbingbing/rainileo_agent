@@ -55,6 +55,16 @@ LEO_TAIL = ("Leo is ONE whole, anatomically connected cat: his long orange tail 
             "floating, detached, or free-standing orange tail or orange shape anywhere in the frame, and "
             "his tail is never draped on or merged with the car body, trunk, rear deck, or any prop.")
 NO_HUMANS = "No humans anywhere in the frame — no hands, no arms, no people; only the pet(s)."
+# Physical-plausibility prior (VLIPP-style explicit physical constraints). T2I models follow text but
+# systematically violate physical commonsense (PhyBench/OmniPhys) — wrong steering side, a pet rendered
+# outside/clipping the car, warped scale, ghosted/doubled limbs. State the physics as HARD facts, not
+# just identity. A physically-clean still is also a cleaner i2v keyframe (less ghosting — PhysGen/K2V).
+PHYSICS = ("Physically correct scene: the steering wheel is on the LEFT (left-hand drive). Each pet's "
+           "WHOLE body is INSIDE the car, contained within the cabin and seats — no pet or body part is "
+           "outside the car, on top of it, or clipping through the doors, panels, or windshield. Correct "
+           "relative scale — the dog is only SLIGHTLY bigger than the cat; neither is shrunken, ballooned, "
+           "or warped. Exactly ONE clean body per animal — no duplicated, doubled, or ghosted limbs, heads, "
+           "or tails. Obey gravity and solid surfaces; nothing floats or merges into the car or props.")
 PHOTO = ("Photorealistic cinematic DSLR photograph, real fur and real materials, natural photographic "
          "lighting, NOT cartoon, NOT CGI, NOT illustration. 9:16 vertical.")
 
@@ -100,40 +110,55 @@ CANONICAL_LOCK = (
 # zoom sawtooth / "same composition" PD flagged). Reference grammar (Blinding Lights, real 151-shot
 # analysis) is WS/MS-dominant with CU/ECU inserts — so FORCE the framing. This leads the prompt so it
 # overrides the medium bias. Kill-switch MV_SHOTSIZE=0.
+# Framing describes the FRAMING ONLY — never names example objects (that was the c10 bug: the insert
+# template listed "dashboard gauge" and the model drew it, overriding the actual DETAIL). The cut's
+# own DETAIL/ACTION line names the subject; framing just sets how tight and from where.
 _FRAMING = {
-    "ECU":    "EXTREME CLOSE-UP — fill the frame with one detail (an eye, a paw on the wheel, a nose); "
-              "the subject is huge, almost abstract, everything else out of frame.",
-    "CU":     "CLOSE-UP — one pet's face fills most of the frame, tight and intimate, shallow depth of field.",
-    "MS":     "MEDIUM SHOT — the two pets from the chest up in the car, balanced, some surroundings visible.",
-    "WS":     "WIDE SHOT — the WHOLE car is SMALL in a big neon cityscape, lots of environment around it; "
-              "the pets are tiny in the frame. A true wide, NOT a medium two-shot. At this distance the "
-              "pets read mostly as their silhouette and base colour — Ryani is a small MOSTLY-BLACK dog "
-              "with only a faint hint of white, Leo a small orange cat; do NOT enlarge, thicken, or "
-              "over-render their white markings into a big white patch.",
-    "insert": "INSERT / detail shot — a close object detail (dashboard gauge, headlight, chrome wheel, "
-              "neon reflection on the hood); the pets may be absent or incidental.",
-    "aerial": "AERIAL / high crane — looking DOWN on the car from high above, the city spread below.",
+    "ECU":    "Extreme close-up: fill the frame with the single detail named below; everything else out of frame.",
+    "CU":     "Close-up: the named subject fills most of the frame, tight and intimate, shallow depth of field.",
+    "MS":     "Medium shot: the two pets from the chest up in the car, balanced, some surroundings visible.",
+    "WS":     "Wide shot: the whole car is SMALL in a big neon cityscape with lots of environment; the pets "
+              "are tiny — read as silhouette and base colour (dark dog, orange cat), markings not enlarged.",
+    "insert": "Tight insert / detail shot: fill the frame with ONLY the object or detail named below — "
+              "the pets are NOT the subject of this shot.",
+    "aerial": "Aerial / high crane: looking down on the car from high above, the city spread below.",
 }
 
 
 def build_prompt(cut: dict, style: str | None = None, canonical: bool = False,
                  scene_setting: str | None = None) -> str:
-    """Assemble the gpt-image-2 prompt: shot-size framing + identity + scene-location + action +
-    art-direction + guards. `style` (manifest art_direction) sets the SHARED world look. `scene_setting`
-    is THIS cut's scene (its location + time-of-day) so every cut in a scene shares one place/time —
-    a drive reads as one coherent scene across varied angles (not cuts jumping location). `canonical`
-    appends the verbatim consistency lock. The LEADING framing clause forces the cut's shot_size so
-    angles actually vary (not all medium). Kill-switch MV_SCENE_SETTING=0 drops the scene token."""
-    _, identity = _refs_and_identity(cut.get("subject", "both"))
-    action = (cut.get("still_prompt") or cut.get("action") or "").strip()
-    framing = ""
-    if os.getenv("MV_SHOTSIZE", "1") != "0":
-        framing = _FRAMING.get((cut.get("shot_size") or "").strip(), "")
-    setting = ""
+    """Assemble the gpt-image EDIT prompt following the OFFICIAL guide (notes/model_prompting_guides.md
+    §gpt-image): edit-framing + hierarchical labeled order SCENE → SHOT → DETAIL/ACTION → KEEP →
+    EXCLUDE → medium, short segments, and NO self-contradiction.
+
+    ★Context-sensitive (the fix for the c10 'dashboard on a blanket insert' disaster): an INSERT /
+    detail shot has the pets as NOT the subject, so it drops the pet-identity, canonical and physics
+    walls that otherwise drown the actual detail and force 'pets in the car'. It gets only the detail +
+    world palette. Pet-subject cuts keep a KEEP-list (identity/world/physics) AFTER the action, so the
+    creative content leads and the constraints follow (guide order), not the other way round."""
+    shot = (cut.get("shot_size") or "").strip()
+    is_insert = shot == "insert"
+    detail = (cut.get("still_prompt") or cut.get("action") or "").strip()
+    framing = _FRAMING.get(shot, "") if os.getenv("MV_SHOTSIZE", "1") != "0" else ""
+    scene = ""
     if scene_setting and os.getenv("MV_SCENE_SETTING", "1") != "0":
-        setting = f"Scene (keep this location and time-of-day consistent across the shot): {scene_setting.strip()}"
-    parts = [framing, identity, setting, action, (style or "").strip(),
-             CANONICAL_LOCK if canonical else "", NO_HUMANS, PHOTO]
+        scene = f"SCENE: {scene_setting.strip()}."
+    world = (style or "").strip()
+    head = "Edit the reference photos into one new cinematic still."
+    exclude = "EXCLUDE: no humans, no hands, no people, no text, no watermark."
+
+    if is_insert:
+        parts = [head, scene, (f"SHOT — {framing}" if framing else ""),
+                 (f"DETAIL: {detail}." if detail else ""),
+                 (f"STYLE: {world}" if world else ""), exclude, PHOTO]
+        return " ".join(p for p in parts if p)
+
+    _, identity = _refs_and_identity(cut.get("subject", "both"))
+    parts = [head, scene, (f"SHOT — {framing}" if framing else ""),
+             (f"ACTION: {detail}." if detail else ""),
+             f"KEEP SUBJECTS (preserve from the reference photos): {identity}",
+             (f"KEEP WORLD: {world}" if world else ""),
+             (CANONICAL_LOCK if canonical else ""), PHYSICS, exclude, PHOTO]
     return " ".join(p for p in parts if p)
 
 
