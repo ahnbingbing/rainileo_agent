@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Recurring GPS-grounding backfill — daily 02:00 KST (after icloud-sync 01:30), PD 2026-11-26.
+
+  TWO steps, both idempotent and safe to repeat:
+    1. scripts.backfill_geo — re-reads Apple's OFFLINE reverse-geocode for still-ungrounded
+       (and places365-guessed) rows. Apple fills place/water ASYNCHRONOUSLY, so coordinates
+       land at capture but the named place + ocean/inland flag arrive hours–days later; a
+       nightly pass closes that gap (this recovered 2,025 rows on 2026-11-26). Authoritative.
+    2. scripts.backfill_geo_scene --recurring --write — conservative Places365 scene class on
+       the GPS-less remainder: writes geo_water='inland_water' (geo_source='places365') only
+       for clear inland-water scenes, NEVER asserts ocean. --recurring implies --no-fetch
+       (local ingest-thumbnails only, so it stays bounded) and is GATED by env
+       GEO_SCENE_ENABLED=1 — remove/flip that to 0 to kill-switch the pixel inferences.
+
+  Install:
+      cp launchd/com.rianileo.geo-backfill.plist ~/Library/LaunchAgents/
+      launchctl load ~/Library/LaunchAgents/com.rianileo.geo-backfill.plist
+  Pause:  launchctl unload ~/Library/LaunchAgents/com.rianileo.geo-backfill.plist
+  The VM picks up the new geo values via the ingest_register export/import.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key><string>com.rianileo.geo-backfill</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/bin/sh</string>
+      <string>-c</string>
+      <string>cd /Users/ahnbingbing/code/rianileo-agent &amp;&amp; .venv/bin/python -m scripts.backfill_geo &amp;&amp; .venv/bin/python -m scripts.backfill_geo_scene --recurring --write</string>
+    </array>
+
+    <key>WorkingDirectory</key><string>/Users/ahnbingbing/code/rianileo-agent</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>TZ</key><string>Asia/Seoul</string>
+      <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+      <key>LOG_LEVEL</key><string>INFO</string>
+      <!-- Kill-switch for the pixel-inferred water class. Set to 0 (or remove) to disable
+           step 2 while keeping the authoritative Apple backfill (step 1) running. -->
+      <key>GEO_SCENE_ENABLED</key><string>1</string>
+    </dict>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+      <key>Hour</key><integer>2</integer>
+      <key>Minute</key><integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key><string>/Users/ahnbingbing/code/rianileo-agent/data/logs/geo-backfill.out.log</string>
+    <key>StandardErrorPath</key><string>/Users/ahnbingbing/code/rianileo-agent/data/logs/geo-backfill.err.log</string>
+
+    <key>RunAtLoad</key><false/>
+    <key>ProcessType</key><string>Background</string>
+    <key>Nice</key><integer>10</integer>
+  </dict>
+</plist>

@@ -38,7 +38,9 @@ def main() -> None:
     # rows now awaiting their reverse-geocode.
     where = "source='icloud' AND source_uuid IS NOT NULL"
     if not a.all:
-        where += " AND geo_water IS NULL"
+        # geo_water IS NULL = still ungrounded; OR geo_source='places365' = a pixel guess
+        # Apple should try to upgrade to the authoritative map value if real GPS has arrived.
+        where += " AND (geo_water IS NULL OR geo_source='places365')"
     rows = con.execute(
         f"SELECT asset_id, source_uuid, kind, file_path FROM assets WHERE {where} "
         f"ORDER BY captured_iso DESC" + (f" LIMIT {int(a.limit)}" if a.limit else "")
@@ -81,8 +83,8 @@ def main() -> None:
                 stats[geo["water"]] = stats.get(geo["water"], 0) + 1
                 if not a.dry_run:
                     con.execute(
-                        "UPDATE assets SET gps_lat=?, gps_lon=?, gps_alt=?, geo_place=?, geo_water=? "
-                        "WHERE asset_id=?",
+                        "UPDATE assets SET gps_lat=?, gps_lon=?, gps_alt=?, geo_place=?, "
+                        "geo_water=?, geo_source='apple' WHERE asset_id=?",
                         (geo["lat"], geo["lon"], alt, geo["place"], geo["water"], aid),
                     )
                     stats["updated"] += 1

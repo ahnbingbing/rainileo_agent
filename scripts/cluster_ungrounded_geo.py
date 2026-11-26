@@ -8,25 +8,36 @@ must be IMAGE clustering, not date), ask PD (the only one who was there) about a
 representatives per cluster, and PROPAGATE the answer across the cluster. Target: answer
 <10% of the total.
 
-This is the PoC + builder: extract one representative frame per ungrounded clip, embed
-with CLIP (open_clip ViT-B-32), cluster with agglomerative cosine linkage, and write a
+Extract one representative frame per ungrounded clip, embed it (Places365 scene features
+by default — SCENE-centric, so the pet no longer dominates; --embedder clip for the old
+object-centric comparison), cluster with agglomerative cosine linkage, and write a
 per-cluster contact sheet so the cluster quality is EYEBALLED before any question is asked.
-Prints the ask-count (= #clusters) vs total so we can see the <10% target is met.
+A cluster manifest (id → members, medoid, scene hint) is written for the PD-naming step:
+PD names the biggest clusters, and scripts/backfill_geo_scene.py --name propagates the real
+place across every member (geo_place, geo_source='pd').
 
-    python -m scripts.cluster_ungrounded_geo --kind video --threshold 0.18
+NOTE on the <10% target: honest scene-centric clustering of this footage yields a HIGH
+ask-count because the GPS-less clips are genuinely many distinct one-off places; forcing
+<10% needs loose thresholds that WRONGLY merge places (re-introducing the very "inland →
+beach" hallucination). The deterministic ocean-refute that actually fixes the safety goal
+without any question lives in scripts/backfill_geo_scene.py; PD-naming here is the optional
+richer layer that grounds the biggest venues by real name, biggest-first.
+
+    python -m scripts.cluster_ungrounded_geo --kind video --threshold 0.20
     python -m scripts.cluster_ungrounded_geo --kind video --limit 120   # quick PoC
+    python -m scripts.cluster_ungrounded_geo --embedder clip             # old object-centric
 """
 import argparse
 import os
-import subprocess
 from pathlib import Path
 
 import numpy as np
 
 from agents.producer import _db
 
+from scripts.geo_thumb import FRAME_DIR, save_thumb
+
 ROOT = Path(__file__).resolve().parents[1]
-FRAME_DIR = ROOT / "data" / "tmp" / "geo_frames"
 OUT_DIR = ROOT / "data" / "tmp" / "geo_clusters"
 
 
@@ -41,32 +52,31 @@ def _rows(kind: str, limit: int | None):
     return _db().execute(q).fetchall()
 
 
-def _frame(aid: str, kind: str, fp: str, dur: float | None) -> Path | None:
-    """One representative 224px frame per asset, cached. Video → mid-point frame."""
+def _frame(aid: str, kind: str, fp: str, dur: float | None, fetch: bool = True) -> Path | None:
+    """One representative 224px frame per asset, cached (this IS the ingest thumbnail —
+    icloud.sync writes the same FRAME_DIR/<aid>.jpg at ingest, so future runs never fetch).
+    Video → mid-point frame. fetch=False skips the GCS pull (recurring jobs stay bounded to
+    assets whose thumbnail already exists locally)."""
     out = FRAME_DIR / f"{aid}.jpg"
     if out.exists():
         return out
     src = Path(fp) if os.path.isabs(fp) else ROOT / fp
-    if not src.exists():
-        return None
-    out.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        if kind == "video":
-            ss = max(0.0, (float(dur or 2.0)) / 2.0)
-            subprocess.run(["ffmpeg", "-nostdin", "-ss", f"{ss:.2f}", "-i", str(src),
-                            "-frames:v", "1", "-vf", "scale=224:224:force_original_aspect_ratio=increase,crop=224:224",
-                            "-y", str(out)], capture_output=True, timeout=60)
-        else:
-            from PIL import Image
-            im = Image.open(src).convert("RGB")
-            im.thumbnail((224, 224))
-            im.save(out, "JPEG")
-    except Exception:
-        return None
-    return out if out.exists() else None
+    if not src.exists() and fetch:
+        # Most GPS-less clips are iCloud-optimized (not on this Mac). Pull the file from the
+        # GCS mirror to the canonical local path (persists → reused by re-sync + next run).
+        try:
+            from icloud import gcs
+            got = gcs.download_to(fp)
+            if got:
+                src = Path(got)
+        except Exception:
+            pass
+    return save_thumb(aid, kind, src, dur)
 
 
-def _embed(frames: list[Path]) -> np.ndarray:
+def _embed_clip(frames: list[Path]) -> tuple[np.ndarray, list[str] | None]:
+    """Full-frame CLIP. OBJECT-centric → the black Frenchie dominates the vector, so
+    'same pet, different place' wrongly merges (the 246-blob). Kept for comparison only."""
     import open_clip
     import torch
     from PIL import Image
@@ -83,7 +93,18 @@ def _embed(frames: list[Path]) -> np.ndarray:
             feats = feats / feats.norm(dim=-1, keepdim=True)
             vecs.append(feats.cpu().numpy())
             print(f"  embedded {min(i+64, len(frames))}/{len(frames)}", flush=True)
-    return np.vstack(vecs).astype(np.float32)
+    return np.vstack(vecs).astype(np.float32), None
+
+
+def _embed_places365(frames: list[Path]) -> tuple[np.ndarray, list[str]]:
+    """Scene-centric 512-d embedding + top scene category per frame (a hint for PD/me)."""
+    from scripts import _places365
+    X, topk = _places365.predict(frames, topk=1)
+    return X, [row[0] for row in topk]
+
+
+def _embed(frames: list[Path], embedder: str) -> tuple[np.ndarray, list[str] | None]:
+    return _embed_places365(frames) if embedder == "places365" else _embed_clip(frames)
 
 
 def _cluster(X: np.ndarray, threshold: float) -> np.ndarray:
@@ -114,7 +135,9 @@ def _contact_sheet(members: list[Path], out: Path, cols: int = 6) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--kind", choices=["video", "photo", "all"], default="video")
-    ap.add_argument("--threshold", type=float, default=0.18, help="cosine distance; lower = tighter")
+    ap.add_argument("--embedder", choices=["places365", "clip"], default="places365",
+                    help="places365 = SCENE-centric (default, ignores the pet); clip = object-centric (the 246-blob)")
+    ap.add_argument("--threshold", type=float, default=0.12, help="cosine distance; lower = tighter")
     ap.add_argument("--limit", type=int, default=None)
     a = ap.parse_args()
 
@@ -130,7 +153,15 @@ def main() -> None:
     if len(frames) < 2:
         return
 
-    X = _embed(frames)
+    # Cache embeddings per (embedder, frame-set) so switching embedders never reuses stale vectors.
+    cache = Path(f"/tmp/geo_emb_{a.embedder}_{a.kind}_{len(frames)}.npz")
+    if cache.exists():
+        d = np.load(cache, allow_pickle=True)
+        X, scenes = d["X"], (list(d["scenes"]) if d["scenes"].size else None)
+        print(f"loaded cached embeddings {cache.name}", flush=True)
+    else:
+        X, scenes = _embed(frames, a.embedder)
+        np.savez(cache, X=X, scenes=np.array(scenes if scenes else [], dtype=object))
     labels = _cluster(X, a.threshold)
     n_clusters = len(set(labels))
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -146,14 +177,31 @@ def main() -> None:
     print(f"=== ASK COUNT = {n_clusters} representatives "
           f"= {100*n_clusters/len(frames):.0f}% of {len(frames)} (target <10%)", flush=True)
 
-    # Contact sheet per multi-member cluster (what PD eyeballs) + medoid asset_id.
+    # Contact sheet per multi-member cluster (what PD eyeballs) + medoid asset_id +
+    # dominant Places365 scene (a hint, not ground truth — PD confirms the real place).
+    # Also dump a manifest the PD-naming step reads to propagate a name across the cluster.
+    import json
+    from collections import Counter
+    manifest = {}
     for lab, idxs in sorted(by_cluster.items(), key=lambda kv: -len(kv[1])):
         if len(idxs) < 2:
             continue
         med = _medoid(idxs, X)
-        _contact_sheet([frames[i] for i in idxs], OUT_DIR / f"cluster_{lab:03d}_n{len(idxs)}.jpg")
-        print(f"  cluster {lab:>3} n={len(idxs):>3} medoid={keep[med]}", flush=True)
-    print(f"\ncontact sheets → {OUT_DIR}", flush=True)
+        sheet = OUT_DIR / f"cluster_{lab:03d}_n{len(idxs)}.jpg"
+        _contact_sheet([frames[i] for i in idxs], sheet)
+        hint = ""
+        scene_top = None
+        if scenes:
+            top = Counter(scenes[i] for i in idxs).most_common(2)
+            scene_top = top[0][0]
+            hint = "  scene~ " + ", ".join(f"{s}×{c}" for s, c in top)
+        print(f"  cluster {lab:>3} n={len(idxs):>3} medoid={keep[med]}{hint}", flush=True)
+        manifest[str(lab)] = {"size": len(idxs), "medoid": keep[med],
+                              "scene_hint": scene_top, "sheet": sheet.name,
+                              "members": [keep[i] for i in idxs]}
+    mpath = OUT_DIR / f"manifest_{a.embedder}_{a.kind}.json"
+    mpath.write_text(json.dumps(manifest, ensure_ascii=False, indent=1))
+    print(f"\ncontact sheets + manifest ({len(manifest)} clusters) → {OUT_DIR}", flush=True)
 
 
 if __name__ == "__main__":

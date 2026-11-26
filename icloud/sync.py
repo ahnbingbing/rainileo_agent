@@ -902,7 +902,7 @@ def insert_asset(con: sqlite3.Connection, **kw) -> "str | None":
     (regardless of source/asset_id), skip the insert and return that existing asset_id so
     the same media never becomes two pool entries. Returns the asset_id actually in the DB."""
     kw.setdefault("source_uuid", None)
-    for _c in ("gps_lat", "gps_lon", "gps_alt", "geo_place", "geo_water"):
+    for _c in ("gps_lat", "gps_lon", "gps_alt", "geo_place", "geo_water", "geo_source"):
         kw.setdefault(_c, None)
     _ensure_content_hash_col(con)
     from agents.geo import ensure_geo_cols
@@ -921,12 +921,12 @@ def insert_asset(con: sqlite3.Connection, **kw) -> "str | None":
             (asset_id, source, kind, file_path, captured_iso, ingested_iso,
              duration_sec, width, height, phash, subjects_csv, age_tag,
              location_tag, notes, source_uuid, content_hash,
-             gps_lat, gps_lon, gps_alt, geo_place, geo_water)
+             gps_lat, gps_lon, gps_alt, geo_place, geo_water, geo_source)
         VALUES (:asset_id, :source, :kind, :file_path, :captured_iso,
                 COALESCE(:ingested_iso, datetime('now')),
                 :duration_sec, :width, :height, :phash,
                 :subjects_csv, :age_tag, :location_tag, :notes, :source_uuid, :content_hash,
-                :gps_lat, :gps_lon, :gps_alt, :geo_place, :geo_water)
+                :gps_lat, :gps_lon, :gps_alt, :geo_place, :geo_water, :geo_source)
         """,
         kw,
     )
@@ -1257,7 +1257,18 @@ def sync_album(
                 gps_alt=_alt,
                 geo_place=_geo.get("place"),
                 geo_water=_geo.get("water") if _geo else None,
+                geo_source=("apple" if _geo else None),
             )
+            # GPS-less clips get grounded later by the scene model / PD cluster-naming, both
+            # of which need one representative frame. Cache it NOW while the file is local,
+            # so that pipeline never has to GCS-refetch thousands of originals (PD 2026-11-26).
+            if not _geo:
+                try:
+                    from scripts.geo_thumb import save_thumb
+                    save_thumb(asset_id, kind, dest_path,
+                               _probe_duration(dest_path) if is_video else None)
+                except Exception:
+                    pass
 
         # Live Photo: paired .mov is its own asset
         if getattr(p, "live_photo", False) and getattr(p, "path_live_photo", None):
@@ -1293,6 +1304,7 @@ def sync_album(
                         gps_alt=(altitude_from_file(live_dest) if _geo else None),
                         geo_place=_geo.get("place"),
                         geo_water=_geo.get("water") if _geo else None,
+                        geo_source=("apple" if _geo else None),
                     )
                 summary["imported_live_clips"] += 1
             except Exception as e:

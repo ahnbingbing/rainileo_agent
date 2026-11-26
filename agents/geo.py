@@ -108,12 +108,56 @@ def altitude_from_file(path: str | Path) -> float | None:
 
 def ensure_geo_cols(con: sqlite3.Connection) -> None:
     """Idempotently add the GPS-grounding columns (runs on both Mac ingest and VM import,
-    so the ingest_register export/import carries them across)."""
-    for col, typ in (("gps_alt", "REAL"), ("geo_place", "TEXT"), ("geo_water", "TEXT")):
+    so the ingest_register export/import carries them across).
+
+    geo_source records WHO wrote geo_water/geo_place — 'apple' (authoritative offline
+    reverse-geocode), 'places365' (conservative scene-model inference for GPS-less clips,
+    refute-only), or 'pd' (a human who was there named the place). Pure provenance: the
+    gates read geo_water the same regardless, but it lets a human audit/revert the pixel
+    inferences in bulk (SELECT … WHERE geo_source='places365')."""
+    for col, typ in (("gps_alt", "REAL"), ("geo_place", "TEXT"), ("geo_water", "TEXT"),
+                     ("geo_source", "TEXT")):
         try:
             con.execute(f"ALTER TABLE assets ADD COLUMN {col} {typ}")
         except sqlite3.OperationalError:
             pass  # already added
+
+
+# ── Places365 scene → water class (GPS-less fallback, PD 2026-11-26) ──
+# When a clip has NO GPS, Apple's authoritative water field is unavailable. A Places365
+# scene model can still REFUTE an ocean hallucination — but a pixel model must never be
+# trusted to ASSERT the ocean (that is the exact failure this whole effort fixes). So the
+# mapping is deliberately asymmetric and conservative:
+#   • a clear INLAND-water scene → 'inland_water'  (safely refutes "ocean/beach")
+#   • an ocean/beach-ish scene   → None            (do NOT auto-assert; leave NULL → ask PD)
+#   • no water scene in top-k    → None            (a pixel "no water" is too weak to write
+#                                                   'none', which would refute a real water
+#                                                   clip the model simply missed)
+_SCENE_OCEAN = {
+    "beach", "coast", "ocean", "sea_cliff", "wave", "beach_house", "harbor",
+    "boat_deck", "underwater/ocean_deep", "islet", "boathouse",
+}
+_SCENE_INLAND = {
+    "pond", "creek", "river", "lake/natural", "swimming_hole", "watering_hole",
+    "hot_spring", "canal/natural", "canal/urban", "waterfall", "water_park",
+    "swimming_pool/outdoor", "swimming_pool/indoor", "fountain", "rice_paddy",
+    "marsh", "swamp", "aquarium",
+}
+
+
+def scene_water_class(scenes) -> str | None:
+    """Conservative water class from Places365 top-k scene names, or None to leave NULL.
+
+    Returns 'inland_water' only when the top scene is a clear inland-water venue AND no
+    ocean-ish scene outranks it; returns None (→ stay unknown / ask PD) for ocean-ish or
+    no-water. Never returns 'ocean' (a pixel guess must not assert the sea) and never
+    returns 'none' (a pixel guess must not deny water)."""
+    if not scenes:
+        return None
+    for s in scenes:                       # ocean-ish anywhere in top-k → defer to PD
+        if s in _SCENE_OCEAN:
+            return None
+    return "inland_water" if scenes[0] in _SCENE_INLAND else None
 
 
 # ── Grounding label for prompts / gates (consumed by the Writer + Giri, next steps) ──
