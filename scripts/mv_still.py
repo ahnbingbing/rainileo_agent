@@ -28,43 +28,31 @@ except Exception:
 
 log = logging.getLogger("scripts.mv_still")
 
-# Proven concise identity blocks (scripts/mv_brillion_gpt.py). Ref-lock (editing the real
-# photo) carries the fine detail; this text reinforces the load-bearing markings.
-LEO = ("a real photorealistic orange tabby cat (warm orange tabby, dark M-shape forehead stripes, "
-       "pale cream cheeks and chest, large pale chartreuse yellow-green eyes, pink nose, white whiskers, cat tail)")
-RYA = ("a real photorealistic small black FEMALE French bulldog with a NORMAL, compact, healthy build — a "
-       "fine-boned-for-a-Frenchie frame (slim legs, a slightly narrower-than-typical chest) BUT a natural "
-       "medium body with gentle belly fullness: NOT skinny/thin/whippet-lean AND NOT an overweight broad "
-       "stocky show-Frenchie. Her FACE is a normal flat-faced French bulldog face, gently refined and "
-       "feminine with a short flat brachycephalic muzzle — do NOT broaden it into wide jowly puffed cheeks "
-       "and do NOT thin it into a narrow gaunt face; keep natural Frenchie proportions. Big upright SMOOTH "
-       "bat ears with short sleek fur and NO fur tufts/feathering/fluff on or inside the ears (a Frenchie's "
-       "ears are smooth). NO TAIL at all. Her white markings stay FINE and clear — a THIN pencil-width white "
-       "blaze up the muzzle to the forehead (never a thick or wide stripe/splash), a neat white chin and a "
-       "big white chest patch, white toe tips; nape and whole back SOLID BLACK with no white spot)")
+# Identity blocks. The ref-lock (editing from leo_real/ryani_real) carries the fine detail, so this
+# text only names the LOAD-BEARING markings and the documented drift classes the image alone fails to
+# prevent (§8.1, §8.14). Per the official gpt-image guide the per-pass preservation reminder is kept
+# SHORT and specific — a long identity paragraph drowns the cut's own action (the c10 lesson). Keep
+# every real guard; just say it tight.
+LEO = ("a photorealistic orange tabby cat — dark M-stripe forehead, cream cheeks/chest, large pale "
+       "chartreuse yellow-green eyes, pink nose, one orange cat tail")
+RYA = ("a photorealistic small black FEMALE French bulldog, NO TAIL — compact healthy build (not "
+       "whippet-thin, not stocky-broad), flat brachycephalic face, smooth upright bat ears with no fur "
+       "tufts. Markings stay fine: a THIN pencil-width white blaze up the muzzle (never thick/wide), a "
+       "neat white chin and chest patch, white toe tips; nape and whole back solid black")
 # Ryani anatomy guard (§6): she is spayed female — gpt-image must not add male anatomy on splay/belly poses.
-RYA_ANAT = ("Ryani's underbelly between her hind legs is completely smooth, flat, featureless black fur — "
-            "no genitalia of any kind.")
-# Cat-tail continuity guard: gpt-image tends to render Leo's orange tail as a SEPARATE, floating
-# object detached from his body (seen hovering behind the car), or draped onto the car's rear deck.
-# His tail must be ONE continuous part of his body — physically joined to his rump, Leo rendered as a
-# single whole cat. No detached, floating, or free-standing orange tail/shape anywhere; the tail never
-# merges with the car body, trunk, or props.
-LEO_TAIL = ("Leo is ONE whole, anatomically connected cat: his long orange tail grows directly from his "
-            "own rump and stays physically attached to and continuous with his body. There is NO separate, "
-            "floating, detached, or free-standing orange tail or orange shape anywhere in the frame, and "
-            "his tail is never draped on or merged with the car body, trunk, rear deck, or any prop.")
+RYA_ANAT = "Ryani's underbelly is smooth featureless black fur, no genitalia."
+# Cat-tail continuity guard: gpt-image renders Leo's tail as a SEPARATE floating object or drapes it on
+# the car. His tail is ONE continuous part of his body.
+LEO_TAIL = ("Leo is one whole cat: his orange tail grows from his own rump and stays attached — no "
+            "separate, floating, or detached orange tail anywhere, never draped on the car.")
 NO_HUMANS = "No humans anywhere in the frame — no hands, no arms, no people; only the pet(s)."
-# Physical-plausibility prior (VLIPP-style explicit physical constraints). T2I models follow text but
-# systematically violate physical commonsense (PhyBench/OmniPhys) — wrong steering side, a pet rendered
-# outside/clipping the car, warped scale, ghosted/doubled limbs. State the physics as HARD facts, not
-# just identity. A physically-clean still is also a cleaner i2v keyframe (less ghosting — PhysGen/K2V).
-PHYSICS = ("Physically correct scene: the steering wheel is on the LEFT (left-hand drive). Each pet's "
-           "WHOLE body is INSIDE the car, contained within the cabin and seats — no pet or body part is "
-           "outside the car, on top of it, or clipping through the doors, panels, or windshield. Correct "
-           "relative scale — the dog is only SLIGHTLY bigger than the cat; neither is shrunken, ballooned, "
-           "or warped. Exactly ONE clean body per animal — no duplicated, doubled, or ghosted limbs, heads, "
-           "or tails. Obey gravity and solid surfaces; nothing floats or merges into the car or props.")
+# Physical-plausibility prior (VLIPP-style). T2I models follow text but violate physical commonsense
+# (PhyBench/OmniPhys) — wrong steering side, a pet outside/clipping the car, warped scale, ghosted
+# limbs. Stated as HARD facts; a physically-clean still is also a cleaner i2v keyframe (PhysGen/K2V).
+PHYSICS = ("Physically correct: the steering wheel is on the LEFT. Each pet's whole body is inside the "
+           "cabin — nothing outside, on top of, or clipping the car. Correct scale — the dog only "
+           "slightly bigger than the cat. Exactly one clean body per animal, no doubled or ghosted "
+           "limbs; obey gravity, nothing floats or merges into the car.")
 PHOTO = ("Photorealistic cinematic DSLR photograph, real fur and real materials, natural photographic "
          "lighting, NOT cartoon, NOT CGI, NOT illustration. 9:16 vertical.")
 
@@ -83,26 +71,15 @@ def _refs_and_identity(subject: str) -> tuple[list[str], str]:
                           "bulldog is SLIGHTLY BIGGER / a bit larger than Leo the cat.")
 
 
-# Verbatim constraint pasted into EVERY still when a canonical reference is set — the recurring
-# car/setting + the pets' relative size must be IDENTICAL to the canonical reference, because text
-# alone can't lock an object's geometry (the cross-shot drift root: car body / wheel size / pet size).
-# "Boring consistency in the prompt → consistency in the output" (Seedance drama workflow).
+# Canonical role-label (official gpt-image multi-ref guide: give each input ref a ROLE, don't re-describe
+# in text what the image already shows). The LAST ref image is the canonical car+pets; text alone can't
+# lock geometry (the cross-shot drift root), so the image carries it and this only names the role +
+# the few invariants the image can't disambiguate (LEFT wheel, relative scale, windshield-clip physics).
 CANONICAL_LOCK = (
-    "★CANONICAL CONSISTENCY: the car and its setting are ONE fixed thing, IDENTICAL in every shot — "
-    "match the canonical reference image exactly for the car body, the chrome wire wheels, the "
-    "normal-size LEFT-side steering wheel, and the pets' relative size (the dog is slightly bigger "
-    "than the cat). Do NOT redesign the car, resize the wheel, or change the pets' build between shots. "
-    "★SCALE & WINDSHIELD (match the canonical exactly): scale the pets to the car as in the canonical — "
-    "small animals seated in the cabin, NOT giant heads filling the car. On this low convertible their "
-    "heads may rise just above the low windshield like the canonical, BUT the chrome windshield frame "
-    "and glass are a SOLID object sitting cleanly in front of the cabin — a pet's ear or head must "
-    "NEVER clip through, pierce, or awkwardly cross the chrome windshield frame bar or the glass. Ears "
-    "stay cleanly ABOVE or BEHIND the frame, never intersecting it. "
-    "★MARKINGS MATCH THE CANONICAL: keep Ryani's white markings exactly as in the canonical reference — "
-    "a THIN pencil-width white blaze up the muzzle (never thickened, widened, or spread), a neat white "
-    "chin and chest patch; do not grow, blur, or drift the white between shots. "
-    "★REARVIEW MIRROR: a small rearview mirror is mounted to the TOP-CENTER of the windshield frame as "
-    "in the canonical — it is NOT a large object and NOT floating detached in the cabin between the pets.")
+    "CANONICAL REF (final image): match the car exactly — same body, chrome wire wheels, and normal-size "
+    "LEFT-side steering wheel; keep the pets small and seated at the same relative size (dog slightly "
+    "bigger than cat), not giant heads filling the car. The windshield frame is a solid object in front "
+    "of the cabin — ears stay clear of it, never clipping through.")
 
 
 # Shot-size must be REALIZED in the still, not just labeled — else every cut comes out a medium
@@ -125,8 +102,24 @@ _FRAMING = {
 }
 
 
+def is_rear_view(cut: dict) -> bool:
+    """A cut whose composition looks at the car FROM BEHIND. The canonical reference image is a
+    front/side view, so as an IMAGE anchor it beats the text 'from behind' (image anchor > text — the
+    c22 front-view defect). For these cuts gen_still drops the canonical image so the text viewpoint
+    wins, and build_prompt adds a terse rear-camera directive."""
+    d = (cut.get("still_prompt") or cut.get("action") or "").lower()
+    return ("from behind" in d or "rear view" in d or "behind the" in d
+            or ("taillight" in d and "rear" in d))
+
+
+_REAR_CAMERA = ("CAMERA IS BEHIND THE CAR looking forward from the rear: we see the back of the car and "
+                "the pets from behind; the empty back seat fills the near foreground, the pets sit ahead "
+                "in the front seats and turn their heads back over their shoulders toward this rear "
+                "camera. Clear depth: foreground seat, mid-ground pets, distant sky beyond.")
+
+
 def build_prompt(cut: dict, style: str | None = None, canonical: bool = False,
-                 scene_setting: str | None = None) -> str:
+                 scene_setting: str | None = None, rear: bool = False) -> str:
     """Assemble the gpt-image EDIT prompt following the OFFICIAL guide (notes/model_prompting_guides.md
     §gpt-image): edit-framing + hierarchical labeled order SCENE → SHOT → DETAIL/ACTION → KEEP →
     EXCLUDE → medium, short segments, and NO self-contradiction.
@@ -155,6 +148,7 @@ def build_prompt(cut: dict, style: str | None = None, canonical: bool = False,
 
     _, identity = _refs_and_identity(cut.get("subject", "both"))
     parts = [head, scene, (f"SHOT — {framing}" if framing else ""),
+             (_REAR_CAMERA if rear else ""),
              (f"ACTION: {detail}." if detail else ""),
              f"KEEP SUBJECTS (preserve from the reference photos): {identity}",
              (f"KEEP WORLD: {world}" if world else ""),
@@ -180,10 +174,17 @@ def gen_still(cut: dict, out_dir: Path, *, size: str = "1024x1536", style: str |
     from openai import OpenAI
     client = OpenAI()
     refs, _ = _refs_and_identity(cut.get("subject", "both"))
-    use_canon = bool(canonical_ref) and Path(canonical_ref).exists()
+    rear = is_rear_view(cut)
+    # Drop the canonical IMAGE when it would fight the intended framing. The canonical is a MEDIUM
+    # two-shot, so as an image anchor it (a) overrides a rear viewpoint with its front/side pose and
+    # (b) pulls an intimate face CU back to a medium two-shot (the c16 hook defect). In both cases the
+    # car is barely in frame, so losing its image-anchor costs little while the framing finally lands.
+    # `drop_canonical` is the explicit per-cut opt-out for tight-intimacy shots the Director marks.
+    drop_canon = rear or bool(cut.get("drop_canonical"))
+    use_canon = bool(canonical_ref) and Path(canonical_ref).exists() and not drop_canon
     if use_canon:
         refs = list(refs) + [canonical_ref]
-    prompt = build_prompt(cut, style=style, canonical=use_canon, scene_setting=scene_setting)
+    prompt = build_prompt(cut, style=style, canonical=use_canon, scene_setting=scene_setting, rear=rear)
     out_dir.mkdir(parents=True, exist_ok=True)
     tag = cut["tag"]
     ver = _next_version(out_dir, tag)
