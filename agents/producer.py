@@ -6021,9 +6021,39 @@ def _ensure_upload_columns(con: sqlite3.Connection) -> None:
             con.execute("ALTER TABLE cards ADD COLUMN youtube_video_id TEXT")
         if "youtube_publish_at" not in cols:
             con.execute("ALTER TABLE cards ADD COLUMN youtube_publish_at TEXT")
+        # PD 2026-11-26: durable clip-usage ledger keyed by VIDEO_ID, written at upload. The
+        # clip-cooldown used to seed only from CARDS (asset_id per cut) — so a card-less ORPHAN
+        # (an upload whose card link was later overwritten by a re-render) became invisible and
+        # its clips got re-used by a sibling episode (11/26 two videos shared a source). A ledger
+        # row survives the card link being lost, so cooldown can still see an orphan's clips.
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS video_clip_usage ("
+            "video_id TEXT, asset_id TEXT, publish_at TEXT, created_at TEXT, "
+            "PRIMARY KEY (video_id, asset_id))")
         con.commit()
     except Exception as e:
         log.warning("ensure upload columns failed: %s", e)
+
+
+def _record_clip_usage(con: sqlite3.Connection, video_id: str, cuts: list,
+                       publish_at: str | None) -> None:
+    """Persist (video_id → each clip) at upload so the clip-cooldown survives a lost card link.
+    Records BOTH halves of a split cut (asset_id + secondary_asset_id). Best-effort."""
+    try:
+        now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for _c in (cuts or []):
+            if not isinstance(_c, dict):
+                continue
+            for _k in ("asset_id", "secondary_asset_id"):
+                aid = _c.get(_k)
+                if aid:
+                    con.execute(
+                        "INSERT OR REPLACE INTO video_clip_usage "
+                        "(video_id, asset_id, publish_at, created_at) VALUES (?,?,?,?)",
+                        (video_id, aid, publish_at, now))
+        con.commit()
+    except Exception as e:
+        log.warning("record clip usage failed (non-fatal): %s", e)
 
 
 def _compute_publish_at(target: dt.date) -> str:
@@ -6361,6 +6391,9 @@ def _auto_upload_episode(con: sqlite3.Connection, out_path: Path, target: dt.dat
         (vid, publish_at, card_id),
     )
     con.commit()
+    # PD 2026-11-26: write the durable clip-usage ledger so the cooldown sees these clips even if
+    # this card's video_id is later overwritten by a re-render (the orphan path).
+    _record_clip_usage(con, vid, payload.get("cuts") or [], publish_at)
     if progress_cb:
         progress_cb(f":white_check_mark: 예약 업로드 완료 → https://youtube.com/shorts/{vid} "
                     f"(공개 {publish_at})")

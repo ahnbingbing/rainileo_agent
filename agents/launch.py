@@ -582,15 +582,43 @@ def launch_pipeline(target: dt.date, *,
                  (target + dt.timedelta(days=2)).isoformat())).fetchall():
                 try:
                     for _cut in (_json.loads(_r[0] or "{}").get("cuts") or []):
-                        _aid = _cut.get("asset_id")
-                        if _aid and _aid not in batch_used_assets:
-                            batch_used_assets.add(_aid); _seeded += 1
+                        # PD 2026-11-26: a split cut consumes TWO clips (asset_id +
+                        # secondary_asset_id). Seeding only the primary left the split's OTHER
+                        # half free for a sibling slot to re-pick — a silent re-use path. Seed both.
+                        for _k in ("asset_id", "secondary_asset_id"):
+                            _aid = _cut.get(_k)
+                            if _aid and _aid not in batch_used_assets:
+                                batch_used_assets.add(_aid); _seeded += 1
                 except Exception:
                     continue
         if _seeded:
             log.info("clip cooldown: seeded %d recently-used clips into exclude set", _seeded)
     except Exception as e:
         log.warning("recent-used clip cooldown seed failed: %s", e)
+
+    # PD 2026-11-26: ALSO seed from the durable clip-usage ledger (video_clip_usage), which is
+    # written at upload keyed by video_id. The card-based seed above goes blind to a CARD-LESS
+    # ORPHAN (a prior upload whose card link a re-render later overwrote) — the 11/26 root where
+    # two videos shared a source. The ledger survives the lost card link, so an orphan's clips
+    # still block re-use. ISO-UTC publish_at sorts lexically → a simple >= window bound works.
+    try:
+        _lo = (target - dt.timedelta(days=_RECENT_PUBLISH_COOLDOWN_DAYS)).isoformat()
+        _hi = (target + dt.timedelta(days=2)).isoformat() + "T99"  # inclusive of the whole +2d day
+        _oseed = 0
+        with _db() as _con:
+            try:
+                for _row in _con.execute(
+                    "SELECT DISTINCT asset_id FROM video_clip_usage "
+                    "WHERE publish_at >= ? AND publish_at <= ?", (_lo, _hi)).fetchall():
+                    _aid = _row[0]
+                    if _aid and _aid not in batch_used_assets:
+                        batch_used_assets.add(_aid); _oseed += 1
+            except Exception:
+                pass  # table may not exist yet on a fresh DB — ensured at first upload
+        if _oseed:
+            log.info("clip cooldown: seeded %d clips from the usage ledger (orphan-safe)", _oseed)
+    except Exception as e:
+        log.warning("usage-ledger clip cooldown seed failed: %s", e)
 
     # PD 2026-11-18: scene-MOTIF cooldown (PD asked for "클립+장면 둘 다"). The 18:00/21:00/
     # next-18:00 run all ENDED on "both pets resting on the home couch" — DIFFERENT clips each
@@ -901,8 +929,11 @@ def launch_pipeline(target: dt.date, *,
             # render. (set.add is GIL-safe; the after-render mark below is a backstop.)
             try:
                 for _c in (concept.get("cuts") or []):
-                    if _c.get("asset_id"):
-                        batch_used_assets.add(_c["asset_id"])
+                    # PD 2026-11-26: reserve BOTH halves of a split cut (secondary_asset_id too),
+                    # else a later slot re-picks the split's other clip.
+                    for _k in ("asset_id", "secondary_asset_id"):
+                        if _c.get(_k):
+                            batch_used_assets.add(_c[_k])
             except Exception:
                 pass
             # PD 2026-06-17: TRANSIENT-error retry. A slot used to empty on ANY render
@@ -942,8 +973,10 @@ def launch_pipeline(target: dt.date, *,
         # avoid re-using them (the 6/11 two-RF-identical-clips bug).
         try:
             for _c in (concept.get("cuts") or []):
-                if _c.get("asset_id"):
-                    batch_used_assets.add(_c["asset_id"])
+                # PD 2026-11-26: backstop also reserves the split's secondary clip.
+                for _k in ("asset_id", "secondary_asset_id"):
+                    if _c.get(_k):
+                        batch_used_assets.add(_c[_k])
         except Exception:
             pass
         sv(out)

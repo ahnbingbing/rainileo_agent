@@ -5647,6 +5647,17 @@ def _clip_subject_prominent(clip: str, t_sec: float) -> "bool | None":
         return None
 
 
+def _probe_duration(path: str) -> float:
+    """Best-effort clip duration in seconds (0.0 on any failure)."""
+    try:
+        return float(subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nw=1:nk=1", str(path)],
+            capture_output=True, text=True, timeout=15).stdout.strip() or 0)
+    except Exception:
+        return 0.0
+
+
 def _detect_prominent_over_window(clip: str, t0: float, dur: float) -> "bool | None":
     """A clip is split-worthy if the pet is a prominent close-up for most of the window. Sample a
     couple frames; prominent if ANY says so (a brief turn-away shouldn't disqualify a close-up)."""
@@ -5810,6 +5821,28 @@ def _prerender_split_cuts(manifests: dict, work_dir: Path,
             _motion_name = (entry.get("split_motion")
                             or (_pick_split_motion(primary)
                                 if os.getenv("RF_SPLIT_MOTION_VARY", "1") == "1" else "opposing"))
+            # PD 2026-11-26: clamp `dur` to what BOTH clips can actually supply so neither panel
+            # FREEZES. The old code clamped trim_dur to the PRIMARY only; a shorter secondary (or a
+            # wide panel playing dur×speed, which consumes even more footage) ran out of frames and
+            # overlay held its last frame while the other panel kept moving. Each panel needs its
+            # source to cover dur×speed from its trim_start; the blurred base reads the primary at
+            # 1×. Downward-only; floored so a cut never collapses. OFF-able via the floor env.
+            if not dry_run:
+                _dp = _probe_duration(primary)
+                _ds = _probe_duration(secondary)
+                _avail = []
+                if _dp > 0:
+                    _avail.append((_dp - ts_a) / max(1.0, float(top_speed)))  # base@1× + top@top_speed
+                if _ds > 0:
+                    _avail.append((_ds - ts_b) / max(0.1, float(bot_speed)))  # bottom@bot_speed
+                if _avail:
+                    _floor = float(os.getenv("RF_SPLIT_MIN_DUR", "1.5"))
+                    _clamped = max(_floor, min(dur, *_avail))
+                    if _clamped < dur - 0.05:
+                        if progress_cb:
+                            progress_cb(f":scissors: split {tag}: dur {dur:.2f}→{_clamped:.2f}s "
+                                        f"(clip 길이 맞춤 — freeze 방지)")
+                        dur = _clamped
             filt = _split_motion_wipe_filter(ts_a, ts_b, dur, top_prom, bot_prom,
                                              top_speed, bot_speed, motion=_motion_name)
             _label = f"split-wipe:{_motion_name}"

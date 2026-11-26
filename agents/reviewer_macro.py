@@ -353,8 +353,11 @@ def _recent_episodes(con, days: int) -> list[dict]:
             title = title.get("ko") or ""
         return {"title": title,
                 "oneliner": (pl.get("narrative_oneliner") or "")[:80],
-                "asset_ids": [c.get("asset_id") for c in (pl.get("cuts") or [])
-                              if c.get("asset_id")]}
+                # PD 2026-11-26: include BOTH halves of a split cut so the freshness/overlap gate
+                # isn't blind to a recent episode's secondary clip (same re-use blind spot the
+                # launch cooldown had).
+                "asset_ids": [a for c in (pl.get("cuts") or [])
+                              for a in (c.get("asset_id"), c.get("secondary_asset_id")) if a]}
 
     out: list[dict] = []
     if os.getenv("REVIEWER_FRESHNESS_YOUTUBE", "1") != "0":
@@ -537,7 +540,9 @@ _LOC_OVERUSE_FRAC = float(os.getenv("REVIEWER_LOC_OVERUSE_FRAC", "0.40"))
 
 
 def _cut_asset_ids(draft: dict) -> list[str]:
-    return [c.get("asset_id") for c in (draft.get("cuts") or []) if c.get("asset_id")]
+    # PD 2026-11-26: both halves of a split cut (secondary_asset_id) count toward visual overlap.
+    return [a for c in (draft.get("cuts") or [])
+            for a in (c.get("asset_id"), c.get("secondary_asset_id")) if a]
 
 
 def visual_overlap(drafts: list, ctx: dict, *, tight: int | None = None) -> dict:
