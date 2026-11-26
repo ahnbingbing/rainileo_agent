@@ -1450,8 +1450,20 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   `_geo_ocean_claim_gate`(바다 캡션인데 쓴 클립 geo_water∈none/inland_water면 cap≤5·수정필요; ★NULL geo_water는
   미발화=unknown≠not-ocean, 8360개 GPS-없는 자산 오탐보호) ③프롬프트 3곳(singlepass·writer_realfootage·concept) geo
   마커 obey+"첫=사실주장, 랴니 물엔 항상 거짓" 통합, concept의 "첫 수영 훅↔첫 날조금지" 모순 해소. **블래스트(양레인)**:
-  AV는 실장소 주장 없어 의도적 미변경·게이트 RF-scoped. 미완: (3b) 매시간 PD 슬랙 ask-drip로 **GPS-없는 물 클립** 백로그
-  소진(PD 2026-11-25 안; GPS-있는 17k는 맵이 답해 질문 불필요) (4) "첫" 일반 단정어(물 외) Giri 캡은 3b 후 결정.
+  AV는 실장소 주장 없어 의도적 미변경·게이트 RF-scoped. **3b 완료(21dc03c, 당초 "PD 슬랙 ask-drip"안을 폐기)**: GPS-없는
+  5.8k 클립엔 맵이 없어 안전목표(개울→바다 금지)가 그 클립들에서만 무방비였다. ①**질문-최소화 클러스터링은 안전목표와
+  상충**이 핵심 발견 — 장소중심(Places365) 임베딩으로 클러스터를 coherent하게 만들면 이 **다양한 일회성 장소** footage는
+  질문이 52~93%로 많고(정직), 질문을 <10%로 줄이려 느슨히 묶으면 **다른 장소가 섞여 바로 그 "내륙→바다" 날조가 재발**한다.
+  즉 "대표만 PD께 물어 <10%"는 이 데이터에선 성립 불가. ②**진짜 해답=장소 *카테고리*의 결정론 ocean-반박**: Places365
+  scene-class가 질문 0개로 inland 52 / no-water 451 / ocean-ish 3을 가름 → `scripts/backfill_geo_scene.py`가 확실한
+  내륙수역 scene만 `geo_water='inland_water'`(geo_source='places365') 자동기입, ocean-ish·no-water는 NULL 유지. ★원칙=
+  **픽셀모델은 바다를 *반박*만, *단정*은 절대 금지**(비대칭 매핑이 C_gpsground 교훈을 깨지 않고 GPS-없는 풀로 확장) —
+  full-frame CLIP이 장소 아닌 **피사체(검은 랴니)를 임베딩**해 실내·잔디·대야가 섞인 246-blob을 만든 것도 같은 뿌리(객체중심
+  vs 장면중심). `geo_source`(apple|places365|pd) provenance로 픽셀추론을 일괄 감사/되돌리기 가능. PD 지명은 옵션 레이어
+  (`--name`가 큰 클러스터에 실지명 전파, geo_source='pd'). ③**durable**: icloud.sync가 GPS-없는 클립의 224px 프레임을
+  인입시 캐시(미래 그라운딩이 GCS 재fetch 불필요)+nightly `com.rianileo.geo-backfill`(Apple **비동기** 역지오코딩 지연분
+  수거=2,025 복구한 바로 그 갭 + bounded scene 패스, GEO_SCENE_ENABLED killsw). E2E: places365-inland + 바다캡션 →
+  스크럽+Giri cap≤5, NULL 대조는 미발화. (4) "첫" 일반 단정어(물 외) Giri 캡은 다음.
   cf [[C_grounding]]·[[grammar_rf_caption_grounding_gap]]·[[giri_title_defect_class]]·[[C_clipknowledgebackfill]].
 - **C_grounding. 캡션/제목이 실재를 배신한다 — 서브젝트 소거·위치 오도, 그 답은 "주인의 설명"(9/18)** — PD: 둘 다 나온
   나들이인데 "레오만"으로 랴니를 지우고, 실외(카페 테라스)를 "집에서"로 서술, Giri 통과. 근본 3겹: ①생성기(특히
