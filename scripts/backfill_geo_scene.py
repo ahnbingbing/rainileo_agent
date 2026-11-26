@@ -98,12 +98,20 @@ def _places365_ocean():
     return _SCENE_OCEAN
 
 
-def propagate_name(cluster_id: str, place: str) -> None:
-    """Option C: write a human-confirmed real place name across every member of a cluster."""
+def propagate_name(cluster_id: str, place: str, manifest: str | None = None) -> None:
+    """Option C: write a human-confirmed real place name across every member of a cluster.
+
+    Reads the FROZEN naming manifest committed at notes/geo_naming_manifest.json by default
+    (NOT the ephemeral data/tmp copy) so a sheet filled in days later still maps each
+    cluster_id to the exact same clips — the tmp manifest is gitignored and the cluster ids
+    would drift if re-clustered. Members are asset_ids, so propagation stays valid even as
+    the nightly backfill shrinks the ungrounded pool."""
     import json
     con = _db()
     ensure_geo_cols(con)
-    mpath = OUT_DIR / "manifest_places365_video.json"
+    mpath = Path(manifest) if manifest else (ROOT / "notes" / "geo_naming_manifest.json")
+    if not mpath.exists():                       # fall back to the live tmp manifest
+        mpath = OUT_DIR / "manifest_places365_video.json"
     if not mpath.exists():
         raise SystemExit(f"no cluster manifest at {mpath} — run cluster_ungrounded_geo first")
     manifest = json.loads(mpath.read_text())

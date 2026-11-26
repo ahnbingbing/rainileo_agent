@@ -1,0 +1,1076 @@
+{
+ "2": {
+  "size": 12,
+  "medoid": "med_2020_10_16_183541_icloud_ac8133da",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_002_n12.jpg",
+  "members": [
+   "med_2026_06_11_100031_icloud_e3542a7c",
+   "med_2024_05_06_170452_icloud_fdcbff2c",
+   "med_2021_01_24_112247_icloud_d974e21b",
+   "med_2021_01_20_174439_icloud_cb59e652",
+   "med_2020_10_16_183541_icloud_ac8133da",
+   "med_2020_02_03_224855_icloud_deb4f4ee",
+   "med_2019_05_18_121517_icloud_1369b7fc",
+   "med_2019_04_30_232723_icloud_dafedde5",
+   "med_2019_02_02_124741_icloud_fa8b79d5",
+   "med_2019_01_22_120550_icloud_b2158cc4",
+   "med_2018_11_18_145906_icloud_37bbde2a",
+   "med_2015_12_25_124544_icloud_cf9e3c0f"
+  ]
+ },
+ "226": {
+  "size": 12,
+  "medoid": "med_2018_05_24_131656_icloud_1d0c99eb",
+  "scene_hint": "lawn",
+  "sheet": "cluster_226_n12.jpg",
+  "members": [
+   "med_2019_03_06_130434_icloud_035839d9",
+   "med_2019_01_16_130742_icloud_d26f4395",
+   "med_2019_01_09_125420_icloud_248c6039",
+   "med_2019_01_09_125407_icloud_6790e8d9",
+   "med_2018_12_19_125724_icloud_bd8f5fd6",
+   "med_2018_11_06_123741_icloud_59f2b687",
+   "med_2018_10_16_141747_icloud_479eaf30",
+   "med_2018_06_19_132243_icloud_905ada5d",
+   "med_2018_06_07_124826_icloud_9fd84f64",
+   "med_2018_05_29_130741_icloud_99235445",
+   "med_2018_05_24_131656_icloud_1d0c99eb",
+   "med_2018_05_24_131628_icloud_6c746c81"
+  ]
+ },
+ "6": {
+  "size": 9,
+  "medoid": "med_2019_03_06_130449_icloud_cab6b69a",
+  "scene_hint": "soccer_field",
+  "sheet": "cluster_006_n9.jpg",
+  "members": [
+   "med_2021_03_08_104941_icloud_b0a2e19c",
+   "med_2020_12_01_220231_icloud_868154c0",
+   "med_2019_07_07_124826_icloud_499ba9e8",
+   "med_2019_03_06_130449_icloud_cab6b69a",
+   "med_2019_01_03_124813_icloud_27374f7c",
+   "med_2019_01_02_142354_icloud_9dd60cf9",
+   "med_2018_12_11_172641_icloud_b67de9ec",
+   "med_2018_05_02_185309_icloud_ab8f2fd4",
+   "med_2017_08_08_051637_icloud_cbb06670"
+  ]
+ },
+ "27": {
+  "size": 8,
+  "medoid": "med_2026_06_24_083628_icloud_fe5c029b",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_027_n8.jpg",
+  "members": [
+   "med_2026_06_25_082140_icloud_c54fdd15",
+   "med_2026_06_24_083628_icloud_fe5c029b",
+   "med_2026_06_18_145345_icloud_a41f0734",
+   "med_2026_06_08_151550_icloud_71e4f966",
+   "med_2026_05_27_115933_icloud_3a23b9a6",
+   "med_2025_01_17_200051_icloud_0b34af64",
+   "med_2021_12_12_192232_icloud_6d871d80",
+   "med_2026_06_11_123101_groomtrim"
+  ]
+ },
+ "34": {
+  "size": 8,
+  "medoid": "med_2016_02_22_230049_icloud_140e64dc",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_034_n8.jpg",
+  "members": [
+   "med_2017_09_09_151204_icloud_3998c0ae",
+   "med_2016_03_14_011417_icloud_4cab2938",
+   "med_2016_02_22_230049_icloud_140e64dc",
+   "med_2016_01_23_002038_icloud_e73d9da2",
+   "med_2016_01_19_120824_icloud_9435b0d8",
+   "med_2015_12_18_130417_icloud_7b470508",
+   "med_2015_11_15_011523_icloud_9bb70aca",
+   "med_2015_07_10_000237_icloud_0008b4b7"
+  ]
+ },
+ "14": {
+  "size": 7,
+  "medoid": "med_2018_09_18_095234_icloud_4fd74564",
+  "scene_hint": "lawn",
+  "sheet": "cluster_014_n7.jpg",
+  "members": [
+   "med_2026_09_20_120102_icloud_ced34ade",
+   "med_2018_09_19_114456_icloud_243dbf53",
+   "med_2018_09_18_174720_icloud_1fe7225e",
+   "med_2018_09_18_125532_icloud_fbb9cba3",
+   "med_2018_09_18_095234_icloud_4fd74564",
+   "med_2017_07_13_032209_icloud_3261f53c",
+   "med_2016_09_05_125157_icloud_66568cb6"
+  ]
+ },
+ "31": {
+  "size": 7,
+  "medoid": "med_2026_06_11_220330_icloud_dfb032bc",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_031_n7.jpg",
+  "members": [
+   "med_2026_06_15_163541_icloud_9d8d39e3",
+   "med_2026_06_14_141759_icloud_010fc730",
+   "med_2026_06_11_220330_icloud_dfb032bc",
+   "med_2026_06_11_220330_icloud_42579b22",
+   "med_2026_06_02_173824_icloud_888f8eef",
+   "med_2026_06_02_100743_icloud_0e816852",
+   "med_2026_04_17_122844_icloud_3d558f40"
+  ]
+ },
+ "29": {
+  "size": 7,
+  "medoid": "med_2018_11_03_013601_icloud_494c15ea",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_029_n7.jpg",
+  "members": [
+   "med_2021_05_06_213500_icloud_cb1efdbc",
+   "med_2019_01_19_202248_icloud_f152cb39",
+   "med_2019_01_05_152937_icloud_00f78cfd",
+   "med_2018_11_03_013601_icloud_494c15ea",
+   "med_2018_10_06_114351_icloud_378748ca",
+   "med_2017_08_29_070300_icloud_030af90a",
+   "med_2016_01_20_234628_icloud_ec2ffffa"
+  ]
+ },
+ "69": {
+  "size": 7,
+  "medoid": "med_2016_04_01_130023_icloud_35d07e40",
+  "scene_hint": "corral",
+  "sheet": "cluster_069_n7.jpg",
+  "members": [
+   "med_2016_04_01_130416_icloud_d0077cb3",
+   "med_2016_04_01_130357_icloud_3df3089f",
+   "med_2016_04_01_130216_icloud_fb03850d",
+   "med_2016_04_01_130145_icloud_c505ed02",
+   "med_2016_04_01_130122_icloud_b0fb95a0",
+   "med_2016_04_01_130049_icloud_91678d1d",
+   "med_2016_04_01_130023_icloud_35d07e40"
+  ]
+ },
+ "35": {
+  "size": 6,
+  "medoid": "med_2016_01_22_114001_icloud_9c5acf9e",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_035_n6.jpg",
+  "members": [
+   "med_2019_05_17_222555_icloud_0ff48b36",
+   "med_2016_01_22_114001_icloud_9c5acf9e",
+   "med_2015_07_11_100356_icloud_1d703666",
+   "med_2015_07_11_100233_icloud_95f03b61",
+   "med_2015_07_11_004322_icloud_cd103d0c",
+   "med_2015_07_11_004013_icloud_9e6ed963"
+  ]
+ },
+ "18": {
+  "size": 6,
+  "medoid": "med_2016_03_19_071253_icloud_5aab41b9",
+  "scene_hint": "bullring",
+  "sheet": "cluster_018_n6.jpg",
+  "members": [
+   "med_2019_02_04_193051_icloud_a2176b67",
+   "med_2018_11_06_123452_icloud_eeb721fa",
+   "med_2018_08_30_173003_icloud_0a193d97",
+   "med_2018_04_11_133739_icloud_a3725ab5",
+   "med_2016_03_19_071253_icloud_5aab41b9",
+   "med_2016_03_03_085847_icloud_1f55b25b"
+  ]
+ },
+ "16": {
+  "size": 5,
+  "medoid": "med_2026_07_01_194402_icloud_518b2624",
+  "scene_hint": "bow_window/indoor",
+  "sheet": "cluster_016_n5.jpg",
+  "members": [
+   "med_2026_07_01_194426_icloud_0dbd976e",
+   "med_2026_07_01_194402_icloud_518b2624",
+   "med_2026_07_01_194402_icloud_c982530c",
+   "med_2026_06_24_204818_icloud_68573fbd",
+   "med_2026_06_18_170802_icloud_22e7c5b8"
+  ]
+ },
+ "10": {
+  "size": 5,
+  "medoid": "med_2019_02_19_115126_icloud_69818226",
+  "scene_hint": "ski_slope",
+  "sheet": "cluster_010_n5.jpg",
+  "members": [
+   "med_2023_01_10_132019_icloud_82f4f358",
+   "med_2021_02_18_102318_icloud_d254ced7",
+   "med_2019_02_19_115242_icloud_993ce5e1",
+   "med_2019_02_19_115126_icloud_69818226",
+   "med_2017_12_19_151243_icloud_5bac7470"
+  ]
+ },
+ "73": {
+  "size": 5,
+  "medoid": "med_2019_03_13_122050_icloud_48f59443",
+  "scene_hint": "zen_garden",
+  "sheet": "cluster_073_n5.jpg",
+  "members": [
+   "med_2019_03_13_122050_icloud_48f59443",
+   "med_2019_02_12_120919_icloud_c4461a9a",
+   "med_2018_11_27_121610_icloud_9ae5f9f5",
+   "med_2018_08_01_105814_icloud_d246e650",
+   "med_2018_02_22_143501_icloud_68209f9e"
+  ]
+ },
+ "46": {
+  "size": 4,
+  "medoid": "med_2021_04_02_102846_icloud_dc04dacc",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_046_n4.jpg",
+  "members": [
+   "med_2025_11_16_202814_icloud_cf09abdc",
+   "med_2021_04_02_102846_icloud_dc04dacc",
+   "med_2017_09_24_094538_icloud_5f0afee0",
+   "med_2016_04_23_103546_icloud_58755baf"
+  ]
+ },
+ "60": {
+  "size": 4,
+  "medoid": "med_2016_05_13_014314_icloud_466c418b",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_060_n4.jpg",
+  "members": [
+   "med_2019_06_01_233856_icloud_33a631c0",
+   "med_2017_08_17_050809_icloud_b7de8edd",
+   "med_2016_05_13_014314_icloud_466c418b",
+   "med_2015_10_06_234150_icloud_9d318f39"
+  ]
+ },
+ "61": {
+  "size": 4,
+  "medoid": "med_2019_01_16_130714_icloud_f9d13703",
+  "scene_hint": "crosswalk",
+  "sheet": "cluster_061_n4.jpg",
+  "members": [
+   "med_2019_01_16_205358_icloud_af8dc3ca",
+   "med_2019_01_16_130714_icloud_f9d13703",
+   "med_2018_09_20_121024_icloud_52d79b3e",
+   "med_2018_09_13_134930_icloud_13834f4e"
+  ]
+ },
+ "45": {
+  "size": 4,
+  "medoid": "med_2016_03_27_135900_icloud_2559f79d",
+  "scene_hint": "lawn",
+  "sheet": "cluster_045_n4.jpg",
+  "members": [
+   "med_2018_05_24_131719_icloud_015cedd5",
+   "med_2018_05_24_131711_icloud_0880e3ba",
+   "med_2016_03_28_012128_icloud_a9d87299",
+   "med_2016_03_27_135900_icloud_2559f79d"
+  ]
+ },
+ "7": {
+  "size": 4,
+  "medoid": "med_2016_01_24_041245_icloud_0bdcd6c1",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_007_n4.jpg",
+  "members": [
+   "med_2016_01_24_041245_icloud_0bdcd6c1",
+   "med_2016_01_24_041245_icloud_20e388ba",
+   "med_2015_12_25_124427_icloud_00bca724",
+   "med_2015_08_13_124850_icloud_48045178"
+  ]
+ },
+ "63": {
+  "size": 4,
+  "medoid": "med_2016_01_18_121139_icloud_1f066052",
+  "scene_hint": "ice_skating_rink/indoor",
+  "sheet": "cluster_063_n4.jpg",
+  "members": [
+   "med_2016_01_23_043714_icloud_b6f5763d",
+   "med_2016_01_20_035444_icloud_a052ac28",
+   "med_2016_01_18_121139_icloud_1f066052",
+   "med_2015_11_09_112813_icloud_548656ba"
+  ]
+ },
+ "94": {
+  "size": 4,
+  "medoid": "med_2016_01_13_083258_icloud_bb5c837c",
+  "scene_hint": "snowfield",
+  "sheet": "cluster_094_n4.jpg",
+  "members": [
+   "med_2016_01_13_085201_icloud_42ba6392",
+   "med_2016_01_13_085143_icloud_03fe2c49",
+   "med_2016_01_13_083258_icloud_bb5c837c",
+   "med_2016_01_13_082410_icloud_7a9206d6"
+  ]
+ },
+ "179": {
+  "size": 3,
+  "medoid": "med_2026_10_21_082357_icloud_5122a3a0",
+  "scene_hint": "natural_history_museum",
+  "sheet": "cluster_179_n3.jpg",
+  "members": [
+   "med_2026_10_21_082402_icloud_2776ed6b",
+   "med_2026_10_21_082357_icloud_5122a3a0",
+   "med_2026_10_21_082355_icloud_a93ef89d"
+  ]
+ },
+ "81": {
+  "size": 3,
+  "medoid": "med_2018_07_12_133551_icloud_9b32b413",
+  "scene_hint": "roof_garden",
+  "sheet": "cluster_081_n3.jpg",
+  "members": [
+   "med_2026_09_30_110559_icloud_c83e3109",
+   "med_2026_08_16_210856_icloud_d99be7c4",
+   "med_2018_07_12_133551_icloud_9b32b413"
+  ]
+ },
+ "152": {
+  "size": 3,
+  "medoid": "med_2015_07_12_094216_icloud_d2f54c9c",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_152_n3.jpg",
+  "members": [
+   "med_2026_08_16_210743_icloud_f4db7c1c",
+   "med_2015_07_12_094625_icloud_688be0e4",
+   "med_2015_07_12_094216_icloud_d2f54c9c"
+  ]
+ },
+ "43": {
+  "size": 3,
+  "medoid": "med_2016_01_23_043805_icloud_025d9fb0",
+  "scene_hint": "ice_skating_rink/outdoor",
+  "sheet": "cluster_043_n3.jpg",
+  "members": [
+   "med_2026_06_24_211232_icloud_429d0eb5",
+   "med_2016_01_23_043805_icloud_025d9fb0",
+   "med_2015_12_17_052043_icloud_4a152322"
+  ]
+ },
+ "40": {
+  "size": 3,
+  "medoid": "med_2019_04_28_150322_icloud_b89a9d3e",
+  "scene_hint": "boardwalk",
+  "sheet": "cluster_040_n3.jpg",
+  "members": [
+   "med_2026_06_13_143905_icloud_409b29ab",
+   "med_2021_02_21_223441_icloud_5e3b14b4",
+   "med_2019_04_28_150322_icloud_b89a9d3e"
+  ]
+ },
+ "92": {
+  "size": 3,
+  "medoid": "med_2026_03_04_105836_icloud_db1d459f",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_092_n3.jpg",
+  "members": [
+   "med_2026_05_20_133511_icloud_4388afa4",
+   "med_2026_03_04_105836_icloud_db1d459f",
+   "med_2026_03_04_105836_icloud_27997f71"
+  ]
+ },
+ "108": {
+  "size": 3,
+  "medoid": "med_2021_02_14_131615_icloud_d768fefb",
+  "scene_hint": "trench",
+  "sheet": "cluster_108_n3.jpg",
+  "members": [
+   "med_2021_02_14_131615_icloud_d768fefb",
+   "med_2021_02_14_131141_icloud_09d3b8f1",
+   "med_2016_01_01_065419_icloud_87e1d2d9"
+  ]
+ },
+ "12": {
+  "size": 3,
+  "medoid": "med_2020_10_12_095620_icloud_9d4ee3c3",
+  "scene_hint": "landfill",
+  "sheet": "cluster_012_n3.jpg",
+  "members": [
+   "med_2020_10_12_095620_icloud_9d4ee3c3",
+   "med_2018_12_19_083346_icloud_3bcd2fef",
+   "med_2018_02_18_215511_icloud_13c31681"
+  ]
+ },
+ "48": {
+  "size": 3,
+  "medoid": "med_2019_07_14_214011_icloud_d24fd2de",
+  "scene_hint": "kennel/outdoor",
+  "sheet": "cluster_048_n3.jpg",
+  "members": [
+   "med_2019_08_06_102239_icloud_7307a75b",
+   "med_2019_07_14_214011_icloud_d24fd2de",
+   "med_2018_06_07_124906_icloud_3ba7e667"
+  ]
+ },
+ "178": {
+  "size": 3,
+  "medoid": "med_2018_07_10_130129_icloud_57d9b235",
+  "scene_hint": "lawn",
+  "sheet": "cluster_178_n3.jpg",
+  "members": [
+   "med_2019_06_16_205409_icloud_37d4ad98",
+   "med_2018_07_10_130129_icloud_57d9b235",
+   "med_2018_04_24_132519_icloud_1570c7e1"
+  ]
+ },
+ "1": {
+  "size": 3,
+  "medoid": "med_2015_10_09_003959_icloud_cfe96304",
+  "scene_hint": "driveway",
+  "sheet": "cluster_001_n3.jpg",
+  "members": [
+   "med_2019_02_09_233120_icloud_de5aee65",
+   "med_2017_09_03_105105_icloud_46d95f75",
+   "med_2015_10_09_003959_icloud_cfe96304"
+  ]
+ },
+ "32": {
+  "size": 3,
+  "medoid": "med_2017_12_19_151231_icloud_70e77458",
+  "scene_hint": "igloo",
+  "sheet": "cluster_032_n3.jpg",
+  "members": [
+   "med_2019_01_31_114524_icloud_f5006f37",
+   "med_2017_12_19_151253_icloud_01a2ce98",
+   "med_2017_12_19_151231_icloud_70e77458"
+  ]
+ },
+ "37": {
+  "size": 3,
+  "medoid": "med_2018_12_04_112547_icloud_77e477d1",
+  "scene_hint": "soccer_field",
+  "sheet": "cluster_037_n3.jpg",
+  "members": [
+   "med_2018_12_04_112547_icloud_77e477d1",
+   "med_2018_11_08_130818_icloud_abf99fdf",
+   "med_2018_06_14_120026_icloud_b4405ecf"
+  ]
+ },
+ "167": {
+  "size": 3,
+  "medoid": "med_2018_08_08_120915_icloud_81b34f5b",
+  "scene_hint": "crosswalk",
+  "sheet": "cluster_167_n3.jpg",
+  "members": [
+   "med_2018_11_14_132619_icloud_04648413",
+   "med_2018_08_08_120915_icloud_81b34f5b",
+   "med_2018_04_05_132957_icloud_611196eb"
+  ]
+ },
+ "23": {
+  "size": 3,
+  "medoid": "med_2017_12_14_141257_icloud_4206e647",
+  "scene_hint": "landfill",
+  "sheet": "cluster_023_n3.jpg",
+  "members": [
+   "med_2018_08_28_134827_icloud_be00c9e6",
+   "med_2018_01_03_143523_icloud_42d2a3a3",
+   "med_2017_12_14_141257_icloud_4206e647"
+  ]
+ },
+ "90": {
+  "size": 3,
+  "medoid": "med_2018_08_16_123142_icloud_4e383658",
+  "scene_hint": "corn_field",
+  "sheet": "cluster_090_n3.jpg",
+  "members": [
+   "med_2018_08_16_123142_icloud_4e383658",
+   "med_2018_07_10_130101_icloud_cd07ab87",
+   "med_2018_07_05_121532_icloud_83a2d34b"
+  ]
+ },
+ "9": {
+  "size": 3,
+  "medoid": "med_2015_11_06_105208_icloud_ba0bed89",
+  "scene_hint": "bullring",
+  "sheet": "cluster_009_n3.jpg",
+  "members": [
+   "med_2018_06_07_124932_icloud_ece2a711",
+   "med_2017_09_11_120819_icloud_ba0e5a74",
+   "med_2015_11_06_105208_icloud_ba0bed89"
+  ]
+ },
+ "24": {
+  "size": 3,
+  "medoid": "med_2017_08_03_222946_icloud_e850e9d8",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_024_n3.jpg",
+  "members": [
+   "med_2018_05_17_130509_icloud_448f98f9",
+   "med_2017_08_03_222946_icloud_e850e9d8",
+   "med_2016_01_22_131734_icloud_bbb31ea6"
+  ]
+ },
+ "13": {
+  "size": 3,
+  "medoid": "med_2017_09_06_233033_icloud_ea929a77",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_013_n3.jpg",
+  "members": [
+   "med_2017_09_06_233033_icloud_ea929a77",
+   "med_2015_09_06_072952_icloud_4b12d143",
+   "med_2015_08_07_153853_icloud_4c9d2686"
+  ]
+ },
+ "5": {
+  "size": 3,
+  "medoid": "med_2015_09_18_091327_icloud_5d199d71",
+  "scene_hint": "lawn",
+  "sheet": "cluster_005_n3.jpg",
+  "members": [
+   "med_2017_08_29_065237_icloud_42807b38",
+   "med_2016_04_28_101741_icloud_bacd026a",
+   "med_2015_09_18_091327_icloud_5d199d71"
+  ]
+ },
+ "11": {
+  "size": 3,
+  "medoid": "med_2016_12_18_053155_icloud_49f34d0d",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_011_n3.jpg",
+  "members": [
+   "med_2016_12_18_053155_icloud_49f34d0d",
+   "med_2016_01_20_133824_icloud_ce856c3f",
+   "med_2016_01_08_142455_icloud_655be4a4"
+  ]
+ },
+ "50": {
+  "size": 3,
+  "medoid": "med_2016_04_08_004750_icloud_7514b111",
+  "scene_hint": "tundra",
+  "sheet": "cluster_050_n3.jpg",
+  "members": [
+   "med_2016_04_08_004750_icloud_7514b111",
+   "med_2016_04_07_075809_icloud_645deed0",
+   "med_2016_04_06_145931_icloud_83b03d36"
+  ]
+ },
+ "0": {
+  "size": 3,
+  "medoid": "med_2015_12_31_111351_icloud_eac343a4",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_000_n3.jpg",
+  "members": [
+   "med_2016_04_01_130309_icloud_409dae83",
+   "med_2016_02_27_130141_icloud_78a9adf1",
+   "med_2015_12_31_111351_icloud_eac343a4"
+  ]
+ },
+ "41": {
+  "size": 3,
+  "medoid": "med_2016_01_18_122719_icloud_b5de999a",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_041_n3.jpg",
+  "members": [
+   "med_2016_01_18_122719_icloud_b5de999a",
+   "med_2016_01_18_121502_icloud_73ea7eac",
+   "med_2016_01_18_121206_icloud_5594874e"
+  ]
+ },
+ "26": {
+  "size": 2,
+  "medoid": "med_2016_06_21_122855_icloud_ef3978ce",
+  "scene_hint": "elevator_lobby",
+  "sheet": "cluster_026_n2.jpg",
+  "members": [
+   "med_2026_10_21_083019_icloud_deab4a5f",
+   "med_2016_06_21_122855_icloud_ef3978ce"
+  ]
+ },
+ "83": {
+  "size": 2,
+  "medoid": "med_2026_08_16_210851_icloud_73873f29",
+  "scene_hint": "rope_bridge",
+  "sheet": "cluster_083_n2.jpg",
+  "members": [
+   "med_2026_08_16_210851_icloud_73873f29",
+   "med_2026_08_16_210848_icloud_536eac2a"
+  ]
+ },
+ "8": {
+  "size": 2,
+  "medoid": "med_2026_08_16_210840_icloud_11c51a16",
+  "scene_hint": "repair_shop",
+  "sheet": "cluster_008_n2.jpg",
+  "members": [
+   "med_2026_08_16_210844_icloud_413e7840",
+   "med_2026_08_16_210840_icloud_11c51a16"
+  ]
+ },
+ "88": {
+  "size": 2,
+  "medoid": "med_2026_06_09_174210_icloud_077a7ae7",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_088_n2.jpg",
+  "members": [
+   "med_2026_08_16_210836_icloud_45cbaa48",
+   "med_2026_06_09_174210_icloud_077a7ae7"
+  ]
+ },
+ "112": {
+  "size": 2,
+  "medoid": "med_2026_06_25_082141_icloud_caa82e6a",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_112_n2.jpg",
+  "members": [
+   "med_2026_06_25_082141_icloud_caa82e6a",
+   "med_2016_01_23_090619_icloud_7d97042c"
+  ]
+ },
+ "115": {
+  "size": 2,
+  "medoid": "med_2026_06_24_084840_icloud_98f0e19a",
+  "scene_hint": "kennel/outdoor",
+  "sheet": "cluster_115_n2.jpg",
+  "members": [
+   "med_2026_06_24_084840_icloud_98f0e19a",
+   "med_2026_06_18_182151_icloud_dacaa249"
+  ]
+ },
+ "82": {
+  "size": 2,
+  "medoid": "med_2026_06_11_091443_icloud_c63b9eac",
+  "scene_hint": "kennel/outdoor",
+  "sheet": "cluster_082_n2.jpg",
+  "members": [
+   "med_2026_06_11_123101_icloud_532c02d9",
+   "med_2026_06_11_091443_icloud_c63b9eac"
+  ]
+ },
+ "122": {
+  "size": 2,
+  "medoid": "med_2026_06_11_090725_icloud_ca04669b",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_122_n2.jpg",
+  "members": [
+   "med_2026_06_11_090725_icloud_ca04669b",
+   "med_2026_05_27_115913_icloud_bb32e273"
+  ]
+ },
+ "54": {
+  "size": 2,
+  "medoid": "med_2026_06_02_132919_icloud_22aff76e",
+  "scene_hint": "beauty_salon",
+  "sheet": "cluster_054_n2.jpg",
+  "members": [
+   "med_2026_06_02_132919_icloud_22aff76e",
+   "med_2026_06_01_235845_icloud_5f48f99c"
+  ]
+ },
+ "22": {
+  "size": 2,
+  "medoid": "med_2026_01_25_093353_icloud_208f7708",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_022_n2.jpg",
+  "members": [
+   "med_2026_06_01_193851_icloud_154f69f3",
+   "med_2026_01_25_093353_icloud_208f7708"
+  ]
+ },
+ "111": {
+  "size": 2,
+  "medoid": "med_2026_05_31_163820_icloud_ce73157e",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_111_n2.jpg",
+  "members": [
+   "med_2026_05_31_163820_icloud_ce73157e",
+   "med_2015_10_02_111149_icloud_09f45ddf"
+  ]
+ },
+ "25": {
+  "size": 2,
+  "medoid": "med_2026_05_31_082241_icloud_4e2f7a10",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_025_n2.jpg",
+  "members": [
+   "med_2026_05_31_082241_icloud_4e2f7a10",
+   "med_2020_02_03_225848_icloud_7cc3968d"
+  ]
+ },
+ "42": {
+  "size": 2,
+  "medoid": "med_2024_11_01_143628_icloud_a65d48a4",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_042_n2.jpg",
+  "members": [
+   "med_2026_05_20_133526_icloud_6baa55fa",
+   "med_2024_11_01_143628_icloud_a65d48a4"
+  ]
+ },
+ "114": {
+  "size": 2,
+  "medoid": "med_2026_05_11_080147_icloud_d01245a3",
+  "scene_hint": "toyshop",
+  "sheet": "cluster_114_n2.jpg",
+  "members": [
+   "med_2026_05_11_080147_icloud_d01245a3",
+   "med_2026_05_11_080147_icloud_3d87f548"
+  ]
+ },
+ "3": {
+  "size": 2,
+  "medoid": "med_2026_04_18_210830_icloud_916fe26d",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_003_n2.jpg",
+  "members": [
+   "med_2026_04_18_210830_icloud_916fe26d",
+   "med_2019_06_28_082541_icloud_f1b39bd5"
+  ]
+ },
+ "121": {
+  "size": 2,
+  "medoid": "med_2026_02_09_094402_icloud_9fc9dcf8",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_121_n2.jpg",
+  "members": [
+   "med_2026_02_09_094402_icloud_9fc9dcf8",
+   "med_2026_02_09_094239_icloud_8aa43468"
+  ]
+ },
+ "30": {
+  "size": 2,
+  "medoid": "med_2021_02_14_162759_icloud_21cb8d1d",
+  "scene_hint": "beach",
+  "sheet": "cluster_030_n2.jpg",
+  "members": [
+   "med_2021_02_14_162759_icloud_21cb8d1d",
+   "med_2020_09_27_200111_icloud_d416696e"
+  ]
+ },
+ "85": {
+  "size": 2,
+  "medoid": "med_2017_09_05_133808_icloud_69395209",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_085_n2.jpg",
+  "members": [
+   "med_2020_10_14_200232_icloud_2bf9963c",
+   "med_2017_09_05_133808_icloud_69395209"
+  ]
+ },
+ "44": {
+  "size": 2,
+  "medoid": "med_2020_10_14_200221_icloud_25f9589f",
+  "scene_hint": "lawn",
+  "sheet": "cluster_044_n2.jpg",
+  "members": [
+   "med_2020_10_14_200221_icloud_25f9589f",
+   "med_2016_09_06_122339_icloud_184ab927"
+  ]
+ },
+ "36": {
+  "size": 2,
+  "medoid": "med_2016_01_01_065433_icloud_c648c156",
+  "scene_hint": "field_road",
+  "sheet": "cluster_036_n2.jpg",
+  "members": [
+   "med_2020_10_05_192039_icloud_533c48c0",
+   "med_2016_01_01_065433_icloud_c648c156"
+  ]
+ },
+ "56": {
+  "size": 2,
+  "medoid": "med_2020_02_07_094339_icloud_836c0f2f",
+  "scene_hint": "igloo",
+  "sheet": "cluster_056_n2.jpg",
+  "members": [
+   "med_2020_02_07_094339_icloud_836c0f2f",
+   "med_2020_02_07_094211_icloud_89228072"
+  ]
+ },
+ "53": {
+  "size": 2,
+  "medoid": "med_2019_11_29_130447_icloud_fb92fcc6",
+  "scene_hint": "botanical_garden",
+  "sheet": "cluster_053_n2.jpg",
+  "members": [
+   "med_2019_11_29_130447_icloud_fb92fcc6",
+   "med_2019_06_05_230652_icloud_bf4f0a99"
+  ]
+ },
+ "19": {
+  "size": 2,
+  "medoid": "med_2019_10_09_172708_icloud_a246f9ac",
+  "scene_hint": "forest_path",
+  "sheet": "cluster_019_n2.jpg",
+  "members": [
+   "med_2019_10_09_172708_icloud_a246f9ac",
+   "med_2019_04_16_224915_icloud_b926aea5"
+  ]
+ },
+ "180": {
+  "size": 2,
+  "medoid": "med_2019_09_03_203958_icloud_1d2e7210",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_180_n2.jpg",
+  "members": [
+   "med_2019_09_03_203958_icloud_1d2e7210",
+   "med_2018_10_16_142154_icloud_ba15434c"
+  ]
+ },
+ "89": {
+  "size": 2,
+  "medoid": "med_2019_06_19_202538_icloud_bebfc8e8",
+  "scene_hint": "ice_skating_rink/outdoor",
+  "sheet": "cluster_089_n2.jpg",
+  "members": [
+   "med_2019_06_19_202538_icloud_bebfc8e8",
+   "med_2018_01_02_153421_icloud_88065c11"
+  ]
+ },
+ "59": {
+  "size": 2,
+  "medoid": "med_2019_01_06_114315_icloud_0fb8e397",
+  "scene_hint": "kennel/outdoor",
+  "sheet": "cluster_059_n2.jpg",
+  "members": [
+   "med_2019_05_12_145750_icloud_8d2c2158",
+   "med_2019_01_06_114315_icloud_0fb8e397"
+  ]
+ },
+ "58": {
+  "size": 2,
+  "medoid": "med_2018_05_31_131739_icloud_5fb23c05",
+  "scene_hint": "golf_course",
+  "sheet": "cluster_058_n2.jpg",
+  "members": [
+   "med_2019_02_13_130849_icloud_db502be2",
+   "med_2018_05_31_131739_icloud_5fb23c05"
+  ]
+ },
+ "4": {
+  "size": 2,
+  "medoid": "med_2019_01_31_114514_icloud_a0256d85",
+  "scene_hint": "sandbox",
+  "sheet": "cluster_004_n2.jpg",
+  "members": [
+   "med_2019_01_31_114514_icloud_a0256d85",
+   "med_2019_01_10_121308_icloud_5913fd5a"
+  ]
+ },
+ "15": {
+  "size": 2,
+  "medoid": "med_2019_01_30_130501_icloud_2c793cce",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_015_n2.jpg",
+  "members": [
+   "med_2019_01_30_130501_icloud_2c793cce",
+   "med_2018_04_24_132644_icloud_91aaafd0"
+  ]
+ },
+ "66": {
+  "size": 2,
+  "medoid": "med_2018_09_20_121128_icloud_23f7ec33",
+  "scene_hint": "golf_course",
+  "sheet": "cluster_066_n2.jpg",
+  "members": [
+   "med_2018_09_20_121128_icloud_23f7ec33",
+   "med_2018_06_26_151947_icloud_c71d9ef5"
+  ]
+ },
+ "117": {
+  "size": 2,
+  "medoid": "med_2018_09_11_121331_icloud_a2b89623",
+  "scene_hint": "igloo",
+  "sheet": "cluster_117_n2.jpg",
+  "members": [
+   "med_2018_09_11_121331_icloud_a2b89623",
+   "med_2015_08_28_053810_icloud_8d9d5cf1"
+  ]
+ },
+ "39": {
+  "size": 2,
+  "medoid": "med_2016_06_21_122838_icloud_25b684fc",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_039_n2.jpg",
+  "members": [
+   "med_2018_09_10_082738_icloud_75eea7c0",
+   "med_2016_06_21_122838_icloud_25b684fc"
+  ]
+ },
+ "51": {
+  "size": 2,
+  "medoid": "med_2018_09_05_134341_icloud_e5d3e4e0",
+  "scene_hint": "sandbox",
+  "sheet": "cluster_051_n2.jpg",
+  "members": [
+   "med_2018_09_05_134341_icloud_e5d3e4e0",
+   "med_2018_06_14_120434_icloud_e0d90a17"
+  ]
+ },
+ "21": {
+  "size": 2,
+  "medoid": "med_2018_08_07_121243_icloud_038f608b",
+  "scene_hint": "field/wild",
+  "sheet": "cluster_021_n2.jpg",
+  "members": [
+   "med_2018_08_07_121243_icloud_038f608b",
+   "med_2016_02_26_094703_icloud_a07ddf48"
+  ]
+ },
+ "120": {
+  "size": 2,
+  "medoid": "med_2018_07_17_133102_icloud_57483fbb",
+  "scene_hint": "vegetable_garden",
+  "sheet": "cluster_120_n2.jpg",
+  "members": [
+   "med_2018_07_17_133102_icloud_57483fbb",
+   "med_2018_06_27_120114_icloud_600759be"
+  ]
+ },
+ "28": {
+  "size": 2,
+  "medoid": "med_2018_07_04_132908_icloud_d5b0f8ae",
+  "scene_hint": "botanical_garden",
+  "sheet": "cluster_028_n2.jpg",
+  "members": [
+   "med_2018_07_04_132908_icloud_d5b0f8ae",
+   "med_2018_07_03_130951_icloud_47db1038"
+  ]
+ },
+ "84": {
+  "size": 2,
+  "medoid": "med_2018_06_20_113246_icloud_56c9e99f",
+  "scene_hint": "pasture",
+  "sheet": "cluster_084_n2.jpg",
+  "members": [
+   "med_2018_06_20_113246_icloud_56c9e99f",
+   "med_2016_04_07_074651_icloud_7f826922"
+  ]
+ },
+ "33": {
+  "size": 2,
+  "medoid": "med_2018_01_30_153136_icloud_988419be",
+  "scene_hint": "ice_skating_rink/outdoor",
+  "sheet": "cluster_033_n2.jpg",
+  "members": [
+   "med_2018_01_30_153136_icloud_988419be",
+   "med_2018_01_30_153130_icloud_1b2a1e0b"
+  ]
+ },
+ "93": {
+  "size": 2,
+  "medoid": "med_2018_01_08_213625_icloud_5c8cbfc7",
+  "scene_hint": "ice_floe",
+  "sheet": "cluster_093_n2.jpg",
+  "members": [
+   "med_2018_01_08_213926_icloud_b5e3f457",
+   "med_2018_01_08_213625_icloud_5c8cbfc7"
+  ]
+ },
+ "110": {
+  "size": 2,
+  "medoid": "med_2017_12_21_151643_icloud_48697902",
+  "scene_hint": "crosswalk",
+  "sheet": "cluster_110_n2.jpg",
+  "members": [
+   "med_2017_12_21_151643_icloud_48697902",
+   "med_2017_12_21_151620_icloud_ae3fc3b2"
+  ]
+ },
+ "218": {
+  "size": 2,
+  "medoid": "med_2015_10_23_134548_icloud_51720c1c",
+  "scene_hint": "orchestra_pit",
+  "sheet": "cluster_218_n2.jpg",
+  "members": [
+   "med_2017_09_15_113442_icloud_dfd21a12",
+   "med_2015_10_23_134548_icloud_51720c1c"
+  ]
+ },
+ "223": {
+  "size": 2,
+  "medoid": "med_2015_09_24_085321_icloud_6354b67b",
+  "scene_hint": "hayfield",
+  "sheet": "cluster_223_n2.jpg",
+  "members": [
+   "med_2017_08_26_232506_icloud_fa2dc076",
+   "med_2015_09_24_085321_icloud_6354b67b"
+  ]
+ },
+ "17": {
+  "size": 2,
+  "medoid": "med_2017_08_19_012916_icloud_95059ce5",
+  "scene_hint": "car_interior",
+  "sheet": "cluster_017_n2.jpg",
+  "members": [
+   "med_2017_08_19_012916_icloud_95059ce5",
+   "med_2015_12_31_093548_icloud_d33815fa"
+  ]
+ },
+ "47": {
+  "size": 2,
+  "medoid": "med_2016_06_21_122901_icloud_e1a2f20a",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_047_n2.jpg",
+  "members": [
+   "med_2016_06_21_122923_icloud_3d5bff8e",
+   "med_2016_06_21_122901_icloud_e1a2f20a"
+  ]
+ },
+ "87": {
+  "size": 2,
+  "medoid": "med_2016_01_25_110029_icloud_ab543d4d",
+  "scene_hint": "driveway",
+  "sheet": "cluster_087_n2.jpg",
+  "members": [
+   "med_2016_03_29_081344_icloud_1392e3d6",
+   "med_2016_01_25_110029_icloud_ab543d4d"
+  ]
+ },
+ "20": {
+  "size": 2,
+  "medoid": "med_2016_01_31_112042_icloud_ddfdb9e7",
+  "scene_hint": "veterinarians_office",
+  "sheet": "cluster_020_n2.jpg",
+  "members": [
+   "med_2016_01_31_122523_icloud_c580411e",
+   "med_2016_01_31_112042_icloud_ddfdb9e7"
+  ]
+ },
+ "57": {
+  "size": 2,
+  "medoid": "med_2016_01_01_071243_icloud_a815ad53",
+  "scene_hint": "wheat_field",
+  "sheet": "cluster_057_n2.jpg",
+  "members": [
+   "med_2016_01_01_071243_icloud_a815ad53",
+   "med_2016_01_01_071201_icloud_5d59f2e5"
+  ]
+ },
+ "75": {
+  "size": 2,
+  "medoid": "med_2016_01_01_065632_icloud_90bdf6c3",
+  "scene_hint": "tundra",
+  "sheet": "cluster_075_n2.jpg",
+  "members": [
+   "med_2016_01_01_065632_icloud_90bdf6c3",
+   "med_2016_01_01_065521_icloud_d7fdde1f"
+  ]
+ },
+ "102": {
+  "size": 2,
+  "medoid": "med_2015_12_16_231256_icloud_aa8bab5a",
+  "scene_hint": "bakery/shop",
+  "sheet": "cluster_102_n2.jpg",
+  "members": [
+   "med_2015_12_16_231256_icloud_aa8bab5a",
+   "med_2015_07_10_204104_icloud_4c05a145"
+  ]
+ },
+ "55": {
+  "size": 2,
+  "medoid": "med_2015_07_20_112550_icloud_5b1229c6",
+  "scene_hint": "kennel/outdoor",
+  "sheet": "cluster_055_n2.jpg",
+  "members": [
+   "med_2015_07_20_112550_icloud_5b1229c6",
+   "med_2015_07_12_094631_icloud_02c588c4"
+  ]
+ },
+ "38": {
+  "size": 2,
+  "medoid": "med_2015_07_08_212854_icloud_72bcdc28",
+  "scene_hint": "artists_loft",
+  "sheet": "cluster_038_n2.jpg",
+  "members": [
+   "med_2015_07_08_212854_icloud_72bcdc28",
+   "med_2015_07_08_093700_icloud_0fa38deb"
+  ]
+ }
+}
