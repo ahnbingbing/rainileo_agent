@@ -928,6 +928,25 @@ LLM을 못 믿는 판단은 코드가 대신한다(에이전트의 또 다른 �
   라이브 교체(예약본, 미공개 중 수정): 12:30 재캡션(TDlJXf8bS9c 따로국밥)·18:00 신선 듀오클립 재선택(cZBiXbOLToc,
   dup 해소). db71e3d·d559a4e. 부산물=pd_reviewer가 같은 dup 클립을 2회 재캡션하며 슬롯 churn(kHR084→vxTsd)→
   옛 카드 archive로 정지(재캡션만으론 dup·footage 결함을 못 고친다 — 클립 재선택이 필요).
+- **C_reuseledger. '무엇을 썼나'의 기록은 사라질 수 있는 것(카드)이 아니라 영속하는 것(video_id)에 매달아라 — 그리고
+  컷이 두 클립이면 둘 다 센다(11/26)** — [[C_dedupblind]]가 "선택을 안 적으면 게이트가 실명"을 고쳤다면, 이건 그 교훈이
+  *한 번 더* 뚫린 두 경로다. 같은 날 공개된 두 RF가 같은 소스를 공유했는데 근본이 둘이었다. ①**split의 secondary 맹점**:
+  split 컷은 클립을 **둘**(asset_id + secondary_asset_id) 쓰는데 쿨다운 시드·`batch_used_assets` reserve/backstop·
+  reviewer_macro freshness/overlap이 전부 primary만 세서, split의 다른 반쪽이 이웃 슬롯에서 자유롭게 재선택됐다 — "컷=클립
+  하나"라는 숨은 가정. ②**card-less orphan**: re-render가 카드의 youtube_video_id를 덮으면 *이전* 업로드는 어떤 카드도
+  안 가리키는 orphan이 된다(클립을 적었던 카드조차 끊긴다). 쿨다운이 `cards`에서만 시드하므로 그 orphan의 클립은
+  투명해져 재사용됐다. Fix=secondary를 모든 소비처에 더함 + **영속 `video_clip_usage` 원장**(업로드 시 video_id별로 두 반쪽
+  기록, 카드 링크가 끊겨도 생존)에서도 쿨다운이 시드. ★교훈=**기록의 수명이 게이트의 수명이다 — dedup의 ground-truth를
+  재-렌더가 덮을 수 있는 필드(카드의 video_id)에 두면, 그 덮임이 곧 실명이다. 소비 단위(컷=N클립)와 기록 단위를 맞추고,
+  기록은 재사용과 같은 생애를 사는 객체(실제로 공개된 video_id)에 붙여라.** 라이브로 이미 뜬 orphan은 소급 불가(원장
+  이전 업로드)라 그대로 두고 재발만 차단 — 코드 롤백 아님. RF한정(split은 RF), 킬스위치 `RF_SPLIT_MIN_DUR`(아래)·원장은
+  best-effort. f8e0cd0. cf [[C_outingdedup]](단위 불일치 가족)·[[C_cooldownrelax]](윈도우는 콘텐츠 라이브 기간).
+- **C_splitclamp. 합성 컷의 길이는 가장 짧은 입력에 맞춘다 — 한 입력만 보고 자르면 나머지가 얼어붙는다(11/26)** — RF
+  상/하 슬라이딩(모션 와이프) split에서 한 패널이 멈춰 있었다. 근본=`_prerender_split_cuts`가 trim_dur를 **primary 클립
+  하나로만** 클램프했고, secondary가 더 짧거나(또는 wide 패널이 `dur×speed`로 더 많은 footage를 소비) 프레임이 바닥나면
+  overlay가 마지막 프레임을 홀드 → 한쪽만 freeze. Fix=dur를 **두 클립 모두 ÷ 배속**으로 하향 클램프(플로어
+  `RF_SPLIT_MIN_DUR`). ★교훈=**N개 입력을 한 타임라인에 겹치는 필터의 길이 계약은 min(모든 입력), 대표 하나가 아니다** —
+  배속·오프셋까지 반영해서. [[C_reuseledger]]와 같은 날·같은 "하나만 보고 전체를 판단한" 패밀리.
 - **C_cooldownrelax. 전-기간 쿨다운이 가장 신선한 클립을 굶겼다 — 완화는 recency-aware여야 한다(9/11)** — PD "셀프힐이
   안 멈춰… 컨셉이 없대". 근본=[[C_dedupblind]]의 asset_id writeback(db71e3d)이 전-기간 쿨다운(`RF_USED_CLIP_ALLTIME`)을
   **비로소 제대로** 채우자, 그 쿨다운이 배제하는 게 하필 **최근-사용=가장 신선한** 클립이었다. 기존 완화 게이트는 정제 풀
