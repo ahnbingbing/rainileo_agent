@@ -81,7 +81,18 @@ CANONICAL_LOCK = (
     "★CANONICAL CONSISTENCY: the car and its setting are ONE fixed thing, IDENTICAL in every shot — "
     "match the canonical reference image exactly for the car body, the chrome wire wheels, the "
     "normal-size LEFT-side steering wheel, and the pets' relative size (the dog is slightly bigger "
-    "than the cat). Do NOT redesign the car, resize the wheel, or change the pets' build between shots.")
+    "than the cat). Do NOT redesign the car, resize the wheel, or change the pets' build between shots. "
+    "★SCALE & WINDSHIELD (match the canonical exactly): scale the pets to the car as in the canonical — "
+    "small animals seated in the cabin, NOT giant heads filling the car. On this low convertible their "
+    "heads may rise just above the low windshield like the canonical, BUT the chrome windshield frame "
+    "and glass are a SOLID object sitting cleanly in front of the cabin — a pet's ear or head must "
+    "NEVER clip through, pierce, or awkwardly cross the chrome windshield frame bar or the glass. Ears "
+    "stay cleanly ABOVE or BEHIND the frame, never intersecting it. "
+    "★MARKINGS MATCH THE CANONICAL: keep Ryani's white markings exactly as in the canonical reference — "
+    "a THIN pencil-width white blaze up the muzzle (never thickened, widened, or spread), a neat white "
+    "chin and chest patch; do not grow, blur, or drift the white between shots. "
+    "★REARVIEW MIRROR: a small rearview mirror is mounted to the TOP-CENTER of the windshield frame as "
+    "in the canonical — it is NOT a large object and NOT floating detached in the cabin between the pets.")
 
 
 # Shot-size must be REALIZED in the still, not just labeled — else every cut comes out a medium
@@ -95,7 +106,10 @@ _FRAMING = {
     "CU":     "CLOSE-UP — one pet's face fills most of the frame, tight and intimate, shallow depth of field.",
     "MS":     "MEDIUM SHOT — the two pets from the chest up in the car, balanced, some surroundings visible.",
     "WS":     "WIDE SHOT — the WHOLE car is SMALL in a big neon cityscape, lots of environment around it; "
-              "the pets are tiny in the frame. A true wide, NOT a medium two-shot.",
+              "the pets are tiny in the frame. A true wide, NOT a medium two-shot. At this distance the "
+              "pets read mostly as their silhouette and base colour — Ryani is a small MOSTLY-BLACK dog "
+              "with only a faint hint of white, Leo a small orange cat; do NOT enlarge, thicken, or "
+              "over-render their white markings into a big white patch.",
     "insert": "INSERT / detail shot — a close object detail (dashboard gauge, headlight, chrome wheel, "
               "neon reflection on the hood); the pets may be absent or incidental.",
     "aerial": "AERIAL / high crane — looking DOWN on the car from high above, the city spread below.",

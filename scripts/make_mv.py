@@ -84,6 +84,14 @@ HLG_TONEMAP = (f"zscale=t=linear:npl={_MV_HLG_NPL},format=gbrpf32le,zscale=p=bt7
 SDR_NORM = "format=yuv420p"                                     # SDR clips: just 8-bit, tag bt709
 BT709 = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"]
 
+# i2v cuts start FROM their input still — the first ~0.2-0.3s is a near-static head as Seedance ramps
+# the motion up (measured: frame-diff stays low until ~0.25s, then climbs). Concatenated, that static
+# head reads as a 0.2-0.3s "pause before it moves" at every scene change. So AV/Seedance (`fill`) cuts
+# start reading HERE, past the head, so the cut opens already in motion. Beat length is preserved: the
+# remaining content is time-scaled to the clip's `dur` slot (setpts over the real usable length, not a
+# hardcoded 4.9). Only `fill` cuts skip — real footage has no i2v ramp. Kill-switch MV_AV_HEAD_SKIP=0.
+AV_HEAD_SKIP = float(os.getenv("MV_AV_HEAD_SKIP", "0.25"))
+
 
 # ── ffmpeg helpers ────────────────────────────────────────────────────
 def _run(cmd):
@@ -195,17 +203,29 @@ def make_mv(song, clips, lines, out, *, bumper=BUMPER_DEFAULT, work=None,
         segs = []
         for i, c in enumerate(clips):
             src, dur = Path(c["src"]), float(c["dur"])
-            ss = float(c.get("ss", 0.1))   # per-clip start offset — land on the action on long source clips
+            is_fill = bool(c.get("fill"))
+            # AV/Seedance (`fill`) cuts start PAST the static i2v head so they open already in motion;
+            # real clips land on the action at 0.1. An explicit per-clip `ss` always wins.
+            ss = float(c.get("ss", AV_HEAD_SKIP if is_fill else 0.1))
             seg = work / f"seg{i:02d}.mp4"
             # `fill`: slow a SHORT fixed-length source (e.g. a 5s Seedance cut) to exactly `dur` so it
             # fills its slot — same path as the finale. Long real clips omit it and get trimmed instead.
-            last = (i == len(clips) - 1) or bool(c.get("fill"))
+            last = (i == len(clips) - 1) or is_fill
             grade = ("," + c["grade"]) if c.get("grade") else ""   # per-clip cinematic grade (real cuts)
-            if last:   # slow the (≤4.9s) clip to EXACTLY `dur` so body == total → no end-freeze
-                vf = f"{_color_vf(src)},setpts=({dur}/4.9)*PTS,{GEOM}{grade}"
-                _run(["ffmpeg", "-y", "-ss", ss, "-t", "4.9", "-i", src, "-vf", vf, "-an",
-                      "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p",
-                      *BT709, "-t", dur, seg])
+            if last:   # slow the clip to EXACTLY `dur` so body == total → no end-freeze
+                if is_fill:
+                    # Scale the content AFTER the skipped head to `dur`. setpts over the REAL usable
+                    # length (src_dur − ss), not a hardcoded 4.9, so beat length stays exact for any head-skip.
+                    usable = max(0.5, _dur(src) - ss)
+                    vf = f"{_color_vf(src)},setpts=({dur}/{usable})*PTS,{GEOM}{grade}"
+                    _run(["ffmpeg", "-y", "-ss", ss, "-t", usable, "-i", src, "-vf", vf, "-an",
+                          "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p",
+                          *BT709, "-t", dur, seg])
+                else:   # finale REAL clip: cap at 4.9s and slow to dur (unchanged)
+                    vf = f"{_color_vf(src)},setpts=({dur}/4.9)*PTS,{GEOM}{grade}"
+                    _run(["ffmpeg", "-y", "-ss", ss, "-t", "4.9", "-i", src, "-vf", vf, "-an",
+                          "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p",
+                          *BT709, "-t", dur, seg])
             else:
                 vf = f"{_color_vf(src)},{GEOM}{grade}"
                 # non-fill = a long REAL clip → trim to the full requested `dur` (NOT capped at 4.9s,
