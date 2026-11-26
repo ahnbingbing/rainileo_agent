@@ -30,9 +30,15 @@ def main() -> None:
 
     con = _db()
     ensure_geo_cols(con)
+    # Target rows that still need grounding by geo_water (the true "ungrounded" condition),
+    # NOT gps_lat: Apple reverse-geocodes asynchronously, so a first pass can capture the
+    # coordinates (gps_lat set) while place/water arrive later — filtering on gps_lat IS NULL
+    # would skip those coord-only rows forever. geo_water IS NULL catches both the no-coord
+    # rows (cheap re-check, may gain a location as iCloud keeps syncing) and the coord-only
+    # rows now awaiting their reverse-geocode.
     where = "source='icloud' AND source_uuid IS NOT NULL"
     if not a.all:
-        where += " AND gps_lat IS NULL"
+        where += " AND geo_water IS NULL"
     rows = con.execute(
         f"SELECT asset_id, source_uuid, kind, file_path FROM assets WHERE {where} "
         f"ORDER BY captured_iso DESC" + (f" LIMIT {int(a.limit)}" if a.limit else "")
